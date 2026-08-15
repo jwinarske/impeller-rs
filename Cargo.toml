@@ -7,6 +7,10 @@ version = "0.1.0"
 edition = "2021"
 rust-version = "1.82"
 publish = false
+# Matches the Flutter Engine, where the C++ Impeller this project takes its
+# architecture from lives. Any code ported from there keeps its own copyright
+# notice alongside ours.
+license = "BSD-3-Clause"
 
 # Dependency versions are pinned here and inherited by every member via
 # `dep = { workspace = true }`, so a bump is a single reviewed edit.

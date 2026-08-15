@@ -4,6 +4,7 @@ version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 publish.workspace = true
+license.workspace = true
 
 # `drm` is presentation-only and composes with either rendering backend:
 #   --features vulkan,drm       Vulkan rendering with KMS scanout

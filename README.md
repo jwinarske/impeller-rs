@@ -116,3 +116,11 @@ policy, explicit synchronization, the ownership boundary with drm-rs, format
 and modifier negotiation, the shader pipeline, dependency purity, and the
 testing model. Read it before proposing structural changes — a fair number of
 alternatives were considered and rejected for recorded reasons.
+
+## License
+
+BSD 3-Clause. See [`LICENSE`](LICENSE).
+
+This matches the Flutter Engine, home of the C++ Impeller whose architecture
+this project takes as its reference. Any code ported from there retains its
+original copyright notice alongside this project's.
