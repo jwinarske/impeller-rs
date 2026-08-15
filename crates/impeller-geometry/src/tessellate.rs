@@ -15,7 +15,8 @@
 //! Convexity detection is conservative for exactly this reason.
 
 use crate::flatten::flatten;
-use crate::path::{polygon_convexity, Convexity, FillRule, Path};
+use crate::path::{polygon_convexity, Convexity, FillRule, Path, Verb};
+use crate::stroke::{LineCap, LineJoin, StrokeStyle};
 use glam::Vec2;
 
 /// Triangles, as a vertex buffer plus an index buffer.
@@ -65,6 +66,7 @@ impl VertexBuffers {
 pub struct Tessellator {
     buffers: VertexBuffers,
     fill: lyon_tessellation::FillTessellator,
+    stroke: lyon_tessellation::StrokeTessellator,
 }
 
 impl Tessellator {
@@ -101,9 +103,116 @@ impl Tessellator {
         &self.buffers
     }
 
+    /// Tessellate a stroked path, returning triangles in path space.
+    ///
+    /// Curves are handed to the tessellator intact rather than pre-flattened.
+    /// Offsetting a polyline and offsetting the curve it approximates are not
+    /// the same operation: the polyline's corners become joins that the curve
+    /// does not have, so pre-flattening would stipple a smooth curve with
+    /// spurious miter or round joins along its length.
+    pub fn stroke(&mut self, path: &Path, style: &StrokeStyle, tolerance: f32) -> &VertexBuffers {
+        use lyon_tessellation::{
+            BuffersBuilder, LineCap as LyonCap, LineJoin as LyonJoin, StrokeOptions,
+        };
+
+        self.buffers.clear();
+        if path.is_empty() || !style.is_visible() {
+            return &self.buffers;
+        }
+
+        let lyon_path = to_lyon_path(path);
+        let options = StrokeOptions::default()
+            .with_line_width(style.width)
+            .with_tolerance(tolerance)
+            // lyon expresses the limit as half the SVG ratio: it bevels when
+            // 1/sin(angle/2) exceeds twice the configured value, so passing an
+            // SVG limit through unchanged would degrade at roughly half the
+            // intended angle. Halving it restores the documented semantics.
+            //
+            // The floor is not defensive style — lyon asserts on anything below
+            // MINIMUM_MITER_LIMIT, so an unclamped caller value panics inside
+            // the tessellator. It costs exactness for SVG limits under 2, which
+            // all behave as 2.
+            .with_miter_limit((style.miter_limit * 0.5).max(StrokeOptions::MINIMUM_MITER_LIMIT))
+            .with_line_cap(match style.cap {
+                LineCap::Butt => LyonCap::Butt,
+                LineCap::Round => LyonCap::Round,
+                LineCap::Square => LyonCap::Square,
+            })
+            .with_line_join(match style.join {
+                // Miter, not MiterClip. The two differ once the miter limit is
+                // exceeded: MiterClip truncates the spike at the limit, while
+                // Miter drops back to a bevel. The latter is what SVG and
+                // PostScript specify, and what StrokeStyle documents.
+                LineJoin::Miter => LyonJoin::Miter,
+                LineJoin::Round => LyonJoin::Round,
+                LineJoin::Bevel => LyonJoin::Bevel,
+            });
+
+        let mut geometry: lyon_tessellation::VertexBuffers<Vec2, u32> =
+            lyon_tessellation::VertexBuffers::new();
+        {
+            let mut builder = BuffersBuilder::new(&mut geometry, ToVec2);
+            if self
+                .stroke
+                .tessellate_path(&lyon_path, &options, &mut builder)
+                .is_err()
+            {
+                return &self.buffers;
+            }
+        }
+
+        self.buffers.vertices.extend_from_slice(&geometry.vertices);
+        self.buffers.indices.extend_from_slice(&geometry.indices);
+        &self.buffers
+    }
+
     pub fn buffers(&self) -> &VertexBuffers {
         &self.buffers
     }
+}
+
+/// Convert to a lyon path, preserving curves rather than flattening them.
+fn to_lyon_path(path: &Path) -> lyon_tessellation::path::Path {
+    use lyon_tessellation::math::Point as LyonPoint;
+    use lyon_tessellation::path::Path as LyonPath;
+
+    let pt = |p: Vec2| LyonPoint::new(p.x, p.y);
+    let mut builder = LyonPath::builder();
+    let mut open = false;
+
+    for (verb, points) in path.segments() {
+        match verb {
+            Verb::MoveTo => {
+                if open {
+                    builder.end(false);
+                }
+                builder.begin(pt(points[0]));
+                open = true;
+            }
+            Verb::LineTo if open => {
+                builder.line_to(pt(points[0]));
+            }
+            Verb::QuadTo if open => {
+                builder.quadratic_bezier_to(pt(points[0]), pt(points[1]));
+            }
+            Verb::CubicTo if open => {
+                builder.cubic_bezier_to(pt(points[0]), pt(points[1]), pt(points[2]));
+            }
+            Verb::Close if open => {
+                builder.end(true);
+                open = false;
+            }
+            // A segment verb with no open subpath cannot occur through
+            // PathBuilder, which inserts an implicit move. Ignoring it keeps
+            // hand-constructed paths from panicking inside lyon.
+            _ => {}
+        }
+    }
+    if open {
+        builder.end(false);
+    }
+    builder.build()
 }
 
 /// Drop a trailing point that merely repeats the first.
@@ -187,6 +296,13 @@ struct ToVec2;
 
 impl lyon_tessellation::FillVertexConstructor<Vec2> for ToVec2 {
     fn new_vertex(&mut self, vertex: lyon_tessellation::FillVertex) -> Vec2 {
+        let p = vertex.position();
+        Vec2::new(p.x, p.y)
+    }
+}
+
+impl lyon_tessellation::StrokeVertexConstructor<Vec2> for ToVec2 {
+    fn new_vertex(&mut self, vertex: lyon_tessellation::StrokeVertex) -> Vec2 {
         let p = vertex.position();
         Vec2::new(p.x, p.y)
     }
@@ -385,6 +501,216 @@ mod tests {
         assert!(
             (area - expected).abs() / expected < 0.01,
             "got {area}, expected about {expected}"
+        );
+    }
+}
+
+#[cfg(test)]
+mod stroke_tests {
+    use super::*;
+    use crate::flatten::DEFAULT_TOLERANCE;
+    use crate::path::PathBuilder;
+
+    /// A horizontal segment of the given length, open.
+    fn segment(len: f32) -> Path {
+        let mut b = PathBuilder::new();
+        b.move_to(Vec2::ZERO).line_to(Vec2::new(len, 0.0));
+        b.build()
+    }
+
+    #[test]
+    fn butt_cap_covers_exactly_length_times_width() {
+        let mut t = Tessellator::new();
+        let buffers = t.stroke(&segment(10.0), &StrokeStyle::new(2.0), DEFAULT_TOLERANCE);
+
+        assert!(buffers.is_well_formed());
+        // Butt caps add nothing beyond the endpoints, so the stroke is exactly
+        // the rectangle 10 x 2.
+        let area = covered_area(buffers);
+        assert!((area - 20.0).abs() < 0.01, "expected 20, got {area}");
+    }
+
+    #[test]
+    fn round_cap_adds_a_disc_worth_of_area() {
+        let mut t = Tessellator::new();
+        let style = StrokeStyle::new(2.0).with_cap(LineCap::Round);
+        let area = covered_area(t.stroke(&segment(10.0), &style, 0.01));
+
+        // Two half-discs of radius 1 make one full disc. Tessellation
+        // inscribes the arc, so the result lands just under.
+        let expected = 20.0 + std::f32::consts::PI;
+        assert!(
+            (area - expected).abs() < 0.1,
+            "expected about {expected}, got {area}"
+        );
+    }
+
+    #[test]
+    fn square_cap_extends_by_a_half_width_at_each_end() {
+        let mut t = Tessellator::new();
+        let style = StrokeStyle::new(2.0).with_cap(LineCap::Square);
+        let area = covered_area(t.stroke(&segment(10.0), &style, DEFAULT_TOLERANCE));
+
+        // Each cap adds a 1 x 2 block, so the stroke becomes 12 x 2.
+        assert!((area - 24.0).abs() < 0.01, "expected 24, got {area}");
+    }
+
+    #[test]
+    fn caps_are_ordered_by_the_area_they_add() {
+        let mut t = Tessellator::new();
+        let path = segment(10.0);
+        let area = |cap| {
+            let mut t2 = Tessellator::new();
+            covered_area(t2.stroke(&path, &StrokeStyle::new(2.0).with_cap(cap), 0.01))
+        };
+        let (butt, round, square) = (
+            area(LineCap::Butt),
+            area(LineCap::Round),
+            area(LineCap::Square),
+        );
+        assert!(butt < round && round < square, "{butt} {round} {square}");
+        let _ = t.stroke(&path, &StrokeStyle::default(), DEFAULT_TOLERANCE);
+    }
+
+    #[test]
+    fn width_scales_area_linearly() {
+        let path = segment(10.0);
+        let mut t = Tessellator::new();
+        let narrow = covered_area(t.stroke(&path, &StrokeStyle::new(1.0), DEFAULT_TOLERANCE));
+        let wide = covered_area(t.stroke(&path, &StrokeStyle::new(4.0), DEFAULT_TOLERANCE));
+        assert!((wide - narrow * 4.0).abs() < 0.01, "{narrow} {wide}");
+    }
+
+    #[test]
+    fn an_invisible_stroke_produces_nothing() {
+        let mut t = Tessellator::new();
+        for width in [0.0, -2.0, f32::NAN] {
+            let buffers = t.stroke(&segment(10.0), &StrokeStyle::new(width), DEFAULT_TOLERANCE);
+            assert!(buffers.is_empty(), "width {width} produced geometry");
+        }
+    }
+
+    #[test]
+    fn an_empty_path_produces_nothing() {
+        let mut t = Tessellator::new();
+        assert!(t
+            .stroke(&Path::default(), &StrokeStyle::new(2.0), DEFAULT_TOLERANCE)
+            .is_empty());
+    }
+
+    /// A corner of `degrees`, opening upward, apex at the origin.
+    fn corner(degrees: f32) -> Path {
+        let half = degrees.to_radians() / 2.0;
+        let r = 50.0;
+        let mut b = PathBuilder::new();
+        b.move_to(Vec2::new(half.sin(), half.cos()) * r)
+            .line_to(Vec2::ZERO)
+            .line_to(Vec2::new(-half.sin(), half.cos()) * r);
+        b.build()
+    }
+
+    fn join_area(path: &Path, join: LineJoin, limit: f32) -> f32 {
+        let mut t = Tessellator::new();
+        let style = StrokeStyle::new(3.0)
+            .with_join(join)
+            .with_miter_limit(limit);
+        covered_area(t.stroke(path, &style, 0.02))
+    }
+
+    #[test]
+    fn miter_degrades_to_bevel_at_the_svg_threshold() {
+        // SVG degrades when 1/sin(angle/2) exceeds the limit, which at the
+        // default limit of 4 falls at about 28.96 degrees. lyon expresses the
+        // limit as half that ratio, so this is the test that catches the
+        // conversion being dropped: without it the threshold lands near 14
+        // degrees and both cases below would miter.
+        let sharper = corner(28.5);
+        assert_eq!(
+            join_area(&sharper, LineJoin::Miter, 4.0),
+            join_area(&sharper, LineJoin::Bevel, 4.0),
+            "below the threshold a miter join must produce bevel geometry"
+        );
+
+        let shallower = corner(29.5);
+        assert!(
+            join_area(&shallower, LineJoin::Miter, 4.0)
+                > join_area(&shallower, LineJoin::Bevel, 4.0),
+            "above the threshold the miter must survive"
+        );
+    }
+
+    #[test]
+    fn raising_the_limit_re_enables_a_miter_that_would_otherwise_bevel() {
+        let path = corner(20.0);
+        let bevelled = join_area(&path, LineJoin::Miter, 4.0);
+        let mitered = join_area(&path, LineJoin::Miter, 8.0);
+        assert!(
+            mitered > bevelled,
+            "a higher limit should keep the spike: {mitered} vs {bevelled}"
+        );
+    }
+
+    #[test]
+    fn bevel_covers_less_than_miter_where_the_miter_survives() {
+        let path = corner(90.0);
+        assert!(join_area(&path, LineJoin::Bevel, 4.0) < join_area(&path, LineJoin::Miter, 4.0));
+    }
+
+    #[test]
+    fn a_miter_limit_below_the_backend_minimum_does_not_panic() {
+        // lyon asserts on a miter limit under 1.0, and the SVG-to-lyon
+        // conversion halves the value, so any caller limit below 2 would reach
+        // that assert unclamped. A stroke style is caller data; it must not be
+        // able to abort the process.
+        let path = corner(90.0);
+        for limit in [0.0, 0.5, 1.0, 1.9] {
+            let area = join_area(&path, LineJoin::Miter, limit);
+            assert!(area > 0.0, "limit {limit} produced no geometry");
+        }
+    }
+
+    #[test]
+    fn stroking_a_curve_does_not_pre_flatten_into_spurious_joins() {
+        // A smooth curve stroked with miter joins must not sprout spikes at
+        // every flattening vertex. If it were pre-flattened, a tight miter
+        // limit would change the area; on a genuinely smooth curve the joins
+        // are all shallow and the limit is irrelevant.
+        let mut b = PathBuilder::new();
+        b.move_to(Vec2::new(0.0, 0.0)).cubic_to(
+            Vec2::new(0.0, 40.0),
+            Vec2::new(60.0, 40.0),
+            Vec2::new(60.0, 0.0),
+        );
+        let path = b.build();
+
+        let area = |limit: f32| {
+            let mut t = Tessellator::new();
+            let style = StrokeStyle::new(4.0)
+                .with_join(LineJoin::Miter)
+                .with_miter_limit(limit);
+            covered_area(t.stroke(&path, &style, 0.1))
+        };
+
+        let (tight, generous) = (area(1.0), area(10.0));
+        assert!(
+            (tight - generous).abs() / generous < 0.01,
+            "miter limit changed a smooth curve's area: {tight} vs {generous}"
+        );
+    }
+
+    #[test]
+    fn stroke_buffers_do_not_leak_between_calls() {
+        let mut t = Tessellator::new();
+        let big = t.stroke(&segment(100.0), &StrokeStyle::new(10.0), DEFAULT_TOLERANCE);
+        let big_tris = big.triangle_count();
+        assert!(big_tris > 0);
+
+        let small = t.stroke(&segment(1.0), &StrokeStyle::new(1.0), DEFAULT_TOLERANCE);
+        assert!(small.is_well_formed());
+        let area = covered_area(small);
+        assert!(
+            (area - 1.0).abs() < 0.01,
+            "stale geometry inflated area to {area}"
         );
     }
 }
