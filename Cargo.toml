@@ -1,0 +1,71 @@
+[workspace]
+resolver = "2"
+members = ["crates/*", "xtask"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.82"
+publish = false
+
+# Dependency versions are pinned here and inherited by every member via
+# `dep = { workspace = true }`, so a bump is a single reviewed edit.
+#
+# Hard constraint: every entry must compile from pure Rust source. No C/C++
+# toolchain, cmake, or pkg-config at build time -- that property is what keeps
+# cross-compilation to aarch64/riscv64 boards and containerized CI builds
+# trivial, and it is enforced by the bans in deny.toml.
+[workspace.dependencies]
+# --- rendering ---
+ash = "0.38"
+gpu-allocator = "0.27"
+glow = "0.14"
+# NEVER enable the "static" feature: it requires libEGL plus pkg-config at link
+# time, which breaks clean cross-builds. "dynamic" dlopens libEGL at runtime.
+khronos-egl = { version = "6", features = ["dynamic"] }
+
+# --- presentation ---
+raw-window-handle = "0.6"
+ash-window = "0.13"
+
+# --- core ---
+lyon_tessellation = "1"
+swash = "0.1"
+glam = "0.27"
+bytemuck = "1"
+half = "2"
+parking_lot = "0.12"
+crossbeam-channel = "0.5"
+log = "0.4"
+thiserror = "1"
+
+# --- build ---
+naga = "23"
+
+# --- dev ---
+proptest = "1"
+criterion = "0.5"
+image = "0.25"
+winit = "0.30"
+cosmic-text = "0.12"
+usvg = "0.43"
+
+# --- internal ---
+impeller-core = { path = "crates/impeller-core" }
+impeller-entity = { path = "crates/impeller-entity" }
+impeller-geometry = { path = "crates/impeller-geometry" }
+impeller-hal = { path = "crates/impeller-hal" }
+impeller-hal-gles = { path = "crates/impeller-hal-gles" }
+impeller-hal-vulkan = { path = "crates/impeller-hal-vulkan" }
+impeller-present = { path = "crates/impeller-present" }
+impeller-present-drm = { path = "crates/impeller-present-drm" }
+impeller-present-egl = { path = "crates/impeller-present-egl" }
+impeller-present-vk = { path = "crates/impeller-present-vk" }
+impeller-renderer = { path = "crates/impeller-renderer" }
+impeller-shaders = { path = "crates/impeller-shaders" }
+impeller-testkit = { path = "crates/impeller-testkit" }
+impeller-text = { path = "crates/impeller-text" }
+
+[profile.release]
+lto = "thin"
+codegen-units = 1

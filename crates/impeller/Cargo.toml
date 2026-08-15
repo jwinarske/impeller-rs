@@ -1,0 +1,26 @@
+[package]
+name = "impeller"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+# `drm` is presentation-only and composes with either rendering backend:
+#   --features vulkan,drm       Vulkan rendering with KMS scanout
+#   --features gles,drm         the classic embedded GBM path
+#   --features vulkan,gles,drm  one binary that picks at runtime
+[features]
+default = ["vulkan", "present-wsi"]
+vulkan = ["dep:impeller-hal-vulkan", "dep:impeller-present-vk"]
+gles = ["dep:impeller-hal-gles", "dep:impeller-present-egl"]
+drm = ["dep:impeller-present-drm"]
+present-wsi = []
+
+[dependencies]
+impeller-core = { workspace = true }
+impeller-present = { workspace = true }
+impeller-hal-vulkan = { workspace = true, optional = true }
+impeller-hal-gles = { workspace = true, optional = true }
+impeller-present-vk = { workspace = true, optional = true }
+impeller-present-egl = { workspace = true, optional = true }
+impeller-present-drm = { workspace = true, optional = true }

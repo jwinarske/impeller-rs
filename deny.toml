@@ -1,0 +1,49 @@
+# cargo-deny configuration.
+#
+# The pkg-config ban below is a hard architectural requirement, not a
+# preference: the project requires that every dependency compile from pure
+# Rust source with no C/C++ toolchain, pkg-config, or system headers at build
+# time. That property is what keeps cross-compilation to aarch64/riscv64
+# boards and containerized CI builds trivial.
+#
+# The known footgun is khronos-egl's "static" feature, which pulls in
+# link-time libEGL via pkg-config. The workspace pins it to "dynamic"
+# (dlopen); this ban is the automated enforcement of that pin.
+
+[bans]
+multiple-versions = "warn"
+wildcards = "deny"
+
+[[bans.deny]]
+name = "pkg-config"
+reason = "pure-Rust build requirement: build must not require pkg-config or a C toolchain"
+
+[[bans.deny]]
+name = "cmake"
+reason = "pure-Rust build requirement: build must compile from pure Rust source"
+
+[[bans.deny]]
+name = "cc"
+reason = "pure-Rust build requirement: build must not require a C/C++ compiler"
+
+[advisories]
+version = 2
+yanked = "deny"
+
+[licenses]
+version = 2
+allow = [
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "ISC",
+    "MIT",
+    "MPL-2.0",
+    "Unicode-3.0",
+    "Zlib",
+]
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
