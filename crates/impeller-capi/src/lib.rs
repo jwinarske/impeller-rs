@@ -69,6 +69,18 @@ pub const fn version_patch(v: u32) -> u32 {
 /// Must track the pinned upstream header exactly. A consumer compiled against
 /// a different version is refused at context creation rather than allowed to
 /// run against a surface it may not match.
+///
+/// # Provenance
+///
+/// Read from `engine/src/flutter/impeller/toolkit/interop/impeller.h` on the
+/// `flutter/flutter` master branch, 2026-08-15. The older `flutter/engine`
+/// repository carries a different minor version and is not the source of
+/// truth; the engine moved into the monorepo.
+///
+/// A bare version constant with no recorded origin is a trap, because master
+/// moves and negotiation failures surface as an opaque NULL from context
+/// creation. When the pinned header is vendored for the symbol-parity check,
+/// this constant is derived from it rather than restated here.
 pub const IMPELLER_VERSION: u32 = make_version(1, 1, 4, 0);
 
 /// `ImpellerGetVersion` — the version this library implements.
