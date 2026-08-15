@@ -128,3 +128,27 @@ fn contexts_can_be_created_and_dropped_repeatedly() {
         assert!(!ctx.capabilities().device_name.is_empty());
     }
 }
+
+#[test]
+fn enabled_extensions_carry_their_dependencies() {
+    let Some(ctx) = context(DevicePreference::Auto) else {
+        return;
+    };
+
+    // The specification requires every dependency of an enabled extension to
+    // be enabled too, and a device created without them is invalid even though
+    // it appears to work. This only shows up under a validation layer, so the
+    // invariant is asserted directly here instead.
+    if ctx.has_extension("VK_EXT_image_drm_format_modifier") {
+        assert!(
+            ctx.has_extension("VK_KHR_image_format_list"),
+            "the modifier extension requires VK_KHR_image_format_list on a 1.1 baseline"
+        );
+    }
+    if ctx.has_extension("VK_EXT_external_memory_dma_buf") {
+        assert!(
+            ctx.has_extension("VK_KHR_external_memory_fd"),
+            "dma-buf external memory requires the fd extension"
+        );
+    }
+}

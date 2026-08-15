@@ -8,4 +8,5 @@ license.workspace = true
 
 [dependencies]
 ash = { workspace = true }
+gpu-allocator = { workspace = true }
 impeller-hal = { workspace = true }

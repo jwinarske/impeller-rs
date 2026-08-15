@@ -15,5 +15,7 @@
 //! look usable while failing at the first draw.
 
 pub mod device;
+pub mod resource;
 
 pub use device::{DevicePreference, VulkanContext};
+pub use resource::VulkanTexture;

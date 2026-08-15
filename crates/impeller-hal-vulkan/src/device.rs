@@ -40,12 +40,56 @@ mod ext {
     pub const EXTERNAL_FENCE_FD: &str = "VK_KHR_external_fence_fd";
     pub const EXTERNAL_SEMAPHORE_FD: &str = "VK_KHR_external_semaphore_fd";
     pub const PHYSICAL_DEVICE_DRM: &str = "VK_EXT_physical_device_drm";
+    /// Promoted to core in 1.2, so on the 1.1 baseline it must be requested
+    /// explicitly as a dependency of the modifier extension.
+    pub const IMAGE_FORMAT_LIST: &str = "VK_KHR_image_format_list";
+}
+
+/// Extensions each wanted extension depends on, beyond what the 1.1 baseline
+/// already provides as core.
+///
+/// The specification requires every dependency to appear in the enable list
+/// too, and a device created without them is invalid even when it appears to
+/// work. Omitting one here surfaces only under validation, which is why the
+/// resolution below drops any extension whose dependencies are unavailable
+/// rather than enabling it regardless.
+fn required_dependencies(name: &str) -> &'static [&'static str] {
+    match name {
+        ext::IMAGE_DRM_FORMAT_MODIFIER => &[ext::IMAGE_FORMAT_LIST],
+        ext::EXTERNAL_MEMORY_DMA_BUF => &[ext::EXTERNAL_MEMORY_FD],
+        _ => &[],
+    }
+}
+
+/// Expand the wanted set to include dependencies, dropping anything whose
+/// dependencies this device does not offer.
+fn resolve_extensions(wanted: &[&str], available: &HashSet<String>) -> HashSet<String> {
+    let mut enabled = HashSet::new();
+    for name in wanted {
+        if !available.contains(*name) {
+            continue;
+        }
+        let deps = required_dependencies(name);
+        if deps.iter().any(|d| !available.contains(*d)) {
+            // Enabling this would produce an invalid device. Skipping it means
+            // the capability it backs is reported false, which is the honest
+            // answer.
+            continue;
+        }
+        enabled.insert((*name).to_string());
+        enabled.extend(deps.iter().map(|d| (*d).to_string()));
+    }
+    enabled
 }
 
 /// A Vulkan device, its queue, and what it can do.
 pub struct VulkanContext {
     // Declaration order is destruction order: the device must outlive nothing
     // and the instance must outlive the device, so Drop tears down in reverse.
+    // The allocator must release its memory before the device goes away, which
+    // is why it is an Option -- Drop takes it and drops it explicitly first.
+    allocator: Option<gpu_allocator::vulkan::Allocator>,
+    command_pool: vk::CommandPool,
     device: ash::Device,
     physical_device: vk::PhysicalDevice,
     queue: vk::Queue,
@@ -113,11 +157,7 @@ impl VulkanContext {
             ext::EXTERNAL_SEMAPHORE_FD,
             ext::PHYSICAL_DEVICE_DRM,
         ];
-        let enabled: HashSet<String> = wanted
-            .iter()
-            .filter(|n| available.contains(**n))
-            .map(|n| n.to_string())
-            .collect();
+        let enabled = resolve_extensions(&wanted, &available);
 
         let queue_family_index = match select_queue_family(&instance, physical_device) {
             Ok(i) => i,
@@ -154,7 +194,29 @@ impl VulkanContext {
         let queue = unsafe { device.get_device_queue(queue_family_index, 0) };
         let capabilities = detect_capabilities(&instance, physical_device, &enabled);
 
+        let allocator =
+            gpu_allocator::vulkan::Allocator::new(&gpu_allocator::vulkan::AllocatorCreateDesc {
+                instance: instance.clone(),
+                device: device.clone(),
+                physical_device,
+                debug_settings: Default::default(),
+                buffer_device_address: false,
+                allocation_sizes: Default::default(),
+            })
+            .map_err(|e| Error::Backend {
+                backend: "vulkan",
+                detail: format!("allocator: {e}"),
+            })?;
+
+        let pool_info = vk::CommandPoolCreateInfo::default()
+            .queue_family_index(queue_family_index)
+            .flags(vk::CommandPoolCreateFlags::RESET_COMMAND_BUFFER);
+        let command_pool = unsafe { device.create_command_pool(&pool_info, None) }
+            .map_err(|e| backend_err("create_command_pool", e))?;
+
         Ok(Self {
+            allocator: Some(allocator),
+            command_pool,
             device,
             physical_device,
             queue,
@@ -190,14 +252,84 @@ impl VulkanContext {
     pub fn raw_queue(&self) -> vk::Queue {
         self.queue
     }
+
+    pub(crate) fn allocator_mut(&mut self) -> &mut gpu_allocator::vulkan::Allocator {
+        self.allocator
+            .as_mut()
+            .expect("allocator is taken only in Drop")
+    }
+
+    /// Allocate and begin a command buffer for a single submission.
+    pub(crate) fn begin_one_shot(&self) -> Result<vk::CommandBuffer> {
+        let info = vk::CommandBufferAllocateInfo::default()
+            .command_pool(self.command_pool)
+            .level(vk::CommandBufferLevel::PRIMARY)
+            .command_buffer_count(1);
+        let buffers = unsafe { self.device.allocate_command_buffers(&info) }
+            .map_err(|e| backend_err("allocate_command_buffers", e))?;
+        let cmd = buffers[0];
+
+        let begin = vk::CommandBufferBeginInfo::default()
+            .flags(vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT);
+        unsafe { self.device.begin_command_buffer(cmd, &begin) }
+            .map_err(|e| backend_err("begin_command_buffer", e))?;
+        Ok(cmd)
+    }
+
+    /// End, submit, and wait for a one-shot command buffer, then free it.
+    ///
+    /// Blocking here is correct for setup and readback and wrong for the frame
+    /// loop, which is fence-driven and never waits on the device. Nothing in
+    /// this path runs per frame.
+    pub(crate) fn submit_one_shot(&self, cmd: vk::CommandBuffer) -> Result<()> {
+        let result = self.submit_and_wait(cmd);
+        // SAFETY: the submission was waited on above, or never made, so the
+        // buffer is no longer in use either way.
+        unsafe { self.device.free_command_buffers(self.command_pool, &[cmd]) };
+        result
+    }
+
+    fn submit_and_wait(&self, cmd: vk::CommandBuffer) -> Result<()> {
+        unsafe { self.device.end_command_buffer(cmd) }
+            .map_err(|e| backend_err("end_command_buffer", e))?;
+
+        let fence_info = vk::FenceCreateInfo::default();
+        let fence = unsafe { self.device.create_fence(&fence_info, None) }
+            .map_err(|e| backend_err("create_fence", e))?;
+
+        let cmds = [cmd];
+        let submit = vk::SubmitInfo::default().command_buffers(&cmds);
+        let submitted = unsafe { self.device.queue_submit(self.queue, &[submit], fence) };
+
+        let result = match submitted {
+            Ok(()) => unsafe {
+                self.device
+                    .wait_for_fences(&[fence], true, u64::MAX)
+                    .map_err(|e| match e {
+                        vk::Result::TIMEOUT => Error::Timeout,
+                        vk::Result::ERROR_DEVICE_LOST => Error::DeviceLost,
+                        other => backend_err("wait_for_fences", other),
+                    })
+            },
+            Err(e) => Err(backend_err("queue_submit", e)),
+        };
+
+        unsafe { self.device.destroy_fence(fence, None) };
+        result
+    }
 }
 
 impl Drop for VulkanContext {
     fn drop(&mut self) {
-        // SAFETY: no command buffers are outstanding because none can be
-        // created yet, and the device is destroyed before the instance that
+        // The allocator must free its memory while the device is still alive,
+        // so it is dropped explicitly before anything else is destroyed.
+        drop(self.allocator.take());
+        // SAFETY: every submission this context made was waited on before the
+        // call that made it returned, so nothing is in flight. Objects are
+        // destroyed inside-out: pool, then device, then the instance that
         // created it.
         unsafe {
+            self.device.destroy_command_pool(self.command_pool, None);
             self.device.destroy_device(None);
             self.instance.destroy_instance(None);
         }
