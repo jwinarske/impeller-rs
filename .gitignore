@@ -1,0 +1,20 @@
+# Local working documents -- not checked in
+/plan.md
+
+# Rust build artifacts
+/target/
+**/*.rs.bk
+
+# Test output: diff images, JSON/JUnit reports, capture artifacts (plan.md 15.3)
+/tests/output/
+/tests/**/actual/
+/tests/**/diff/
+
+# Device-run artifacts pulled back from boards (plan.md 17.1)
+/ci/results/
+
+# Editor / OS
+.idea/
+.vscode/
+*.swp
+.DS_Store
