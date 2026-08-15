@@ -1,8 +1,19 @@
-//! Vulkan backend via ash and gpu-allocator. First-class: the reference
-//! implementation, the conformance oracle other backends are diffed against,
-//! and where new features land first.
+//! Vulkan backend via ash. First-class: the reference implementation, the
+//! conformance oracle other backends are diffed against, and where new
+//! features land first.
 //!
-//! Vulkan 1.1 floor; 1.3 dynamic rendering, timeline semaphores, and sync2 used
-//! opportunistically. Avoids geometry shaders, tessellation shaders, sparse
-//! residency, and multi-draw-indirect-with-count for MoltenVK compatibility --
-//! none are needed for 2D.
+//! Vulkan 1.1 is the floor; later features are used when present rather than
+//! required. Features avoided for MoltenVK compatibility — geometry shaders,
+//! tessellation shaders, sparse residency, multi-draw-indirect-with-count —
+//! are none of them needed for 2D.
+//!
+//! # Status
+//!
+//! Device bring-up and capability detection only. The `Hal` and `HalContext`
+//! traits are not implemented yet, because doing so means resource creation
+//! and command recording; stubbing those to return errors would make the type
+//! look usable while failing at the first draw.
+
+pub mod device;
+
+pub use device::{DevicePreference, VulkanContext};
