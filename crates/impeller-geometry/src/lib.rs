@@ -13,6 +13,8 @@
 
 pub mod flatten;
 pub mod path;
+pub mod tessellate;
 
 pub use flatten::{flatten, DEFAULT_TOLERANCE};
 pub use path::{Convexity, FillRule, Path, PathBuilder, Rect, Verb};
+pub use tessellate::{Tessellator, VertexBuffers};

@@ -9,6 +9,7 @@ use glam::Vec2;
 use impeller_geometry::flatten::{
     cubic_segment_count, eval_cubic, eval_quad, quad_segment_count, DEFAULT_TOLERANCE,
 };
+use impeller_geometry::tessellate::{covered_area, polygon_area, Tessellator};
 use impeller_geometry::{flatten, PathBuilder};
 use proptest::prelude::*;
 
@@ -111,6 +112,66 @@ proptest! {
 
         prop_assert_eq!(lines.len(), 1);
         prop_assert_eq!(lines[0].first(), lines[0].last());
+    }
+
+    /// Tessellating a convex polygon must cover its area and no more. This is
+    /// the assertion that catches a fan applied to something that is not
+    /// actually convex, which would paint outside the path.
+    #[test]
+    fn convex_tessellation_covers_exactly_the_polygon_area(
+        n in 3usize..24,
+        rx in 1.0f32..100.0f32,
+        ry in 1.0f32..100.0f32,
+        cx in -50.0f32..50.0f32,
+        cy in -50.0f32..50.0f32,
+    ) {
+        // Sampling an ellipse at evenly spaced angles is convex for any axis
+        // lengths. Varying the radius per vertex instead would not be:
+        // alternating long and short radii produces a star, which is concave,
+        // and the test would then be asserting the wrong thing.
+        let center = Vec2::new(cx, cy);
+        let pts: Vec<Vec2> = (0..n)
+            .map(|i| {
+                let a = std::f32::consts::TAU * i as f32 / n as f32;
+                center + Vec2::new(a.cos() * rx, a.sin() * ry)
+            })
+            .collect();
+
+        let mut b = PathBuilder::new();
+        b.move_to(pts[0]);
+        for p in &pts[1..] {
+            b.line_to(*p);
+        }
+        b.close();
+
+        let mut t = Tessellator::new();
+        let buffers = t.fill(&b.build(), DEFAULT_TOLERANCE);
+        prop_assert!(buffers.is_well_formed());
+
+        let expected = polygon_area(&pts);
+        let actual = covered_area(buffers);
+        prop_assert!(
+            (actual - expected).abs() <= expected * 0.01 + 0.01,
+            "covered {actual}, polygon is {expected}"
+        );
+    }
+
+    /// Whatever the input, index buffers must stay in bounds and whole. A
+    /// malformed buffer is an out-of-range read on the GPU, not a visual
+    /// artifact.
+    #[test]
+    fn tessellation_always_produces_well_formed_buffers(
+        pts in prop::collection::vec(point(), 3..40),
+    ) {
+        let mut b = PathBuilder::new();
+        b.move_to(pts[0]);
+        for p in &pts[1..] {
+            b.line_to(*p);
+        }
+        b.close();
+
+        let mut t = Tessellator::new();
+        prop_assert!(t.fill(&b.build(), DEFAULT_TOLERANCE).is_well_formed());
     }
 
     /// Every verb's point count must match what the builder pushed, or the
