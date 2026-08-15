@@ -482,6 +482,72 @@ Fixed seeds, serialized scene descriptions, pinned Mesa and kernel versions in
 containers, and per-cell tolerance profiles. A container image bump is a change
 that re-baselines tolerances under review, never ambient drift.
 
+## Impeller C API compatibility
+
+`impeller-capi` builds `libimpeller`, an ABI-compatible implementation of
+upstream Impeller's C API (`impeller/toolkit/interop/impeller.h`). The goal is
+binary compatibility: a consumer linking the upstream C API can link this
+instead without recompiling. The shared BSD 3-Clause license is what makes
+vendoring the header and upstream's test assets clean.
+
+**This is not a drop-in for Impeller inside the Flutter Engine build.** The
+engine does not consume Impeller across this boundary — it compiles the C++
+sources directly against internal classes carrying templates, STL types, and
+virtual inheritance. Rust cannot present a compatible C++ ABI, and inline code
+already compiled into the engine's own translation units cannot be replaced by
+swapping a library. Rendering Flutter content would additionally require an
+engine-side shim dispatching DisplayList calls into this C API, carried as an
+engine fork. The C API serves embedders, and that is the seam this crate
+targets.
+
+### Conventions the header imposes
+
+- **Reference counting.** Every handle has `Retain` and `Release` entry points,
+  both NULL-safe no-ops.
+- **No error channel.** Creation returns NULL on failure, operations return
+  `bool`. There are no error codes, so diagnostics go to the log. This is a
+  narrower contract than the internal `Error` type and information is lost at
+  the boundary.
+- **Version negotiation.** The caller passes its compiled-in version to context
+  creation and a mismatch fails the call, so the implemented version must track
+  the pinned header exactly.
+
+### Where parity is partial
+
+Three parts of the C API sit outside what the renderer otherwise commits to.
+None is a reason to abandon compatibility, but each is a deliberate exception
+rather than an oversight:
+
+1. **Typography.** The header exposes `ImpellerTypographyContext`,
+   `ImpellerParagraphBuilder`, and paragraph drawing. Text shaping and layout
+   are otherwise explicitly out of scope, on the reasoning that callers bring
+   their own shaper. Implementing this surface means the C API layer — not the
+   renderer — depends on a shaper, and that dependency is confined to
+   `impeller-capi` so the core stays shaper-agnostic.
+2. **Runtime shaders.** `ImpellerFragmentProgram` loads shader programs at
+   runtime, which is in tension with compiling every pipeline ahead of time to
+   avoid compilation jank. Supporting it means accepting a runtime compilation
+   path that the renderer's own materials never use, with its cost documented
+   rather than hidden.
+3. **Backend coverage.** The header offers OpenGL ES, Metal, and Vulkan context
+   creation. Metal is a deferred backend, so `ImpellerContextCreateMetalNew`
+   returns NULL until it exists. Parity is a subset until then, and the gap is
+   reported rather than papered over.
+
+Note also that the C API is WSI-shaped — wrapped framebuffers, drawables, and a
+Vulkan swapchain. Direct scanout has no expression in it, so the DRM path
+remains reachable only through the Rust API.
+
+### Verifying parity
+
+Symbol-level parity is checked mechanically rather than maintained by hand: CI
+diffs exported symbols against a pinned copy of the upstream header, so an
+upstream addition surfaces as a failure naming the missing entry points.
+Semantic parity — blend mode values, fill rules, color handling, stroke
+geometry — is checked by running upstream's C API samples against this library
+and comparing output through the usual golden comparators. Semantics, not
+symbols, are the hard half.
+
 ## Future backends
 
 Metal, desktop OpenGL, D3D12, and WebGPU are planned behind the same HAL trait.

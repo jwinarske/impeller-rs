@@ -4,9 +4,9 @@ A tessellation-based 2D vector graphics renderer for Rust, targeting everything
 from desktop discrete GPUs down to embedded SoCs driving panels directly
 through KMS with no compositor present.
 
-> **Status: early development.** The workspace and crate boundaries exist; the
-> renderer does not. Every crate is currently a documented stub, and the test
-> suite is empty. Nothing here draws pixels yet.
+> **Status: early development.** The workspace, crate boundaries, and the HAL
+> trait exist; the renderer does not. Most crates are still documented stubs.
+> Nothing here draws pixels yet.
 
 ## Why
 
@@ -93,9 +93,23 @@ crates/
   impeller-present-drm  DRM/KMS scanout target
   impeller-shaders      WGSL sources, build-time translation via naga
   impeller-testkit      shared test harness
+  impeller-capi         Impeller C API (libimpeller), ABI-compatible
 xtask/                  device runs, golden management, CI reproduction
 docs/                   architecture
 ```
+
+## Impeller C API
+
+`impeller-capi` builds `libimpeller`, an ABI-compatible implementation of
+upstream Impeller's C API, so a consumer linking that API can link this instead
+without recompiling.
+
+It is **not** a drop-in for Impeller inside the Flutter Engine build: the
+engine compiles Impeller's C++ sources directly rather than consuming them
+across this boundary, and no Rust library can present a compatible C++ ABI. The
+C API serves embedders. See
+[`docs/architecture.md`](docs/architecture.md#impeller-c-api-compatibility) for
+where parity is partial and how it is verified.
 
 ## Scope
 

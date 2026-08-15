@@ -1,0 +1,16 @@
+[package]
+name = "impeller-capi"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+license.workspace = true
+
+[lib]
+# Produces libimpeller.so / .dylib / impeller.dll, the artifact a C API
+# consumer links against in place of the upstream build.
+name = "impeller"
+crate-type = ["cdylib", "staticlib", "rlib"]
+
+[dependencies]
+impeller-core = { workspace = true }
