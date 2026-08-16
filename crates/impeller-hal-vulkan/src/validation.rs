@@ -1,0 +1,169 @@
+//! Capturing validation-layer output so tests can assert on it.
+//!
+//! Validation errors that only reach stderr are worth very little: they are
+//! noticed when someone happens to look, and a device created invalid can pass
+//! an entire suite while appearing to work. Routing the messenger into a log
+//! the context owns turns "validation-clean" from something a developer
+//! remembers to check into something a test asserts.
+
+use ash::vk;
+use std::ffi::{c_void, CStr};
+use std::sync::Mutex;
+
+/// The layer name, requested at instance creation when validation is on.
+pub const VALIDATION_LAYER: &str = "VK_LAYER_KHRONOS_validation";
+
+/// One diagnostic from the validation layer.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ValidationMessage {
+    pub severity: ValidationSeverity,
+    /// The VUID or message identifier, where the layer supplies one.
+    pub id: String,
+    pub message: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum ValidationSeverity {
+    Info,
+    Warning,
+    Error,
+}
+
+/// Messages collected from the layer for the lifetime of a context.
+#[derive(Debug, Default)]
+pub struct ValidationLog {
+    messages: Mutex<Vec<ValidationMessage>>,
+}
+
+impl ValidationLog {
+    pub fn record(&self, message: ValidationMessage) {
+        // A poisoned lock means a previous callback panicked. Dropping the
+        // message is better than panicking again inside a driver callback,
+        // where unwinding across the FFI boundary is undefined.
+        if let Ok(mut guard) = self.messages.lock() {
+            guard.push(message);
+        }
+    }
+
+    pub fn messages(&self) -> Vec<ValidationMessage> {
+        self.messages.lock().map(|g| g.clone()).unwrap_or_default()
+    }
+
+    /// Messages at error severity, which are the ones that fail a test.
+    pub fn errors(&self) -> Vec<ValidationMessage> {
+        self.messages()
+            .into_iter()
+            .filter(|m| m.severity == ValidationSeverity::Error)
+            .collect()
+    }
+
+    pub fn is_clean(&self) -> bool {
+        self.errors().is_empty()
+    }
+}
+
+/// The messenger callback.
+///
+/// # Safety
+///
+/// Invoked by the loader with a valid callback-data pointer, and with
+/// `user_data` set to the [`ValidationLog`] pointer supplied at messenger
+/// creation. The log outlives the messenger because the context destroys the
+/// messenger before releasing the log.
+pub(crate) unsafe extern "system" fn debug_callback(
+    severity: vk::DebugUtilsMessageSeverityFlagsEXT,
+    _types: vk::DebugUtilsMessageTypeFlagsEXT,
+    data: *const vk::DebugUtilsMessengerCallbackDataEXT<'_>,
+    user_data: *mut c_void,
+) -> vk::Bool32 {
+    // Never unwind out of here: this frame is owned by the driver.
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        if data.is_null() || user_data.is_null() {
+            return;
+        }
+        let data = unsafe { &*data };
+        let log = unsafe { &*(user_data as *const ValidationLog) };
+
+        let severity = if severity.contains(vk::DebugUtilsMessageSeverityFlagsEXT::ERROR) {
+            ValidationSeverity::Error
+        } else if severity.contains(vk::DebugUtilsMessageSeverityFlagsEXT::WARNING) {
+            ValidationSeverity::Warning
+        } else {
+            ValidationSeverity::Info
+        };
+
+        let cstr_or_empty = |p: *const std::ffi::c_char| {
+            if p.is_null() {
+                String::new()
+            } else {
+                unsafe { CStr::from_ptr(p) }.to_string_lossy().into_owned()
+            }
+        };
+
+        log.record(ValidationMessage {
+            severity,
+            id: cstr_or_empty(data.p_message_id_name),
+            message: cstr_or_empty(data.p_message),
+        });
+    }));
+    let _ = result;
+
+    // False means "do not abort the call that triggered this". The layer is a
+    // reporting mechanism here, not a policy one; tests decide what is fatal.
+    vk::FALSE
+}
+
+/// Severities and types worth subscribing to.
+pub(crate) fn messenger_create_info<'a>() -> vk::DebugUtilsMessengerCreateInfoEXT<'a> {
+    vk::DebugUtilsMessengerCreateInfoEXT::default()
+        .message_severity(
+            vk::DebugUtilsMessageSeverityFlagsEXT::ERROR
+                | vk::DebugUtilsMessageSeverityFlagsEXT::WARNING,
+        )
+        .message_type(
+            vk::DebugUtilsMessageTypeFlagsEXT::GENERAL
+                | vk::DebugUtilsMessageTypeFlagsEXT::VALIDATION
+                | vk::DebugUtilsMessageTypeFlagsEXT::PERFORMANCE,
+        )
+        .pfn_user_callback(Some(debug_callback))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_log_with_only_warnings_is_still_clean() {
+        let log = ValidationLog::default();
+        log.record(ValidationMessage {
+            severity: ValidationSeverity::Warning,
+            id: "test".into(),
+            message: "a warning".into(),
+        });
+        // Warnings are recorded for inspection but do not fail a run: drivers
+        // emit performance advice that is not a correctness problem.
+        assert!(log.is_clean());
+        assert_eq!(log.messages().len(), 1);
+        assert!(log.errors().is_empty());
+    }
+
+    #[test]
+    fn errors_are_separated_from_the_rest() {
+        let log = ValidationLog::default();
+        for severity in [
+            ValidationSeverity::Info,
+            ValidationSeverity::Warning,
+            ValidationSeverity::Error,
+        ] {
+            log.record(ValidationMessage {
+                severity,
+                id: "id".into(),
+                message: format!("{severity:?}"),
+            });
+        }
+        assert!(!log.is_clean());
+        assert_eq!(log.errors().len(), 1);
+        assert_eq!(log.errors()[0].severity, ValidationSeverity::Error);
+        assert_eq!(log.messages().len(), 3);
+    }
+}

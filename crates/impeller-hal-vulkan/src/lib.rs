@@ -16,6 +16,8 @@
 
 pub mod device;
 pub mod resource;
+pub mod validation;
 
-pub use device::{DevicePreference, VulkanContext};
+pub use device::{ContextConfig, DevicePreference, VulkanContext};
 pub use resource::VulkanTexture;
+pub use validation::{ValidationMessage, ValidationSeverity};

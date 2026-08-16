@@ -8,10 +8,12 @@
 //! not fail loudly — it silently selects the slower path, or worse, selects
 //! the fast path on a driver that cannot support it.
 
+use crate::validation::{self, ValidationLog, ValidationMessage, VALIDATION_LAYER};
 use ash::vk;
 use impeller_hal::{Capabilities, DmaBufSupport, Error, Result, SampleCounts, SyncSupport};
 use std::collections::HashSet;
 use std::ffi::{c_char, CStr, CString};
+use std::sync::Arc;
 
 /// Which physical device to use.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -27,6 +29,18 @@ pub enum DevicePreference {
     Software,
     /// A specific index into the enumeration order.
     Index(usize),
+}
+
+/// How to create a context.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct ContextConfig {
+    pub device: DevicePreference,
+    /// Request the validation layer and capture what it reports.
+    ///
+    /// Off by default because it costs real time per call. Tests turn it on
+    /// and assert the log is clean, which is what keeps "validation-clean"
+    /// from depending on someone reading stderr.
+    pub validation: bool,
 }
 
 /// Extensions the DRM presentation path depends on.
@@ -84,6 +98,10 @@ fn resolve_extensions(wanted: &[&str], available: &HashSet<String>) -> HashSet<S
 
 /// A Vulkan device, its queue, and what it can do.
 pub struct VulkanContext {
+    // The messenger must be destroyed before the log it points at is dropped,
+    // and before the instance that owns it.
+    debug_messenger: Option<(ash::ext::debug_utils::Instance, vk::DebugUtilsMessengerEXT)>,
+    validation_log: Arc<ValidationLog>,
     // Declaration order is destruction order: the device must outlive nothing
     // and the instance must outlive the device, so Drop tears down in reverse.
     // The allocator must release its memory before the device goes away, which
@@ -103,6 +121,15 @@ pub struct VulkanContext {
 impl VulkanContext {
     /// Create a context, selecting a physical device by preference.
     pub fn new(preference: DevicePreference) -> Result<Self> {
+        Self::with_config(ContextConfig {
+            device: preference,
+            validation: false,
+        })
+    }
+
+    /// Create a context with explicit configuration.
+    pub fn with_config(config: ContextConfig) -> Result<Self> {
+        let preference = config.device;
         // SAFETY: the loader is dlopened and the returned entry points are
         // used only for the lifetime of `entry`, which this struct owns.
         let entry = unsafe { ash::Entry::load() }.map_err(|e| Error::Backend {
@@ -118,9 +145,48 @@ impl VulkanContext {
             // when present rather than required.
             .api_version(vk::make_api_version(0, 1, 1, 0));
 
-        let create_info = vk::InstanceCreateInfo::default().application_info(&app_info);
+        // The layer and the debug-utils extension are only requested when both
+        // are actually present, so asking for validation on a machine without
+        // the SDK degrades to running without it rather than failing to start.
+        let want_validation = config.validation
+            && layer_available(&entry, VALIDATION_LAYER)
+            && instance_extension_available(&entry, "VK_EXT_debug_utils");
+
+        let layer_name = CString::new(VALIDATION_LAYER).unwrap();
+        let layer_ptrs: Vec<*const c_char> = if want_validation {
+            vec![layer_name.as_ptr()]
+        } else {
+            Vec::new()
+        };
+        let debug_ext = CString::new("VK_EXT_debug_utils").unwrap();
+        let ext_ptrs: Vec<*const c_char> = if want_validation {
+            vec![debug_ext.as_ptr()]
+        } else {
+            Vec::new()
+        };
+
+        let create_info = vk::InstanceCreateInfo::default()
+            .application_info(&app_info)
+            .enabled_layer_names(&layer_ptrs)
+            .enabled_extension_names(&ext_ptrs);
         let instance = unsafe { entry.create_instance(&create_info, None) }
             .map_err(|e| backend_err("create_instance", e))?;
+
+        let validation_log = Arc::new(ValidationLog::default());
+        let debug_messenger = if want_validation {
+            let loader = ash::ext::debug_utils::Instance::new(&entry, &instance);
+            let info = validation::messenger_create_info()
+                .user_data(Arc::as_ptr(&validation_log) as *mut std::ffi::c_void);
+            match unsafe { loader.create_debug_utils_messenger(&info, None) } {
+                Ok(m) => Some((loader, m)),
+                Err(e) => {
+                    unsafe { instance.destroy_instance(None) };
+                    return Err(backend_err("create_debug_utils_messenger", e));
+                }
+            }
+        } else {
+            None
+        };
 
         let physical_device = match select_physical_device(&instance, preference) {
             Ok(pd) => pd,
@@ -130,13 +196,21 @@ impl VulkanContext {
             }
         };
 
-        Self::finish(entry, instance, physical_device)
+        Self::finish(
+            entry,
+            instance,
+            physical_device,
+            debug_messenger,
+            validation_log,
+        )
     }
 
     fn finish(
         entry: ash::Entry,
         instance: ash::Instance,
         physical_device: vk::PhysicalDevice,
+        debug_messenger: Option<(ash::ext::debug_utils::Instance, vk::DebugUtilsMessengerEXT)>,
+        validation_log: Arc<ValidationLog>,
     ) -> Result<Self> {
         let available = match device_extensions(&instance, physical_device) {
             Ok(set) => set,
@@ -215,6 +289,8 @@ impl VulkanContext {
             .map_err(|e| backend_err("create_command_pool", e))?;
 
         Ok(Self {
+            debug_messenger,
+            validation_log,
             allocator: Some(allocator),
             command_pool,
             device,
@@ -230,6 +306,25 @@ impl VulkanContext {
 
     pub fn capabilities(&self) -> &Capabilities {
         &self.capabilities
+    }
+
+    /// Whether the validation layer is actually installed and reporting.
+    ///
+    /// Requesting validation on a machine without the layer yields false here
+    /// rather than an error, so tests can skip instead of failing on a machine
+    /// that simply lacks the SDK.
+    pub fn validation_active(&self) -> bool {
+        self.debug_messenger.is_some()
+    }
+
+    /// Everything the layer has reported for this context so far.
+    pub fn validation_messages(&self) -> Vec<ValidationMessage> {
+        self.validation_log.messages()
+    }
+
+    /// Whether the layer has reported no errors.
+    pub fn validation_clean(&self) -> bool {
+        self.validation_log.is_clean()
     }
 
     pub fn queue_family_index(&self) -> u32 {
@@ -331,6 +426,10 @@ impl Drop for VulkanContext {
         unsafe {
             self.device.destroy_command_pool(self.command_pool, None);
             self.device.destroy_device(None);
+            // Before the instance, and before the log the callback points at.
+            if let Some((loader, messenger)) = self.debug_messenger.take() {
+                loader.destroy_debug_utils_messenger(messenger, None);
+            }
             self.instance.destroy_instance(None);
         }
     }
@@ -343,6 +442,32 @@ impl std::fmt::Debug for VulkanContext {
             .field("driver", &self.capabilities.driver_name)
             .finish_non_exhaustive()
     }
+}
+
+fn layer_available(entry: &ash::Entry, name: &str) -> bool {
+    let Ok(layers) = (unsafe { entry.enumerate_instance_layer_properties() }) else {
+        return false;
+    };
+    layers.iter().any(|l| {
+        // SAFETY: the loader guarantees a NUL-terminated name.
+        unsafe { CStr::from_ptr(l.layer_name.as_ptr()) }
+            .to_str()
+            .map(|s| s == name)
+            .unwrap_or(false)
+    })
+}
+
+fn instance_extension_available(entry: &ash::Entry, name: &str) -> bool {
+    let Ok(exts) = (unsafe { entry.enumerate_instance_extension_properties(None) }) else {
+        return false;
+    };
+    exts.iter().any(|e| {
+        // SAFETY: the loader guarantees a NUL-terminated name.
+        unsafe { CStr::from_ptr(e.extension_name.as_ptr()) }
+            .to_str()
+            .map(|s| s == name)
+            .unwrap_or(false)
+    })
 }
 
 fn backend_err(what: &str, e: vk::Result) -> Error {
