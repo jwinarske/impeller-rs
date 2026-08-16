@@ -322,6 +322,15 @@ against its WGSL twin**. A derive macro generates matching Rust structs, std140
 UBO layouts, and vertex input descriptions from one definition, so layout
 mismatches are compile errors.
 
+**Clip space follows the WGSL convention, with Y increasing upward** — not the
+Y-down convention Vulkan's framebuffer uses natively. Translation to each
+backend's native space happens during shader translation, which is what makes
+one source produce matching output everywhere instead of vertically mirrored
+output on some targets. Mapping user space, where Y typically runs downward,
+onto clip space belongs to the renderer's transform stack. A test pins this,
+because disabling the adjustment mirrors every shader on Vulkan while leaving
+other backends untouched.
+
 naga output for every shader and target is snapshotted in the repository and
 diffed in CI, so a naga upgrade that changes codegen is a reviewed event rather
 than a silent behavior change. Specialization maps from one set of declarations

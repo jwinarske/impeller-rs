@@ -40,6 +40,11 @@ impl VulkanTexture {
         self.image
     }
 
+    /// Record a layout change made by an operation outside this module.
+    pub(crate) fn set_layout(&mut self, layout: vk::ImageLayout) {
+        self.layout = layout;
+    }
+
     /// Bytes a tightly packed readback of this texture occupies.
     pub fn byte_size(&self) -> u64 {
         self.extent.area() * self.format.bytes_per_pixel() as u64

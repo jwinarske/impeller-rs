@@ -15,6 +15,7 @@
 //! look usable while failing at the first draw.
 
 pub mod device;
+pub mod render;
 pub mod resource;
 pub mod validation;
 
