@@ -121,3 +121,28 @@ pub trait HalCommandBuffer: Send {
     /// [`HalContext::submit`].
     fn finish(&mut self) -> Result<()>;
 }
+
+/// How a draw combines with what a target already holds.
+///
+/// Only the two that the renderer needs before it has a material system. The
+/// full set of roughly thirty W3C modes arrives with the entity layer, which
+/// is what decides per-entity which one applies.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub enum BlendMode {
+    /// Source over destination, the default for drawing one thing on another.
+    #[default]
+    SrcOver,
+    /// Replace the destination outright, ignoring what was there.
+    ///
+    /// Not the same as `SrcOver` with an opaque source: this also overwrites
+    /// the destination alpha, which matters when rendering into a layer that
+    /// will itself be composited.
+    Src,
+}
+
+impl BlendMode {
+    /// Whether the destination contributes to the result at all.
+    pub const fn reads_destination(self) -> bool {
+        matches!(self, Self::SrcOver)
+    }
+}

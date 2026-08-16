@@ -10,7 +10,7 @@
 use glam::{Affine2, Vec2};
 use impeller_geometry::stroke::{LineCap, StrokeStyle};
 use impeller_geometry::{Path, PathBuilder};
-use impeller_hal::{Extent2D, PixelFormat, TextureDescriptor};
+use impeller_hal::{BlendMode, Extent2D, PixelFormat, TextureDescriptor};
 use impeller_hal_vulkan::{ContextConfig, DevicePreference, VulkanContext};
 use impeller_renderer::{Renderer, TOLERANCE};
 
@@ -88,6 +88,7 @@ fn render_sized(
         positions,
         indices,
         RED,
+        BlendMode::Src,
         Some([0.0, 0.0, 0.0, 1.0]),
     )
     .expect("draw");

@@ -5,7 +5,7 @@ use crate::resource::{backend_err, transition, vk_format, VulkanTexture};
 use ash::vk;
 use gpu_allocator::vulkan::{Allocation, AllocationCreateDesc, AllocationScheme};
 use gpu_allocator::MemoryLocation;
-use impeller_hal::{Error, Result};
+use impeller_hal::{BlendMode, Error, Result};
 
 /// Objects that depend only on the target's format, so they are built once per
 /// format rather than per draw.
@@ -21,6 +21,7 @@ use impeller_hal::{Error, Result};
 pub(crate) struct PipelineKey {
     pub(crate) format: vk::Format,
     pub(crate) clears: bool,
+    pub(crate) blend: BlendMode,
 }
 
 pub(crate) struct SolidPipeline {
@@ -55,8 +56,10 @@ impl VulkanContext {
     /// source tree exists to prevent. Mapping user space, where Y typically
     /// runs downward, onto this belongs to the renderer's transform stack.
     ///
-    /// `color` is the paint for the whole draw, in linear space. Conversion to
-    /// the target's transfer function is the attachment format's job.
+    /// `color` is the paint for the whole draw, in linear space with **straight
+    /// alpha**. It is premultiplied on the way to the target, which holds
+    /// premultiplied color. Conversion to the target's transfer function is the
+    /// attachment format's job.
     ///
     /// Every draw clears. Load-preserving passes belong to the renderer, which
     /// owns pass grouping and knows when a target's contents matter.
@@ -66,6 +69,7 @@ impl VulkanContext {
         vertices: &[[f32; 2]],
         indices: &[u32],
         color: [f32; 4],
+        blend: BlendMode,
         clear: Option<[f32; 4]>,
     ) -> Result<()> {
         if indices.len() % 3 != 0 {
@@ -87,6 +91,7 @@ impl VulkanContext {
         let key = PipelineKey {
             format,
             clears: clear.is_some(),
+            blend,
         };
         self.ensure_solid_pipeline(key)?;
         let device = self.raw_device().clone();
@@ -430,9 +435,23 @@ fn build_solid_pipeline(device: &ash::Device, key: PipelineKey) -> Result<SolidP
         .line_width(1.0);
     let multisample = vk::PipelineMultisampleStateCreateInfo::default()
         .rasterization_samples(vk::SampleCountFlags::TYPE_1);
-    let blend_attachment = vk::PipelineColorBlendAttachmentState::default()
-        .color_write_mask(vk::ColorComponentFlags::RGBA)
-        .blend_enable(false);
+    // Source color arrives premultiplied from the shader, so source-over is
+    // ONE rather than SRC_ALPHA. Using SRC_ALPHA against a premultiplied
+    // source would apply alpha twice and darken every translucent edge.
+    let blend_attachment = match key.blend {
+        BlendMode::SrcOver => vk::PipelineColorBlendAttachmentState::default()
+            .color_write_mask(vk::ColorComponentFlags::RGBA)
+            .blend_enable(true)
+            .src_color_blend_factor(vk::BlendFactor::ONE)
+            .dst_color_blend_factor(vk::BlendFactor::ONE_MINUS_SRC_ALPHA)
+            .color_blend_op(vk::BlendOp::ADD)
+            .src_alpha_blend_factor(vk::BlendFactor::ONE)
+            .dst_alpha_blend_factor(vk::BlendFactor::ONE_MINUS_SRC_ALPHA)
+            .alpha_blend_op(vk::BlendOp::ADD),
+        BlendMode::Src => vk::PipelineColorBlendAttachmentState::default()
+            .color_write_mask(vk::ColorComponentFlags::RGBA)
+            .blend_enable(false),
+    };
     let blend_attachments = [blend_attachment];
     let blend = vk::PipelineColorBlendStateCreateInfo::default().attachments(&blend_attachments);
 

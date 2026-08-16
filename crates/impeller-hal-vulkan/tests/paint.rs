@@ -4,7 +4,7 @@
 //! that a color supplied per draw arrives intact, and that a second draw can
 //! add to a target instead of replacing it.
 
-use impeller_hal::{Extent2D, PixelFormat, TextureDescriptor};
+use impeller_hal::{BlendMode, Extent2D, PixelFormat, TextureDescriptor};
 use impeller_hal_vulkan::{ContextConfig, DevicePreference, VulkanContext, VulkanTexture};
 
 const SIZE: u32 = 32;
@@ -67,8 +67,15 @@ fn each_channel_of_the_paint_arrives_independently() {
         ([1.0, 1.0, 0.0, 1.0], [255, 255, 0, 255]),
     ] {
         let mut tex = target(&mut ctx);
-        ctx.draw_indexed(&mut tex, &FULL, &QUAD, color, Some([0.0, 0.0, 0.0, 1.0]))
-            .expect("draw");
+        ctx.draw_indexed(
+            &mut tex,
+            &FULL,
+            &QUAD,
+            color,
+            BlendMode::Src,
+            Some([0.0, 0.0, 0.0, 1.0]),
+        )
+        .expect("draw");
         let pixels = ctx.read_texture(&mut tex).expect("readback");
         ctx.destroy_texture(tex);
         assert_eq!(
@@ -89,6 +96,7 @@ fn intermediate_values_survive_the_round_trip() {
         &FULL,
         &QUAD,
         [0.25, 0.5, 0.75, 1.0],
+        BlendMode::Src,
         Some([0.0, 0.0, 0.0, 1.0]),
     )
     .expect("draw");
@@ -118,6 +126,7 @@ fn paint_is_independent_of_the_clear_color() {
         &LEFT,
         &QUAD,
         [1.0, 0.0, 0.0, 1.0],
+        BlendMode::Src,
         Some([0.0, 0.0, 1.0, 1.0]),
     )
     .expect("draw");
@@ -148,12 +157,20 @@ fn a_second_draw_can_preserve_what_the_first_left() {
         &LEFT,
         &QUAD,
         [1.0, 0.0, 0.0, 1.0],
+        BlendMode::Src,
         Some([0.0, 0.0, 0.0, 1.0]),
     )
     .expect("first draw");
     // Second draw preserves, painting the right half a different color.
-    ctx.draw_indexed(&mut tex, &RIGHT, &QUAD, [0.0, 1.0, 0.0, 1.0], None)
-        .expect("second draw");
+    ctx.draw_indexed(
+        &mut tex,
+        &RIGHT,
+        &QUAD,
+        [0.0, 1.0, 0.0, 1.0],
+        BlendMode::Src,
+        None,
+    )
+    .expect("second draw");
 
     let pixels = ctx.read_texture(&mut tex).expect("readback");
     ctx.destroy_texture(tex);
@@ -179,11 +196,19 @@ fn a_later_draw_paints_over_an_earlier_one() {
         &FULL,
         &QUAD,
         [1.0, 0.0, 0.0, 1.0],
+        BlendMode::Src,
         Some([0.0, 0.0, 0.0, 1.0]),
     )
     .expect("first");
-    ctx.draw_indexed(&mut tex, &FULL, &QUAD, [0.0, 0.0, 1.0, 1.0], None)
-        .expect("second");
+    ctx.draw_indexed(
+        &mut tex,
+        &FULL,
+        &QUAD,
+        [0.0, 0.0, 1.0, 1.0],
+        BlendMode::Src,
+        None,
+    )
+    .expect("second");
 
     let pixels = ctx.read_texture(&mut tex).expect("readback");
     ctx.destroy_texture(tex);
@@ -206,11 +231,19 @@ fn preserving_and_clearing_pipelines_are_cached_separately() {
             &FULL,
             &QUAD,
             [1.0, 0.0, 0.0, 1.0],
+            BlendMode::Src,
             Some([0.0, 0.0, 0.0, 1.0]),
         )
         .unwrap_or_else(|e| panic!("clearing draw {i}: {e}"));
-        ctx.draw_indexed(&mut tex, &LEFT, &QUAD, [0.0, 1.0, 0.0, 1.0], None)
-            .unwrap_or_else(|e| panic!("preserving draw {i}: {e}"));
+        ctx.draw_indexed(
+            &mut tex,
+            &LEFT,
+            &QUAD,
+            [0.0, 1.0, 0.0, 1.0],
+            BlendMode::Src,
+            None,
+        )
+        .unwrap_or_else(|e| panic!("preserving draw {i}: {e}"));
     }
     let pixels = ctx.read_texture(&mut tex).expect("readback");
     ctx.destroy_texture(tex);
@@ -229,12 +262,20 @@ fn a_preserving_draw_with_no_geometry_leaves_the_target_alone() {
         &FULL,
         &QUAD,
         [1.0, 0.0, 0.0, 1.0],
+        BlendMode::Src,
         Some([0.0, 0.0, 0.0, 1.0]),
     )
     .expect("first");
     // Nothing to draw and nothing to clear must be a no-op, not a wipe.
-    ctx.draw_indexed(&mut tex, &[], &[], [0.0, 1.0, 0.0, 1.0], None)
-        .expect("empty");
+    ctx.draw_indexed(
+        &mut tex,
+        &[],
+        &[],
+        [0.0, 1.0, 0.0, 1.0],
+        BlendMode::Src,
+        None,
+    )
+    .expect("empty");
 
     let pixels = ctx.read_texture(&mut tex).expect("readback");
     ctx.destroy_texture(tex);
