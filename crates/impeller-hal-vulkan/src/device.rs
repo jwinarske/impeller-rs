@@ -8,11 +8,11 @@
 //! not fail loudly — it silently selects the slower path, or worse, selects
 //! the fast path on a driver that cannot support it.
 
-use crate::render::{PipelineKey, SolidPipeline};
+use crate::render::PipelineCache;
 use crate::validation::{self, ValidationLog, ValidationMessage, VALIDATION_LAYER};
 use ash::vk;
 use impeller_hal::{Capabilities, DmaBufSupport, Error, Result, SampleCounts, SyncSupport};
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 use std::ffi::{c_char, CStr, CString};
 use std::sync::Arc;
 
@@ -108,7 +108,7 @@ pub struct VulkanContext {
     // The allocator must release its memory before the device goes away, which
     // is why it is an Option -- Drop takes it and drops it explicitly first.
     allocator: Option<gpu_allocator::vulkan::Allocator>,
-    solid_pipelines: HashMap<PipelineKey, SolidPipeline>,
+    pipelines: PipelineCache,
     command_pool: vk::CommandPool,
     device: ash::Device,
     physical_device: vk::PhysicalDevice,
@@ -294,7 +294,7 @@ impl VulkanContext {
             debug_messenger,
             validation_log,
             allocator: Some(allocator),
-            solid_pipelines: HashMap::new(),
+            pipelines: PipelineCache::default(),
             command_pool,
             device,
             physical_device,
@@ -351,12 +351,12 @@ impl VulkanContext {
         self.queue
     }
 
-    pub(crate) fn solid_pipeline(&self, key: PipelineKey) -> Option<&SolidPipeline> {
-        self.solid_pipelines.get(&key)
+    pub(crate) fn pipeline_cache(&self) -> &PipelineCache {
+        &self.pipelines
     }
 
-    pub(crate) fn insert_solid_pipeline(&mut self, key: PipelineKey, p: SolidPipeline) {
-        self.solid_pipelines.insert(key, p);
+    pub(crate) fn pipeline_cache_mut(&mut self) -> &mut PipelineCache {
+        &mut self.pipelines
     }
 
     pub(crate) fn allocator_mut(&mut self) -> &mut gpu_allocator::vulkan::Allocator {
@@ -429,9 +429,7 @@ impl Drop for VulkanContext {
     fn drop(&mut self) {
         // The allocator must free its memory while the device is still alive,
         // so it is dropped explicitly before anything else is destroyed.
-        for pipeline in self.solid_pipelines.values() {
-            pipeline.destroy(&self.device);
-        }
+        self.pipelines.destroy(&self.device);
         drop(self.allocator.take());
         // SAFETY: every submission this context made was waited on before the
         // call that made it returned, so nothing is in flight. Objects are

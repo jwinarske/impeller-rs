@@ -20,5 +20,6 @@ pub mod resource;
 pub mod validation;
 
 pub use device::{ContextConfig, DevicePreference, VulkanContext};
+pub use render::Batch;
 pub use resource::VulkanTexture;
 pub use validation::{ValidationMessage, ValidationSeverity};

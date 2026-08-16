@@ -1,4 +1,9 @@
-//! Render passes, pipelines, and drawing triangles into a texture.
+//! Render passes, pipelines, and drawing.
+//!
+//! Draws are accumulated into a [`Batch`] and submitted together: one geometry
+//! upload, one render pass, one submission for the whole thing. A draw per
+//! submission is fine for a test and hopeless for a frame loop, where the
+//! fixed cost of beginning a pass and waiting on a fence dwarfs the drawing.
 
 use crate::device::VulkanContext;
 use crate::resource::{backend_err, transition, vk_format, VulkanTexture};
@@ -6,71 +11,110 @@ use ash::vk;
 use gpu_allocator::vulkan::{Allocation, AllocationCreateDesc, AllocationScheme};
 use gpu_allocator::MemoryLocation;
 use impeller_hal::{BlendMode, Error, Result};
+use std::collections::HashMap;
 
-/// Objects that depend only on the target's format, so they are built once per
-/// format rather than per draw.
+/// A render pass is distinguished by the attachment it targets and whether it
+/// clears, because the load operation is baked into the object.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub(crate) struct RenderPassKey {
+    pub(crate) format: vk::Format,
+    pub(crate) clears: bool,
+}
+
+/// A pipeline is distinguished by format and blend state.
 ///
-/// Pipeline creation costs milliseconds. Doing it per draw would put exactly
-/// the compilation stall in the frame loop that compiling everything ahead of
-/// time is meant to avoid.
-/// What distinguishes one cached pipeline from another.
-///
-/// The load operation is baked into a render pass, so preserving and clearing
-/// need separate objects rather than a flag at draw time.
+/// Not by load operation: render passes with matching attachment formats and
+/// sample counts are compatible, so one pipeline is usable with both the
+/// clearing and the preserving pass. That compatibility is what lets a single
+/// batch mix blend modes inside one pass.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub(crate) struct PipelineKey {
     pub(crate) format: vk::Format,
-    pub(crate) clears: bool,
     pub(crate) blend: BlendMode,
 }
 
-pub(crate) struct SolidPipeline {
-    pub(crate) render_pass: vk::RenderPass,
-    pub(crate) layout: vk::PipelineLayout,
-    pub(crate) pipeline: vk::Pipeline,
+/// Cached pipeline objects, built on demand and held for the context's life.
+///
+/// Pipeline creation costs milliseconds, so building one per draw would put
+/// exactly the compilation stall in the frame loop that compiling everything
+/// ahead of time is meant to avoid.
+#[derive(Default)]
+pub(crate) struct PipelineCache {
+    pub(crate) layout: Option<vk::PipelineLayout>,
+    pub(crate) render_passes: HashMap<RenderPassKey, vk::RenderPass>,
+    pub(crate) pipelines: HashMap<PipelineKey, vk::Pipeline>,
 }
 
-impl SolidPipeline {
-    pub(crate) fn destroy(&self, device: &ash::Device) {
+impl PipelineCache {
+    pub(crate) fn render_pass(&self, key: RenderPassKey) -> Option<vk::RenderPass> {
+        self.render_passes.get(&key).copied()
+    }
+
+    pub(crate) fn pipeline(&self, key: PipelineKey) -> Option<vk::Pipeline> {
+        self.pipelines.get(&key).copied()
+    }
+
+    pub(crate) fn layout(&self) -> Option<vk::PipelineLayout> {
+        self.layout
+    }
+
+    pub(crate) fn destroy(&mut self, device: &ash::Device) {
         // SAFETY: called from context teardown, after the queue has drained.
         unsafe {
-            device.destroy_pipeline(self.pipeline, None);
-            device.destroy_pipeline_layout(self.layout, None);
-            device.destroy_render_pass(self.render_pass, None);
+            for pipeline in self.pipelines.values() {
+                device.destroy_pipeline(*pipeline, None);
+            }
+            for pass in self.render_passes.values() {
+                device.destroy_render_pass(*pass, None);
+            }
+            if let Some(layout) = self.layout {
+                device.destroy_pipeline_layout(layout, None);
+            }
         }
+        self.pipelines.clear();
+        self.render_passes.clear();
+        self.layout = None;
     }
 }
 
-impl VulkanContext {
-    /// Draw indexed triangles into a texture, clearing it first.
+/// One draw within a batch.
+#[derive(Debug, Clone, Copy)]
+struct BatchDraw {
+    first_index: u32,
+    index_count: u32,
+    color: [f32; 4],
+    blend: BlendMode,
+}
+
+/// Geometry and paint for a sequence of draws sharing one target.
+///
+/// Draws are kept in submission order rather than sorted by pipeline. Sorting
+/// would cut pipeline binds, but 2D drawing is painter's-algorithm ordered:
+/// reordering two overlapping draws changes which one ends up on top. Deciding
+/// when a reorder is safe needs either overlap analysis or a depth buffer, and
+/// that belongs to the layer that knows what the draws represent.
+#[derive(Debug, Default, Clone)]
+pub struct Batch {
+    vertices: Vec<[f32; 2]>,
+    indices: Vec<u32>,
+    draws: Vec<BatchDraw>,
+}
+
+impl Batch {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Append a draw.
     ///
-    /// Positions are in normalized device coordinates following the **WGSL
-    /// convention, where Y increases upward** — not Vulkan's native Y-down
-    /// framebuffer convention.
-    ///
-    /// The difference is not incidental. Shaders are authored once in WGSL and
-    /// translated per backend, and naga normalizes coordinate space so the
-    /// same source behaves identically everywhere. Rendering against Vulkan's
-    /// raw convention here would mean the same shader produced vertically
-    /// mirrored output on Vulkan versus WebGPU, which is precisely what one
-    /// source tree exists to prevent. Mapping user space, where Y typically
-    /// runs downward, onto this belongs to the renderer's transform stack.
-    ///
-    /// `color` is the paint for the whole draw, in linear space with **straight
-    /// alpha**. It is premultiplied on the way to the target, which holds
-    /// premultiplied color. Conversion to the target's transfer function is the
-    /// attachment format's job.
-    ///
-    /// Every draw clears. Load-preserving passes belong to the renderer, which
-    /// owns pass grouping and knows when a target's contents matter.
-    pub fn draw_indexed(
+    /// Indices are relative to `vertices` and are rebased onto the batch's
+    /// shared buffer, so a caller need not know what came before it.
+    pub fn push(
         &mut self,
-        target: &mut VulkanTexture,
         vertices: &[[f32; 2]],
         indices: &[u32],
         color: [f32; 4],
         blend: BlendMode,
-        clear: Option<[f32; 4]>,
     ) -> Result<()> {
         if indices.len() % 3 != 0 {
             return Err(Error::Unsupported("index count is not a whole triangle"));
@@ -86,39 +130,130 @@ impl VulkanContext {
                 });
             }
         }
+        if indices.is_empty() {
+            return Ok(());
+        }
 
-        let format = vk_format(target.format());
-        let key = PipelineKey {
-            format,
-            clears: clear.is_some(),
+        let base = u32::try_from(self.vertices.len()).map_err(|_| Error::LimitExceeded {
+            what: "batch vertex count",
+            requested: self.vertices.len() as u64,
+            limit: u32::MAX as u64,
+        })?;
+        let first_index = self.indices.len() as u32;
+
+        self.vertices.extend_from_slice(vertices);
+        self.indices.extend(indices.iter().map(|i| i + base));
+        self.draws.push(BatchDraw {
+            first_index,
+            index_count: indices.len() as u32,
+            color,
             blend,
-        };
-        self.ensure_solid_pipeline(key)?;
-        let device = self.raw_device().clone();
+        });
+        Ok(())
+    }
+
+    /// Drop the contents but keep the allocations, for reuse next frame.
+    pub fn clear(&mut self) {
+        self.vertices.clear();
+        self.indices.clear();
+        self.draws.clear();
+    }
+
+    pub fn draw_count(&self) -> usize {
+        self.draws.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.draws.is_empty()
+    }
+
+    /// How many times a pipeline will be bound when this batch is recorded.
+    ///
+    /// Consecutive draws sharing a blend mode reuse the bound pipeline, so this
+    /// counts transitions rather than draws.
+    pub fn pipeline_binds(&self) -> usize {
+        let mut binds = 0;
+        let mut current: Option<BlendMode> = None;
+        for draw in &self.draws {
+            if current != Some(draw.blend) {
+                binds += 1;
+                current = Some(draw.blend);
+            }
+        }
+        binds
+    }
+}
+
+impl VulkanContext {
+    /// Draw a single set of triangles. A convenience over [`Batch`].
+    ///
+    /// `color` is in linear space with **straight alpha**; it is premultiplied
+    /// on the way to the target, which holds premultiplied color.
+    pub fn draw_indexed(
+        &mut self,
+        target: &mut VulkanTexture,
+        vertices: &[[f32; 2]],
+        indices: &[u32],
+        color: [f32; 4],
+        blend: BlendMode,
+        clear: Option<[f32; 4]>,
+    ) -> Result<()> {
+        let mut batch = Batch::new();
+        batch.push(vertices, indices, color, blend)?;
+        self.submit_batch(target, &batch, clear)
+    }
+
+    /// Record and submit a whole batch as one render pass.
+    pub fn submit_batch(
+        &mut self,
+        target: &mut VulkanTexture,
+        batch: &Batch,
+        clear: Option<[f32; 4]>,
+    ) -> Result<()> {
+        let format = vk_format(target.format());
 
         // Nothing to draw still clears, which is what a caller submitting an
-        // empty scene expects. With no clear requested there is nothing to do
-        // at all.
-        if indices.is_empty() {
+        // empty scene expects. With no clear either, there is nothing to do.
+        if batch.is_empty() {
             return match clear {
                 Some(c) => self.clear_texture(target, c),
                 None => Ok(()),
             };
         }
 
-        let vertex_bytes: &[u8] = bytemuck_cast(vertices);
-        let index_bytes: &[u8] = bytemuck_cast(indices);
-        let vertex_buffer = self.upload(vertex_bytes, vk::BufferUsageFlags::VERTEX_BUFFER)?;
-        let index_buffer = self.upload(index_bytes, vk::BufferUsageFlags::INDEX_BUFFER)?;
+        let pass_key = RenderPassKey {
+            format,
+            clears: clear.is_some(),
+        };
+        let render_pass = self.ensure_render_pass(pass_key)?;
+        for draw in &batch.draws {
+            self.ensure_pipeline(
+                PipelineKey {
+                    format,
+                    blend: draw.blend,
+                },
+                render_pass,
+            )?;
+        }
 
-        let result = self.record_draw(
+        let device = self.raw_device().clone();
+        let vertex_buffer = self.upload(
+            cast_bytes(&batch.vertices),
+            vk::BufferUsageFlags::VERTEX_BUFFER,
+        )?;
+        let index_buffer = self.upload(
+            cast_bytes(&batch.indices),
+            vk::BufferUsageFlags::INDEX_BUFFER,
+        )?;
+
+        let result = self.record_batch(
             &device,
             target,
-            key,
+            format,
+            render_pass,
+            batch,
             vertex_buffer.buffer,
             index_buffer.buffer,
-            indices.len() as u32,
-            color,
             clear,
         );
 
@@ -128,21 +263,19 @@ impl VulkanContext {
     }
 
     #[allow(clippy::too_many_arguments)]
-    fn record_draw(
+    fn record_batch(
         &mut self,
         device: &ash::Device,
         target: &mut VulkanTexture,
-        key: PipelineKey,
+        format: vk::Format,
+        render_pass: vk::RenderPass,
+        batch: &Batch,
         vertex_buffer: vk::Buffer,
         index_buffer: vk::Buffer,
-        index_count: u32,
-        color: [f32; 4],
         clear: Option<[f32; 4]>,
     ) -> Result<()> {
-        let format = key.format;
-        let cached = self.solid_pipeline(key).expect("ensured above");
-        let (render_pass, pipeline, pipeline_layout) =
-            (cached.render_pass, cached.pipeline, cached.layout);
+        let layout = self.pipeline_cache().layout().expect("ensured above");
+        let extent = target.extent();
 
         let view_info = vk::ImageViewCreateInfo::default()
             .image(target.raw_image())
@@ -157,7 +290,6 @@ impl VulkanContext {
         let view = unsafe { device.create_image_view(&view_info, None) }
             .map_err(|e| backend_err("create_image_view", e))?;
 
-        let extent = target.extent();
         let attachments = [view];
         let fb_info = vk::FramebufferCreateInfo::default()
             .render_pass(render_pass)
@@ -190,22 +322,22 @@ impl VulkanContext {
                 );
             }
 
-            let clear_value = vk::ClearValue {
+            let clear_values = [vk::ClearValue {
                 color: vk::ClearColorValue {
                     float32: clear.unwrap_or([0.0; 4]),
                 },
+            }];
+            let area = vk::Rect2D {
+                offset: vk::Offset2D { x: 0, y: 0 },
+                extent: vk::Extent2D {
+                    width: extent.width,
+                    height: extent.height,
+                },
             };
-            let clear_values = [clear_value];
             let begin = vk::RenderPassBeginInfo::default()
                 .render_pass(render_pass)
                 .framebuffer(framebuffer)
-                .render_area(vk::Rect2D {
-                    offset: vk::Offset2D { x: 0, y: 0 },
-                    extent: vk::Extent2D {
-                        width: extent.width,
-                        height: extent.height,
-                    },
-                })
+                .render_area(area)
                 .clear_values(&clear_values);
 
             let viewport = vk::Viewport {
@@ -216,29 +348,40 @@ impl VulkanContext {
                 min_depth: 0.0,
                 max_depth: 1.0,
             };
-            let scissor = vk::Rect2D {
-                offset: vk::Offset2D { x: 0, y: 0 },
-                extent: vk::Extent2D {
-                    width: extent.width,
-                    height: extent.height,
-                },
-            };
 
             unsafe {
                 device.cmd_begin_render_pass(cmd, &begin, vk::SubpassContents::INLINE);
-                device.cmd_bind_pipeline(cmd, vk::PipelineBindPoint::GRAPHICS, pipeline);
-                device.cmd_push_constants(
-                    cmd,
-                    pipeline_layout,
-                    vk::ShaderStageFlags::FRAGMENT,
-                    0,
-                    bytemuck_cast(&color),
-                );
                 device.cmd_set_viewport(cmd, 0, &[viewport]);
-                device.cmd_set_scissor(cmd, 0, &[scissor]);
+                device.cmd_set_scissor(cmd, 0, &[area]);
                 device.cmd_bind_vertex_buffers(cmd, 0, &[vertex_buffer], &[0]);
                 device.cmd_bind_index_buffer(cmd, index_buffer, 0, vk::IndexType::UINT32);
-                device.cmd_draw_indexed(cmd, index_count, 1, 0, 0, 0);
+
+                // Bind only when the pipeline actually changes. Draws stay in
+                // submission order, so consecutive draws sharing a blend mode
+                // are common and rebinding each time is pure overhead.
+                let mut bound: Option<BlendMode> = None;
+                for draw in &batch.draws {
+                    if bound != Some(draw.blend) {
+                        let pipeline = self
+                            .pipeline_cache()
+                            .pipeline(PipelineKey {
+                                format,
+                                blend: draw.blend,
+                            })
+                            .expect("ensured above");
+                        device.cmd_bind_pipeline(cmd, vk::PipelineBindPoint::GRAPHICS, pipeline);
+                        bound = Some(draw.blend);
+                    }
+                    device.cmd_push_constants(
+                        cmd,
+                        layout,
+                        vk::ShaderStageFlags::FRAGMENT,
+                        0,
+                        cast_bytes(&draw.color),
+                    );
+                    device.cmd_draw_indexed(cmd, draw.index_count, 1, draw.first_index, 0, 0);
+                }
+
                 device.cmd_end_render_pass(cmd);
             }
 
@@ -261,20 +404,38 @@ impl VulkanContext {
         outcome
     }
 
-    fn ensure_solid_pipeline(&mut self, key: PipelineKey) -> Result<()> {
-        if self.solid_pipeline(key).is_some() {
+    fn ensure_render_pass(&mut self, key: RenderPassKey) -> Result<vk::RenderPass> {
+        if let Some(pass) = self.pipeline_cache().render_pass(key) {
+            return Ok(pass);
+        }
+        let device = self.raw_device().clone();
+        let pass = build_render_pass(&device, key)?;
+        self.pipeline_cache_mut().render_passes.insert(key, pass);
+        Ok(pass)
+    }
+
+    fn ensure_pipeline(&mut self, key: PipelineKey, render_pass: vk::RenderPass) -> Result<()> {
+        if self.pipeline_cache().pipeline(key).is_some() {
             return Ok(());
         }
         let device = self.raw_device().clone();
-        let built = build_solid_pipeline(&device, key)?;
-        self.insert_solid_pipeline(key, built);
+        let layout = match self.pipeline_cache().layout() {
+            Some(l) => l,
+            None => {
+                let l = build_pipeline_layout(&device)?;
+                self.pipeline_cache_mut().layout = Some(l);
+                l
+            }
+        };
+        let pipeline = build_pipeline(&device, key, render_pass, layout)?;
+        self.pipeline_cache_mut().pipelines.insert(key, pipeline);
         Ok(())
     }
 
     fn upload(&mut self, bytes: &[u8], usage: vk::BufferUsageFlags) -> Result<StagedBuffer> {
         let device = self.raw_device().clone();
         let info = vk::BufferCreateInfo::default()
-            .size(bytes.len() as u64)
+            .size(bytes.len().max(1) as u64)
             .usage(usage)
             .sharing_mode(vk::SharingMode::EXCLUSIVE);
         let buffer = unsafe { device.create_buffer(&info, None) }
@@ -288,7 +449,7 @@ impl VulkanContext {
                 requirements,
                 // Host-visible so the write below needs no staging copy. Real
                 // per-frame geometry goes through a ring allocator instead;
-                // this path is for one-shot work.
+                // this path allocates per submission.
                 location: MemoryLocation::CpuToGpu,
                 linear: true,
                 allocation_scheme: AllocationScheme::GpuAllocatorManaged,
@@ -326,7 +487,7 @@ struct StagedBuffer {
     allocation: Allocation,
 }
 
-fn build_solid_pipeline(device: &ash::Device, key: PipelineKey) -> Result<SolidPipeline> {
+fn build_render_pass(device: &ash::Device, key: RenderPassKey) -> Result<vk::RenderPass> {
     // Clearing makes prior contents irrelevant, so the attachment can declare
     // UNDEFINED and skip a transition. Loading must declare the layout the
     // image is actually in, and the caller transitions it there first.
@@ -338,7 +499,7 @@ fn build_solid_pipeline(device: &ash::Device, key: PipelineKey) -> Result<SolidP
             vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL,
         )
     };
-    let attachment = vk::AttachmentDescription::default()
+    let attachments = [vk::AttachmentDescription::default()
         .format(key.format)
         .samples(vk::SampleCountFlags::TYPE_1)
         .load_op(load_op)
@@ -346,51 +507,44 @@ fn build_solid_pipeline(device: &ash::Device, key: PipelineKey) -> Result<SolidP
         .stencil_load_op(vk::AttachmentLoadOp::DONT_CARE)
         .stencil_store_op(vk::AttachmentStoreOp::DONT_CARE)
         .initial_layout(initial_layout)
-        .final_layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL);
+        .final_layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL)];
 
-    let color_ref = vk::AttachmentReference::default()
+    let color_refs = [vk::AttachmentReference::default()
         .attachment(0)
-        .layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL);
-    let color_refs = [color_ref];
-    let subpass = vk::SubpassDescription::default()
+        .layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL)];
+    let subpasses = [vk::SubpassDescription::default()
         .pipeline_bind_point(vk::PipelineBindPoint::GRAPHICS)
-        .color_attachments(&color_refs);
-
-    let attachments = [attachment];
-    let subpasses = [subpass];
-    let rp_info = vk::RenderPassCreateInfo::default()
+        .color_attachments(&color_refs)];
+    let info = vk::RenderPassCreateInfo::default()
         .attachments(&attachments)
         .subpasses(&subpasses);
-    let render_pass = unsafe { device.create_render_pass(&rp_info, None) }
-        .map_err(|e| backend_err("create_render_pass", e))?;
 
-    let module_info = vk::ShaderModuleCreateInfo::default().code(impeller_shaders::SOLID_SPV);
-    let module = match unsafe { device.create_shader_module(&module_info, None) } {
-        Ok(m) => m,
-        Err(e) => {
-            unsafe { device.destroy_render_pass(render_pass, None) };
-            return Err(backend_err("create_shader_module", e));
-        }
-    };
+    unsafe { device.create_render_pass(&info, None) }
+        .map_err(|e| backend_err("create_render_pass", e))
+}
 
-    // Paint travels as a push constant, so the layout has to declare the range
-    // even though the pipeline itself has no descriptor sets.
-    let push_range = vk::PushConstantRange::default()
+fn build_pipeline_layout(device: &ash::Device) -> Result<vk::PipelineLayout> {
+    // Paint travels as a push constant, so the layout declares the range even
+    // though there are no descriptor sets. One layout serves every pipeline,
+    // since they all take the same paint.
+    let ranges = [vk::PushConstantRange::default()
         .stage_flags(vk::ShaderStageFlags::FRAGMENT)
         .offset(0)
-        .size(std::mem::size_of::<[f32; 4]>() as u32);
-    let push_ranges = [push_range];
-    let layout_info = vk::PipelineLayoutCreateInfo::default().push_constant_ranges(&push_ranges);
-    let layout = match unsafe { device.create_pipeline_layout(&layout_info, None) } {
-        Ok(l) => l,
-        Err(e) => {
-            unsafe {
-                device.destroy_shader_module(module, None);
-                device.destroy_render_pass(render_pass, None);
-            }
-            return Err(backend_err("create_pipeline_layout", e));
-        }
-    };
+        .size(std::mem::size_of::<[f32; 4]>() as u32)];
+    let info = vk::PipelineLayoutCreateInfo::default().push_constant_ranges(&ranges);
+    unsafe { device.create_pipeline_layout(&info, None) }
+        .map_err(|e| backend_err("create_pipeline_layout", e))
+}
+
+fn build_pipeline(
+    device: &ash::Device,
+    key: PipelineKey,
+    render_pass: vk::RenderPass,
+    layout: vk::PipelineLayout,
+) -> Result<vk::Pipeline> {
+    let module_info = vk::ShaderModuleCreateInfo::default().code(impeller_shaders::SOLID_SPV);
+    let module = unsafe { device.create_shader_module(&module_info, None) }
+        .map_err(|e| backend_err("create_shader_module", e))?;
 
     let vs_name = c"vs_main";
     let fs_name = c"fs_main";
@@ -405,17 +559,15 @@ fn build_solid_pipeline(device: &ash::Device, key: PipelineKey) -> Result<SolidP
             .name(fs_name),
     ];
 
-    let binding = vk::VertexInputBindingDescription::default()
+    let bindings = [vk::VertexInputBindingDescription::default()
         .binding(0)
         .stride(std::mem::size_of::<[f32; 2]>() as u32)
-        .input_rate(vk::VertexInputRate::VERTEX);
-    let attribute = vk::VertexInputAttributeDescription::default()
+        .input_rate(vk::VertexInputRate::VERTEX)];
+    let attributes = [vk::VertexInputAttributeDescription::default()
         .location(0)
         .binding(0)
         .format(vk::Format::R32G32_SFLOAT)
-        .offset(0);
-    let bindings = [binding];
-    let attributes = [attribute];
+        .offset(0)];
     let vertex_input = vk::PipelineVertexInputStateCreateInfo::default()
         .vertex_binding_descriptions(&bindings)
         .vertex_attribute_descriptions(&attributes);
@@ -435,10 +587,11 @@ fn build_solid_pipeline(device: &ash::Device, key: PipelineKey) -> Result<SolidP
         .line_width(1.0);
     let multisample = vk::PipelineMultisampleStateCreateInfo::default()
         .rasterization_samples(vk::SampleCountFlags::TYPE_1);
+
     // Source color arrives premultiplied from the shader, so source-over is
     // ONE rather than SRC_ALPHA. Using SRC_ALPHA against a premultiplied
     // source would apply alpha twice and darken every translucent edge.
-    let blend_attachment = match key.blend {
+    let blend_attachments = [match key.blend {
         BlendMode::SrcOver => vk::PipelineColorBlendAttachmentState::default()
             .color_write_mask(vk::ColorComponentFlags::RGBA)
             .blend_enable(true)
@@ -451,14 +604,13 @@ fn build_solid_pipeline(device: &ash::Device, key: PipelineKey) -> Result<SolidP
         BlendMode::Src => vk::PipelineColorBlendAttachmentState::default()
             .color_write_mask(vk::ColorComponentFlags::RGBA)
             .blend_enable(false),
-    };
-    let blend_attachments = [blend_attachment];
+    }];
     let blend = vk::PipelineColorBlendStateCreateInfo::default().attachments(&blend_attachments);
 
     let dynamic_states = [vk::DynamicState::VIEWPORT, vk::DynamicState::SCISSOR];
     let dynamic = vk::PipelineDynamicStateCreateInfo::default().dynamic_states(&dynamic_states);
 
-    let pipeline_info = vk::GraphicsPipelineCreateInfo::default()
+    let info = vk::GraphicsPipelineCreateInfo::default()
         .stages(&stages)
         .vertex_input_state(&vertex_input)
         .input_assembly_state(&assembly)
@@ -471,36 +623,103 @@ fn build_solid_pipeline(device: &ash::Device, key: PipelineKey) -> Result<SolidP
         .render_pass(render_pass)
         .subpass(0);
 
-    let pipelines = unsafe {
-        device.create_graphics_pipelines(vk::PipelineCache::null(), &[pipeline_info], None)
-    };
+    let created =
+        unsafe { device.create_graphics_pipelines(vk::PipelineCache::null(), &[info], None) };
 
     // The shader module is only needed during creation.
     unsafe { device.destroy_shader_module(module, None) };
 
-    match pipelines {
-        Ok(p) => Ok(SolidPipeline {
-            render_pass,
-            layout,
-            pipeline: p[0],
-        }),
-        Err((_, e)) => {
-            unsafe {
-                device.destroy_pipeline_layout(layout, None);
-                device.destroy_render_pass(render_pass, None);
-            }
-            Err(backend_err("create_graphics_pipelines", e))
-        }
+    match created {
+        Ok(pipelines) => Ok(pipelines[0]),
+        Err((_, e)) => Err(backend_err("create_graphics_pipelines", e)),
     }
 }
 
-/// Reinterpret a slice as bytes.
-///
-/// Both call sites pass slices of plain data with no padding and no invalid
-/// bit patterns, and the result is only read.
-fn bytemuck_cast<T>(slice: &[T]) -> &[u8] {
-    // SAFETY: T is a plain-data type here ([f32; 2] or u32), every byte of it
-    // is initialized, and the returned slice borrows the same memory for a
-    // shorter-or-equal lifetime.
+/// Reinterpret a slice of plain data as bytes.
+fn cast_bytes<T>(slice: &[T]) -> &[u8] {
+    // SAFETY: T is a plain-data type here ([f32; 2], [f32; 4] or u32), every
+    // byte of it is initialized, and the returned slice borrows the same memory
+    // for a shorter-or-equal lifetime.
     unsafe { std::slice::from_raw_parts(slice.as_ptr() as *const u8, std::mem::size_of_val(slice)) }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const TRI: [[f32; 2]; 3] = [[0.0, 0.0], [1.0, 0.0], [0.0, 1.0]];
+
+    #[test]
+    fn indices_are_rebased_onto_the_shared_buffer() {
+        let mut batch = Batch::new();
+        batch
+            .push(&TRI, &[0, 1, 2], [1.0; 4], BlendMode::Src)
+            .unwrap();
+        batch
+            .push(&TRI, &[0, 1, 2], [1.0; 4], BlendMode::Src)
+            .unwrap();
+
+        // The second draw's indices must point at its own vertices, not the
+        // first draw's, or both draws render the same triangle.
+        assert_eq!(batch.indices, vec![0, 1, 2, 3, 4, 5]);
+        assert_eq!(batch.vertices.len(), 6);
+        assert_eq!(batch.draws[1].first_index, 3);
+        assert_eq!(batch.draw_count(), 2);
+    }
+
+    #[test]
+    fn pipeline_binds_count_transitions_not_draws() {
+        let mut batch = Batch::new();
+        for blend in [
+            BlendMode::Src,
+            BlendMode::Src,
+            BlendMode::SrcOver,
+            BlendMode::SrcOver,
+            BlendMode::Src,
+        ] {
+            batch.push(&TRI, &[0, 1, 2], [1.0; 4], blend).unwrap();
+        }
+        // Five draws, three runs of like pipelines.
+        assert_eq!(batch.draw_count(), 5);
+        assert_eq!(batch.pipeline_binds(), 3);
+    }
+
+    #[test]
+    fn an_empty_draw_adds_nothing() {
+        let mut batch = Batch::new();
+        batch.push(&[], &[], [1.0; 4], BlendMode::Src).unwrap();
+        assert!(batch.is_empty());
+        assert_eq!(batch.draw_count(), 0);
+    }
+
+    #[test]
+    fn malformed_geometry_is_refused_where_it_is_pushed() {
+        let mut batch = Batch::new();
+        // Catching this at push means the caller learns which draw was wrong,
+        // rather than a whole batch failing later at submission.
+        assert!(batch
+            .push(&[[0.0, 0.0]], &[0, 1, 2], [1.0; 4], BlendMode::Src)
+            .is_err());
+        assert!(batch
+            .push(&[[0.0, 0.0]], &[0, 0], [1.0; 4], BlendMode::Src)
+            .is_err());
+        assert!(batch.is_empty(), "a refused draw must leave no residue");
+    }
+
+    #[test]
+    fn clearing_keeps_the_batch_reusable() {
+        let mut batch = Batch::new();
+        batch
+            .push(&TRI, &[0, 1, 2], [1.0; 4], BlendMode::Src)
+            .unwrap();
+        batch.clear();
+        assert!(batch.is_empty());
+
+        batch
+            .push(&TRI, &[0, 1, 2], [1.0; 4], BlendMode::Src)
+            .unwrap();
+        // Rebasing must start from zero again rather than continuing from the
+        // cleared contents.
+        assert_eq!(batch.indices, vec![0, 1, 2]);
+    }
 }
