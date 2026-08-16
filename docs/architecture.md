@@ -133,6 +133,15 @@ that intent is the backend's business. The rule that the trait follows Vulkan
 rather than being reduced to a lowest common denominator is unchanged — this is
 Vulkan's model raised one level, not a concession to a weaker backend.
 
+**Multisampling is a pass property, not a target property.** A pass renders
+into a transient multisample buffer and resolves into the target, so the target
+stays single-sampled and directly readable. The multisample attachment is never
+stored — its contents are consumed by the resolve — which on a tiler keeps it in
+tile memory rather than writing it out. A multisampled pass must clear: seeding
+the multisample buffer from a target's existing contents has no reverse-resolve
+to do it with, so preserving is refused rather than silently discarding what was
+there.
+
 **Draws within a batch keep submission order.** Sorting by pipeline would cut
 bindings further, but 2D drawing is painter's-algorithm ordered and reordering
 two overlapping draws changes which ends up on top. Knowing when a reorder is

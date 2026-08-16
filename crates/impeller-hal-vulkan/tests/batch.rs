@@ -6,7 +6,7 @@
 //! trade-off, so most of these tests render the same scene both ways and
 //! compare the results directly.
 
-use impeller_hal::{Batch, BlendMode, Extent2D, PixelFormat, TextureDescriptor};
+use impeller_hal::{Batch, BlendMode, Extent2D, PassDescriptor, PixelFormat, TextureDescriptor};
 use impeller_hal_vulkan::{ContextConfig, DevicePreference, VulkanContext};
 
 const SIZE: u32 = 32;
@@ -43,7 +43,7 @@ impl Scene {
             batch.push(verts, &QUAD, *color, *blend).expect("push");
         }
         let mut tex = target(ctx);
-        ctx.submit_batch(&mut tex, &batch, Some(BLACK))
+        ctx.submit_batch(&mut tex, &batch, PassDescriptor::clear(BLACK))
             .expect("submit");
         finish(ctx, tex)
     }
@@ -186,7 +186,7 @@ fn many_draws_in_one_batch_all_land() {
     assert_eq!(batch.draw_count(), rows);
 
     let mut tex = target(&mut ctx);
-    ctx.submit_batch(&mut tex, &batch, Some(BLACK))
+    ctx.submit_batch(&mut tex, &batch, PassDescriptor::clear(BLACK))
         .expect("submit");
     let pixels = finish(&mut ctx, tex);
 
@@ -205,8 +205,12 @@ fn an_empty_batch_still_clears() {
     let Some(mut ctx) = context() else { return };
     let batch = Batch::new();
     let mut tex = target(&mut ctx);
-    ctx.submit_batch(&mut tex, &batch, Some([0.0, 0.0, 1.0, 1.0]))
-        .expect("submit");
+    ctx.submit_batch(
+        &mut tex,
+        &batch,
+        PassDescriptor::clear([0.0, 0.0, 1.0, 1.0]),
+    )
+    .expect("submit");
     let pixels = finish(&mut ctx, tex);
     assert_eq!(pixel(&pixels, 0, 0), [0, 0, 255, 255]);
 }
@@ -226,7 +230,8 @@ fn a_batch_can_be_reused_across_submissions() {
 
     let first = {
         let mut tex = target(&mut ctx);
-        ctx.submit_batch(&mut tex, &batch, Some(BLACK)).expect("a");
+        ctx.submit_batch(&mut tex, &batch, PassDescriptor::clear(BLACK))
+            .expect("a");
         finish(&mut ctx, tex)
     };
 
@@ -244,7 +249,8 @@ fn a_batch_can_be_reused_across_submissions() {
         .expect("push");
     let second = {
         let mut tex = target(&mut ctx);
-        ctx.submit_batch(&mut tex, &batch, Some(BLACK)).expect("b");
+        ctx.submit_batch(&mut tex, &batch, PassDescriptor::clear(BLACK))
+            .expect("b");
         finish(&mut ctx, tex)
     };
 

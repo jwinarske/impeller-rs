@@ -8,8 +8,8 @@
 use crate::device::VulkanContext;
 use crate::resource::VulkanTexture;
 use impeller_hal::{
-    Batch, Capabilities, Extent2D, Hal, HalContext, HalTexture, PixelFormat, Result,
-    TextureDescriptor,
+    Batch, Capabilities, Extent2D, Hal, HalContext, HalTexture, PassDescriptor, PixelFormat,
+    Result, TextureDescriptor,
 };
 
 /// Marker naming the Vulkan backend's family of types.
@@ -52,9 +52,9 @@ impl HalContext for VulkanContext {
         &mut self,
         target: &mut VulkanTexture,
         batch: &Batch,
-        clear: Option<[f32; 4]>,
+        pass: PassDescriptor,
     ) -> Result<()> {
-        VulkanContext::submit_batch(self, target, batch, clear)
+        VulkanContext::submit_batch(self, target, batch, pass)
     }
 
     fn read_texture(&mut self, texture: &mut VulkanTexture) -> Result<Vec<u8>> {

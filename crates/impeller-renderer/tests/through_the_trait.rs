@@ -9,7 +9,8 @@
 use glam::{Affine2, Vec2};
 use impeller_geometry::{Path, PathBuilder};
 use impeller_hal::{
-    Batch, BlendMode, Extent2D, Hal, HalContext, HalTexture, PixelFormat, TextureDescriptor,
+    Batch, BlendMode, Extent2D, Hal, HalContext, HalTexture, PassDescriptor, PixelFormat,
+    TextureDescriptor,
 };
 use impeller_hal_vulkan::{VulkanContext, VulkanHal};
 use impeller_renderer::{Paint, Renderer, TOLERANCE};
@@ -68,8 +69,12 @@ where
     assert_eq!(target.extent(), TARGET);
     assert_eq!(target.format(), PixelFormat::Rgba8Unorm);
 
-    ctx.submit_batch(&mut target, &batch, Some([0.0, 0.0, 0.0, 1.0]))
-        .expect("submit");
+    ctx.submit_batch(
+        &mut target,
+        &batch,
+        PassDescriptor::clear([0.0, 0.0, 0.0, 1.0]),
+    )
+    .expect("submit");
     let pixels = ctx.read_texture(&mut target).expect("readback");
     let extent = target.extent();
     ctx.destroy_texture(target);

@@ -10,7 +10,9 @@ use crate::resource::{backend_err, transition, vk_format, VulkanTexture};
 use ash::vk;
 use gpu_allocator::vulkan::{Allocation, AllocationCreateDesc, AllocationScheme};
 use gpu_allocator::MemoryLocation;
-use impeller_hal::{Batch, BlendMode, Error, Result};
+use impeller_hal::{
+    Batch, BlendMode, Error, PassDescriptor, Result, TextureDescriptor, TextureUsage,
+};
 use std::collections::HashMap;
 
 /// A render pass is distinguished by the attachment it targets and whether it
@@ -19,6 +21,9 @@ use std::collections::HashMap;
 pub(crate) struct RenderPassKey {
     pub(crate) format: vk::Format,
     pub(crate) clears: bool,
+    /// Sample count of the attachment being rendered into. Above one, the pass
+    /// carries a resolve attachment as well.
+    pub(crate) samples: u32,
 }
 
 /// A pipeline is distinguished by format and blend state.
@@ -31,6 +36,9 @@ pub(crate) struct RenderPassKey {
 pub(crate) struct PipelineKey {
     pub(crate) format: vk::Format,
     pub(crate) blend: BlendMode,
+    /// Rasterization sample count, which is baked into a pipeline and must
+    /// match the render pass it is used with.
+    pub(crate) samples: u32,
 }
 
 /// Cached pipeline objects, built on demand and held for the context's life.
@@ -93,7 +101,7 @@ impl VulkanContext {
     ) -> Result<()> {
         let mut batch = Batch::new();
         batch.push(vertices, indices, color, blend)?;
-        self.submit_batch(target, &batch, clear)
+        self.submit_batch(target, &batch, PassDescriptor { clear, samples: 1 })
     }
 
     /// Record and submit a whole batch as one render pass.
@@ -101,9 +109,27 @@ impl VulkanContext {
         &mut self,
         target: &mut VulkanTexture,
         batch: &Batch,
-        clear: Option<[f32; 4]>,
+        pass: PassDescriptor,
     ) -> Result<()> {
         let format = vk_format(target.format());
+        let clear = pass.clear;
+
+        if !pass.samples.is_power_of_two() {
+            return Err(Error::Unsupported("sample count is not a power of two"));
+        }
+        if !self.capabilities().sample_counts.supports(pass.samples) {
+            return Err(Error::Unsupported("sample count not supported by device"));
+        }
+        if pass.is_multisampled() && clear.is_none() {
+            // A multisample pass renders into a transient buffer and resolves
+            // out of it. Preserving would mean seeding that buffer with the
+            // target's existing contents, and there is no reverse of a resolve
+            // to do it with -- it would take a full-screen draw. Refusing is
+            // better than silently discarding what the target held.
+            return Err(Error::Unsupported(
+                "a multisampled pass must clear; preserving needs a resolved-to-multisample copy",
+            ));
+        }
 
         // Nothing to draw still clears, which is what a caller submitting an
         // empty scene expects. With no clear either, there is nothing to do.
@@ -117,6 +143,7 @@ impl VulkanContext {
         let pass_key = RenderPassKey {
             format,
             clears: clear.is_some(),
+            samples: pass.samples,
         };
         let render_pass = self.ensure_render_pass(pass_key)?;
         for draw in batch.draws() {
@@ -124,6 +151,7 @@ impl VulkanContext {
                 PipelineKey {
                     format,
                     blend: draw.blend,
+                    samples: pass.samples,
                 },
                 render_pass,
             )?;
@@ -147,7 +175,7 @@ impl VulkanContext {
             batch,
             vertex_buffer.buffer,
             index_buffer.buffer,
-            clear,
+            pass,
         );
 
         self.release(vertex_buffer);
@@ -165,10 +193,11 @@ impl VulkanContext {
         batch: &Batch,
         vertex_buffer: vk::Buffer,
         index_buffer: vk::Buffer,
-        clear: Option<[f32; 4]>,
+        pass: PassDescriptor,
     ) -> Result<()> {
         let layout = self.pipeline_cache().layout().expect("ensured above");
         let extent = target.extent();
+        let clear = pass.clear;
 
         let view_info = vk::ImageViewCreateInfo::default()
             .image(target.raw_image())
@@ -183,7 +212,28 @@ impl VulkanContext {
         let view = unsafe { device.create_image_view(&view_info, None) }
             .map_err(|e| backend_err("create_image_view", e))?;
 
-        let attachments = [view];
+        // The multisample buffer is transient: rendered into, resolved out of,
+        // and discarded. Allocating it per submission is wasteful and will move
+        // into the frame's resource pool once one exists; keeping it here for
+        // now avoids a cache whose invalidation rules nothing yet needs.
+        let multisample = if pass.is_multisampled() {
+            match self.create_multisample_buffer(target, pass.samples) {
+                Ok(ms) => Some(ms),
+                Err(e) => {
+                    unsafe { device.destroy_image_view(view, None) };
+                    return Err(e);
+                }
+            }
+        } else {
+            None
+        };
+
+        let attachments: Vec<vk::ImageView> = match &multisample {
+            // Order matches the render pass: the multisample attachment first,
+            // then the resolve target the caller reads.
+            Some((_, ms_view)) => vec![*ms_view, view],
+            None => vec![view],
+        };
         let fb_info = vk::FramebufferCreateInfo::default()
             .render_pass(render_pass)
             .attachments(&attachments)
@@ -194,6 +244,10 @@ impl VulkanContext {
             Ok(fb) => fb,
             Err(e) => {
                 unsafe { device.destroy_image_view(view, None) };
+                if let Some((tex, ms_view)) = multisample {
+                    unsafe { device.destroy_image_view(ms_view, None) };
+                    self.destroy_texture(tex);
+                }
                 return Err(backend_err("create_framebuffer", e));
             }
         };
@@ -215,11 +269,17 @@ impl VulkanContext {
                 );
             }
 
-            let clear_values = [vk::ClearValue {
-                color: vk::ClearColorValue {
-                    float32: clear.unwrap_or([0.0; 4]),
+            // One clear value per attachment, even though the resolve target's
+            // load operation discards it.
+            let clear_values = [
+                vk::ClearValue {
+                    color: vk::ClearColorValue {
+                        float32: clear.unwrap_or([0.0; 4]),
+                    },
                 },
-            }];
+                vk::ClearValue::default(),
+            ];
+            let clear_values = &clear_values[..attachments.len()];
             let area = vk::Rect2D {
                 offset: vk::Offset2D { x: 0, y: 0 },
                 extent: vk::Extent2D {
@@ -231,7 +291,7 @@ impl VulkanContext {
                 .render_pass(render_pass)
                 .framebuffer(framebuffer)
                 .render_area(area)
-                .clear_values(&clear_values);
+                .clear_values(clear_values);
 
             let viewport = vk::Viewport {
                 x: 0.0,
@@ -260,6 +320,7 @@ impl VulkanContext {
                             .pipeline(PipelineKey {
                                 format,
                                 blend: draw.blend,
+                                samples: pass.samples,
                             })
                             .expect("ensured above");
                         device.cmd_bind_pipeline(cmd, vk::PipelineBindPoint::GRAPHICS, pipeline);
@@ -287,6 +348,10 @@ impl VulkanContext {
             device.destroy_framebuffer(framebuffer, None);
             device.destroy_image_view(view, None);
         }
+        if let Some((tex, ms_view)) = multisample {
+            unsafe { device.destroy_image_view(ms_view, None) };
+            self.destroy_texture(tex);
+        }
 
         if outcome.is_ok() {
             // The render pass declares this as its final layout, so the next
@@ -295,6 +360,45 @@ impl VulkanContext {
             target.set_layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL);
         }
         outcome
+    }
+
+    /// Allocate a transient multisample colour buffer matching `target`.
+    fn create_multisample_buffer(
+        &mut self,
+        target: &VulkanTexture,
+        samples: u32,
+    ) -> Result<(VulkanTexture, vk::ImageView)> {
+        let desc = TextureDescriptor {
+            extent: target.extent(),
+            format: target.format(),
+            usage: TextureUsage {
+                render_target: true,
+                ..TextureUsage::default()
+            },
+            sample_count: samples,
+            #[cfg(unix)]
+            external: None,
+        };
+        let texture = self.create_texture(&desc)?;
+
+        let device = self.raw_device().clone();
+        let info = vk::ImageViewCreateInfo::default()
+            .image(texture.raw_image())
+            .view_type(vk::ImageViewType::TYPE_2D)
+            .format(vk_format(target.format()))
+            .subresource_range(
+                vk::ImageSubresourceRange::default()
+                    .aspect_mask(vk::ImageAspectFlags::COLOR)
+                    .level_count(1)
+                    .layer_count(1),
+            );
+        match unsafe { device.create_image_view(&info, None) } {
+            Ok(view) => Ok((texture, view)),
+            Err(e) => {
+                self.destroy_texture(texture);
+                Err(backend_err("create_image_view", e))
+            }
+        }
     }
 
     fn ensure_render_pass(&mut self, key: RenderPassKey) -> Result<vk::RenderPass> {
@@ -392,28 +496,73 @@ fn build_render_pass(device: &ash::Device, key: RenderPassKey) -> Result<vk::Ren
             vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL,
         )
     };
-    let attachments = [vk::AttachmentDescription::default()
+    let color = vk::AttachmentDescription::default()
         .format(key.format)
-        .samples(vk::SampleCountFlags::TYPE_1)
+        .samples(sample_flags(key.samples))
         .load_op(load_op)
-        .store_op(vk::AttachmentStoreOp::STORE)
+        // Multisample contents are consumed by the resolve and never read
+        // again, so storing them would cost bandwidth for nothing. On a tiler
+        // that is the difference between the multisample buffer staying in
+        // tile memory and being written out to main memory.
+        .store_op(if key.samples > 1 {
+            vk::AttachmentStoreOp::DONT_CARE
+        } else {
+            vk::AttachmentStoreOp::STORE
+        })
         .stencil_load_op(vk::AttachmentLoadOp::DONT_CARE)
         .stencil_store_op(vk::AttachmentStoreOp::DONT_CARE)
         .initial_layout(initial_layout)
-        .final_layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL)];
+        .final_layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL);
+
+    // The resolve target is the texture the caller reads. Its prior contents
+    // are irrelevant because the resolve overwrites every pixel the pass
+    // touched.
+    let resolve = vk::AttachmentDescription::default()
+        .format(key.format)
+        .samples(vk::SampleCountFlags::TYPE_1)
+        .load_op(vk::AttachmentLoadOp::DONT_CARE)
+        .store_op(vk::AttachmentStoreOp::STORE)
+        .stencil_load_op(vk::AttachmentLoadOp::DONT_CARE)
+        .stencil_store_op(vk::AttachmentStoreOp::DONT_CARE)
+        .initial_layout(vk::ImageLayout::UNDEFINED)
+        .final_layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL);
+
+    let attachments: Vec<vk::AttachmentDescription> = if key.samples > 1 {
+        vec![color, resolve]
+    } else {
+        vec![color]
+    };
 
     let color_refs = [vk::AttachmentReference::default()
         .attachment(0)
         .layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL)];
-    let subpasses = [vk::SubpassDescription::default()
+    let resolve_refs = [vk::AttachmentReference::default()
+        .attachment(1)
+        .layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL)];
+
+    let mut subpass = vk::SubpassDescription::default()
         .pipeline_bind_point(vk::PipelineBindPoint::GRAPHICS)
-        .color_attachments(&color_refs)];
+        .color_attachments(&color_refs);
+    if key.samples > 1 {
+        subpass = subpass.resolve_attachments(&resolve_refs);
+    }
+    let subpasses = [subpass];
     let info = vk::RenderPassCreateInfo::default()
         .attachments(&attachments)
         .subpasses(&subpasses);
 
     unsafe { device.create_render_pass(&info, None) }
         .map_err(|e| backend_err("create_render_pass", e))
+}
+
+pub(crate) fn sample_flags(count: u32) -> vk::SampleCountFlags {
+    match count {
+        2 => vk::SampleCountFlags::TYPE_2,
+        4 => vk::SampleCountFlags::TYPE_4,
+        8 => vk::SampleCountFlags::TYPE_8,
+        16 => vk::SampleCountFlags::TYPE_16,
+        _ => vk::SampleCountFlags::TYPE_1,
+    }
 }
 
 fn build_pipeline_layout(device: &ash::Device) -> Result<vk::PipelineLayout> {
@@ -479,7 +628,7 @@ fn build_pipeline(
         .polygon_mode(vk::PolygonMode::FILL)
         .line_width(1.0);
     let multisample = vk::PipelineMultisampleStateCreateInfo::default()
-        .rasterization_samples(vk::SampleCountFlags::TYPE_1);
+        .rasterization_samples(sample_flags(key.samples));
 
     // Source color arrives premultiplied from the shader, so source-over is
     // ONE rather than SRC_ALPHA. Using SRC_ALPHA against a premultiplied

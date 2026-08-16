@@ -107,15 +107,17 @@ pub trait HalContext {
     /// Release a texture and its memory.
     fn destroy_texture(&mut self, texture: <Self::Hal as Hal>::Texture);
 
-    /// Draw a batch into a target, optionally clearing it first.
+    /// Draw a batch into a target.
     ///
-    /// Passing `None` preserves the target's existing contents, which is what
-    /// composing several batches onto one target requires.
+    /// A descriptor that preserves rather than clears composes several batches
+    /// onto one target. A multisampled descriptor renders to a transient
+    /// multisample buffer and resolves into the target, so the target stays
+    /// single-sampled and readable either way.
     fn submit_batch(
         &mut self,
         target: &mut <Self::Hal as Hal>::Texture,
         batch: &Batch,
-        clear: Option<[f32; 4]>,
+        pass: PassDescriptor,
     ) -> Result<()>;
 
     /// Copy a target back to host memory, tightly packed.
@@ -135,6 +137,53 @@ pub trait HalContext {
         _texture: &<Self::Hal as Hal>::Texture,
     ) -> Result<ExternalImageDesc> {
         Err(Error::Unsupported("dma-buf export"))
+    }
+}
+
+/// How a pass is configured, beyond the draws themselves.
+///
+/// Grouped rather than passed as loose parameters so later pass-level state —
+/// stencil, depth, damage regions — extends this without changing every
+/// backend's signature.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct PassDescriptor {
+    /// Clear to this color first, or preserve the target's contents.
+    pub clear: Option<[f32; 4]>,
+    /// MSAA sample count. 1 disables multisampling.
+    ///
+    /// Rendering is multisampled and resolved into the target, so the target
+    /// itself stays single-sampled and directly readable.
+    pub samples: u32,
+}
+
+impl Default for PassDescriptor {
+    fn default() -> Self {
+        Self {
+            clear: None,
+            samples: 1,
+        }
+    }
+}
+
+impl PassDescriptor {
+    pub fn clear(color: [f32; 4]) -> Self {
+        Self {
+            clear: Some(color),
+            samples: 1,
+        }
+    }
+
+    pub fn preserve() -> Self {
+        Self::default()
+    }
+
+    pub fn with_samples(mut self, samples: u32) -> Self {
+        self.samples = samples;
+        self
+    }
+
+    pub fn is_multisampled(&self) -> bool {
+        self.samples > 1
     }
 }
 
