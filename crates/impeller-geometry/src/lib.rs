@@ -15,8 +15,10 @@ pub mod flatten;
 pub mod path;
 pub mod stroke;
 pub mod tessellate;
+pub mod transform;
 
 pub use flatten::{flatten, DEFAULT_TOLERANCE};
 pub use path::{Convexity, FillRule, Path, PathBuilder, Rect, Verb};
 pub use stroke::{LineCap, LineJoin, StrokeStyle};
 pub use tessellate::{Tessellator, VertexBuffers};
+pub use transform::{max_scale, transform_points, viewport_projection};

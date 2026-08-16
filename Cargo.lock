@@ -240,6 +240,12 @@ version = "0.1.0"
 [[package]]
 name = "impeller-renderer"
 version = "0.1.0"
+dependencies = [
+ "glam",
+ "impeller-geometry",
+ "impeller-hal",
+ "impeller-hal-vulkan",
+]
 
 [[package]]
 name = "impeller-shaders"
