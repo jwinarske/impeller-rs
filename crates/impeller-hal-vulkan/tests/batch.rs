@@ -6,8 +6,8 @@
 //! trade-off, so most of these tests render the same scene both ways and
 //! compare the results directly.
 
-use impeller_hal::{BlendMode, Extent2D, PixelFormat, TextureDescriptor};
-use impeller_hal_vulkan::{Batch, ContextConfig, DevicePreference, VulkanContext};
+use impeller_hal::{Batch, BlendMode, Extent2D, PixelFormat, TextureDescriptor};
+use impeller_hal_vulkan::{ContextConfig, DevicePreference, VulkanContext};
 
 const SIZE: u32 = 32;
 const BLACK: [f32; 4] = [0.0, 0.0, 0.0, 1.0];

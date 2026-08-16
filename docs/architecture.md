@@ -93,28 +93,58 @@ recording, and that is the accepted trade.
 ```rust
 pub trait Hal: 'static {
     type Context: HalContext<Hal = Self>;
-    type CommandBuffer: HalCommandBuffer<Hal = Self>;
-    type Pipeline: Send + Sync;
-    type Buffer: Send + Sync;
-    type Texture: Send + Sync;
-    type Sampler: Send + Sync;
-    type Fence: HalFence;
+    type Texture: HalTexture;
+    const NAME: &'static str;
 }
 
-pub trait HalContext: Send + Sync {
+pub trait HalContext {
     type Hal: Hal;
-    fn create_command_buffer(&self) -> <Self::Hal as Hal>::CommandBuffer;
-    fn create_pipeline(&self, desc: &PipelineDescriptor)
-        -> Result<Arc<<Self::Hal as Hal>::Pipeline>>;
-    fn create_buffer(&self, desc: &BufferDescriptor)
-        -> Result<<Self::Hal as Hal>::Buffer>;
-    fn create_texture(&self, desc: &TextureDescriptor)
-        -> Result<<Self::Hal as Hal>::Texture>;
-    fn submit(&self, cmd: <Self::Hal as Hal>::CommandBuffer)
-        -> <Self::Hal as Hal>::Fence;
     fn capabilities(&self) -> &Capabilities;
+    fn create_texture(&mut self, desc: &TextureDescriptor)
+        -> Result<<Self::Hal as Hal>::Texture>;
+    fn destroy_texture(&mut self, texture: <Self::Hal as Hal>::Texture);
+    fn submit_batch(
+        &mut self,
+        target: &mut <Self::Hal as Hal>::Texture,
+        batch: &Batch,
+        clear: Option<[f32; 4]>,
+    ) -> Result<()>;
+    fn read_texture(&mut self, texture: &mut <Self::Hal as Hal>::Texture) -> Result<Vec<u8>>;
 }
 ```
+
+### Batches, not command buffers
+
+An earlier shape of this trait had callers record incrementally — begin a pass,
+bind a pipeline, draw, finish — mirroring how Vulkan itself works. Building a
+real backend showed that to be the wrong seam, and the trait was revised to
+take a whole `Batch`: shared geometry plus a list of draws over it.
+
+The decisions a backend actually wants to make are global to a batch. Which
+draws can share a pipeline binding, how to lay out one shared vertex buffer,
+what to upload in a single copy — none of those are answerable one call at a
+time. Handing over a stream forces every backend to reconstruct the shape, and
+a record-and-replay backend has to buffer the stream anyway just to see what it
+was given.
+
+This keeps the explicitness that matters. Nothing is discovered at draw time
+and a caller states its whole intent up front; what changes is that realizing
+that intent is the backend's business. The rule that the trait follows Vulkan
+rather than being reduced to a lowest common denominator is unchanged — this is
+Vulkan's model raised one level, not a concession to a weaker backend.
+
+**Draws within a batch keep submission order.** Sorting by pipeline would cut
+bindings further, but 2D drawing is painter's-algorithm ordered and reordering
+two overlapping draws changes which ends up on top. Knowing when a reorder is
+safe needs overlap analysis or a depth buffer, and belongs to the layer that
+knows what the draws represent.
+
+**Thread-safe resource creation is not yet met.** These methods take `&mut
+self`, so a context cannot create resources from several threads at once. The
+intended design is creation behind `&self`, which needs interior mutability
+around the allocator; that is deferred rather than decided against, because
+nothing creates resources off the recording thread yet and the synchronization
+would be shaped around a caller that does not exist.
 
 ### Vulkan-first policy
 
@@ -302,7 +332,8 @@ choice is capability-driven.
 
 ## Threading
 
-- `Context` is `Send + Sync`; resource creation is thread-safe.
+- `Context` is intended to be `Send + Sync` with thread-safe resource
+  creation. Not yet met: creation takes `&mut self` today, see the HAL section.
 - `Canvas` recording is single-threaded per frame.
 - A background fence waiter retires GPU work and releases tracked resources,
   handling Vulkan fences, `GLsync` objects, and sync_file fds uniformly.
@@ -347,8 +378,9 @@ permutations on GLES.
 - **Entity layer** (`impeller-entity`): an entity carries transform, blend,
   clip depth, contents, and geometry, with a Contents implementation per
   material and coverage computation for culling.
-- **Passes** (`impeller-renderer`): draw commands are buffered per pass, sorted
-  by pipeline, and encoded once at pass end. Save layers become offscreen
+- **Passes** (`impeller-renderer`): draws are accumulated into a batch and
+  submitted as one pass, in submission order rather than sorted by pipeline
+  (see above). Save layers become offscreen
   targets with a paint-composited restore; path clipping is stencil-based;
   blur is multi-pass separable.
 - **Text** (`impeller-text`): swash rasterization into LRU atlas pages,

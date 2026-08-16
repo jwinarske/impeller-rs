@@ -107,7 +107,8 @@ fn render_sized(
 
 fn fill(ctx: &mut VulkanContext, path: &Path, transform: Affine2) -> Image {
     let mut r = Renderer::new();
-    let geo = r.fill_path(path, transform, TARGET, TOLERANCE);
+    r.begin_frame(TARGET, TOLERANCE);
+    let geo = r.fill_path(path, transform);
     let positions = geo.positions();
     let indices = geo.indices.to_vec();
     render(ctx, &positions, &indices)
@@ -190,12 +191,8 @@ fn a_non_square_target_does_not_distort_geometry() {
     // only show up as stretching when the two differ.
     let extent = Extent2D::new(96, 48);
     let mut r = Renderer::new();
-    let geo = r.fill_path(
-        &rect(8.0, 8.0, 40.0, 40.0),
-        Affine2::IDENTITY,
-        extent,
-        TOLERANCE,
-    );
+    r.begin_frame(extent, TOLERANCE);
+    let geo = r.fill_path(&rect(8.0, 8.0, 40.0, 40.0), Affine2::IDENTITY);
     let positions = geo.positions();
     let indices = geo.indices.to_vec();
     let img = render_sized(&mut ctx, &positions, &indices, extent);
@@ -220,8 +217,9 @@ fn a_stroked_line_covers_a_band_of_the_requested_width() {
     let path = b.build();
 
     let mut r = Renderer::new();
+    r.begin_frame(TARGET, TOLERANCE);
     let style = StrokeStyle::new(8.0).with_cap(LineCap::Butt);
-    let geo = r.stroke_path(&path, &style, Affine2::IDENTITY, TARGET, TOLERANCE);
+    let geo = r.stroke_path(&path, &style, Affine2::IDENTITY);
     let positions = geo.positions();
     let indices = geo.indices.to_vec();
     let img = render(&mut ctx, &positions, &indices);

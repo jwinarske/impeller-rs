@@ -34,12 +34,14 @@
 //! lacking `VK_KHR_external_fence_fd` are the same problem, and code asking
 //! "is this GLES?" instead of "can this export a fence?" gets both wrong.
 
+pub mod batch;
 pub mod capabilities;
 pub mod error;
 pub mod format;
 pub mod resource;
 pub mod sync;
 
+pub use batch::{Batch, BatchDraw};
 pub use capabilities::{Capabilities, DmaBufSupport, SampleCounts, SyncSupport};
 pub use error::{Error, Result};
 pub use format::{Extent2D, FormatModifierSet, Fourcc, Modifier, PixelFormat};
@@ -49,77 +51,91 @@ pub use sync::{HalFence, FRAME_WAIT_TIMEOUT};
 #[cfg(unix)]
 pub use resource::{DmaBufPlane, ExternalImageDesc};
 
-use std::sync::Arc;
-
 /// A rendering backend, as a family of associated types.
 ///
 /// Implementors are zero-sized markers; the types they name carry the work.
 pub trait Hal: 'static {
     type Context: HalContext<Hal = Self>;
-    type CommandBuffer: HalCommandBuffer<Hal = Self>;
-    type Pipeline: Send + Sync;
-    type Buffer: Send + Sync;
-    type Texture: Send + Sync;
-    type Sampler: Send + Sync;
-    type Fence: HalFence;
+    type Texture: HalTexture;
 
     /// Backend name, for logs and report fingerprints.
     const NAME: &'static str;
 }
 
+/// What a target must be able to tell the layers above it.
+pub trait HalTexture {
+    fn extent(&self) -> Extent2D;
+    fn format(&self) -> PixelFormat;
+}
+
 /// A device, and the resources created from it.
 ///
-/// `Send + Sync` because resource creation is thread-safe. Canvas recording is
-/// single-threaded per frame, but nothing forces allocation onto that thread.
-pub trait HalContext: Send + Sync {
+/// # Why a batch rather than a command buffer
+///
+/// An earlier shape of this trait had callers record incrementally — begin a
+/// pass, bind a pipeline, draw, finish — mirroring how Vulkan itself works.
+/// Building a real backend showed that to be the wrong seam. What a backend
+/// actually wants is the whole [`Batch`] at once, because the useful decisions
+/// are all global to it: which draws can share a pipeline binding, how to lay
+/// out one shared vertex buffer, what to upload in a single copy. Handing over
+/// a stream of calls forces each backend to reconstruct that shape, and a
+/// record-and-replay backend would have to buffer the stream anyway just to see
+/// what it was given.
+///
+/// This stays explicit in the sense that matters — nothing is discovered at
+/// draw time and the caller states its whole intent up front — while leaving
+/// each backend free to realize it natively.
+///
+/// # Threading
+///
+/// These take `&mut self`, so a context is not yet usable for resource
+/// creation from several threads at once. The intended design is thread-safe
+/// creation behind `&self`, which needs interior mutability around the
+/// allocator. That is deferred rather than decided against: nothing creates
+/// resources off the recording thread yet, and adding the synchronization
+/// before there is a caller to shape it around would be guesswork.
+pub trait HalContext {
     type Hal: Hal;
 
     /// What this device can do. The only thing callers branch on.
     fn capabilities(&self) -> &Capabilities;
 
-    fn create_command_buffer(&self) -> Result<<Self::Hal as Hal>::CommandBuffer>;
-
     /// Allocate a texture, or import an external image when the descriptor
     /// carries one.
-    fn create_texture(&self, desc: &TextureDescriptor) -> Result<<Self::Hal as Hal>::Texture>;
+    fn create_texture(&mut self, desc: &TextureDescriptor) -> Result<<Self::Hal as Hal>::Texture>;
 
-    fn create_buffer(&self, desc: &BufferDescriptor) -> Result<<Self::Hal as Hal>::Buffer>;
+    /// Release a texture and its memory.
+    fn destroy_texture(&mut self, texture: <Self::Hal as Hal>::Texture);
 
-    /// Submit recorded work, returning a fence that signals on completion.
-    fn submit(&self, cmd: <Self::Hal as Hal>::CommandBuffer) -> Result<<Self::Hal as Hal>::Fence>;
-
-    /// Export a texture as a dma-buf for scanout or cross-device sharing.
+    /// Draw a batch into a target, optionally clearing it first.
     ///
-    /// Returns [`Error::Unsupported`] where
-    /// [`DmaBufSupport::export`] is false; the DRM path then allocates through
-    /// GBM and imports instead.
-    #[cfg(unix)]
-    fn export_texture(&self, _texture: &<Self::Hal as Hal>::Texture) -> Result<ExternalImageDesc> {
-        Err(Error::Unsupported("dma-buf export"))
-    }
-}
-
-/// Recorded work, encoded once and submitted.
-///
-/// Draw commands are buffered per pass, sorted by pipeline, and encoded at
-/// pass end rather than issued as they arrive.
-pub trait HalCommandBuffer: Send {
-    type Hal: Hal;
-
-    /// Begin a render pass targeting `target`.
-    fn begin_render_pass(
+    /// Passing `None` preserves the target's existing contents, which is what
+    /// composing several batches onto one target requires.
+    fn submit_batch(
         &mut self,
-        target: &<Self::Hal as Hal>::Texture,
+        target: &mut <Self::Hal as Hal>::Texture,
+        batch: &Batch,
         clear: Option<[f32; 4]>,
     ) -> Result<()>;
 
-    fn end_render_pass(&mut self) -> Result<()>;
+    /// Copy a target back to host memory, tightly packed.
+    ///
+    /// Part of the trait rather than a backend extra because the offscreen
+    /// target is a first-class citizen: the entire golden and conformance
+    /// apparatus is built on rendering to one and reading it back.
+    fn read_texture(&mut self, texture: &mut <Self::Hal as Hal>::Texture) -> Result<Vec<u8>>;
 
-    fn bind_pipeline(&mut self, pipeline: &Arc<<Self::Hal as Hal>::Pipeline>) -> Result<()>;
-
-    /// Finish recording. The buffer is submitted through
-    /// [`HalContext::submit`].
-    fn finish(&mut self) -> Result<()>;
+    /// Export a texture as a dma-buf for scanout or cross-device sharing.
+    ///
+    /// Returns [`Error::Unsupported`] where [`DmaBufSupport::export`] is false;
+    /// the DRM path then allocates through GBM and imports instead.
+    #[cfg(unix)]
+    fn export_texture(
+        &mut self,
+        _texture: &<Self::Hal as Hal>::Texture,
+    ) -> Result<ExternalImageDesc> {
+        Err(Error::Unsupported("dma-buf export"))
+    }
 }
 
 /// How a draw combines with what a target already holds.

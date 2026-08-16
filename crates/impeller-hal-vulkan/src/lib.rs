@@ -7,19 +7,18 @@
 //! tessellation shaders, sparse residency, multi-draw-indirect-with-count —
 //! are none of them needed for 2D.
 //!
-//! # Status
-//!
-//! Device bring-up and capability detection only. The `Hal` and `HalContext`
-//! traits are not implemented yet, because doing so means resource creation
-//! and command recording; stubbing those to return errors would make the type
-//! look usable while failing at the first draw.
+//! Implements the `Hal` and `HalContext` traits, so the renderer and the
+//! conformance harness can drive this backend without naming it. The concrete
+//! API stays available alongside for bring-up and for tests that need Vulkan
+//! specifics.
 
 pub mod device;
+pub mod hal;
 pub mod render;
 pub mod resource;
 pub mod validation;
 
 pub use device::{ContextConfig, DevicePreference, VulkanContext};
-pub use render::Batch;
+pub use hal::VulkanHal;
 pub use resource::VulkanTexture;
 pub use validation::{ValidationMessage, ValidationSeverity};

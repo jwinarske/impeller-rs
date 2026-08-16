@@ -10,21 +10,78 @@ use impeller_geometry::stroke::StrokeStyle;
 use impeller_geometry::tessellate::{Tessellator, VertexBuffers};
 use impeller_geometry::transform::{max_scale, transform_points, viewport_projection};
 use impeller_geometry::{flatten::DEFAULT_TOLERANCE, Path};
-use impeller_hal::Extent2D;
+use impeller_hal::{Batch, BlendMode, Extent2D, Result};
+
+/// How a shape is painted.
+///
+/// Grouped rather than passed as loose parameters because color and blend mode
+/// travel together everywhere and will grow into the material set: gradients,
+/// image shaders, and filters all attach here.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Paint {
+    /// Linear color with straight alpha.
+    pub color: [f32; 4],
+    pub blend: BlendMode,
+}
+
+impl Paint {
+    pub fn solid(color: [f32; 4]) -> Self {
+        Self {
+            color,
+            blend: BlendMode::default(),
+        }
+    }
+
+    pub fn with_blend(mut self, blend: BlendMode) -> Self {
+        self.blend = blend;
+        self
+    }
+}
 
 /// Tessellates paths and places the result in clip space.
 ///
 /// Holds its scratch buffers across calls, so a steady frame loop stops
 /// allocating once they reach working size.
-#[derive(Default)]
+///
+/// Target size and tolerance are frame state rather than per-call arguments:
+/// they are fixed for every shape in a frame, and threading them through each
+/// call invited the mistake of passing different values within one frame.
 pub struct Renderer {
     tessellator: Tessellator,
     clip_space: Vec<Vec2>,
+    target: Extent2D,
+    tolerance: f32,
+}
+
+impl Default for Renderer {
+    fn default() -> Self {
+        Self {
+            tessellator: Tessellator::default(),
+            clip_space: Vec::new(),
+            target: Extent2D::new(1, 1),
+            tolerance: DEFAULT_TOLERANCE,
+        }
+    }
 }
 
 impl Renderer {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Set the target size and flattening tolerance for the frame.
+    ///
+    /// Must be called before drawing; the default target is a single pixel, so
+    /// forgetting produces geometry collapsed to nothing rather than something
+    /// subtly misplaced.
+    pub fn begin_frame(&mut self, target: Extent2D, tolerance: f32) -> &mut Self {
+        self.target = target;
+        self.tolerance = tolerance;
+        self
+    }
+
+    pub fn target(&self) -> Extent2D {
+        self.target
     }
 
     /// Tessellate a filled path and map it into clip space.
@@ -35,16 +92,10 @@ impl Renderer {
     /// device-space quantity, so the scale that matters for flattening is the
     /// path-to-pixel scale alone. Folding the projection in would divide by
     /// the target size and flatten far too coarsely.
-    pub fn fill_path(
-        &mut self,
-        path: &Path,
-        transform: Affine2,
-        target: Extent2D,
-        tolerance: f32,
-    ) -> ClipGeometry<'_> {
-        let path_tolerance = path_space_tolerance(tolerance, &transform);
+    pub fn fill_path(&mut self, path: &Path, transform: Affine2) -> ClipGeometry<'_> {
+        let path_tolerance = path_space_tolerance(self.tolerance, &transform);
         let buffers = self.tessellator.fill(path, path_tolerance);
-        Self::to_clip_space(&mut self.clip_space, buffers, transform, target)
+        Self::to_clip_space(&mut self.clip_space, buffers, transform, self.target)
     }
 
     /// Tessellate a stroked path and map it into clip space.
@@ -57,12 +108,43 @@ impl Renderer {
         path: &Path,
         style: &StrokeStyle,
         transform: Affine2,
-        target: Extent2D,
-        tolerance: f32,
     ) -> ClipGeometry<'_> {
-        let path_tolerance = path_space_tolerance(tolerance, &transform);
+        let path_tolerance = path_space_tolerance(self.tolerance, &transform);
         let buffers = self.tessellator.stroke(path, style, path_tolerance);
-        Self::to_clip_space(&mut self.clip_space, buffers, transform, target)
+        Self::to_clip_space(&mut self.clip_space, buffers, transform, self.target)
+    }
+
+    /// Tessellate a filled path and append it to a batch.
+    ///
+    /// The batch is what a backend is handed, so this is the path a real frame
+    /// takes: many shapes accumulated, one submission. The borrowing form above
+    /// exists for callers inspecting geometry without drawing it.
+    pub fn fill_into(
+        &mut self,
+        batch: &mut Batch,
+        path: &Path,
+        transform: Affine2,
+        paint: Paint,
+    ) -> Result<()> {
+        let geo = self.fill_path(path, transform);
+        let positions = geo.positions();
+        let indices = geo.indices.to_vec();
+        batch.push(&positions, &indices, paint.color, paint.blend)
+    }
+
+    /// Tessellate a stroked path and append it to a batch.
+    pub fn stroke_into(
+        &mut self,
+        batch: &mut Batch,
+        path: &Path,
+        style: &StrokeStyle,
+        transform: Affine2,
+        paint: Paint,
+    ) -> Result<()> {
+        let geo = self.stroke_path(path, style, transform);
+        let positions = geo.positions();
+        let indices = geo.indices.to_vec();
+        batch.push(&positions, &indices, paint.color, paint.blend)
     }
 
     fn to_clip_space<'a>(
@@ -131,12 +213,8 @@ mod tests {
     #[test]
     fn a_full_target_rect_reaches_the_corners_of_clip_space() {
         let mut r = Renderer::new();
-        let geo = r.fill_path(
-            &rect(0.0, 0.0, 64.0, 64.0),
-            Affine2::IDENTITY,
-            Extent2D::new(64, 64),
-            TOLERANCE,
-        );
+        r.begin_frame(Extent2D::new(64, 64), TOLERANCE);
+        let geo = r.fill_path(&rect(0.0, 0.0, 64.0, 64.0), Affine2::IDENTITY);
         let xs: Vec<f32> = geo.vertices.iter().map(|v| v.x).collect();
         let ys: Vec<f32> = geo.vertices.iter().map(|v| v.y).collect();
         let min = |v: &[f32]| v.iter().copied().fold(f32::INFINITY, f32::min);
@@ -164,16 +242,10 @@ mod tests {
         let target = Extent2D::new(256, 256);
 
         let mut r = Renderer::new();
-        let plain = r
-            .fill_path(&path, Affine2::IDENTITY, target, TOLERANCE)
-            .triangle_count();
+        r.begin_frame(target, TOLERANCE);
+        let plain = r.fill_path(&path, Affine2::IDENTITY).triangle_count();
         let scaled = r
-            .fill_path(
-                &path,
-                Affine2::from_scale(Vec2::splat(10.0)),
-                target,
-                TOLERANCE,
-            )
+            .fill_path(&path, Affine2::from_scale(Vec2::splat(10.0)))
             .triangle_count();
         assert!(
             scaled > plain,
@@ -182,26 +254,16 @@ mod tests {
 
         // Target size must not affect it. Folding the projection into the
         // tolerance scale would make a large target flatten coarsely.
-        let big_target = r
-            .fill_path(
-                &path,
-                Affine2::IDENTITY,
-                Extent2D::new(4096, 4096),
-                TOLERANCE,
-            )
-            .triangle_count();
+        r.begin_frame(Extent2D::new(4096, 4096), TOLERANCE);
+        let big_target = r.fill_path(&path, Affine2::IDENTITY).triangle_count();
         assert_eq!(big_target, plain);
     }
 
     #[test]
     fn an_empty_path_produces_no_geometry() {
         let mut r = Renderer::new();
-        let geo = r.fill_path(
-            &Path::default(),
-            Affine2::IDENTITY,
-            Extent2D::new(64, 64),
-            TOLERANCE,
-        );
+        r.begin_frame(Extent2D::new(64, 64), TOLERANCE);
+        let geo = r.fill_path(&Path::default(), Affine2::IDENTITY);
         assert!(geo.is_empty());
         assert!(geo.positions().is_empty());
     }
