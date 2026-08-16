@@ -40,6 +40,10 @@ impl VulkanTexture {
         self.image
     }
 
+    pub(crate) fn layout(&self) -> vk::ImageLayout {
+        self.layout
+    }
+
     /// Record a layout change made by an operation outside this module.
     pub(crate) fn set_layout(&mut self, layout: vk::ImageLayout) {
         self.layout = layout;
@@ -277,7 +281,7 @@ impl VulkanContext {
 /// masks. These are one-shot setup and readback operations, not frame-loop
 /// work, so precision here buys nothing and getting it wrong costs
 /// hard-to-reproduce corruption.
-fn transition(
+pub(crate) fn transition(
     device: &ash::Device,
     cmd: vk::CommandBuffer,
     image: vk::Image,

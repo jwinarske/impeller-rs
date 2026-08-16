@@ -10,6 +10,16 @@
 // owns the transform stack; baking one in here would mean two places decide
 // where geometry lands.
 
+// One paint per draw. Push constants rather than a uniform buffer because the
+// data is small and changes every draw: a buffer would need either a fresh
+// allocation or a dynamic offset per draw, and both cost more than the handful
+// of bytes this occupies.
+struct Paint {
+    color: vec4<f32>,
+};
+
+var<push_constant> paint: Paint;
+
 struct VertexOutput {
     @builtin(position) position: vec4<f32>,
 };
@@ -23,5 +33,7 @@ fn vs_main(@location(0) position: vec2<f32>) -> VertexOutput {
 
 @fragment
 fn fs_main() -> @location(0) vec4<f32> {
-    return vec4<f32>(1.0, 0.0, 0.0, 1.0);
+    // Colors are linear here. Conversion to the target's transfer function is
+    // the attachment format's job, not this shader's.
+    return paint.color;
 }

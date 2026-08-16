@@ -1,7 +1,7 @@
 //! Render passes, pipelines, and drawing triangles into a texture.
 
 use crate::device::VulkanContext;
-use crate::resource::{backend_err, vk_format, VulkanTexture};
+use crate::resource::{backend_err, transition, vk_format, VulkanTexture};
 use ash::vk;
 use gpu_allocator::vulkan::{Allocation, AllocationCreateDesc, AllocationScheme};
 use gpu_allocator::MemoryLocation;
@@ -13,6 +13,16 @@ use impeller_hal::{Error, Result};
 /// Pipeline creation costs milliseconds. Doing it per draw would put exactly
 /// the compilation stall in the frame loop that compiling everything ahead of
 /// time is meant to avoid.
+/// What distinguishes one cached pipeline from another.
+///
+/// The load operation is baked into a render pass, so preserving and clearing
+/// need separate objects rather than a flag at draw time.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub(crate) struct PipelineKey {
+    pub(crate) format: vk::Format,
+    pub(crate) clears: bool,
+}
+
 pub(crate) struct SolidPipeline {
     pub(crate) render_pass: vk::RenderPass,
     pub(crate) layout: vk::PipelineLayout,
@@ -45,6 +55,9 @@ impl VulkanContext {
     /// source tree exists to prevent. Mapping user space, where Y typically
     /// runs downward, onto this belongs to the renderer's transform stack.
     ///
+    /// `color` is the paint for the whole draw, in linear space. Conversion to
+    /// the target's transfer function is the attachment format's job.
+    ///
     /// Every draw clears. Load-preserving passes belong to the renderer, which
     /// owns pass grouping and knows when a target's contents matter.
     pub fn draw_indexed(
@@ -52,7 +65,8 @@ impl VulkanContext {
         target: &mut VulkanTexture,
         vertices: &[[f32; 2]],
         indices: &[u32],
-        clear: [f32; 4],
+        color: [f32; 4],
+        clear: Option<[f32; 4]>,
     ) -> Result<()> {
         if indices.len() % 3 != 0 {
             return Err(Error::Unsupported("index count is not a whole triangle"));
@@ -70,13 +84,21 @@ impl VulkanContext {
         }
 
         let format = vk_format(target.format());
-        self.ensure_solid_pipeline(format)?;
+        let key = PipelineKey {
+            format,
+            clears: clear.is_some(),
+        };
+        self.ensure_solid_pipeline(key)?;
         let device = self.raw_device().clone();
 
         // Nothing to draw still clears, which is what a caller submitting an
-        // empty scene expects.
+        // empty scene expects. With no clear requested there is nothing to do
+        // at all.
         if indices.is_empty() {
-            return self.clear_texture(target, clear);
+            return match clear {
+                Some(c) => self.clear_texture(target, c),
+                None => Ok(()),
+            };
         }
 
         let vertex_bytes: &[u8] = bytemuck_cast(vertices);
@@ -87,10 +109,11 @@ impl VulkanContext {
         let result = self.record_draw(
             &device,
             target,
-            format,
+            key,
             vertex_buffer.buffer,
             index_buffer.buffer,
             indices.len() as u32,
+            color,
             clear,
         );
 
@@ -104,14 +127,17 @@ impl VulkanContext {
         &mut self,
         device: &ash::Device,
         target: &mut VulkanTexture,
-        format: vk::Format,
+        key: PipelineKey,
         vertex_buffer: vk::Buffer,
         index_buffer: vk::Buffer,
         index_count: u32,
-        clear: [f32; 4],
+        color: [f32; 4],
+        clear: Option<[f32; 4]>,
     ) -> Result<()> {
-        let cached = self.solid_pipeline(format).expect("ensured above");
-        let (render_pass, pipeline, _) = (cached.render_pass, cached.pipeline, cached.layout);
+        let format = key.format;
+        let cached = self.solid_pipeline(key).expect("ensured above");
+        let (render_pass, pipeline, pipeline_layout) =
+            (cached.render_pass, cached.pipeline, cached.layout);
 
         let view_info = vk::ImageViewCreateInfo::default()
             .image(target.raw_image())
@@ -142,11 +168,27 @@ impl VulkanContext {
             }
         };
 
+        let previous_layout = target.layout();
         let outcome = (|| -> Result<()> {
             let cmd = self.begin_one_shot()?;
 
+            if clear.is_none() {
+                // Loading requires the attachment already be in the layout the
+                // render pass declares, and the texture may be sitting in
+                // whatever a previous readback left it in.
+                transition(
+                    device,
+                    cmd,
+                    target.raw_image(),
+                    previous_layout,
+                    vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL,
+                );
+            }
+
             let clear_value = vk::ClearValue {
-                color: vk::ClearColorValue { float32: clear },
+                color: vk::ClearColorValue {
+                    float32: clear.unwrap_or([0.0; 4]),
+                },
             };
             let clear_values = [clear_value];
             let begin = vk::RenderPassBeginInfo::default()
@@ -180,6 +222,13 @@ impl VulkanContext {
             unsafe {
                 device.cmd_begin_render_pass(cmd, &begin, vk::SubpassContents::INLINE);
                 device.cmd_bind_pipeline(cmd, vk::PipelineBindPoint::GRAPHICS, pipeline);
+                device.cmd_push_constants(
+                    cmd,
+                    pipeline_layout,
+                    vk::ShaderStageFlags::FRAGMENT,
+                    0,
+                    bytemuck_cast(&color),
+                );
                 device.cmd_set_viewport(cmd, 0, &[viewport]);
                 device.cmd_set_scissor(cmd, 0, &[scissor]);
                 device.cmd_bind_vertex_buffers(cmd, 0, &[vertex_buffer], &[0]);
@@ -207,13 +256,13 @@ impl VulkanContext {
         outcome
     }
 
-    fn ensure_solid_pipeline(&mut self, format: vk::Format) -> Result<()> {
-        if self.solid_pipeline(format).is_some() {
+    fn ensure_solid_pipeline(&mut self, key: PipelineKey) -> Result<()> {
+        if self.solid_pipeline(key).is_some() {
             return Ok(());
         }
         let device = self.raw_device().clone();
-        let built = build_solid_pipeline(&device, format)?;
-        self.insert_solid_pipeline(format, built);
+        let built = build_solid_pipeline(&device, key)?;
+        self.insert_solid_pipeline(key, built);
         Ok(())
     }
 
@@ -272,17 +321,26 @@ struct StagedBuffer {
     allocation: Allocation,
 }
 
-fn build_solid_pipeline(device: &ash::Device, format: vk::Format) -> Result<SolidPipeline> {
+fn build_solid_pipeline(device: &ash::Device, key: PipelineKey) -> Result<SolidPipeline> {
+    // Clearing makes prior contents irrelevant, so the attachment can declare
+    // UNDEFINED and skip a transition. Loading must declare the layout the
+    // image is actually in, and the caller transitions it there first.
+    let (load_op, initial_layout) = if key.clears {
+        (vk::AttachmentLoadOp::CLEAR, vk::ImageLayout::UNDEFINED)
+    } else {
+        (
+            vk::AttachmentLoadOp::LOAD,
+            vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL,
+        )
+    };
     let attachment = vk::AttachmentDescription::default()
-        .format(format)
+        .format(key.format)
         .samples(vk::SampleCountFlags::TYPE_1)
-        .load_op(vk::AttachmentLoadOp::CLEAR)
+        .load_op(load_op)
         .store_op(vk::AttachmentStoreOp::STORE)
         .stencil_load_op(vk::AttachmentLoadOp::DONT_CARE)
         .stencil_store_op(vk::AttachmentStoreOp::DONT_CARE)
-        // CLEAR makes prior contents irrelevant, so declaring UNDEFINED here
-        // saves a transition rather than losing anything.
-        .initial_layout(vk::ImageLayout::UNDEFINED)
+        .initial_layout(initial_layout)
         .final_layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL);
 
     let color_ref = vk::AttachmentReference::default()
@@ -310,7 +368,14 @@ fn build_solid_pipeline(device: &ash::Device, format: vk::Format) -> Result<Soli
         }
     };
 
-    let layout_info = vk::PipelineLayoutCreateInfo::default();
+    // Paint travels as a push constant, so the layout has to declare the range
+    // even though the pipeline itself has no descriptor sets.
+    let push_range = vk::PushConstantRange::default()
+        .stage_flags(vk::ShaderStageFlags::FRAGMENT)
+        .offset(0)
+        .size(std::mem::size_of::<[f32; 4]>() as u32);
+    let push_ranges = [push_range];
+    let layout_info = vk::PipelineLayoutCreateInfo::default().push_constant_ranges(&push_ranges);
     let layout = match unsafe { device.create_pipeline_layout(&layout_info, None) } {
         Ok(l) => l,
         Err(e) => {

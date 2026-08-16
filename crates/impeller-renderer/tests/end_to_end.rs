@@ -15,6 +15,7 @@ use impeller_hal_vulkan::{ContextConfig, DevicePreference, VulkanContext};
 use impeller_renderer::{Renderer, TOLERANCE};
 
 const SIZE: u32 = 64;
+const RED: [f32; 4] = [1.0, 0.0, 0.0, 1.0];
 const TARGET: Extent2D = Extent2D {
     width: SIZE,
     height: SIZE,
@@ -82,8 +83,14 @@ fn render_sized(
             PixelFormat::Rgba8Unorm,
         ))
         .expect("texture");
-    ctx.draw_indexed(&mut tex, positions, indices, [0.0, 0.0, 0.0, 1.0])
-        .expect("draw");
+    ctx.draw_indexed(
+        &mut tex,
+        positions,
+        indices,
+        RED,
+        Some([0.0, 0.0, 0.0, 1.0]),
+    )
+    .expect("draw");
     let pixels = ctx.read_texture(&mut tex).expect("readback");
     ctx.destroy_texture(tex);
 

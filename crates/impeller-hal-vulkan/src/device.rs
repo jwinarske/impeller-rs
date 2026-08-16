@@ -8,7 +8,7 @@
 //! not fail loudly — it silently selects the slower path, or worse, selects
 //! the fast path on a driver that cannot support it.
 
-use crate::render::SolidPipeline;
+use crate::render::{PipelineKey, SolidPipeline};
 use crate::validation::{self, ValidationLog, ValidationMessage, VALIDATION_LAYER};
 use ash::vk;
 use impeller_hal::{Capabilities, DmaBufSupport, Error, Result, SampleCounts, SyncSupport};
@@ -108,7 +108,7 @@ pub struct VulkanContext {
     // The allocator must release its memory before the device goes away, which
     // is why it is an Option -- Drop takes it and drops it explicitly first.
     allocator: Option<gpu_allocator::vulkan::Allocator>,
-    solid_pipelines: HashMap<vk::Format, SolidPipeline>,
+    solid_pipelines: HashMap<PipelineKey, SolidPipeline>,
     command_pool: vk::CommandPool,
     device: ash::Device,
     physical_device: vk::PhysicalDevice,
@@ -351,12 +351,12 @@ impl VulkanContext {
         self.queue
     }
 
-    pub(crate) fn solid_pipeline(&self, format: vk::Format) -> Option<&SolidPipeline> {
-        self.solid_pipelines.get(&format)
+    pub(crate) fn solid_pipeline(&self, key: PipelineKey) -> Option<&SolidPipeline> {
+        self.solid_pipelines.get(&key)
     }
 
-    pub(crate) fn insert_solid_pipeline(&mut self, format: vk::Format, p: SolidPipeline) {
-        self.solid_pipelines.insert(format, p);
+    pub(crate) fn insert_solid_pipeline(&mut self, key: PipelineKey, p: SolidPipeline) {
+        self.solid_pipelines.insert(key, p);
     }
 
     pub(crate) fn allocator_mut(&mut self) -> &mut gpu_allocator::vulkan::Allocator {

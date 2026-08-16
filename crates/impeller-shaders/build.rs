@@ -47,7 +47,10 @@ fn compile(path: &Path) -> String {
 
     let mut validator = naga::valid::Validator::new(
         naga::valid::ValidationFlags::all(),
-        naga::valid::Capabilities::empty(),
+        // Push constants are how per-draw paint reaches the shader. Without
+        // this the validator rejects the declaration rather than the backend
+        // failing later, which is the right place for it to be caught.
+        naga::valid::Capabilities::PUSH_CONSTANT,
     );
     let info = validator
         .validate(&module)

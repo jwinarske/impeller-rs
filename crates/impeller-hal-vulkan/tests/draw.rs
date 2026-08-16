@@ -10,6 +10,7 @@ use impeller_hal_vulkan::{ContextConfig, DevicePreference, VulkanContext};
 
 const SIZE: u32 = 64;
 const CLEAR: [f32; 4] = [0.0, 0.0, 0.0, 1.0];
+const RED: [f32; 4] = [1.0, 0.0, 0.0, 1.0];
 
 fn context() -> Option<VulkanContext> {
     // Validation on: a draw touches render passes, framebuffers, pipelines and
@@ -62,7 +63,7 @@ fn draw(ctx: &mut VulkanContext, vertices: &[[f32; 2]], indices: &[u32]) -> Imag
             PixelFormat::Rgba8Unorm,
         ))
         .expect("texture");
-    ctx.draw_indexed(&mut tex, vertices, indices, CLEAR)
+    ctx.draw_indexed(&mut tex, vertices, indices, RED, Some(CLEAR))
         .expect("draw");
     let pixels = ctx.read_texture(&mut tex).expect("readback");
     ctx.destroy_texture(tex);
@@ -199,11 +200,11 @@ fn an_out_of_range_index_is_refused_before_reaching_the_gpu() {
 
     // Out-of-range indices are an out-of-bounds read on the GPU, which is
     // undefined rather than merely wrong, so it must be caught on the CPU.
-    let result = ctx.draw_indexed(&mut tex, &[[0.0, 0.0]], &[0, 1, 2], CLEAR);
+    let result = ctx.draw_indexed(&mut tex, &[[0.0, 0.0]], &[0, 1, 2], RED, Some(CLEAR));
     assert!(result.is_err());
 
     // A partial triangle would leave the draw reading past the buffer.
-    let result = ctx.draw_indexed(&mut tex, &[[0.0, 0.0]], &[0, 0], CLEAR);
+    let result = ctx.draw_indexed(&mut tex, &[[0.0, 0.0]], &[0, 0], RED, Some(CLEAR));
     assert!(result.is_err());
 
     ctx.destroy_texture(tex);
