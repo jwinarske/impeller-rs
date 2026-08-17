@@ -875,7 +875,7 @@ rather than staying pinned to the screen.
 | `impeller-present-drm` | DRM/KMS scanout target |
 | `impeller-shaders` | WGSL sources and build-time translation |
 | `impeller-testkit` | Shared test harness |
-| `xtask` | Device runs, golden management, CI reproduction |
+| `xtask` | Capability reporting; device runs, golden management and CI reproduction planned |
 
 Feature flags live on the `impeller` facade because a virtual workspace root
 cannot declare them. `drm` is presentation-only and composes with either

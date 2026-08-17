@@ -1,0 +1,8 @@
+# `cargo xtask <command>` runs the task runner in xtask/.
+#
+# Without this the crate is still there and the invocation the documentation
+# uses is not: it would have to be spelled `cargo run -p xtask --`, and the
+# whole point of the xtask pattern is that a development task is one word and
+# needs no tool installed that the repository does not carry.
+[alias]
+xtask = "run --quiet --package xtask --"
