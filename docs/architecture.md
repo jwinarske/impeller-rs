@@ -133,6 +133,14 @@ that intent is the backend's business. The rule that the trait follows Vulkan
 rather than being reduced to a lowest common denominator is unchanged — this is
 Vulkan's model raised one level, not a concession to a weaker backend.
 
+**Framebuffer orientation needs no correction on readback.** The two APIs
+number framebuffer rows from opposite ends, and the usual consequence is an
+image flipped on one of them. Shader translation already negates Y per target,
+which cancels the difference exactly: a read comes back identically oriented
+from either backend, and adding a row flip would reintroduce the mirror rather
+than remove it. Both backends assert this against a scene that is not
+symmetric top-to-bottom, since a symmetric one proves nothing.
+
 **Multisampling is a pass property, not a target property.** A pass renders
 into a transient multisample buffer and resolves into the target, so the target
 stays single-sampled and directly readable. The multisample attachment is never

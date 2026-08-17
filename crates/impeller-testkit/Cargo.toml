@@ -14,3 +14,4 @@ impeller-renderer = { workspace = true }
 
 [dev-dependencies]
 impeller-hal-vulkan = { workspace = true }
+impeller-hal-gles = { workspace = true }

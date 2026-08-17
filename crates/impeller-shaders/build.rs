@@ -1,5 +1,10 @@
 //! Translates the WGSL source tree into the targets each backend needs.
 //!
+//! One source, several targets: SPIR-V for Vulkan and GLSL ES for GLES today,
+//! with MSL and HLSL available for backends that do not exist yet. The point is
+//! not merely convenience — it is that both backends render from the same
+//! source, so a shader change cannot land on one and miss the other.
+//!
 //! One source language, many targets, no C++ shader toolchain: naga emits
 //! SPIR-V today and MSL, HLSL, and GLSL for backends that do not exist yet.
 //! Translation happens at build time so no shader compiler ships in the
@@ -80,5 +85,60 @@ fn compile(path: &Path) -> String {
         out.push('\n');
     }
     out.push_str("];\n\n");
+
+    // GLSL ES needs one source per stage, unlike SPIR-V where both entry
+    // points live in one module.
+    for (stage, entry, suffix) in [
+        (naga::ShaderStage::Vertex, "vs_main", "VS_GLSL"),
+        (naga::ShaderStage::Fragment, "fs_main", "FS_GLSL"),
+    ] {
+        let glsl = write_glsl(&module, &info, stage, entry, path);
+        out.push_str(&format!(
+            "/// GLSL ES 300 for `{}.wgsl`, {} stage.\npub static {}_{}: &str = r####\"{}\"####;\n\n",
+            path.file_stem().unwrap().to_string_lossy(),
+            entry,
+            name,
+            suffix,
+            glsl
+        ));
+    }
+
+    out
+}
+
+/// Translate one entry point to GLSL ES 300.
+fn write_glsl(
+    module: &naga::Module,
+    info: &naga::valid::ModuleInfo,
+    stage: naga::ShaderStage,
+    entry: &str,
+    path: &Path,
+) -> String {
+    let options = naga::back::glsl::Options {
+        version: naga::back::glsl::Version::Embedded {
+            version: 300,
+            is_webgl: false,
+        },
+        ..Default::default()
+    };
+    let pipeline = naga::back::glsl::PipelineOptions {
+        shader_stage: stage,
+        entry_point: entry.to_string(),
+        multiview: None,
+    };
+
+    let mut out = String::new();
+    let mut writer = naga::back::glsl::Writer::new(
+        &mut out,
+        module,
+        info,
+        &options,
+        &pipeline,
+        naga::proc::BoundsCheckPolicies::default(),
+    )
+    .unwrap_or_else(|e| panic!("glsl writer for {} {stage:?}: {e}", path.display()));
+    writer
+        .write()
+        .unwrap_or_else(|e| panic!("glsl for {} {stage:?}: {e}", path.display()));
     out
 }

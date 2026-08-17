@@ -255,6 +255,7 @@ version = "0.1.0"
 dependencies = [
  "glow",
  "impeller-hal",
+ "impeller-shaders",
  "khronos-egl",
 ]
 
@@ -308,6 +309,7 @@ dependencies = [
  "glam",
  "impeller-geometry",
  "impeller-hal",
+ "impeller-hal-gles",
  "impeller-hal-vulkan",
  "impeller-renderer",
 ]

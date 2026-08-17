@@ -10,10 +10,15 @@
 //!
 //! # Status
 //!
-//! Context creation and capability detection. Rendering is not implemented yet,
-//! so the `Hal` traits are not claimed: a backend that answered every call with
-//! an error would look usable and fail at the first draw.
+//! Offscreen rendering of solid-colour geometry, with blending. Multisampling
+//! is not implemented: it needs a multisample renderbuffer and a blit resolve,
+//! which is a different framebuffer shape rather than a flag, and a
+//! multisampled pass is refused rather than silently rendering aliased.
 
 pub mod context;
+pub mod hal;
+pub mod render;
 
 pub use context::{DisplayTarget, GlesContext};
+pub use hal::GlesHal;
+pub use render::GlesTexture;

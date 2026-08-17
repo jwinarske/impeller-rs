@@ -7,4 +7,4 @@ publish.workspace = true
 license.workspace = true
 
 [build-dependencies]
-naga = { workspace = true, features = ["wgsl-in", "spv-out"] }
+naga = { workspace = true, features = ["wgsl-in", "spv-out", "glsl-out"] }

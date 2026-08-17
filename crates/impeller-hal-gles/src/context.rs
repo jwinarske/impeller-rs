@@ -49,6 +49,7 @@ pub struct GlesContext {
     capabilities: Capabilities,
     egl_extensions: HashSet<String>,
     gl_extensions: HashSet<String>,
+    program: Option<crate::render::SolidProgram>,
 }
 
 impl GlesContext {
@@ -172,11 +173,20 @@ impl GlesContext {
             capabilities,
             egl_extensions,
             gl_extensions,
+            program: None,
         })
     }
 
     pub fn capabilities(&self) -> &Capabilities {
         &self.capabilities
+    }
+
+    pub(crate) fn program(&self) -> Option<&crate::render::SolidProgram> {
+        self.program.as_ref()
+    }
+
+    pub(crate) fn set_program(&mut self, program: crate::render::SolidProgram) {
+        self.program = Some(program);
     }
 
     pub fn raw_gl(&self) -> &glow::Context {
@@ -201,6 +211,17 @@ impl GlesContext {
 
 impl Drop for GlesContext {
     fn drop(&mut self) {
+        if let Some(program) = self.program.take() {
+            use glow::HasContext;
+            // SAFETY: the context is still current here, and nothing else holds
+            // these objects.
+            unsafe {
+                self.gl.delete_program(program.program);
+                self.gl.delete_vertex_array(program.vao);
+                self.gl.delete_buffer(program.vertices);
+                self.gl.delete_buffer(program.indices);
+            }
+        }
         // Unbind before destroying, or the driver keeps the context alive and
         // the display never actually releases its resources.
         let _ = self.egl.make_current(self.display, None, None, None);
