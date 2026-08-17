@@ -168,3 +168,65 @@ fn translucent_shapes_compose_through_the_trait() {
         );
     }
 }
+
+#[test]
+fn a_scene_can_be_rendered_antialiased_through_the_trait() {
+    let Some(mut ctx) = context() else { return };
+    if !HalContext::capabilities(&ctx).sample_counts.supports(4) {
+        eprintln!("skipping: 4x not supported");
+        return;
+    }
+
+    // A triangle with a shallow edge, in user coordinates.
+    let mut b = PathBuilder::new();
+    b.move_to(Vec2::new(0.0, 64.0))
+        .line_to(Vec2::new(64.0, 64.0))
+        .line_to(Vec2::new(0.0, 20.0))
+        .close();
+    let path = b.build();
+
+    let render = |ctx: &mut VulkanContext, samples: u32| -> Vec<u8> {
+        let mut renderer = Renderer::new();
+        renderer.begin_frame(TARGET, TOLERANCE);
+        let mut batch = Batch::new();
+        renderer
+            .fill_into(
+                &mut batch,
+                &path,
+                Affine2::IDENTITY,
+                Paint::solid([1.0, 1.0, 1.0, 1.0]).with_blend(BlendMode::Src),
+            )
+            .expect("tessellate");
+
+        let mut target = ctx
+            .create_texture(&TextureDescriptor::offscreen(
+                TARGET,
+                PixelFormat::Rgba8Unorm,
+            ))
+            .expect("texture");
+        ctx.submit_batch(
+            &mut target,
+            &batch,
+            PassDescriptor::clear([0.0, 0.0, 0.0, 1.0]).with_samples(samples),
+        )
+        .expect("submit");
+        let pixels = ctx.read_texture(&mut target).expect("readback");
+        ctx.destroy_texture(target);
+        pixels
+    };
+
+    let partial = |pixels: &[u8]| {
+        pixels
+            .chunks_exact(4)
+            .filter(|p| p[0] > 0 && p[0] < 255)
+            .count()
+    };
+
+    // Antialiasing needs no renderer plumbing: geometry is independent of how
+    // the pass samples it, so a caller opts in purely through the descriptor.
+    assert_eq!(partial(&render(&mut ctx, 1)), 0, "aliased");
+    assert!(
+        partial(&render(&mut ctx, 4)) > 16,
+        "antialiased edge should have intermediate coverage"
+    );
+}

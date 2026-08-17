@@ -1,13 +1,24 @@
-//! Shared test harness used by every tier, so a test written once runs
-//! everywhere.
+//! Shared test harness.
 //!
-//! Scenes are data, not Rust code: one versioned corpus drives golden,
-//! conformance, perf, and on-device runs across every backend and presentation
-//! combination, so a new feature adds scenes once and the matrix multiplies
-//! coverage automatically.
+//! One corpus, many executions. Scenes are data rather than Rust code, so a
+//! single corpus drives golden comparison, cross-backend conformance,
+//! performance runs, and on-device runs without being rewritten for each. A new
+//! feature adds scenes once and every execution mode picks them up, which is
+//! what keeps authoring cost flat while the test matrix multiplies.
 //!
-//! Executors cover offscreen, WSI, and DRM. Comparators support per-channel
-//! tolerance with an outlier budget, perceptual comparison where cross-driver
-//! float variance is expected, and CRC equality for scanout validation.
-//! Tolerance tables are checked in: tightening one is a normal change,
-//! loosening one requires a linked driver bug.
+//! The pieces:
+//!
+//! - [`shape`] and [`scene`] describe what to draw, as plain data.
+//! - [`executor`] renders a scene through any backend implementing the HAL.
+//! - [`image`] compares results, with tolerances that state where the
+//!   specification permits a difference rather than papering over one.
+
+pub mod executor;
+pub mod image;
+pub mod scene;
+pub mod shape;
+
+pub use executor::{render_corpus, render_scene};
+pub use image::{accepts, compare, Difference, Image, Tolerance};
+pub use scene::{corpus, Item, Scene, StrokeSpec, Transform};
+pub use shape::Shape;

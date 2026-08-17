@@ -257,6 +257,13 @@ dependencies = [
 [[package]]
 name = "impeller-testkit"
 version = "0.1.0"
+dependencies = [
+ "glam",
+ "impeller-geometry",
+ "impeller-hal",
+ "impeller-hal-vulkan",
+ "impeller-renderer",
+]
 
 [[package]]
 name = "impeller-text"

@@ -1,0 +1,130 @@
+//! Shapes as data.
+//!
+//! Scenes describe geometry declaratively rather than by calling a builder, so
+//! one corpus can drive golden comparison, cross-backend conformance,
+//! performance runs, and on-device runs without being rewritten for each. Every
+//! type here is plain data and can be serialized when the corpus moves out of
+//! Rust source.
+
+use glam::Vec2;
+use impeller_geometry::{Path, PathBuilder};
+
+/// The magic constant for approximating a quarter circle with a cubic.
+const KAPPA: f32 = 0.552_284_8;
+
+/// A shape, in user coordinates.
+#[derive(Debug, Clone, PartialEq)]
+pub enum Shape {
+    Rect {
+        min: [f32; 2],
+        max: [f32; 2],
+    },
+    /// A closed polygon through the given points.
+    Polygon(Vec<[f32; 2]>),
+    Circle {
+        center: [f32; 2],
+        radius: f32,
+    },
+    /// An open cubic, for curve and stroke coverage.
+    Cubic {
+        start: [f32; 2],
+        c0: [f32; 2],
+        c1: [f32; 2],
+        end: [f32; 2],
+    },
+}
+
+impl Shape {
+    pub fn to_path(&self) -> Path {
+        let mut b = PathBuilder::new();
+        match self {
+            Self::Rect { min, max } => {
+                b.move_to(Vec2::from(*min))
+                    .line_to(Vec2::new(max[0], min[1]))
+                    .line_to(Vec2::from(*max))
+                    .line_to(Vec2::new(min[0], max[1]))
+                    .close();
+            }
+            Self::Polygon(points) => {
+                if let Some((first, rest)) = points.split_first() {
+                    b.move_to(Vec2::from(*first));
+                    for p in rest {
+                        b.line_to(Vec2::from(*p));
+                    }
+                    b.close();
+                }
+            }
+            Self::Circle { center, radius } => {
+                let (cx, cy) = (center[0], center[1]);
+                let r = *radius;
+                let k = KAPPA * r;
+                b.move_to(Vec2::new(cx + r, cy))
+                    .cubic_to(
+                        Vec2::new(cx + r, cy + k),
+                        Vec2::new(cx + k, cy + r),
+                        Vec2::new(cx, cy + r),
+                    )
+                    .cubic_to(
+                        Vec2::new(cx - k, cy + r),
+                        Vec2::new(cx - r, cy + k),
+                        Vec2::new(cx - r, cy),
+                    )
+                    .cubic_to(
+                        Vec2::new(cx - r, cy - k),
+                        Vec2::new(cx - k, cy - r),
+                        Vec2::new(cx, cy - r),
+                    )
+                    .cubic_to(
+                        Vec2::new(cx + k, cy - r),
+                        Vec2::new(cx + r, cy - k),
+                        Vec2::new(cx + r, cy),
+                    )
+                    .close();
+            }
+            Self::Cubic { start, c0, c1, end } => {
+                b.move_to(Vec2::from(*start)).cubic_to(
+                    Vec2::from(*c0),
+                    Vec2::from(*c1),
+                    Vec2::from(*end),
+                );
+            }
+        }
+        b.build()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_rect_encloses_its_corners() {
+        let shape = Shape::Rect {
+            min: [10.0, 20.0],
+            max: [30.0, 50.0],
+        };
+        let bounds = shape.to_path().bounds();
+        assert_eq!(bounds.min, Vec2::new(10.0, 20.0));
+        assert_eq!(bounds.max, Vec2::new(30.0, 50.0));
+    }
+
+    #[test]
+    fn a_circle_is_bounded_by_its_radius() {
+        let shape = Shape::Circle {
+            center: [50.0, 50.0],
+            radius: 20.0,
+        };
+        let bounds = shape.to_path().bounds();
+        // Control points of a cubic circle approximation lie within the
+        // bounding box of the circle itself on the axes.
+        assert!((bounds.min.x - 30.0).abs() < 0.01);
+        assert!((bounds.max.x - 70.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn an_empty_polygon_produces_an_empty_path() {
+        // Scenes come from data and may be degenerate; converting must not
+        // panic on the way in.
+        assert!(Shape::Polygon(Vec::new()).to_path().is_empty());
+    }
+}
