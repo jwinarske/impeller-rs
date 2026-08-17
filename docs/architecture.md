@@ -459,17 +459,27 @@ display, no compositor, and no window system library linked. What a real window
 adds and this cannot reach is an extent the surface dictates and a surface going
 out of date underneath a frame; both are handled, and both are unverified here.
 
-**The GLES window surface is the one cell still empty, and orientation is why.**
-An EGL pbuffer would serve as the headless case a headless Vulkan surface does,
-and the context already selects a config that permits one. The obstacle is that
-the shader translator negates Y for GLSL, so a framebuffer's row zero holds the
-image's *top* row — which is what makes readback need no flip and what makes the
-two backends agree. A window system displays a framebuffer with row zero at the
-bottom, so handing it that same content shows the frame upside down, and a
-pbuffer read back cannot tell the difference. Closing this cell means rendering
-to a window surface without the negation: a second orientation convention chosen
-by where the image is going, which is not a thing to write against a test that
-cannot see it.
+**A GLES window frame is rendered offscreen and blitted in, flipped.** It could
+go straight into the window's own framebuffer, and it would be upside down.
+Everything this renderer draws puts the image's top row at a framebuffer's row
+zero — the shader translator negates Y for GLSL, which is what makes readback
+need no flip and the two backends agree pixel for pixel — while a window system
+reads row zero as the bottom of what it shows.
+
+Blitting with the source's rows exchanged puts that flip in exactly one place,
+at the moment the image stops being something this renderer reads and becomes
+something a window system does. The alternative is a second orientation
+convention threaded through the projection, the scissor, the stencil and the
+readback, each behaving differently depending on where the frame is going. The
+cost is a full-screen blit per frame, which is what an offscreen-then-present
+design costs anywhere and what a multisampled frame already pays for its
+resolve.
+
+An EGL pbuffer is the counterpart of a headless Vulkan surface: creation, being
+made current, the blit and the swap all run with no display. What no test can
+observe is what a window system would actually show, so the property checked is
+the one that decides it — a presented frame is the vertical mirror of the frame
+as rendered — against scenes deliberately not symmetric in the axis under test.
 
 A swapchain is built at a size the caller asks for. There is no useful default:
 a surface that defers its size clamps an unstated one up from zero to its

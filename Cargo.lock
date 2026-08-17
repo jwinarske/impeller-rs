@@ -300,6 +300,13 @@ dependencies = [
 [[package]]
 name = "impeller-present-egl"
 version = "0.1.0"
+dependencies = [
+ "glow",
+ "impeller-hal",
+ "impeller-hal-gles",
+ "impeller-present",
+ "khronos-egl",
+]
 
 [[package]]
 name = "impeller-present-vk"

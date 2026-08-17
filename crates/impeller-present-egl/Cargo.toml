@@ -5,3 +5,13 @@ edition.workspace = true
 rust-version.workspace = true
 publish.workspace = true
 license.workspace = true
+
+[dependencies]
+glow = { workspace = true }
+khronos-egl = { workspace = true }
+impeller-hal = { workspace = true }
+impeller-hal-gles = { workspace = true }
+impeller-present = { workspace = true }
+
+[dev-dependencies]
+khronos-egl = { workspace = true }

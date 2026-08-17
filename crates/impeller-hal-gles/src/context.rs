@@ -14,7 +14,7 @@ use std::sync::Mutex;
 /// surfaceless, GBM, or window platform explicitly. The 1.4 entry point guesses
 /// from the native display type, which is exactly the ambiguity the DRM path
 /// cannot afford.
-type Egl = khronos_egl::DynamicInstance<khronos_egl::EGL1_5>;
+pub type Egl = khronos_egl::DynamicInstance<khronos_egl::EGL1_5>;
 
 /// `EGL_PLATFORM_SURFACELESS_MESA`, for a context with no drawable at all.
 const PLATFORM_SURFACELESS: khronos_egl::Enum = 0x31DD;
@@ -47,6 +47,10 @@ pub struct GlesContext {
     egl: Egl,
     display: khronos_egl::Display,
     context: khronos_egl::Context,
+    /// Kept because a presentation target needs it to create a surface: a
+    /// surface and the context drawing into it must share a config, and only
+    /// the context knows which one it chose.
+    config: khronos_egl::Config,
     capabilities: Capabilities,
     egl_extensions: HashSet<String>,
     gl_extensions: HashSet<String>,
@@ -177,6 +181,7 @@ impl GlesContext {
             egl,
             display,
             context,
+            config,
             capabilities,
             egl_extensions,
             gl_extensions,
@@ -243,6 +248,35 @@ impl GlesContext {
 
     pub(crate) fn set_program(&mut self, program: crate::render::SolidProgram) {
         self.program = Some(program);
+    }
+
+    /// The EGL entry points, display, context and config.
+    ///
+    /// Handed out for a presentation target to build a surface with. Grouped
+    /// rather than returned one at a time because a caller needs all four
+    /// together and any three of them are useless.
+    pub fn egl(
+        &self,
+    ) -> (
+        &Egl,
+        khronos_egl::Display,
+        khronos_egl::Context,
+        khronos_egl::Config,
+    ) {
+        (&self.egl, self.display, self.context, self.config)
+    }
+
+    /// Bind a surface as the drawable, or unbind with `None`.
+    ///
+    /// A context created surfaceless can still have a surface made current
+    /// later; that is what a window target does when it is created, and what it
+    /// undoes when it is destroyed. Doing it here rather than in the target
+    /// keeps every `eglMakeCurrent` this crate performs in one file, which is
+    /// what makes "which surface is current" answerable.
+    pub fn make_surface_current(&self, surface: Option<khronos_egl::Surface>) -> Result<()> {
+        self.egl
+            .make_current(self.display, surface, surface, Some(self.context))
+            .map_err(|e| backend_err("make_current", e))
     }
 
     pub fn raw_gl(&self) -> &glow::Context {

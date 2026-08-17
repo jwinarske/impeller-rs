@@ -46,8 +46,8 @@ alongside windowed surfaces, not a third rendering backend.
 | **Vulkan** | `VkSwapchainKHR`    | VkImage → dma-buf export → drm-rs FB → commit |
 | **GLES**   | EGL window surface  | EGL on GBM → gbm_surface → drm-rs FB → commit |
 
-All four combinations are Tier 1 on Linux. Offscreen, direct scanout, and
-Vulkan WSI work today; the GLES window surface is not implemented.
+All four combinations are Tier 1 on Linux and all four work today, against
+surfaces a caller supplies.
 
 ```rust
 use impeller::{BackendPreference, Canvas, Color, Context, Extent2D, Paint, PixelFormat, Rect};

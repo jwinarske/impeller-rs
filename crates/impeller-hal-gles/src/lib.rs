@@ -18,6 +18,6 @@ pub mod context;
 pub mod hal;
 pub mod render;
 
-pub use context::{DisplayTarget, GlesContext};
+pub use context::{DisplayTarget, Egl, GlesContext};
 pub use hal::GlesHal;
 pub use render::GlesTexture;

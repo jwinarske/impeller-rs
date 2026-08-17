@@ -22,6 +22,15 @@ pub struct GlesTexture {
 }
 
 impl GlesTexture {
+    /// The framebuffer this texture is attached to.
+    ///
+    /// Exposed for a presentation target, which has to read from it to get the
+    /// frame onto a window surface. Reading a texture through its own
+    /// framebuffer is what this backend already does everywhere else.
+    pub fn raw_framebuffer(&self) -> glow::Framebuffer {
+        self.framebuffer
+    }
+
     pub fn extent(&self) -> Extent2D {
         self.extent
     }
