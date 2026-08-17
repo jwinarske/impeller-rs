@@ -210,12 +210,11 @@ name = "impeller"
 version = "0.1.0"
 dependencies = [
  "impeller-core",
+ "impeller-hal",
  "impeller-hal-gles",
  "impeller-hal-vulkan",
  "impeller-present",
  "impeller-present-drm",
- "impeller-present-egl",
- "impeller-present-vk",
 ]
 
 [[package]]
@@ -228,6 +227,12 @@ dependencies = [
 [[package]]
 name = "impeller-core"
 version = "0.1.0"
+dependencies = [
+ "glam",
+ "impeller-geometry",
+ "impeller-hal",
+ "impeller-renderer",
+]
 
 [[package]]
 name = "impeller-entity"

@@ -4,9 +4,10 @@ A tessellation-based 2D vector graphics renderer for Rust, targeting everything
 from desktop discrete GPUs down to embedded SoCs driving panels directly
 through KMS with no compositor present.
 
-> **Status: early development.** The workspace, crate boundaries, and the HAL
-> trait exist; the renderer does not. Most crates are still documented stubs.
-> Nothing here draws pixels yet.
+> **Status: early development.** Solid fills, strokes, blending, and
+> antialiasing render on both backends and are verified against real hardware
+> and a software reference. Gradients, image shaders, text, and windowed
+> presentation are not implemented yet.
 
 ## Why
 
@@ -35,25 +36,30 @@ alongside windowed surfaces, not a third rendering backend.
 | **Vulkan** | `VkSwapchainKHR`    | VkImage → dma-buf export → drm-rs FB → commit |
 | **GLES**   | EGL window surface  | EGL on GBM → gbm_surface → drm-rs FB → commit |
 
-All four combinations are Tier 1 on Linux. The frame loop is identical across
-every one of them — sketched below as the intended API, none of which is
-implemented yet:
+All four combinations are Tier 1 on Linux. Offscreen and direct scanout work
+today; the windowed column is not implemented.
 
 ```rust
-let ctx = impeller::Context::new(BackendPreference::Auto)?;
+use impeller::{BackendPreference, Canvas, Color, Context, Extent2D, Paint, PixelFormat, Rect};
 
-// Windowed...
-let mut target = impeller::present::window(&ctx, &raw_window_handle)?;
-// ...or straight to a display, with no compositor in the picture:
-let mut target = impeller::present::drm(&ctx, output)?;
+// The backend is chosen at run time, so one binary serves a board with a
+// working Vulkan driver and one where only GLES is usable.
+let mut ctx = Context::new(BackendPreference::Auto)?;
 
-loop {
-    let frame = target.acquire()?;          // paced by the target
-    let mut canvas = Canvas::for_frame(&ctx, &frame);
-    draw_ui(&mut canvas);
-    let done = canvas.finish()?;
-    frame.present(done)?;
-}
+let size = Extent2D::new(256, 256);
+let mut surface = ctx.create_surface(size, PixelFormat::Rgba8Unorm)?;
+
+let mut canvas = Canvas::new(size);
+canvas.clear(Color::WHITE);
+canvas.draw_rect(
+    Rect::new(32.0, 32.0, 224.0, 224.0),
+    &Paint::fill(Color::rgba8(0, 120, 220, 255)),
+)?;
+
+// Recording is separate from submitting, so a whole frame is described
+// before any of it reaches the GPU and every shape shares one pass.
+ctx.draw(&mut surface, &canvas.finish())?;
+let pixels = ctx.read(&mut surface)?;
 ```
 
 ## Building

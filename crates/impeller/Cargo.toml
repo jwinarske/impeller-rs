@@ -12,16 +12,15 @@ license.workspace = true
 #   --features vulkan,gles,drm  one binary that picks at runtime
 [features]
 default = ["vulkan", "present-wsi"]
-vulkan = ["dep:impeller-hal-vulkan", "dep:impeller-present-vk"]
-gles = ["dep:impeller-hal-gles", "dep:impeller-present-egl"]
+vulkan = ["dep:impeller-hal-vulkan"]
+gles = ["dep:impeller-hal-gles"]
 drm = ["dep:impeller-present-drm"]
 present-wsi = []
 
 [dependencies]
 impeller-core = { workspace = true }
+impeller-hal = { workspace = true }
 impeller-present = { workspace = true }
 impeller-hal-vulkan = { workspace = true, optional = true }
 impeller-hal-gles = { workspace = true, optional = true }
-impeller-present-vk = { workspace = true, optional = true }
-impeller-present-egl = { workspace = true, optional = true }
 impeller-present-drm = { workspace = true, optional = true }
