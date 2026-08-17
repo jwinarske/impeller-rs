@@ -36,36 +36,22 @@ where
     H::Context: HalContext<Hal = H>,
 {
     use impeller_hal::Batch;
-    use impeller_renderer::{Paint, Renderer, TOLERANCE};
+    use impeller_renderer::{Renderer, TOLERANCE};
+    use impeller_testkit::{pass_for, record_scene};
 
+    // Recording goes through the testkit rather than being repeated here.
+    // Turning scene data into paint has real content — gradient endpoints go
+    // through two transforms — and a second copy of it silently stopped
+    // matching the first as soon as the scene format grew.
     let mut renderer = Renderer::new();
     renderer.begin_frame(target.extent(), TOLERANCE);
     let mut batch = Batch::new();
-    for item in &scene.items {
-        let path = item.shape.to_path();
-        let transform = item.transform.to_affine();
-        let paint = Paint {
-            material: impeller_hal::Material::solid(item.color),
-            blend: item.blend,
-        };
-        match &item.stroke {
-            Some(spec) => renderer
-                .stroke_into(&mut batch, &path, &spec.to_style(), transform, &paint)
-                .expect("stroke"),
-            None => renderer
-                .fill_into(&mut batch, &path, transform, &paint)
-                .expect("fill"),
-        }
-    }
+    record_scene(&mut renderer, &mut batch, scene).expect("record");
 
     // The loop the architecture promises is the same everywhere.
     let image = target.acquire(ctx).expect("acquire");
-    ctx.submit_batch(
-        image,
-        &batch,
-        PassDescriptor::clear(scene.background).with_samples(scene.samples),
-    )
-    .expect("submit");
+    ctx.submit_batch(image, &batch, pass_for(scene))
+        .expect("submit");
     target.present(ctx).expect("present");
 
     let image = target.acquire(ctx).expect("re-acquire for readback");

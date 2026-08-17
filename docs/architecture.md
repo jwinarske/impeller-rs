@@ -539,9 +539,18 @@ comparison where cross-driver float variance is expected, CRC equality for
 scanout), and a single report schema emitted identically by CI containers and
 by a shell on an embedded board.
 
-**Tolerance tables are checked in**, keyed by scene class, backend, and driver.
-Tightening one is a normal change; **loosening one requires a linked
-driver-bug issue**.
+Tolerance is derived from what a scene does rather than assigned per scene:
+**exact where a value is transported, tolerant where it is computed per
+fragment.** A solid fill copies a colour through the pipeline, and any
+difference there is a defect. A gradient evaluates one, a blend converts an
+intermediate to fixed point, and a multisample resolve averages — none of which
+the specification requires to be bit-identical, since shader arithmetic is
+permitted some error and compilers may fuse operations differently. Deriving it
+means a new scene inherits the right rule instead of acquiring a hand-set
+number, and a genuine divergence cannot be waved through by loosening one entry.
+
+Where per-driver tables become necessary, tightening one is a normal change and
+**loosening one requires a linked driver-bug issue**.
 
 | Level | What | Where |
 |---|---|---|

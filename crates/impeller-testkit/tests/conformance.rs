@@ -12,24 +12,7 @@
 
 use impeller_hal::HalContext;
 use impeller_hal_vulkan::{DevicePreference, VulkanContext, VulkanHal};
-use impeller_testkit::{accepts, compare, corpus, render_scene, Scene, Tolerance};
-
-/// Tolerance for a scene, by what it exercises.
-///
-/// Blending and multisampled resolve both convert intermediate results to
-/// normalized fixed-point, where the specification permits either of the two
-/// nearest values. Everything else is required to match exactly.
-fn tolerance_for(scene: &Scene) -> Tolerance {
-    let blends = scene
-        .items
-        .iter()
-        .any(|i| i.blend == impeller_hal::BlendMode::SrcOver);
-    if blends || scene.samples > 1 {
-        Tolerance::ROUNDING
-    } else {
-        Tolerance::EXACT
-    }
-}
+use impeller_testkit::{accepts, compare, corpus, render_scene};
 
 fn devices() -> Option<(VulkanContext, VulkanContext)> {
     let default = VulkanContext::new(DevicePreference::Auto).ok()?;
@@ -66,8 +49,7 @@ fn every_scene_agrees_across_devices() {
         let b = render_scene::<VulkanHal>(&mut software, &scene).expect("software reference");
 
         let difference = compare(&a, &b).expect("same size");
-        let tolerance = tolerance_for(&scene);
-        if !accepts(&difference, tolerance) {
+        if !accepts(&difference, scene.tolerance()) {
             failures.push(format!("  {}: {difference}", scene.name));
         } else {
             eprintln!("  {:<22} {difference}", scene.name);

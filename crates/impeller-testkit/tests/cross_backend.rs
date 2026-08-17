@@ -13,21 +13,7 @@
 use impeller_hal::HalContext;
 use impeller_hal_gles::{DisplayTarget, GlesContext, GlesHal};
 use impeller_hal_vulkan::{DevicePreference, VulkanContext, VulkanHal};
-use impeller_testkit::{accepts, compare, corpus, render_scene, Scene, Tolerance};
-
-/// Blending converts intermediate results to fixed-point, where either of the
-/// two nearest values is permitted. Everything else must match exactly.
-fn tolerance_for(scene: &Scene) -> Tolerance {
-    if scene
-        .items
-        .iter()
-        .any(|i| i.blend == impeller_hal::BlendMode::SrcOver)
-    {
-        Tolerance::ROUNDING
-    } else {
-        Tolerance::EXACT
-    }
-}
+use impeller_testkit::{accepts, compare, corpus, render_scene};
 
 #[test]
 fn the_corpus_matches_across_backends() {
@@ -65,7 +51,7 @@ fn the_corpus_matches_across_backends() {
         };
 
         let difference = compare(&from_vulkan, &from_gles).expect("same size");
-        if accepts(&difference, tolerance_for(&scene)) {
+        if accepts(&difference, scene.tolerance()) {
             eprintln!("  {:<22} {difference}", scene.name);
             compared += 1;
         } else {

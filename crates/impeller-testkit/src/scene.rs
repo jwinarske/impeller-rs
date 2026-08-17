@@ -82,6 +82,36 @@ impl StrokeSpec {
     }
 }
 
+/// A colour stop, as data.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Stop {
+    /// Linear colour with straight alpha.
+    pub color: [f32; 4],
+    pub offset: f32,
+}
+
+impl Stop {
+    pub fn new(color: [f32; 4], offset: f32) -> Self {
+        Self { color, offset }
+    }
+}
+
+/// What fills a shape.
+///
+/// Kept as data alongside the geometry so a gradient scene serializes with
+/// everything else, rather than needing code to reconstruct it.
+#[derive(Debug, Clone, PartialEq)]
+pub enum Fill {
+    Solid([f32; 4]),
+    /// A gradient between two points in the item's own coordinate space, so it
+    /// travels through the item's transform with the geometry.
+    LinearGradient {
+        start: [f32; 2],
+        end: [f32; 2],
+        stops: Vec<Stop>,
+    },
+}
+
 /// One thing to draw.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Item {
@@ -89,8 +119,7 @@ pub struct Item {
     /// Stroke the shape rather than filling it.
     pub stroke: Option<StrokeSpec>,
     pub transform: Transform,
-    /// Linear color with straight alpha.
-    pub color: [f32; 4],
+    pub fill: Fill,
     pub blend: BlendMode,
 }
 
@@ -100,7 +129,18 @@ impl Item {
             shape,
             stroke: None,
             transform: Transform::default(),
-            color,
+            fill: Fill::Solid(color),
+            blend: BlendMode::Src,
+        }
+    }
+
+    /// A shape filled with a gradient between two points in its own space.
+    pub fn gradient(shape: Shape, start: [f32; 2], end: [f32; 2], stops: Vec<Stop>) -> Self {
+        Self {
+            shape,
+            stroke: None,
+            transform: Transform::default(),
+            fill: Fill::LinearGradient { start, end, stops },
             blend: BlendMode::Src,
         }
     }
@@ -110,7 +150,7 @@ impl Item {
             shape,
             stroke: Some(spec),
             transform: Transform::default(),
-            color,
+            fill: Fill::Solid(color),
             blend: BlendMode::Src,
         }
     }
@@ -156,6 +196,31 @@ impl Scene {
     pub fn with_background(mut self, background: [f32; 4]) -> Self {
         self.background = background;
         self
+    }
+
+    /// How closely two implementations must agree on this scene.
+    ///
+    /// The rule is where the value came from, not what the picture looks like:
+    /// **exact where a value is transported, tolerant where it is computed per
+    /// fragment.** A solid fill copies a colour through the pipeline, and any
+    /// difference there is a defect. A gradient evaluates one, a blend converts
+    /// an intermediate result to fixed point, and a multisample resolve
+    /// averages — none of which the specification requires to be bit-identical
+    /// across implementations, since shader arithmetic is permitted some error
+    /// and compilers may fuse operations differently.
+    ///
+    /// Assigning this per scene by hand would drift as the corpus grows, and
+    /// would let a genuine divergence be waved through by loosening one entry.
+    pub fn tolerance(&self) -> crate::image::Tolerance {
+        let computed = self.samples > 1
+            || self.items.iter().any(|item| {
+                item.blend == BlendMode::SrcOver || matches!(item.fill, Fill::LinearGradient { .. })
+            });
+        if computed {
+            crate::image::Tolerance::ROUNDING
+        } else {
+            crate::image::Tolerance::EXACT
+        }
     }
 }
 
@@ -317,6 +382,61 @@ pub fn corpus() -> Vec<Scene> {
             )],
         )
         .with_samples(4),
+        // Gradients are where the two backends most easily diverge: one sends
+        // the paint as push constants, the other as individually-set uniforms,
+        // and the fragment locates itself from an interpolated clip position
+        // whose orientation the two APIs disagree about. Comparing them is the
+        // point of having these in the corpus rather than only in a suite
+        // someone remembers to run twice.
+        Scene::new(
+            "gradient-horizontal",
+            vec![Item::gradient(
+                Shape::Rect {
+                    min: [8.0, 8.0],
+                    max: [120.0, 120.0],
+                },
+                [8.0, 0.0],
+                [120.0, 0.0],
+                vec![Stop::new(RED, 0.0), Stop::new(BLUE, 1.0)],
+            )],
+        ),
+        // Vertical as well as horizontal: an axis mix-up leaves one of the two
+        // looking perfectly correct.
+        Scene::new(
+            "gradient-vertical",
+            vec![Item::gradient(
+                Shape::Circle {
+                    center: [64.0, 64.0],
+                    radius: 52.0,
+                },
+                [0.0, 12.0],
+                [0.0, 116.0],
+                vec![
+                    Stop::new(RED, 0.0),
+                    Stop::new(GREEN, 0.5),
+                    Stop::new(BLUE, 1.0),
+                ],
+            )],
+        ),
+        // Under a transform, so the endpoints are exercised through the same
+        // mapping the geometry takes rather than only through the identity.
+        Scene::new(
+            "gradient-transformed",
+            vec![Item::gradient(
+                Shape::Rect {
+                    min: [0.0, 0.0],
+                    max: [64.0, 64.0],
+                },
+                [0.0, 0.0],
+                [64.0, 0.0],
+                vec![Stop::new(WHITE, 0.0), Stop::new(BLUE, 1.0)],
+            )
+            .with_transform(Transform {
+                scale: [1.5, 1.5],
+                rotate: 0.6,
+                translate: [40.0, 16.0],
+            })],
+        ),
         Scene::new(
             "curve-antialiased",
             vec![Item::stroke(

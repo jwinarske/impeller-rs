@@ -8,9 +8,14 @@ license.workspace = true
 
 [lib]
 # Produces libimpeller.so / .dylib / impeller.dll, the artifact a C API
-# consumer links against in place of the upstream build.
+# consumer links against in place of the upstream build. The name is the whole
+# point: a drop-in has to be findable under the name the linker expects.
+#
+# Deliberately no rlib. Nothing depends on this crate from Rust — it exists to
+# emit the C artifact — and an rlib would collide with the facade crate's, which
+# cargo currently warns about and intends to make an error.
 name = "impeller"
-crate-type = ["cdylib", "staticlib", "rlib"]
+crate-type = ["cdylib", "staticlib"]
 
 [dependencies]
 impeller-core = { workspace = true }
