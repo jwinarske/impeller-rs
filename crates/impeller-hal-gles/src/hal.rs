@@ -14,6 +14,11 @@ pub struct GlesHal;
 impl Hal for GlesHal {
     type Context = GlesContext;
     type Texture = GlesTexture;
+    /// A fence type exists to satisfy the trait, but nothing constructs one:
+    /// deferred submission is not implemented here, so the default returns
+    /// unsupported and this is never produced. Naming an uninhabited type is
+    /// more honest than naming one that could be built but never signals.
+    type Fence = std::convert::Infallible;
 
     const NAME: &'static str = "gles";
 }

@@ -6,10 +6,11 @@
 //! the renderer and the conformance harness talk to.
 
 use crate::device::VulkanContext;
+use crate::fence::VulkanFence;
 use crate::resource::VulkanTexture;
 use impeller_hal::{
-    Batch, Capabilities, Extent2D, Hal, HalContext, HalTexture, PassDescriptor, PixelFormat,
-    Result, TextureDescriptor,
+    Batch, Capabilities, Extent2D, Hal, HalContext, HalTexture, Modifier, PassDescriptor,
+    PixelFormat, Result, TextureDescriptor,
 };
 
 /// Marker naming the Vulkan backend's family of types.
@@ -19,6 +20,7 @@ pub struct VulkanHal;
 impl Hal for VulkanHal {
     type Context = VulkanContext;
     type Texture = VulkanTexture;
+    type Fence = VulkanFence;
 
     const NAME: &'static str = "vulkan";
 }
@@ -59,5 +61,35 @@ impl HalContext for VulkanContext {
 
     fn read_texture(&mut self, texture: &mut VulkanTexture) -> Result<Vec<u8>> {
         VulkanContext::read_texture(self, texture)
+    }
+
+    fn create_exportable_texture(
+        &mut self,
+        extent: Extent2D,
+        format: PixelFormat,
+        modifiers: &[Modifier],
+    ) -> Result<VulkanTexture> {
+        VulkanContext::create_exportable_texture(self, extent, format, modifiers)
+    }
+
+    #[cfg(unix)]
+    fn export_texture(
+        &mut self,
+        texture: &VulkanTexture,
+    ) -> Result<impeller_hal::ExternalImageDesc> {
+        VulkanContext::export_texture(self, texture)
+    }
+
+    fn submit_batch_deferred(
+        &mut self,
+        target: &mut VulkanTexture,
+        batch: &Batch,
+        pass: PassDescriptor,
+    ) -> Result<VulkanFence> {
+        VulkanContext::submit_batch_deferred(self, target, batch, pass)
+    }
+
+    fn retire_fence(&mut self, fence: VulkanFence) {
+        VulkanContext::retire_fence(self, fence)
     }
 }

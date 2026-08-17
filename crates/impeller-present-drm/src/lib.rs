@@ -1,14 +1,18 @@
-//! DRM/KMS direct-scanout presentation: rendering straight to a display with no
-//! compositor present, the configuration embedded, automotive, kiosk, and
-//! industrial products actually ship.
+//! DRM/KMS direct scanout: rendering straight to a display with no compositor.
 //!
-//! DRM is a presentation target, not a third rendering backend. Both rendering
-//! backends reach it: Vulkan exports VkImages as dma-bufs, and GLES renders
-//! into a gbm_surface.
+//! This is the configuration embedded, automotive, kiosk, and industrial
+//! products actually ship, and the one most renderers leave as an exercise. It
+//! is a presentation target, not a rendering backend: the renderer draws through
+//! a HAL as always, and this decides how the result reaches a panel.
 //!
-//! All KMS logic belongs to drm-rs -- connector, CRTC and plane discovery, mode
-//! selection, atomic commit construction, page-flip events, hotplug, and
-//! framebuffer import. The dependency direction is one-way and this crate does
-//! not reimplement any of it. What lives here is buffer allocation, image
-//! import and export, frame pacing against flip completion, and fence
-//! plumbing.
+//! Everything to do with KMS belongs to drm-rs and is consumed through
+//! [`output::ScanoutOutput`], which states exactly what this crate requires.
+//! Expressing it as a trait lets the two projects be sequenced against each
+//! other, and makes the parts most worth testing — ring accounting and fence
+//! plumbing — testable without a display attached.
+
+pub mod output;
+pub mod target;
+
+pub use output::{CommitRequest, DmaBufPlanes, FbHandle, Mode, OutputEvent, ScanoutOutput};
+pub use target::{DrmScanoutTarget, DEFAULT_RING_DEPTH};

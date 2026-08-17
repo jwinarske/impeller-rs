@@ -57,6 +57,12 @@ pub use resource::{DmaBufPlane, ExternalImageDesc};
 pub trait Hal: 'static {
     type Context: HalContext<Hal = Self>;
     type Texture: HalTexture;
+    /// GPU completion, for callers that submit without waiting.
+    ///
+    /// Named here because the DRM presentation path consumes one: it needs
+    /// something to hand the kernel and something to decide when a frame slot
+    /// is free again.
+    type Fence: HalFence;
 
     /// Backend name, for logs and report fingerprints.
     const NAME: &'static str;
@@ -127,6 +133,24 @@ pub trait HalContext {
     /// apparatus is built on rendering to one and reading it back.
     fn read_texture(&mut self, texture: &mut <Self::Hal as Hal>::Texture) -> Result<Vec<u8>>;
 
+    /// Allocate a target that can be shared with a display controller.
+    ///
+    /// `modifiers` are the layouts the other side accepts, in preference order.
+    /// The default reports the capability as absent, which is the honest answer
+    /// for a backend that cannot do it: callers check
+    /// [`DmaBufSupport::can_allocate_scanout`] and take the GBM-allocated path
+    /// instead. This is capability gating rather than a stub — a backend that
+    /// answered every method this way would be useless, but one that answers
+    /// only the optional ones is correctly describing itself.
+    fn create_exportable_texture(
+        &mut self,
+        _extent: Extent2D,
+        _format: PixelFormat,
+        _modifiers: &[Modifier],
+    ) -> Result<<Self::Hal as Hal>::Texture> {
+        Err(Error::Unsupported("allocating exportable images"))
+    }
+
     /// Export a texture as a dma-buf for scanout or cross-device sharing.
     ///
     /// Returns [`Error::Unsupported`] where [`DmaBufSupport::export`] is false;
@@ -138,6 +162,24 @@ pub trait HalContext {
     ) -> Result<ExternalImageDesc> {
         Err(Error::Unsupported("dma-buf export"))
     }
+
+    /// Submit a batch without waiting, returning something that signals when
+    /// the GPU has finished.
+    ///
+    /// A frame loop needs this rather than the waiting form: the returned
+    /// fence is what gets handed to a display commit, and what decides when a
+    /// frame slot may be reused.
+    fn submit_batch_deferred(
+        &mut self,
+        _target: &mut <Self::Hal as Hal>::Texture,
+        _batch: &Batch,
+        _pass: PassDescriptor,
+    ) -> Result<<Self::Hal as Hal>::Fence> {
+        Err(Error::Unsupported("deferred submission"))
+    }
+
+    /// Release a deferred submission once its work has completed.
+    fn retire_fence(&mut self, _fence: <Self::Hal as Hal>::Fence) {}
 }
 
 /// How a pass is configured, beyond the draws themselves.

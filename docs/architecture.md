@@ -339,6 +339,21 @@ one-way and this crate reimplements no KMS logic.**
 | Buffer allocation, image import and export | impeller-present-drm |
 | Frame pacing against flip completion, fence plumbing | impeller-present-drm |
 
+The required surface is expressed as a trait (`ScanoutOutput`) rather than
+consumed directly. That states exactly what drm-rs must provide, so the two
+projects can be sequenced against each other rather than discovering a mismatch
+at integration, and it makes the parts most worth testing runnable without a
+display: ring accounting and fence plumbing are where this path goes wrong, and
+neither needs real hardware to go wrong. What a stand-in display cannot check is
+whether a real controller accepts the buffers, which is what the VKMS lane and
+the board rack exist for.
+
+**A slot can be held by two different things, and they need different waits.**
+A buffer the display still owns frees when a flip completes; a buffer the GPU
+still owns frees when its fence signals. Waiting for a display event in the
+second case waits for something that is not coming, which stalls the loop until
+it times out rather than failing outright.
+
 **Vulkan path**, triple-buffered: a ring of VkImages is allocated with
 `VK_EXT_image_drm_format_modifier` using the negotiated modifier set and
 exported once at startup as dma-bufs, which drm-rs imports into framebuffers.

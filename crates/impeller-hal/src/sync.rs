@@ -38,6 +38,22 @@ pub trait HalFence: Send + Sync + 'static {
     }
 }
 
+/// A fence for a backend that cannot submit without waiting.
+///
+/// Uninhabited, so every method is unreachable: no value can exist to call one
+/// on. That is a stronger statement than a type whose methods return errors,
+/// which would be constructible and could reach a caller expecting a real
+/// fence.
+impl HalFence for std::convert::Infallible {
+    fn is_signaled(&self) -> Result<bool> {
+        match *self {}
+    }
+
+    fn wait(&self, _timeout: Duration) -> Result<bool> {
+        match *self {}
+    }
+}
+
 /// How long a frame-loop wait should tolerate before it is considered a hang.
 ///
 /// Generous relative to any real frame: a wait reaching this has hit a lost
