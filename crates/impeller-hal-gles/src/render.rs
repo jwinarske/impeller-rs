@@ -42,6 +42,12 @@ pub(crate) struct SolidProgram {
     /// each member is set individually. The array of stops needs one location
     /// per element for the same reason.
     pub(crate) stops: [Option<glow::UniformLocation>; impeller_hal::MAX_STOPS],
+    /// The sampler the image paint reads.
+    ///
+    /// The translator combines WGSL's separate texture and sampler into one
+    /// GLSL sampler, named for the texture's group and binding, so that name is
+    /// part of the contract in exactly the way the paint member names are.
+    pub(crate) image: Option<glow::UniformLocation>,
     /// Every non-array member, paired with where it starts in the packed
     /// material.
     ///
@@ -96,6 +102,15 @@ impl GlesContext {
                 glow::TEXTURE_MAG_FILTER,
                 glow::LINEAR as i32,
             );
+            // Clamped, to match the Vulkan sampler. GL defaults to repeating,
+            // and the difference is invisible until something samples an edge:
+            // a linear filter at the last texel then blends with the first one
+            // from the opposite side, where clamping holds the edge. Tiling is
+            // the shader's job, so a texture that wrapped here would tile twice
+            // in repeat mode and bleed in the other two.
+            for axis in [glow::TEXTURE_WRAP_S, glow::TEXTURE_WRAP_T] {
+                gl.tex_parameter_i32(glow::TEXTURE_2D, axis, glow::CLAMP_TO_EDGE as i32);
+            }
 
             let framebuffer = gl
                 .create_framebuffer()
@@ -147,6 +162,31 @@ impl GlesContext {
         batch: &Batch,
         pass: PassDescriptor,
     ) -> Result<()> {
+        self.submit_batch_textured(target, batch, pass, &[])
+    }
+
+    /// Draw a batch into a target, with a texture table its image paints index.
+    pub fn submit_batch_textured(
+        &mut self,
+        target: &mut GlesTexture,
+        batch: &Batch,
+        pass: PassDescriptor,
+        textures: &[&GlesTexture],
+    ) -> Result<()> {
+        // Checked before anything is bound, so a batch naming a slot nobody
+        // supplied fails rather than reading whatever is on the unit.
+        for slot in batch.texture_slots() {
+            if slot as usize >= textures.len() {
+                return Err(Error::Backend {
+                    backend: "gles",
+                    detail: format!(
+                        "a draw samples texture slot {slot}, but only {} were supplied",
+                        textures.len()
+                    ),
+                });
+            }
+        }
+        let placeholder = self.placeholder_texture()?;
         if !pass.samples.is_power_of_two() {
             return Err(Error::Unsupported("sample count is not a power of two"));
         }
@@ -261,6 +301,7 @@ impl GlesContext {
             // started and what an unclipped draw wants.
             let mut scissor: Option<Scissor> = None;
             let mut stencil_state: Option<ClipState> = None;
+            let mut bound_texture: Option<Option<u32>> = None;
             for draw in batch.draws() {
                 if current != Some(draw.blend) {
                     apply_blend(gl, draw.blend);
@@ -300,6 +341,24 @@ impl GlesContext {
                     }
                     scissor = wanted;
                 }
+                // Bound for every draw, not only the ones that sample. A GLES
+                // sampler left pointing at whatever unit a previous frame used
+                // reads a texture that may since have been deleted, so the
+                // placeholder is bound explicitly rather than by omission.
+                let wanted = draw.material.texture_slot();
+                if bound_texture != Some(wanted) {
+                    let texture = match wanted {
+                        Some(slot) => textures[slot as usize].texture,
+                        None => placeholder,
+                    };
+                    gl.active_texture(glow::TEXTURE0);
+                    gl.bind_texture(glow::TEXTURE_2D, Some(texture));
+                    if let Some(location) = &program.image {
+                        gl.uniform_1_i32(Some(location), 0);
+                    }
+                    bound_texture = Some(wanted);
+                }
+
                 let packed = draw.material.to_push_constants();
                 let set = |location: &Option<glow::UniformLocation>, at: usize| {
                     if let Some(location) = location {
@@ -352,6 +411,56 @@ impl GlesContext {
     }
 
     /// Read a target back, tightly packed and top-row first.
+    /// Fill a texture from host memory, tightly packed and top row first.
+    ///
+    /// Stated in the same layout as [`Self::read_texture`], so a round trip
+    /// through the pair is the identity on both backends.
+    ///
+    /// No row flip, for the same reason readback needs none: the shader
+    /// translator negates Y for GLSL, which puts the image's top row at GL's
+    /// zero. Flipping here would mean uploaded pixels and rendered ones
+    /// disagreed about which way up they were, and only one of the two would
+    /// look wrong.
+    pub fn write_texture(&mut self, texture: &mut GlesTexture, pixels: &[u8]) -> Result<()> {
+        let extent = texture.extent;
+        let size = (extent.area() * 4) as usize;
+        if pixels.len() != size {
+            return Err(Error::Backend {
+                backend: "gles",
+                detail: format!("texture wants {size} bytes, {} supplied", pixels.len()),
+            });
+        }
+
+        let gl = self.raw_gl();
+        // SAFETY: a context is current and the source is sized for the region
+        // being written.
+        unsafe {
+            gl.bind_texture(glow::TEXTURE_2D, Some(texture.texture));
+            gl.pixel_store_i32(glow::UNPACK_ALIGNMENT, 1);
+            gl.tex_sub_image_2d(
+                glow::TEXTURE_2D,
+                0,
+                0,
+                0,
+                extent.width as i32,
+                extent.height as i32,
+                glow::RGBA,
+                glow::UNSIGNED_BYTE,
+                glow::PixelUnpackData::Slice(pixels),
+            );
+            gl.bind_texture(glow::TEXTURE_2D, None);
+
+            let error = gl.get_error();
+            if error != glow::NO_ERROR {
+                return Err(Error::Backend {
+                    backend: "gles",
+                    detail: format!("upload produced GL error {error:#x}"),
+                });
+            }
+        }
+        Ok(())
+    }
+
     pub fn read_texture(&mut self, texture: &mut GlesTexture) -> Result<Vec<u8>> {
         let extent = texture.extent;
         let size = (extent.area() * 4) as usize;
@@ -751,6 +860,11 @@ fn build_program(gl: &glow::Context) -> Result<SolidProgram> {
         })
         .collect();
 
+        // Naga names a combined sampler after the texture's group and binding
+        // rather than after the WGSL variable, so this is the generated name
+        // and not `image_texture`.
+        let image = gl.get_uniform_location(program, "_group_0_binding_0_fs");
+
         let vao = gl
             .create_vertex_array()
             .map_err(|e| gl_err("create_vertex_array", &e))?;
@@ -764,6 +878,7 @@ fn build_program(gl: &glow::Context) -> Result<SolidProgram> {
         Ok(SolidProgram {
             program,
             stops,
+            image,
             members,
             vao,
             vertices,
@@ -797,7 +912,7 @@ fn internal_format(format: PixelFormat) -> u32 {
     }
 }
 
-fn gl_err(what: &str, detail: &str) -> Error {
+pub(crate) fn gl_err(what: &str, detail: &str) -> Error {
     Error::Backend {
         backend: "gles",
         detail: format!("{what}: {detail}"),

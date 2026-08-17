@@ -49,7 +49,7 @@ pub use blend::{BlendFactor, BlendFactors, BlendMode};
 pub use capabilities::{Capabilities, DmaBufSupport, SampleCounts, SyncSupport};
 pub use error::{Error, Result};
 pub use format::{Extent2D, FormatModifierSet, Fourcc, Modifier, PixelFormat};
-pub use material::{Material, MaterialVariant, Stop, MATERIAL_FLOATS, MAX_STOPS};
+pub use material::{Material, MaterialVariant, Stop, TileMode, MATERIAL_FLOATS, MAX_STOPS};
 pub use resource::{BufferDescriptor, BufferUsage, TextureDescriptor, TextureUsage};
 pub use scissor::Scissor;
 pub use sync::{HalFence, FRAME_WAIT_TIMEOUT};
@@ -130,6 +130,31 @@ pub trait HalContext {
         target: &mut <Self::Hal as Hal>::Texture,
         batch: &Batch,
         pass: PassDescriptor,
+    ) -> Result<()> {
+        self.submit_batch_textured(target, batch, pass, &[])
+    }
+
+    /// Draw a batch whose materials sample textures.
+    ///
+    /// `textures` is the table a [`Material::Image`] slot indexes. It is passed
+    /// alongside the batch rather than held inside it because a batch is a
+    /// description a recorder produces without touching the device, and a
+    /// backend texture handle is not something it can name.
+    ///
+    /// The target is borrowed mutably and the table immutably, so a batch
+    /// cannot sample the target it draws into. That restriction is real rather
+    /// than incidental — reading an attachment being written in the same pass
+    /// needs machinery this does not have — and having the borrow checker state
+    /// it is better than discovering it as a driver-dependent picture.
+    ///
+    /// A slot with no entry is an error rather than a fallback: a paint
+    /// silently drawn as something else is the failure nobody debugs from.
+    fn submit_batch_textured(
+        &mut self,
+        target: &mut <Self::Hal as Hal>::Texture,
+        batch: &Batch,
+        pass: PassDescriptor,
+        textures: &[&<Self::Hal as Hal>::Texture],
     ) -> Result<()>;
 
     /// Copy a target back to host memory, tightly packed.
@@ -138,6 +163,22 @@ pub trait HalContext {
     /// target is a first-class citizen: the entire golden and conformance
     /// apparatus is built on rendering to one and reading it back.
     fn read_texture(&mut self, texture: &mut <Self::Hal as Hal>::Texture) -> Result<Vec<u8>>;
+
+    /// Fill a texture from host memory, tightly packed and top row first.
+    ///
+    /// The exact inverse of [`Self::read_texture`], stated in the same layout,
+    /// so a round trip through the pair is the identity on every backend. That
+    /// is what lets it be checked without a decoder: write known bytes, read
+    /// them back, compare.
+    ///
+    /// Decoding images is out of scope for this project; getting already
+    /// decoded pixels onto the device is not. Without this, an image shader
+    /// could sample nothing but what the renderer itself had drawn.
+    fn write_texture(
+        &mut self,
+        texture: &mut <Self::Hal as Hal>::Texture,
+        pixels: &[u8],
+    ) -> Result<()>;
 
     /// Allocate a target that can be shared with a display controller.
     ///

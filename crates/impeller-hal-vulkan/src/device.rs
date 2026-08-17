@@ -151,6 +151,20 @@ pub struct VulkanContext {
     queue: vk::Queue,
     queue_family_index: u32,
     capabilities: Capabilities,
+    /// Texture sampling objects, built the first time anything samples.
+    ///
+    /// Lazy rather than eager because a context that never draws an image
+    /// should not allocate a sampler, a layout, and a one-pixel texture to sit
+    /// unused -- and every context created by a test that only fills shapes is
+    /// exactly that.
+    descriptor_layout: Option<vk::DescriptorSetLayout>,
+    sampler: Option<vk::Sampler>,
+    placeholder: Option<crate::resource::VulkanTexture>,
+    /// Pool, view and set for the placeholder, owned by the context rather than
+    /// by a submission so that a deferred submission may use it: a per-
+    /// submission pool would have to survive until a fence the caller retires
+    /// whenever it chooses.
+    placeholder_binding: Option<(vk::DescriptorPool, vk::ImageView, vk::DescriptorSet)>,
     enabled_extensions: HashSet<String>,
     instance: ash::Instance,
     _entry: ash::Entry,
@@ -352,6 +366,10 @@ impl VulkanContext {
             queue,
             queue_family_index,
             capabilities,
+            descriptor_layout: None,
+            sampler: None,
+            placeholder: None,
+            placeholder_binding: None,
             enabled_extensions: enabled,
             instance,
             _entry: entry,
@@ -360,6 +378,77 @@ impl VulkanContext {
 
     pub fn capabilities(&self) -> &Capabilities {
         &self.capabilities
+    }
+
+    /// The descriptor set layout every pipeline is built against.
+    pub(crate) fn descriptor_layout(&mut self) -> Result<vk::DescriptorSetLayout> {
+        if self.descriptor_layout.is_none() {
+            self.descriptor_layout = Some(crate::sampling::create_descriptor_layout(&self.device)?);
+        }
+        Ok(self.descriptor_layout.expect("just created"))
+    }
+
+    /// The one sampler every image draw uses.
+    pub(crate) fn sampler(&mut self) -> Result<vk::Sampler> {
+        if self.sampler.is_none() {
+            self.sampler = Some(crate::sampling::create_sampler(&self.device)?);
+        }
+        Ok(self.sampler.expect("just created"))
+    }
+
+    /// A one-pixel opaque white texture, bound where a draw samples nothing.
+    ///
+    /// Left in a shader-readable layout for good: nothing writes to it after
+    /// creation, so it needs no transition at any later point and cannot be
+    /// caught in the wrong layout by a pass that happened to run first.
+    ///
+    /// White rather than transparent so that a bug binding it in place of a
+    /// real texture shows up as a blank shape rather than as nothing at all.
+    pub(crate) fn placeholder_texture(&mut self) -> Result<vk::Image> {
+        if self.placeholder.is_none() {
+            let mut texture = self.create_texture(&impeller_hal::TextureDescriptor::offscreen(
+                impeller_hal::Extent2D::new(1, 1),
+                impeller_hal::PixelFormat::Rgba8Unorm,
+            ))?;
+            self.write_texture(&mut texture, &[255, 255, 255, 255])?;
+
+            let device = self.device.clone();
+            let cmd = self.begin_one_shot()?;
+            crate::resource::transition(
+                &device,
+                cmd,
+                texture.raw_image(),
+                texture.layout(),
+                vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
+            );
+            if let Err(e) = self.submit_one_shot(cmd) {
+                self.destroy_texture(texture);
+                return Err(e);
+            }
+            texture.set_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL);
+            self.placeholder = Some(texture);
+        }
+        // The image handle rather than the texture, so a caller holding it is
+        // not also holding a borrow of the context it needs to keep using.
+        Ok(self.placeholder.as_ref().expect("just created").raw_image())
+    }
+
+    /// The descriptor set bound where a draw samples nothing.
+    pub(crate) fn placeholder_set(&mut self) -> Result<vk::DescriptorSet> {
+        if let Some((_, _, set)) = self.placeholder_binding {
+            return Ok(set);
+        }
+        let image = self.placeholder_texture()?;
+        let layout = self.descriptor_layout()?;
+        let sampler = self.sampler()?;
+        let binding = crate::sampling::create_placeholder_binding(
+            &self.device.clone(),
+            image,
+            layout,
+            sampler,
+        )?;
+        self.placeholder_binding = Some(binding);
+        Ok(binding.2)
     }
 
     /// Whether the validation layer is actually installed and reporting.
@@ -570,6 +659,25 @@ impl Drop for VulkanContext {
         // so it is dropped explicitly before anything else is destroyed.
         self.release_retained();
         self.pipelines.destroy(&self.device);
+        // Before the allocator, since the placeholder holds an allocation.
+        if let Some(texture) = self.placeholder.take() {
+            self.destroy_texture(texture);
+        }
+        // SAFETY: nothing is in flight, and no descriptor set still refers to
+        // either of these -- every other pool is destroyed with the submission
+        // that made it.
+        unsafe {
+            if let Some((pool, view, _)) = self.placeholder_binding.take() {
+                self.device.destroy_descriptor_pool(pool, None);
+                self.device.destroy_image_view(view, None);
+            }
+            if let Some(sampler) = self.sampler.take() {
+                self.device.destroy_sampler(sampler, None);
+            }
+            if let Some(layout) = self.descriptor_layout.take() {
+                self.device.destroy_descriptor_set_layout(layout, None);
+            }
+        }
         drop(self.allocator.take());
         // SAFETY: every submission this context made was waited on before the
         // call that made it returned, so nothing is in flight. Objects are

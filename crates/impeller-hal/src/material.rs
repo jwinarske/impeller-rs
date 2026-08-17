@@ -58,6 +58,14 @@ pub mod kind {
     pub const LINEAR: f32 = 1.0;
     pub const RADIAL: f32 = 2.0;
     pub const SWEEP: f32 = 3.0;
+    pub const IMAGE: f32 = 4.0;
+}
+
+/// Tile mode selector shared with the shader.
+pub mod tile {
+    pub const CLAMP: f32 = 0.0;
+    pub const REPEAT: f32 = 1.0;
+    pub const DECAL: f32 = 2.0;
 }
 
 /// A colour stop.
@@ -117,6 +125,43 @@ pub enum Material {
         end_angle: f32,
         stops: Vec<Stop>,
     },
+    /// A texture, sampled through a mapping from clip space.
+    ///
+    /// `origin` and `to_local` together are an affine: a clip-space position
+    /// maps to texture coordinates as `to_local * (clip - origin)`, which lands
+    /// the image's top-left corner at zero and its bottom-right at one. The
+    /// same pair a radial gradient uses, for the same reason — clip space is
+    /// anisotropic on a non-square target, so a mapping that ignored it would
+    /// stretch every image by the aspect ratio.
+    ///
+    /// Which texture is not named here. The material is data the recorder
+    /// produces without touching the device, so it carries a slot into the
+    /// table supplied at submission instead of a backend handle.
+    Image {
+        origin: [f32; 2],
+        to_local: ToLocal,
+        /// Index into the texture table given at submission.
+        slot: u32,
+        /// Scales the sampled color, for drawing an image translucently.
+        alpha: f32,
+        tile: TileMode,
+    },
+}
+
+/// What happens outside an image's own bounds.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum TileMode {
+    /// Hold the edge pixel. The usual choice for drawing an image once.
+    #[default]
+    Clamp,
+    /// Repeat the image, tiling the plane.
+    Repeat,
+    /// Draw nothing outside the image.
+    ///
+    /// Distinct from clamping in the only case that matters: a shape larger
+    /// than the image it is filled with. Clamping smears the border across the
+    /// remainder, which reads as a rendering fault rather than as a choice.
+    Decal,
 }
 
 impl Material {
@@ -133,13 +178,24 @@ impl Material {
             | Self::SweepGradient { stops, .. } => {
                 stops.is_empty() || stops.iter().all(|s| s.color[3] <= 0.0)
             }
+            // What the texture holds is unknown here, so only a zero alpha
+            // makes an image provably invisible.
+            Self::Image { alpha, .. } => *alpha <= 0.0,
+        }
+    }
+
+    /// The texture slot this samples, for a backend building its bindings.
+    pub fn texture_slot(&self) -> Option<u32> {
+        match self {
+            Self::Image { slot, .. } => Some(*slot),
+            _ => None,
         }
     }
 
     /// The stops, for any material that has them.
     fn stops(&self) -> &[Stop] {
         match self {
-            Self::Solid(_) => &[],
+            Self::Solid(_) | Self::Image { .. } => &[],
             Self::LinearGradient { stops, .. }
             | Self::RadialGradient { stops, .. }
             | Self::SweepGradient { stops, .. } => stops,
@@ -161,6 +217,30 @@ impl Material {
             return out;
         }
 
+        // An image carries no stops and no count, and must be packed before
+        // the gradient path below decides it has too few to interpolate.
+        if let Self::Image {
+            origin,
+            to_local,
+            alpha,
+            tile,
+            ..
+        } = self
+        {
+            out[layout::GEOMETRY] = origin[0];
+            out[layout::GEOMETRY + 1] = origin[1];
+            out[layout::GEOMETRY + 2] = *alpha;
+            out[layout::GEOMETRY + 3] = match tile {
+                TileMode::Clamp => tile::CLAMP,
+                TileMode::Repeat => tile::REPEAT,
+                TileMode::Decal => tile::DECAL,
+            };
+            out[layout::TO_LOCAL..layout::TO_LOCAL + 4].copy_from_slice(to_local);
+            out[layout::PARAMS] = 1.0;
+            out[layout::PARAMS + 1] = kind::IMAGE;
+            return out;
+        }
+
         let stops = self.stops();
         let count = stops.len().min(MAX_STOPS);
         for (i, stop) in stops.iter().take(count).enumerate() {
@@ -178,7 +258,7 @@ impl Material {
         }
 
         match self {
-            Self::Solid(_) => unreachable!("handled above"),
+            Self::Solid(_) | Self::Image { .. } => unreachable!("handled above"),
             Self::LinearGradient { start, end, .. } => {
                 out[layout::GEOMETRY] = start[0];
                 out[layout::GEOMETRY + 1] = start[1];

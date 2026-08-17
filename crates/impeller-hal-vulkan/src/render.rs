@@ -125,6 +125,18 @@ impl VulkanContext {
         batch: &Batch,
         pass: PassDescriptor,
     ) -> Result<()> {
+        self.submit_batch_textured(target, batch, pass, &[])
+    }
+
+    /// Record and submit a whole batch as one render pass, with a texture table
+    /// its image paints index.
+    pub fn submit_batch_textured(
+        &mut self,
+        target: &mut VulkanTexture,
+        batch: &Batch,
+        pass: PassDescriptor,
+        textures: &[&VulkanTexture],
+    ) -> Result<()> {
         let format = vk_format(target.format());
         let clear = pass.clear;
 
@@ -176,6 +188,8 @@ impl VulkanContext {
             )?;
         }
 
+        let bindings = crate::sampling::build(self, batch, textures)?;
+
         let device = self.raw_device().clone();
         let vertex_buffer = self.upload(
             cast_bytes(batch.vertices()),
@@ -196,10 +210,13 @@ impl VulkanContext {
             index_buffer.buffer,
             pass,
             stencil_format,
+            &bindings,
+            textures,
         );
 
         self.release(vertex_buffer);
         self.release(index_buffer);
+        bindings.destroy(self);
         result
     }
 
@@ -215,6 +232,8 @@ impl VulkanContext {
         index_buffer: vk::Buffer,
         pass: PassDescriptor,
         stencil_format: Option<vk::Format>,
+        bindings: &crate::sampling::Bindings,
+        sampled: &[&VulkanTexture],
     ) -> Result<()> {
         let layout = self.pipeline_cache().layout().expect("ensured above");
         let extent = target.extent();
@@ -300,6 +319,11 @@ impl VulkanContext {
         let outcome = (|| -> Result<()> {
             let cmd = self.begin_one_shot()?;
 
+            // Before the render pass begins, since a layout transition is not
+            // legal inside one. Whatever left these in a color-attachment or
+            // transfer layout, a shader cannot read them there.
+            crate::sampling::transition_for_sampling(device, cmd, sampled);
+
             if clear.is_none() {
                 // Loading requires the attachment already be in the layout the
                 // render pass declares, and the texture may be sitting in
@@ -358,6 +382,7 @@ impl VulkanContext {
                     cmd,
                     layout,
                     area,
+                    bindings,
                 };
                 let mut state = RecordedState::at_pass_start(area);
                 for draw in batch.draws() {
@@ -571,6 +596,9 @@ impl VulkanContext {
         pass: PassDescriptor,
         stencil_format: Option<vk::Format>,
     ) -> Result<crate::fence::VulkanFence> {
+        // A deferred submission samples nothing yet, so the context's own
+        // placeholder set serves and no pool has to outlive the fence.
+        let bindings = crate::sampling::Bindings::placeholder_only(self.placeholder_set()?);
         let layout = self.pipeline_cache().layout().expect("ensured above");
         let extent = target.extent();
 
@@ -674,6 +702,7 @@ impl VulkanContext {
                 cmd,
                 layout,
                 area,
+                bindings: &bindings,
             };
             let mut state = RecordedState::at_pass_start(area);
             for (draw, pipeline) in batch.draws().iter().zip(&pipelines) {
@@ -705,7 +734,11 @@ impl VulkanContext {
         let layout = match self.pipeline_cache().layout() {
             Some(l) => l,
             None => {
-                let l = build_pipeline_layout(&device)?;
+                // Built here rather than lazily beside the sampler, because
+                // every pipeline declares the set whether it samples or not
+                // and so cannot be created without it.
+                let descriptors = self.descriptor_layout()?;
+                let l = build_pipeline_layout(&device, descriptors)?;
                 self.pipeline_cache_mut().layout = Some(l);
                 l
             }
@@ -878,15 +911,22 @@ pub(crate) fn sample_flags(count: u32) -> vk::SampleCountFlags {
     }
 }
 
-fn build_pipeline_layout(device: &ash::Device) -> Result<vk::PipelineLayout> {
-    // Paint travels as a push constant, so the layout declares the range even
-    // though there are no descriptor sets. One layout serves every pipeline,
-    // since they all take the same paint.
+fn build_pipeline_layout(
+    device: &ash::Device,
+    descriptor_layout: vk::DescriptorSetLayout,
+) -> Result<vk::PipelineLayout> {
+    // Paint travels as a push constant; the one descriptor set carries the
+    // texture an image paint samples. One layout serves every pipeline, since
+    // they all take the same paint and declare the same binding -- which is
+    // also why a solid fill still binds something there.
     let ranges = [vk::PushConstantRange::default()
         .stage_flags(vk::ShaderStageFlags::FRAGMENT)
         .offset(0)
         .size((impeller_hal::MATERIAL_FLOATS * 4) as u32)];
-    let info = vk::PipelineLayoutCreateInfo::default().push_constant_ranges(&ranges);
+    let set_layouts = [descriptor_layout];
+    let info = vk::PipelineLayoutCreateInfo::default()
+        .push_constant_ranges(&ranges)
+        .set_layouts(&set_layouts);
     unsafe { device.create_pipeline_layout(&info, None) }
         .map_err(|e| backend_err("create_pipeline_layout", e))
 }
@@ -1074,6 +1114,7 @@ struct PassRecording<'a> {
     layout: vk::PipelineLayout,
     /// The whole render area, which is also what an unclipped draw scissors to.
     area: vk::Rect2D,
+    bindings: &'a crate::sampling::Bindings,
 }
 
 /// What has already been recorded, so each piece is set only where it changes.
@@ -1082,6 +1123,7 @@ struct PassRecording<'a> {
 /// a clip are the common case rather than the exception.
 struct RecordedState {
     pipeline: Option<vk::Pipeline>,
+    descriptor_set: Option<vk::DescriptorSet>,
     scissor: vk::Rect2D,
     /// `None` until the first draw sets it, since a pass begins with the
     /// reference undefined rather than at any particular value.
@@ -1094,6 +1136,7 @@ impl RecordedState {
     fn at_pass_start(area: vk::Rect2D) -> Self {
         Self {
             pipeline: None,
+            descriptor_set: None,
             scissor: area,
             stencil_reference: None,
         }
@@ -1122,6 +1165,7 @@ unsafe fn record_draw(
         cmd,
         layout,
         area,
+        bindings,
     } = *pass;
     unsafe {
         if state.pipeline != Some(pipeline) {
@@ -1157,6 +1201,23 @@ unsafe fn record_draw(
         if state.scissor != wanted {
             device.cmd_set_scissor(cmd, 0, &[wanted]);
             state.scissor = wanted;
+        }
+
+        // Bound for every draw, not only the ones that sample: the shader
+        // declares the texture whatever the paint is, and a descriptor a
+        // pipeline statically uses must be bound even where the branch reading
+        // it is unreachable. A draw that samples nothing gets a placeholder.
+        let set = bindings.set_for(draw.material.texture_slot());
+        if state.descriptor_set != Some(set) {
+            device.cmd_bind_descriptor_sets(
+                cmd,
+                vk::PipelineBindPoint::GRAPHICS,
+                layout,
+                0,
+                &[set],
+                &[],
+            );
+            state.descriptor_set = Some(set);
         }
 
         // The clip depth is dynamic state, so nesting deeper is a state change

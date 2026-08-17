@@ -51,6 +51,13 @@ pub struct GlesContext {
     egl_extensions: HashSet<String>,
     gl_extensions: HashSet<String>,
     program: Option<crate::render::SolidProgram>,
+    /// A one-pixel opaque white texture, bound where a draw samples nothing.
+    ///
+    /// Created on first use rather than eagerly, so a context that only ever
+    /// fills shapes allocates nothing for a feature it does not use. White
+    /// rather than transparent so that binding it in place of a real texture
+    /// shows up as a blank shape rather than as nothing at all.
+    placeholder: Option<glow::Texture>,
 }
 
 impl GlesContext {
@@ -174,11 +181,60 @@ impl GlesContext {
             egl_extensions,
             gl_extensions,
             program: None,
+            placeholder: None,
         })
     }
 
     pub fn capabilities(&self) -> &Capabilities {
         &self.capabilities
+    }
+
+    /// A one-pixel opaque white texture, for draws that sample nothing.
+    pub(crate) fn placeholder_texture(&mut self) -> Result<glow::Texture> {
+        if let Some(texture) = self.placeholder {
+            return Ok(texture);
+        }
+        let gl = self.raw_gl();
+        // SAFETY: a context is current, and the source is sized for the one
+        // pixel being written.
+        let texture = unsafe {
+            let texture = gl
+                .create_texture()
+                .map_err(|e| crate::render::gl_err("create_texture", &e))?;
+            gl.bind_texture(glow::TEXTURE_2D, Some(texture));
+            gl.tex_image_2d(
+                glow::TEXTURE_2D,
+                0,
+                glow::RGBA8 as i32,
+                1,
+                1,
+                0,
+                glow::RGBA,
+                glow::UNSIGNED_BYTE,
+                Some(&[255u8, 255, 255, 255]),
+            );
+            // Filtering must be set explicitly: a texture with the default
+            // mipmap filter and no mipmaps is incomplete and samples as black,
+            // which would make the placeholder do exactly what it exists to
+            // avoid.
+            gl.tex_parameter_i32(
+                glow::TEXTURE_2D,
+                glow::TEXTURE_MIN_FILTER,
+                glow::LINEAR as i32,
+            );
+            gl.tex_parameter_i32(
+                glow::TEXTURE_2D,
+                glow::TEXTURE_MAG_FILTER,
+                glow::LINEAR as i32,
+            );
+            for axis in [glow::TEXTURE_WRAP_S, glow::TEXTURE_WRAP_T] {
+                gl.tex_parameter_i32(glow::TEXTURE_2D, axis, glow::CLAMP_TO_EDGE as i32);
+            }
+            gl.bind_texture(glow::TEXTURE_2D, None);
+            texture
+        };
+        self.placeholder = Some(texture);
+        Ok(texture)
     }
 
     pub(crate) fn program(&self) -> Option<&crate::render::SolidProgram> {

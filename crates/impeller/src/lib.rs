@@ -30,12 +30,12 @@ pub mod backend;
 pub mod context;
 
 pub use backend::{Backend, BackendPreference};
-pub use context::{Context, Surface};
+pub use context::{Context, Image, Surface};
 
 // The drawing API, so an application depends on this crate alone.
 pub use impeller_core::{
     Affine2, BlendMode, Canvas, Color, Extent2D, FillRule, GradientStop, LineCap, LineJoin, Paint,
-    Path, PathBuilder, PixelFormat, Recording, Rect, Shader, StrokeStyle, Style, Vec2,
+    Path, PathBuilder, PixelFormat, Recording, Rect, Shader, StrokeStyle, Style, TileMode, Vec2,
 };
 pub use impeller_hal::{BlendFactor, Capabilities, Error, Result};
 

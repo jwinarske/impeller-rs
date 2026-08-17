@@ -280,6 +280,22 @@ impl Batch {
             .unwrap_or(0)
     }
 
+    /// The texture slots this batch samples, in ascending order without
+    /// repeats.
+    ///
+    /// A backend uses this to size its bindings before recording, and to check
+    /// the table it was given covers what the draws ask for.
+    pub fn texture_slots(&self) -> Vec<u32> {
+        let mut slots: Vec<u32> = self
+            .draws
+            .iter()
+            .filter_map(|draw| draw.material.texture_slot())
+            .collect();
+        slots.sort_unstable();
+        slots.dedup();
+        slots
+    }
+
     /// How many times a pipeline will be bound when this batch is recorded.
     ///
     /// Consecutive draws sharing a blend mode reuse the bound pipeline, so this

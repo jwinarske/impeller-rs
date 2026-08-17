@@ -1,9 +1,10 @@
 //! How a shape is drawn.
 
+use crate::canvas::Rect;
 use crate::color::Color;
 use glam::Vec2;
 use impeller_geometry::stroke::StrokeStyle;
-use impeller_hal::BlendMode;
+use impeller_hal::{BlendMode, TileMode};
 
 /// A colour stop in a gradient.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -42,6 +43,25 @@ pub enum Shader {
     },
     /// A gradient around a centre **in user space**, running between two angles
     /// in radians, measured counter-clockwise from the positive X axis.
+    /// A texture, mapped onto a rectangle **in user space**.
+    ///
+    /// The rectangle travels through the canvas transform with the geometry, so
+    /// an image rotates and scales with the shape it fills. It is the region
+    /// the image covers, not the region drawn: filling a circle with this paint
+    /// draws a circular piece of the image.
+    ///
+    /// `slot` indexes the table supplied when the recording is drawn. The
+    /// canvas names a slot rather than holding a texture because it records
+    /// without touching a device, and a backend texture is not something it can
+    /// name. Assigning slots is the caller's business for now; a registry that
+    /// did it for them is a separate piece of design.
+    Image {
+        slot: u32,
+        rect: Rect,
+        /// Scales the sampled color, for drawing an image translucently.
+        alpha: f32,
+        tile: TileMode,
+    },
     SweepGradient {
         center: Vec2,
         start_angle: f32,
@@ -58,6 +78,9 @@ impl Shader {
             Self::LinearGradient { stops, .. }
             | Self::RadialGradient { stops, .. }
             | Self::SweepGradient { stops, .. } => stops.iter().any(|s| !s.color.is_invisible()),
+            // What the texture holds is unknown here, so only a zero alpha or
+            // an empty destination makes an image provably invisible.
+            Self::Image { alpha, rect, .. } => *alpha > 0.0 && !rect.is_empty(),
         }
     }
 }
@@ -155,6 +178,40 @@ impl Paint {
     }
 
     /// A stroke of the given width, with default caps and joins.
+    /// A fill that samples an image across a rectangle in user space.
+    ///
+    /// `slot` indexes the table supplied when the recording is drawn, and
+    /// `rect` is the region the image covers rather than the region drawn: the
+    /// shape being filled decides what is painted, this decides where the image
+    /// sits under it.
+    pub fn image(slot: u32, rect: Rect) -> Self {
+        Self {
+            shader: Shader::Image {
+                slot,
+                rect,
+                alpha: 1.0,
+                tile: TileMode::default(),
+            },
+            ..Default::default()
+        }
+    }
+
+    /// What happens outside the image's own rectangle. Ignored by other paints.
+    pub fn with_tile_mode(mut self, tile: TileMode) -> Self {
+        if let Shader::Image { tile: current, .. } = &mut self.shader {
+            *current = tile;
+        }
+        self
+    }
+
+    /// Scale an image paint's sampled color. Ignored by other paints.
+    pub fn with_image_alpha(mut self, alpha: f32) -> Self {
+        if let Shader::Image { alpha: current, .. } = &mut self.shader {
+            *current = alpha;
+        }
+        self
+    }
+
     pub fn stroke(color: Color, width: f32) -> Self {
         Self {
             shader: Shader::Solid(color),

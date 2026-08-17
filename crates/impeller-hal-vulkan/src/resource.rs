@@ -24,7 +24,14 @@ pub struct VulkanTexture {
     pub(crate) format: PixelFormat,
     /// The layout the image is currently in, so the next operation knows what
     /// to transition from.
-    pub(crate) layout: vk::ImageLayout,
+    /// The layout the image is currently in.
+    ///
+    /// Behind a cell because this tracks device-side state, not anything Rust
+    /// aliasing rules are about: a texture being *sampled* is borrowed shared,
+    /// and getting it into a readable layout is a transition the recorder has
+    /// to make and record. Requiring a unique borrow for that would mean a
+    /// batch could sample only one texture at a time.
+    pub(crate) layout: std::cell::Cell<vk::ImageLayout>,
     pub(crate) usage: TextureUsage,
 }
 
@@ -54,12 +61,12 @@ impl VulkanTexture {
     }
 
     pub(crate) fn layout(&self) -> vk::ImageLayout {
-        self.layout
+        self.layout.get()
     }
 
     /// Record a layout change made by an operation outside this module.
-    pub(crate) fn set_layout(&mut self, layout: vk::ImageLayout) {
-        self.layout = layout;
+    pub(crate) fn set_layout(&self, layout: vk::ImageLayout) {
+        self.layout.set(layout);
     }
 
     /// Bytes a tightly packed readback of this texture occupies.
@@ -156,7 +163,7 @@ impl VulkanContext {
             memory: TextureMemory::Pooled(allocation),
             extent: desc.extent,
             format: desc.format,
-            layout: vk::ImageLayout::UNDEFINED,
+            layout: std::cell::Cell::new(vk::ImageLayout::UNDEFINED),
             usage: desc.usage,
         })
     }
@@ -194,7 +201,7 @@ impl VulkanContext {
             &device,
             cmd,
             texture.image,
-            texture.layout,
+            texture.layout.get(),
             vk::ImageLayout::TRANSFER_DST_OPTIMAL,
         );
 
@@ -212,12 +219,115 @@ impl VulkanContext {
                 &[range],
             );
         }
-        texture.layout = vk::ImageLayout::TRANSFER_DST_OPTIMAL;
+        texture.layout.set(vk::ImageLayout::TRANSFER_DST_OPTIMAL);
 
         self.submit_one_shot(cmd)
     }
 
     /// Copy a texture back to host memory, tightly packed.
+    /// Fill a texture from host memory, tightly packed and top row first.
+    ///
+    /// The mirror of [`Self::read_texture`], and stated in the same layout, so
+    /// a round trip through the pair is the identity. That is what makes it
+    /// testable without a decoder: write known bytes, read them back, compare.
+    ///
+    /// Image *decoding* is out of scope for this project, but getting decoded
+    /// pixels onto the device is not — without this an image shader would have
+    /// nothing to sample but what the renderer itself drew.
+    pub fn write_texture(&mut self, texture: &mut VulkanTexture, pixels: &[u8]) -> Result<()> {
+        let size = texture.byte_size();
+        if pixels.len() as u64 != size {
+            return Err(Error::Backend {
+                backend: "vulkan",
+                detail: format!("texture wants {size} bytes, {} supplied", pixels.len()),
+            });
+        }
+        let device = self.raw_device().clone();
+
+        let buffer_info = vk::BufferCreateInfo::default()
+            .size(size)
+            .usage(vk::BufferUsageFlags::TRANSFER_SRC)
+            .sharing_mode(vk::SharingMode::EXCLUSIVE);
+        let buffer = unsafe { device.create_buffer(&buffer_info, None) }
+            .map_err(|e| backend_err("create_buffer", e))?;
+        let requirements = unsafe { device.get_buffer_memory_requirements(buffer) };
+        let mut allocation = self
+            .allocator_mut()
+            .allocate(&AllocationCreateDesc {
+                name: "upload",
+                requirements,
+                location: MemoryLocation::CpuToGpu,
+                linear: true,
+                allocation_scheme: AllocationScheme::GpuAllocatorManaged,
+            })
+            .map_err(|e| {
+                unsafe { device.destroy_buffer(buffer, None) };
+                Error::OutOfMemory {
+                    what: "upload buffer",
+                }
+                .with_detail(e)
+            })?;
+        if let Err(e) =
+            unsafe { device.bind_buffer_memory(buffer, allocation.memory(), allocation.offset()) }
+        {
+            let _ = self.allocator_mut().free(allocation);
+            unsafe { device.destroy_buffer(buffer, None) };
+            return Err(backend_err("bind_buffer_memory", e));
+        }
+
+        let staged = match allocation.mapped_slice_mut() {
+            Some(slice) => {
+                slice[..pixels.len()].copy_from_slice(pixels);
+                Ok(())
+            }
+            None => Err(Error::Backend {
+                backend: "vulkan",
+                detail: "upload allocation was not host-visible".into(),
+            }),
+        };
+
+        let outcome = staged.and_then(|()| {
+            let cmd = self.begin_one_shot()?;
+            transition(
+                &device,
+                cmd,
+                texture.image,
+                texture.layout.get(),
+                vk::ImageLayout::TRANSFER_DST_OPTIMAL,
+            );
+            let region = vk::BufferImageCopy::default()
+                .image_subresource(
+                    vk::ImageSubresourceLayers::default()
+                        .aspect_mask(vk::ImageAspectFlags::COLOR)
+                        .layer_count(1),
+                )
+                .image_extent(vk::Extent3D {
+                    width: texture.extent.width,
+                    height: texture.extent.height,
+                    depth: 1,
+                });
+            // SAFETY: the command buffer is recording, the buffer holds the
+            // staged pixels, and the image is in the layout named here.
+            unsafe {
+                device.cmd_copy_buffer_to_image(
+                    cmd,
+                    buffer,
+                    texture.image,
+                    vk::ImageLayout::TRANSFER_DST_OPTIMAL,
+                    &[region],
+                );
+            }
+            texture.layout.set(vk::ImageLayout::TRANSFER_DST_OPTIMAL);
+            self.submit_one_shot(cmd)
+        });
+
+        let _ = self.allocator_mut().free(allocation);
+        // SAFETY: the submission above was waited on, so the copy has finished
+        // reading from this buffer.
+        unsafe { device.destroy_buffer(buffer, None) };
+        outcome
+    }
+
     pub fn read_texture(&mut self, texture: &mut VulkanTexture) -> Result<Vec<u8>> {
         let size = texture.byte_size();
         let device = self.raw_device().clone();
@@ -253,7 +363,7 @@ impl VulkanContext {
             &device,
             cmd,
             texture.image,
-            texture.layout,
+            texture.layout.get(),
             vk::ImageLayout::TRANSFER_SRC_OPTIMAL,
         );
         let region = vk::BufferImageCopy::default()
@@ -276,7 +386,7 @@ impl VulkanContext {
                 &[region],
             );
         }
-        texture.layout = vk::ImageLayout::TRANSFER_SRC_OPTIMAL;
+        texture.layout.set(vk::ImageLayout::TRANSFER_SRC_OPTIMAL);
 
         // The buffer and its allocation are released on every path below, so
         // the submission result is folded in rather than returned early.

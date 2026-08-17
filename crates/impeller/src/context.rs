@@ -87,14 +87,50 @@ impl Context {
 
     /// Draw a recording into a surface.
     pub fn draw(&mut self, surface: &mut Surface, recording: &Recording) -> Result<()> {
+        self.draw_with_images(surface, recording, &[])
+    }
+
+    /// Draw a recording whose paints sample images.
+    ///
+    /// `images` is the table a [`Shader::Image`] slot indexes, in slot order.
+    /// A recording carries slots rather than images because it is produced
+    /// without touching a device; supplying the table here is what resolves
+    /// them.
+    ///
+    /// The surface is borrowed mutably and the images immutably, so a recording
+    /// cannot sample the surface it draws into. That restriction is real, and
+    /// having the compiler state it beats discovering it as a picture that
+    /// differs by driver.
+    ///
+    /// [`Shader::Image`]: impeller_core::Shader::Image
+    pub fn draw_with_images(
+        &mut self,
+        surface: &mut Surface,
+        recording: &Recording,
+        images: &[&Image],
+    ) -> Result<()> {
         match (self, surface) {
             #[cfg(feature = "vulkan")]
             (Self::Vulkan(ctx), Surface::Vulkan(texture)) => {
-                HalContext::submit_batch(ctx, texture, &recording.batch, recording.pass)
+                let textures = vulkan_textures(images)?;
+                HalContext::submit_batch_textured(
+                    ctx,
+                    texture,
+                    &recording.batch,
+                    recording.pass,
+                    &textures,
+                )
             }
             #[cfg(feature = "gles")]
             (Self::Gles(ctx), Surface::Gles(texture)) => {
-                HalContext::submit_batch(ctx, texture, &recording.batch, recording.pass)
+                let textures = gles_textures(images)?;
+                HalContext::submit_batch_textured(
+                    ctx,
+                    texture,
+                    &recording.batch,
+                    recording.pass,
+                    &textures,
+                )
             }
             // A surface belongs to the context that made it; pairing one with
             // another context would use a handle the device never allocated.
@@ -102,6 +138,55 @@ impl Context {
             _ => Err(Error::Unsupported(
                 "this surface was created by a different context",
             )),
+        }
+    }
+
+    /// Allocate an image this context can sample.
+    pub fn create_image(&mut self, extent: Extent2D, format: PixelFormat) -> Result<Image> {
+        let descriptor = impeller_hal::TextureDescriptor::offscreen(extent, format);
+        match self {
+            #[cfg(feature = "vulkan")]
+            Self::Vulkan(ctx) => HalContext::create_texture(ctx, &descriptor).map(Image::Vulkan),
+            #[cfg(feature = "gles")]
+            Self::Gles(ctx) => HalContext::create_texture(ctx, &descriptor).map(Image::Gles),
+        }
+    }
+
+    /// Fill an image from host memory, tightly packed and top row first.
+    ///
+    /// Decoding is out of scope for this crate; bring `image` or another
+    /// decoder and hand the pixels here.
+    pub fn write_image(&mut self, image: &mut Image, pixels: &[u8]) -> Result<()> {
+        match (self, image) {
+            #[cfg(feature = "vulkan")]
+            (Self::Vulkan(ctx), Image::Vulkan(texture)) => {
+                HalContext::write_texture(ctx, texture, pixels)
+            }
+            #[cfg(feature = "gles")]
+            (Self::Gles(ctx), Image::Gles(texture)) => {
+                HalContext::write_texture(ctx, texture, pixels)
+            }
+            #[allow(unreachable_patterns)]
+            _ => Err(Error::Unsupported(
+                "this image was created by a different context",
+            )),
+        }
+    }
+
+    /// Release an image.
+    ///
+    /// Explicit for the same reason a surface is: the memory belongs to the
+    /// context, which an image cannot reach from its own `Drop`.
+    pub fn destroy_image(&mut self, image: Image) {
+        match (self, image) {
+            #[cfg(feature = "vulkan")]
+            (Self::Vulkan(ctx), Image::Vulkan(texture)) => {
+                HalContext::destroy_texture(ctx, texture)
+            }
+            #[cfg(feature = "gles")]
+            (Self::Gles(ctx), Image::Gles(texture)) => HalContext::destroy_texture(ctx, texture),
+            #[allow(unreachable_patterns)]
+            _ => {}
         }
     }
 
@@ -138,6 +223,64 @@ impl Context {
 }
 
 /// Something to draw into.
+/// A texture a paint can sample.
+///
+/// Distinct from a [`Surface`] in the type system even though both are textures
+/// underneath, because the two are used in opposite directions and mixing them
+/// up is exactly the mistake worth making impossible: a surface is drawn into,
+/// an image is read from.
+pub enum Image {
+    #[cfg(feature = "vulkan")]
+    Vulkan(impeller_hal_vulkan::VulkanTexture),
+    #[cfg(feature = "gles")]
+    Gles(impeller_hal_gles::GlesTexture),
+}
+
+impl Image {
+    pub fn extent(&self) -> Extent2D {
+        match self {
+            #[cfg(feature = "vulkan")]
+            Self::Vulkan(texture) => texture.extent(),
+            #[cfg(feature = "gles")]
+            Self::Gles(texture) => texture.extent(),
+        }
+    }
+}
+
+/// Unwrap a table of images to one backend's textures.
+///
+/// An image from another backend is an error rather than a skip: the slots are
+/// positional, so dropping one would silently shift every slot after it.
+#[cfg(feature = "vulkan")]
+fn vulkan_textures<'a>(
+    images: &[&'a Image],
+) -> Result<Vec<&'a impeller_hal_vulkan::VulkanTexture>> {
+    images
+        .iter()
+        .map(|image| match image {
+            Image::Vulkan(texture) => Ok(texture),
+            #[allow(unreachable_patterns)]
+            _ => Err(Error::Unsupported(
+                "this image was created by a different context",
+            )),
+        })
+        .collect()
+}
+
+#[cfg(feature = "gles")]
+fn gles_textures<'a>(images: &[&'a Image]) -> Result<Vec<&'a impeller_hal_gles::GlesTexture>> {
+    images
+        .iter()
+        .map(|image| match image {
+            Image::Gles(texture) => Ok(texture),
+            #[allow(unreachable_patterns)]
+            _ => Err(Error::Unsupported(
+                "this image was created by a different context",
+            )),
+        })
+        .collect()
+}
+
 pub enum Surface {
     #[cfg(feature = "vulkan")]
     Vulkan(impeller_hal_vulkan::VulkanTexture),

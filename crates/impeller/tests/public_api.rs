@@ -924,3 +924,123 @@ fn nested_path_clips_intersect_and_unwind_one_level_at_a_time() {
         "restoring lifted the outer clip as well"
     );
 }
+
+/// A four-by-four image with a different color in each quadrant.
+fn quadrant_image() -> Vec<u8> {
+    let mut pixels = vec![0u8; 4 * 4 * 4];
+    for y in 0..4u32 {
+        for x in 0..4u32 {
+            let i = ((y * 4 + x) * 4) as usize;
+            let color: [u8; 4] = match (x < 2, y < 2) {
+                (true, true) => [255, 0, 0, 255],
+                (false, true) => [0, 255, 0, 255],
+                (true, false) => [0, 0, 255, 255],
+                (false, false) => [255, 255, 0, 255],
+            };
+            pixels[i..i + 4].copy_from_slice(&color);
+        }
+    }
+    pixels
+}
+
+#[test]
+fn an_image_paint_draws_a_texture_through_the_api() {
+    let Some(mut ctx) = context() else { return };
+    let mut image = ctx
+        .create_image(Extent2D::new(4, 4), PixelFormat::Rgba8Unorm)
+        .expect("image");
+    ctx.write_image(&mut image, &quadrant_image())
+        .expect("upload");
+
+    let mut canvas = Canvas::new(SIZE);
+    canvas.clear(Color::linear(0.0, 0.0, 0.0, 1.0));
+    canvas
+        .draw_rect(
+            Rect::from_size(128.0, 128.0),
+            &Paint::image(0, Rect::from_size(128.0, 128.0)).with_anti_alias(false),
+        )
+        .expect("rect");
+
+    let mut surface = ctx
+        .create_surface(SIZE, PixelFormat::Rgba8Unorm)
+        .expect("surface");
+    ctx.draw_with_images(&mut surface, &canvas.finish(), &[&image])
+        .expect("draw");
+    let pixels = ctx.read(&mut surface).expect("read");
+    ctx.destroy_surface(surface);
+    ctx.destroy_image(image);
+
+    // The quadrants land where the image put them, with the top-left of the
+    // image at the top-left of the destination.
+    for (x, y, want, corner) in [
+        (16u32, 16u32, [255u8, 0, 0, 255], "top-left"),
+        (112, 16, [0, 255, 0, 255], "top-right"),
+        (16, 112, [0, 0, 255, 255], "bottom-left"),
+        (112, 112, [255, 255, 0, 255], "bottom-right"),
+    ] {
+        assert_eq!(
+            pixel(&pixels, x, y),
+            want,
+            "the {corner} quadrant sampled the wrong part of the image"
+        );
+    }
+}
+
+#[test]
+fn an_image_travels_with_the_canvas_transform() {
+    let Some(mut ctx) = context() else { return };
+    let mut image = ctx
+        .create_image(Extent2D::new(4, 4), PixelFormat::Rgba8Unorm)
+        .expect("image");
+    ctx.write_image(&mut image, &quadrant_image())
+        .expect("upload");
+
+    // A half turn about the middle of the target exchanges opposite quadrants.
+    // The image's mapping goes through the same transform as the geometry, so
+    // a mapping computed in device pixels instead would leave it upright while
+    // the shape turned.
+    let mut canvas = Canvas::new(SIZE);
+    canvas.clear(Color::linear(0.0, 0.0, 0.0, 1.0));
+    canvas.translate(64.0, 64.0);
+    canvas.rotate(std::f32::consts::PI);
+    canvas
+        .draw_rect(
+            Rect::new(-64.0, -64.0, 64.0, 64.0),
+            &Paint::image(0, Rect::new(-64.0, -64.0, 64.0, 64.0)).with_anti_alias(false),
+        )
+        .expect("rect");
+
+    let mut surface = ctx
+        .create_surface(SIZE, PixelFormat::Rgba8Unorm)
+        .expect("surface");
+    ctx.draw_with_images(&mut surface, &canvas.finish(), &[&image])
+        .expect("draw");
+    let pixels = ctx.read(&mut surface).expect("read");
+    ctx.destroy_surface(surface);
+    ctx.destroy_image(image);
+
+    // Bottom-right now holds what was top-left.
+    assert_eq!(pixel(&pixels, 112, 112), [255, 0, 0, 255]);
+    assert_eq!(pixel(&pixels, 16, 16), [255, 255, 0, 255]);
+}
+
+#[test]
+fn drawing_an_image_paint_without_the_image_is_refused() {
+    let Some(mut ctx) = context() else { return };
+    let mut canvas = Canvas::new(SIZE);
+    canvas
+        .draw_rect(
+            Rect::from_size(128.0, 128.0),
+            &Paint::image(0, Rect::from_size(128.0, 128.0)),
+        )
+        .expect("rect");
+
+    let mut surface = ctx
+        .create_surface(SIZE, PixelFormat::Rgba8Unorm)
+        .expect("surface");
+    // Sampling whatever happens to be bound would draw a plausible picture out
+    // of a previous frame's texture, which is worse than failing.
+    let result = ctx.draw(&mut surface, &canvas.finish());
+    ctx.destroy_surface(surface);
+    assert!(result.is_err(), "a paint sampling slot 0 drew without it");
+}

@@ -57,7 +57,21 @@ impl HalContext for GlesContext {
         GlesContext::submit_batch(self, target, batch, pass)
     }
 
+    fn submit_batch_textured(
+        &mut self,
+        target: &mut GlesTexture,
+        batch: &Batch,
+        pass: PassDescriptor,
+        textures: &[&GlesTexture],
+    ) -> Result<()> {
+        GlesContext::submit_batch_textured(self, target, batch, pass, textures)
+    }
+
     fn read_texture(&mut self, texture: &mut GlesTexture) -> Result<Vec<u8>> {
         GlesContext::read_texture(self, texture)
+    }
+
+    fn write_texture(&mut self, texture: &mut GlesTexture, pixels: &[u8]) -> Result<()> {
+        GlesContext::write_texture(self, texture, pixels)
     }
 }

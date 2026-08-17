@@ -190,7 +190,7 @@ impl VulkanContext {
             memory: TextureMemory::Dedicated(memory),
             extent,
             format,
-            layout: vk::ImageLayout::UNDEFINED,
+            layout: std::cell::Cell::new(vk::ImageLayout::UNDEFINED),
             usage: TextureUsage {
                 render_target: true,
                 transfer: true,

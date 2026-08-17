@@ -59,8 +59,22 @@ impl HalContext for VulkanContext {
         VulkanContext::submit_batch(self, target, batch, pass)
     }
 
+    fn submit_batch_textured(
+        &mut self,
+        target: &mut VulkanTexture,
+        batch: &Batch,
+        pass: PassDescriptor,
+        textures: &[&VulkanTexture],
+    ) -> Result<()> {
+        VulkanContext::submit_batch_textured(self, target, batch, pass, textures)
+    }
+
     fn read_texture(&mut self, texture: &mut VulkanTexture) -> Result<Vec<u8>> {
         VulkanContext::read_texture(self, texture)
+    }
+
+    fn write_texture(&mut self, texture: &mut VulkanTexture, pixels: &[u8]) -> Result<()> {
+        VulkanContext::write_texture(self, texture, pixels)
     }
 
     fn create_exportable_texture(

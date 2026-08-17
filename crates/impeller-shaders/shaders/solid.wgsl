@@ -18,9 +18,14 @@
 // offset each time.
 //
 // This occupies 128 bytes, which is exactly what every device is required to
-// offer and therefore the ceiling. Materials that need more — an image shader
-// with its own sampler and matrix — do not fit here and want a uniform buffer
-// instead; this is deliberately at the limit rather than over it.
+// offer and therefore the ceiling.
+//
+// The image shader was expected to be what broke that budget, and it is not:
+// its mapping reuses the same origin-plus-matrix pair a radial gradient needs,
+// and the texture it samples is a binding rather than data, so it costs no
+// push-constant space at all. What would break the budget is a material
+// wanting both a gradient's stops and an image's mapping at once. Nothing does
+// yet, and that is the point at which a uniform buffer becomes the answer.
 struct Paint {
     // Up to four stops. Unused entries are ignored rather than blended.
     stops: array<vec4<f32>, 4>,
@@ -43,6 +48,13 @@ struct Paint {
 };
 
 var<push_constant> paint: Paint;
+
+// One texture per draw. Always bound, even for a paint that does not sample it:
+// the alternative is a pipeline variant per material kind, and a binding a
+// pipeline declares but no draw supplies is invalid however unreachable the
+// branch that would have read it.
+@group(0) @binding(0) var image_texture: texture_2d<f32>;
+@group(0) @binding(1) var image_sampler: sampler;
 
 struct VertexOutput {
     @builtin(position) position: vec4<f32>,
@@ -85,6 +97,39 @@ fn to_gradient_space(clip: vec2<f32>) -> vec2<f32> {
     return column0 * delta.x + column1 * delta.y;
 }
 
+/// Sample the bound texture at a clip-space position.
+///
+/// Returns straight alpha, like every other path here: premultiplication
+/// happens once at the end rather than per material.
+fn sample_image(clip: vec2<f32>) -> vec4<f32> {
+    // The same mapping a radial gradient uses, so an image lands correctly on a
+    // target that is not square and under a transform that rotates or scales.
+    let uv = to_gradient_space(clip);
+    let tile = paint.geometry.w;
+
+    var coord = uv;
+    if (tile > 0.5 && tile < 1.5) {
+        // Repeat. Done here rather than through the sampler's address mode so
+        // that one sampler serves every draw; the modes are a property of the
+        // paint, and baking them into samplers would mean one per combination.
+        coord = fract(uv);
+    } else {
+        coord = clamp(uv, vec2<f32>(0.0), vec2<f32>(1.0));
+    }
+
+    var texel = textureSampleLevel(image_texture, image_sampler, coord, 0.0);
+    if (tile > 1.5) {
+        // Decal: nothing outside the image's own bounds. Tested against the
+        // unclamped coordinate, since the clamped one is inside by
+        // construction.
+        let outside = any(uv < vec2<f32>(0.0)) || any(uv > vec2<f32>(1.0));
+        if (outside) {
+            texel = vec4<f32>(0.0);
+        }
+    }
+    return vec4<f32>(texel.rgb, texel.a * paint.geometry.z);
+}
+
 @fragment
 fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     var colour: vec4<f32> = paint.stops[0];
@@ -103,7 +148,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         // Radial: distance in gradient space, where the radius is one.
         let t = clamp(length(to_gradient_space(in.clip)), 0.0, 1.0);
         colour = sample_stops(t, count);
-    } else if (kind > 2.5) {
+    } else if (kind > 2.5 && kind < 3.5) {
         // Sweep: angle about the centre, measured in gradient space so an
         // anisotropic target does not bunch the stops on two sides.
         let local = to_gradient_space(in.clip);
@@ -115,6 +160,12 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         var turns = (angle - start_angle) / sweep;
         turns = turns - floor(turns);
         colour = sample_stops(clamp(turns, 0.0, 1.0), count);
+    }
+    // Checked after the gradient chain rather than inside it, because the
+    // sweep arm tests only a lower bound and would otherwise claim this kind
+    // as well.
+    if (kind > 3.5) {
+        colour = sample_image(in.clip);
     }
 
     // Colours are linear here. Conversion to the target's transfer function is

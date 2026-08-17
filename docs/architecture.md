@@ -281,6 +281,50 @@ the test is disabled before a multisample resolve rather than at each call site
 that resolves. A clip left enabled across either would leave most of the target
 holding whatever it held before.
 
+**A texture a paint samples travels beside the batch, not inside it.** A batch
+is a description a recorder produces without touching a device, so it cannot
+name a backend texture handle. An image material carries a slot instead, and the
+table those slots index is supplied at submission. A slot with no entry is an
+error rather than a fallback — sampling whatever happened to be bound would draw
+a plausible picture out of a previous frame.
+
+The target is borrowed mutably and the table immutably, so a batch cannot sample
+the target it draws into. That restriction is real rather than incidental, since
+reading an attachment being written in the same pass needs machinery this does
+not have, and having the compiler state it beats discovering it as a picture
+that differs by driver.
+
+**Every draw binds a texture, even a solid fill.** One shader serves every
+material kind, so it declares the texture whatever the paint is, and a
+descriptor a pipeline statically uses must be bound however unreachable the
+branch reading it. The alternatives are a pipeline variant per material kind —
+multiplying the cache to avoid one binding — or an unbound descriptor, which is
+invalid. A draw that samples nothing binds a one-pixel white placeholder, owned
+by the context rather than by a submission so a deferred submission can use it
+without its descriptor pool outliving the fence.
+
+**Tile modes live in the shader, not in samplers.** Address modes are a property
+of the paint, so baking them into samplers would mean one sampler per
+combination and a descriptor set per draw that used a different one. One sampler
+stays fixed at clamp-to-edge and the shader does the wrapping. Both backends
+must agree on that clamp: GL textures default to repeating, and the difference
+is invisible until something samples an edge, where a linear filter blends with
+the texel from the opposite side.
+
+The image material was expected to break the 128-byte push-constant budget and
+does not. Its mapping reuses the same origin-plus-matrix pair a radial gradient
+needs — clip space is anisotropic on a non-square target, so both must map back
+before measuring — and the texture is a binding rather than data. What would
+break the budget is a material wanting a gradient's stops and an image's mapping
+at once; nothing does yet, and that is when a uniform buffer becomes the answer.
+
+**Upload is the exact inverse of readback**, in the same tightly packed
+top-row-first layout, so a round trip through the pair is the identity on both
+backends. That is what makes it checkable without a decoder. Decoding images
+stays out of scope; getting already decoded pixels onto the device does not,
+since without it an image paint could sample nothing but what the renderer had
+already drawn.
+
 **Multisampling is a pass property, not a target property.** A pass renders
 into a transient multisample buffer and resolves into the target, so the target
 stays single-sampled and directly readable. Each backend realizes that

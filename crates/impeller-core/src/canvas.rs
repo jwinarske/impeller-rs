@@ -384,6 +384,49 @@ impl Canvas {
 
         match shader {
             Shader::Solid(color) => Material::solid(color.to_array()),
+            Shader::Image {
+                slot,
+                rect,
+                alpha,
+                tile,
+            } => {
+                // Texture coordinates run from zero to one across the
+                // destination rectangle, so the mapping is: undo the transform
+                // that took user space to clip space, then scale by the
+                // rectangle's own size. Composing the two here means the shader
+                // receives one matrix and does no inversion of its own.
+                //
+                // A degenerate transform has no inverse, and glam returns a
+                // matrix of NaN rather than failing. Those would propagate into
+                // texture coordinates and sample nothing in particular, so a
+                // collapsed transform maps everything to the image's origin
+                // instead -- which is what a zero-area destination looks like
+                // anyway.
+                let inverse = to_clip.matrix2.inverse();
+                let scale = Mat2::from_diagonal(Vec2::new(
+                    1.0 / (rect.right - rect.left),
+                    1.0 / (rect.bottom - rect.top),
+                ));
+                let mapping = scale * inverse;
+                let origin = to_clip.transform_point2(Vec2::new(rect.left, rect.top));
+                let usable = mapping.is_finite() && origin.is_finite();
+                Material::Image {
+                    origin: if usable { origin.into() } else { [0.0, 0.0] },
+                    to_local: if usable {
+                        [
+                            mapping.x_axis.x,
+                            mapping.x_axis.y,
+                            mapping.y_axis.x,
+                            mapping.y_axis.y,
+                        ]
+                    } else {
+                        [0.0; 4]
+                    },
+                    slot: *slot,
+                    alpha: *alpha,
+                    tile: *tile,
+                }
+            }
             Shader::LinearGradient { start, end, stops } => {
                 let start = to_clip.transform_point2(*start);
                 let end = to_clip.transform_point2(*end);

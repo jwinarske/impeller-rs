@@ -24,7 +24,7 @@ pub use paint::{GradientStop, Paint, Shader, Style};
 // dependency rather than three.
 pub use impeller_geometry::stroke::{LineCap, LineJoin, StrokeStyle};
 pub use impeller_geometry::{FillRule, Path, PathBuilder};
-pub use impeller_hal::{BlendMode, Extent2D, PixelFormat};
+pub use impeller_hal::{BlendMode, Extent2D, PixelFormat, TileMode};
 
 /// Two-dimensional vector and affine types, from `glam`.
 pub use glam::{Affine2, Vec2};
