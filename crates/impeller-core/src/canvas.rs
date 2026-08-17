@@ -15,6 +15,7 @@ use impeller_geometry::transform::{
 use impeller_geometry::{Path, PathBuilder};
 use impeller_hal::{
     Batch, BlendMode, ClipState, Extent2D, Material, PassDescriptor, Result, Scissor, Stop,
+    TileMode,
 };
 use impeller_renderer::{Paint as RenderPaint, Renderer, TOLERANCE};
 
@@ -64,19 +65,63 @@ impl Rect {
     }
 }
 
-/// A finished recording, ready to submit.
-pub struct Recording {
+/// Where a pass's texture slot gets its content.
+///
+/// A recording is produced without touching a device, so it can name neither a
+/// texture nor an allocation. It names either an image the caller will supply
+/// or an earlier pass in the same recording, and whoever executes it resolves
+/// both.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TextureSource {
+    /// The caller's image at this index in the table given at draw time.
+    Image(u32),
+    /// The output of the pass at this index in [`Recording::passes`].
+    Layer(usize),
+}
+
+/// One target's worth of drawing.
+pub struct Pass {
     pub batch: Batch,
-    pub pass: PassDescriptor,
+    pub descriptor: PassDescriptor,
+    /// What each texture slot this pass samples refers to, in slot order.
+    pub sources: Vec<TextureSource>,
+}
+
+/// A finished recording, ready to submit.
+///
+/// More than one pass where the recording used layers. A layer is drawn into a
+/// target of its own and then composited back, which cannot happen in the same
+/// pass that samples it: reading an attachment being written needs machinery
+/// this does not have, and the separation is what makes group opacity mean
+/// "make this subtree, then fade it" rather than "fade each shape in it".
+pub struct Recording {
+    /// Layers first, each before whatever samples it; the root target last.
+    ///
+    /// The order falls out of how they are recorded rather than being sorted:
+    /// a layer is finished when it is restored, which is necessarily before the
+    /// draw that composites it.
+    pub passes: Vec<Pass>,
+    /// The size every pass renders at.
+    pub extent: Extent2D,
 }
 
 impl Recording {
     pub fn draw_count(&self) -> usize {
-        self.batch.draw_count()
+        self.passes.iter().map(|p| p.batch.draw_count()).sum()
     }
 
     pub fn is_empty(&self) -> bool {
-        self.batch.is_empty()
+        self.passes.iter().all(|p| p.batch.is_empty())
+    }
+
+    /// The pass drawn into the caller's surface.
+    pub fn root(&self) -> &Pass {
+        self.passes.last().expect("a recording always has a root")
+    }
+
+    /// How many offscreen targets executing this needs.
+    pub fn layer_count(&self) -> usize {
+        self.passes.len() - 1
     }
 }
 
@@ -85,11 +130,61 @@ impl Recording {
 /// One stack rather than two: a `save` and its `restore` bracket a subtree, and
 /// letting the two pieces of state unwind independently would mean a caller
 /// could balance one while leaving the other adrift.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug)]
 struct SavedState {
     transform: Affine2,
     clip: Option<Scissor>,
     depth: u32,
+    /// Set where this save opened a layer, holding what the layer displaced.
+    layer: Option<LayerFrame>,
+}
+
+/// A layer in progress: the parent's recording, set aside until it returns.
+#[derive(Debug)]
+struct LayerFrame {
+    batch: Batch,
+    sources: Vec<TextureSource>,
+    paint: Layer,
+}
+
+/// How a layer is composited back onto what was underneath it.
+///
+/// A separate type from [`Paint`] rather than a reuse of it, because only two
+/// of a paint's parts mean anything here — there is no shape to fill and no
+/// geometry to stroke — and a caller handed a `Paint` would reasonably expect
+/// its shader to matter.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Layer {
+    /// Scales the whole layer on the way back. This is what makes group opacity
+    /// differ from per-shape opacity: two overlapping half-transparent shapes
+    /// in a layer show one blended edge, where the same shapes drawn directly
+    /// show where they cross.
+    pub alpha: f32,
+    /// How the finished layer meets what was underneath it.
+    pub blend: BlendMode,
+}
+
+impl Default for Layer {
+    fn default() -> Self {
+        Self {
+            alpha: 1.0,
+            blend: BlendMode::SrcOver,
+        }
+    }
+}
+
+impl Layer {
+    pub fn opacity(alpha: f32) -> Self {
+        Self {
+            alpha,
+            ..Self::default()
+        }
+    }
+
+    pub fn with_blend(mut self, blend: BlendMode) -> Self {
+        self.blend = blend;
+        self
+    }
 }
 
 /// A rectangle covering the whole target, in device pixels.
@@ -117,6 +212,13 @@ pub struct Canvas {
     /// every one of those clips admitted the pixel.
     depth: u32,
     stack: Vec<SavedState>,
+    /// What the batch being recorded samples, in slot order.
+    sources: Vec<TextureSource>,
+    /// Layers already finished, in the order they were restored.
+    ///
+    /// A layer is restored before anything can composite it, so this order is
+    /// already an order the passes can be executed in.
+    finished: Vec<Pass>,
     extent: Extent2D,
     background: Option<Color>,
     /// Set once anything asks for antialiasing.
@@ -141,6 +243,8 @@ impl Canvas {
             clip: None,
             depth: 0,
             stack: Vec::new(),
+            sources: Vec::new(),
+            finished: Vec::new(),
             extent,
             background: None,
             anti_alias: false,
@@ -256,8 +360,55 @@ impl Canvas {
             transform: self.transform,
             clip: self.clip,
             depth: self.depth,
+            layer: None,
         });
         self
+    }
+
+    /// Begin drawing into a layer of its own, composited back on `restore`.
+    ///
+    /// Everything recorded until the matching restore goes into a separate
+    /// target and arrives as one image, which is what makes an alpha here apply
+    /// to the group rather than to each shape in it.
+    ///
+    /// The layer starts unclipped and at the identity for clipping purposes,
+    /// while keeping the current transform. It does not need to inherit the
+    /// clip because the draw that composites it is subject to it: content the
+    /// clip excludes is discarded once rather than prevented from being drawn,
+    /// which costs some work in the layer and keeps a stencil clip from having
+    /// to be rebuilt in a second target.
+    pub fn save_layer(&mut self, layer: Layer) -> &mut Self {
+        self.stack.push(SavedState {
+            transform: self.transform,
+            clip: self.clip,
+            depth: self.depth,
+            layer: Some(LayerFrame {
+                batch: std::mem::take(&mut self.batch),
+                sources: std::mem::take(&mut self.sources),
+                paint: layer,
+            }),
+        });
+        self.clip = None;
+        self.depth = 0;
+        self
+    }
+
+    /// How many layers are open, for a caller checking its own balance.
+    pub fn layer_depth(&self) -> usize {
+        self.stack.iter().filter(|s| s.layer.is_some()).count()
+    }
+
+    /// The slot a source occupies in the pass being recorded, adding it if new.
+    ///
+    /// Slots are per pass rather than global, because each pass carries its own
+    /// table. Deduplicating means a recording that draws the same image twenty
+    /// times binds one texture rather than twenty.
+    fn slot_for(&mut self, source: TextureSource) -> u32 {
+        if let Some(index) = self.sources.iter().position(|s| *s == source) {
+            return index as u32;
+        }
+        self.sources.push(source);
+        (self.sources.len() - 1) as u32
     }
 
     /// Return to the most recently saved transform and clip.
@@ -271,6 +422,15 @@ impl Canvas {
         };
         self.transform = previous.transform;
         self.clip = previous.clip;
+
+        if let Some(frame) = previous.layer {
+            // The clip and stencil are restored before the composite is
+            // recorded, so the layer arrives subject to what was in force when
+            // it was opened rather than to whatever it did inside itself.
+            self.depth = previous.depth;
+            self.finish_layer(frame);
+            return self;
+        }
 
         // A scissor is state the recorder holds, so restoring it is an
         // assignment. A stencil clip lives in a buffer on the device, so
@@ -345,8 +505,11 @@ impl Canvas {
             return Ok(self);
         }
 
+        // Resolved before the clip is read, since it may add a slot to this
+        // pass's table.
+        let material = self.material_for(&paint.shader);
         let render_paint = RenderPaint {
-            material: self.material_for(&paint.shader),
+            material,
             blend: paint.blend,
             clip: self.clip,
             stencil: ClipState::content(self.depth),
@@ -373,7 +536,7 @@ impl Canvas {
     /// gradient rotates and scales with its shape rather than staying fixed to
     /// the screen. Doing it here rather than in the fragment stage means the
     /// shader receives clip-space endpoints and needs no transform of its own.
-    fn material_for(&self, shader: &Shader) -> Material {
+    fn material_for(&mut self, shader: &Shader) -> Material {
         let to_clip = viewport_projection(self.extent.width, self.extent.height) * self.transform;
         let stops_of = |stops: &[crate::paint::GradientStop]| -> Vec<Stop> {
             stops
@@ -422,7 +585,12 @@ impl Canvas {
                     } else {
                         [0.0; 4]
                     },
-                    slot: *slot,
+                    // The caller's index goes through this pass's own table,
+                    // because a layer occupies a slot too and the two number
+                    // independently. A recording that never uses a layer maps
+                    // them one to one, which is why this is invisible until it
+                    // is not.
+                    slot: self.slot_for(TextureSource::Image(*slot)),
                     alpha: *alpha,
                     tile: *tile,
                 }
@@ -493,18 +661,88 @@ impl Canvas {
         self.draw_path(&path, paint)
     }
 
-    /// Finish recording.
-    pub fn finish(self) -> Recording {
-        let pass = PassDescriptor {
-            clear: self.background.map(|c| c.to_array()),
-            // One sample unless something asked for antialiasing, because
-            // multisampling costs bandwidth and a frame of solid rectangles
-            // gains nothing from it.
-            samples: if self.anti_alias { self.samples } else { 1 },
+    /// Close a layer: file its pass, and composite it onto the parent.
+    fn finish_layer(&mut self, frame: LayerFrame) {
+        let batch = std::mem::replace(&mut self.batch, frame.batch);
+        let sources = std::mem::replace(&mut self.sources, frame.sources);
+
+        // A layer clears to transparent rather than to the frame's background:
+        // it is composited over what is already there, so anywhere it drew
+        // nothing must contribute nothing. Clearing to the background instead
+        // would paint an opaque rectangle over the parent.
+        self.finished.push(Pass {
+            batch,
+            descriptor: PassDescriptor {
+                clear: Some([0.0; 4]),
+                samples: self.pass_samples(),
+            },
+            sources,
+        });
+        let index = self.finished.len() - 1;
+        let slot = self.slot_for(TextureSource::Layer(index));
+
+        // The layer is the size of the target, so the mapping from clip space
+        // to its texture coordinates is fixed: the top-left corner of clip
+        // space is the image's origin, and the axes are halved with Y negated
+        // because clip space spans two units and runs upward.
+        let material = Material::Image {
+            origin: [-1.0, 1.0],
+            to_local: [0.5, 0.0, 0.0, -0.5],
+            slot,
+            alpha: frame.paint.alpha,
+            tile: TileMode::Clamp,
         };
-        Recording {
+        let paint = RenderPaint {
+            material,
+            blend: frame.paint.blend,
+            clip: self.clip,
+            stencil: ClipState::content(self.depth),
+        };
+        // Stated in device pixels and drawn through the identity, since a
+        // layer's contents are already where they belong: the transform applied
+        // to the shapes inside it, not again to the finished image.
+        let whole = full_target_path(self.extent);
+        let _ = self
+            .renderer
+            .fill_into(&mut self.batch, &whole, Affine2::IDENTITY, &paint);
+    }
+
+    /// The sample count a pass renders at.
+    fn pass_samples(&self) -> u32 {
+        // One sample unless something asked for antialiasing, because
+        // multisampling costs bandwidth and a frame of solid rectangles gains
+        // nothing from it.
+        if self.anti_alias {
+            self.samples
+        } else {
+            1
+        }
+    }
+
+    /// Finish recording.
+    pub fn finish(mut self) -> Recording {
+        // A layer left open is a caller mistake, and the useful recovery is to
+        // composite it anyway: the alternative is silently dropping everything
+        // drawn since the unbalanced `save_layer`, which looks like a rendering
+        // fault rather than like the missing `restore` it is.
+        while self.stack.iter().any(|s| s.layer.is_some()) {
+            self.restore();
+        }
+
+        let samples = self.pass_samples();
+        let root = Pass {
             batch: self.batch,
-            pass,
+            descriptor: PassDescriptor {
+                clear: self.background.map(|c| c.to_array()),
+                samples,
+            },
+            sources: self.sources,
+        };
+        let mut passes = self.finished;
+        passes.push(root);
+        Recording {
+            passes,
+            extent: self.extent,
         }
     }
 }
@@ -680,7 +918,7 @@ mod tests {
             .unwrap();
         // Multisampling costs bandwidth, and a frame of solid rectangles gains
         // nothing from it.
-        assert_eq!(canvas.finish().pass.samples, 1);
+        assert_eq!(canvas.finish().root().descriptor.samples, 1);
     }
 
     #[test]
@@ -698,7 +936,7 @@ mod tests {
 
         // Sampling is a property of the pass, so it cannot vary per shape.
         // Honouring the request for the frame beats silently ignoring it.
-        assert!(canvas.finish().pass.samples > 1);
+        assert!(canvas.finish().root().descriptor.samples > 1);
     }
 
     #[test]
@@ -709,6 +947,6 @@ mod tests {
         // A clear is a pass property; recording it as a full-target rectangle
         // would cost a draw and defeat the load operation.
         assert!(recording.is_empty());
-        assert!(recording.pass.clear.is_some());
+        assert!(recording.root().descriptor.clear.is_some());
     }
 }

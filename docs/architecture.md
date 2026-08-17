@@ -325,6 +325,40 @@ stays out of scope; getting already decoded pixels onto the device does not,
 since without it an image paint could sample nothing but what the renderer had
 already drawn.
 
+**A recording is a list of passes, not one batch.** A layer is drawn into a
+target of its own and composited back, which cannot happen in the pass that
+samples it — reading an attachment being written needs machinery this does not
+have. The separation is what makes group opacity mean "make this subtree, then
+fade it" rather than "fade each shape in it": two overlapping half-transparent
+shapes drawn directly show where they cross, and the same pair inside a
+half-transparent layer does not.
+
+Passes are stored in the order they finish and executed in that order, which is
+already correct rather than something to sort: a layer is filed when it is
+restored, necessarily before the draw that composites it. Each pass carries its
+own slot table, since a layer occupies a slot alongside the caller's images and
+the two number independently — invisible in a recording that uses no layers,
+where they map one to one.
+
+A layer clears to transparent rather than to the frame's background, because it
+is composited over what is already there and anywhere it drew nothing must
+contribute nothing. It starts unclipped: the draw that composites it is subject
+to the clip that was in force when it opened, so content the clip excludes is
+discarded once instead of prevented from being drawn. That costs some work
+inside the layer and saves rebuilding a stencil clip in a second target.
+
+A layer left open at `finish` is composited rather than discarded. An unbalanced
+`save_layer` is a caller mistake either way, and dropping everything drawn since
+it looks like a rendering fault rather than like the missing `restore` it is.
+
+**A sampled texel is premultiplied and stays that way.** Every texture holds
+premultiplied color, whether it was uploaded or rendered into, so an image paint
+scales the whole texel by its alpha rather than treating the sample as straight
+alpha and premultiplying afterwards. Doing the latter applies alpha twice. It is
+invisible for an opaque image — the two conventions agree there — which is why
+the first thing to expose it was a layer nested inside another layer, where a
+half inside a half came out an eighth.
+
 **Multisampling is a pass property, not a target property.** A pass renders
 into a transient multisample buffer and resolves into the target, so the target
 stays single-sampled and directly readable. Each backend realizes that

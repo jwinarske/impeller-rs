@@ -97,10 +97,18 @@ fn to_gradient_space(clip: vec2<f32>) -> vec2<f32> {
     return column0 * delta.x + column1 * delta.y;
 }
 
-/// Sample the bound texture at a clip-space position.
+/// Sample the bound texture at a clip-space position, premultiplied.
 ///
-/// Returns straight alpha, like every other path here: premultiplication
-/// happens once at the end rather than per material.
+/// Unlike every other path here, this returns premultiplied color rather than
+/// straight, because that is what it read: render targets store premultiplied
+/// and an uploaded image is required to. Scaling the whole vector by the
+/// paint's alpha keeps it premultiplied and is exact, where converting to
+/// straight alpha and back would divide by an alpha that may be zero and lose
+/// precision where it is merely small.
+///
+/// Getting this wrong is invisible until something samples a translucent
+/// texture: with an opaque one the two conventions agree, so a layer nested in
+/// another layer is the first thing that shows it.
 fn sample_image(clip: vec2<f32>) -> vec4<f32> {
     // The same mapping a radial gradient uses, so an image lands correctly on a
     // target that is not square and under a transform that rotates or scales.
@@ -127,7 +135,7 @@ fn sample_image(clip: vec2<f32>) -> vec4<f32> {
             texel = vec4<f32>(0.0);
         }
     }
-    return vec4<f32>(texel.rgb, texel.a * paint.geometry.z);
+    return texel * paint.geometry.z;
 }
 
 @fragment
@@ -163,9 +171,10 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     }
     // Checked after the gradient chain rather than inside it, because the
     // sweep arm tests only a lower bound and would otherwise claim this kind
-    // as well.
+    // as well. Returned directly, since a sampled texel is premultiplied
+    // already and the conversion below would apply alpha a second time.
     if (kind > 3.5) {
-        colour = sample_image(in.clip);
+        return sample_image(in.clip);
     }
 
     // Colours are linear here. Conversion to the target's transfer function is

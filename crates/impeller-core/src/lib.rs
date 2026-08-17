@@ -16,7 +16,7 @@ pub mod canvas;
 pub mod color;
 pub mod paint;
 
-pub use canvas::{Canvas, Recording, Rect};
+pub use canvas::{Canvas, Layer, Pass, Recording, Rect, TextureSource};
 pub use color::Color;
 pub use paint::{GradientStop, Paint, Shader, Style};
 

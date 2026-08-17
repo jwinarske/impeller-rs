@@ -112,25 +112,13 @@ impl Context {
         match (self, surface) {
             #[cfg(feature = "vulkan")]
             (Self::Vulkan(ctx), Surface::Vulkan(texture)) => {
-                let textures = vulkan_textures(images)?;
-                HalContext::submit_batch_textured(
-                    ctx,
-                    texture,
-                    &recording.batch,
-                    recording.pass,
-                    &textures,
-                )
+                let images = vulkan_textures(images)?;
+                execute::<impeller_hal_vulkan::VulkanHal>(ctx, texture, recording, &images)
             }
             #[cfg(feature = "gles")]
             (Self::Gles(ctx), Surface::Gles(texture)) => {
-                let textures = gles_textures(images)?;
-                HalContext::submit_batch_textured(
-                    ctx,
-                    texture,
-                    &recording.batch,
-                    recording.pass,
-                    &textures,
-                )
+                let images = gles_textures(images)?;
+                execute::<impeller_hal_gles::GlesHal>(ctx, texture, recording, &images)
             }
             // A surface belongs to the context that made it; pairing one with
             // another context would use a handle the device never allocated.
@@ -245,6 +233,82 @@ impl Image {
             Self::Gles(texture) => texture.extent(),
         }
     }
+}
+
+/// Render every pass of a recording, layers first, root into the surface.
+///
+/// Generic over the HAL rather than written once per backend, because nothing
+/// here is backend-specific: a layer is a target allocated at the recording's
+/// size, rendered into, and sampled by a later pass. Writing it twice would be
+/// two chances to get the ordering wrong.
+///
+/// Layer targets are allocated per call and released before returning. Reusing
+/// them across frames is worth doing and is a pool's job; doing it here would
+/// mean a cache whose invalidation rule has to answer what happens when the
+/// surface is resized.
+fn execute<H: impeller_hal::Hal>(
+    ctx: &mut H::Context,
+    surface: &mut H::Texture,
+    recording: &Recording,
+    images: &[&H::Texture],
+) -> Result<()>
+where
+    H::Context: HalContext<Hal = H>,
+{
+    use impeller_core::TextureSource;
+
+    // Rendered in order, so a layer is always finished before the pass that
+    // samples it -- which is the order a recording stores them in, since a
+    // layer is filed when it is restored and cannot be composited before that.
+    let mut layers: Vec<H::Texture> = Vec::new();
+    let outcome = (|| -> Result<()> {
+        for (index, pass) in recording.passes.iter().enumerate() {
+            let is_root = index + 1 == recording.passes.len();
+
+            // Resolved per pass: a slot means something different in each,
+            // since a layer occupies one and the caller's images occupy others.
+            let mut table: Vec<&H::Texture> = Vec::with_capacity(pass.sources.len());
+            for source in &pass.sources {
+                match source {
+                    TextureSource::Image(slot) => {
+                        let texture = images.get(*slot as usize).ok_or(Error::Unsupported(
+                            "a paint samples an image the caller did not supply",
+                        ))?;
+                        table.push(texture);
+                    }
+                    // Earlier by construction, so this is always already
+                    // rendered. A recording that named a later one would be
+                    // malformed rather than merely out of order.
+                    TextureSource::Layer(pass_index) => {
+                        let texture = layers.get(*pass_index).ok_or(Error::Unsupported(
+                            "a layer is composited before it is rendered",
+                        ))?;
+                        table.push(texture);
+                    }
+                }
+            }
+
+            if is_root {
+                ctx.submit_batch_textured(surface, &pass.batch, pass.descriptor, &table)?;
+            } else {
+                let mut target =
+                    ctx.create_texture(&impeller_hal::TextureDescriptor::offscreen(
+                        recording.extent,
+                        impeller_hal::PixelFormat::Rgba8Unorm,
+                    ))?;
+                let result =
+                    ctx.submit_batch_textured(&mut target, &pass.batch, pass.descriptor, &table);
+                layers.push(target);
+                result?;
+            }
+        }
+        Ok(())
+    })();
+
+    for layer in layers {
+        ctx.destroy_texture(layer);
+    }
+    outcome
 }
 
 /// Unwrap a table of images to one backend's textures.

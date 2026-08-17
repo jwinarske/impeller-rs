@@ -7,7 +7,7 @@
 //! works.
 
 use impeller::{
-    BackendPreference, BlendMode, Canvas, Color, Context, Extent2D, GradientStop, Paint,
+    BackendPreference, BlendMode, Canvas, Color, Context, Extent2D, GradientStop, Layer, Paint,
     PathBuilder, PixelFormat, Rect, Vec2,
 };
 
@@ -1043,4 +1043,289 @@ fn drawing_an_image_paint_without_the_image_is_refused() {
     let result = ctx.draw(&mut surface, &canvas.finish());
     ctx.destroy_surface(surface);
     assert!(result.is_err(), "a paint sampling slot 0 drew without it");
+}
+
+/// Two overlapping opaque circles, drawn through `build`.
+fn overlapping_circles(canvas: &mut Canvas, alpha: f32) {
+    for center in [Vec2::new(52.0, 64.0), Vec2::new(76.0, 64.0)] {
+        canvas
+            .draw_circle(
+                center,
+                28.0,
+                &Paint::fill(Color::linear(1.0, 0.0, 0.0, alpha)).with_anti_alias(false),
+            )
+            .expect("circle");
+    }
+}
+
+#[test]
+fn a_layer_applies_its_alpha_to_the_group_rather_than_to_each_shape() {
+    let Some(mut ctx) = context() else { return };
+
+    // Two overlapping half-transparent circles drawn directly show where they
+    // cross, because the second blends over the first. The same pair inside a
+    // half-transparent layer does not: the group is composited once, so the
+    // overlap is no denser than the rest. That difference is the whole reason
+    // save layers exist, and it is what a per-shape alpha cannot express.
+    let mut direct = Canvas::new(SIZE);
+    direct.clear(Color::linear(0.0, 0.0, 0.0, 1.0));
+    overlapping_circles(&mut direct, 0.5);
+    let direct = render(&mut ctx, direct);
+
+    let mut grouped = Canvas::new(SIZE);
+    grouped.clear(Color::linear(0.0, 0.0, 0.0, 1.0));
+    grouped.save_layer(Layer::opacity(0.5));
+    overlapping_circles(&mut grouped, 1.0);
+    grouped.restore();
+    let grouped = render(&mut ctx, grouped);
+
+    // Away from the overlap the two agree: one shape at half alpha either way.
+    let outside = (36u32, 64u32);
+    assert_eq!(
+        pixel(&direct, outside.0, outside.1),
+        pixel(&grouped, outside.0, outside.1),
+        "the two differ where only one circle covers"
+    );
+
+    // In the overlap they must not. Drawn directly the second circle blends
+    // over the first and the red is denser; grouped, it is not.
+    let overlap = (64u32, 64u32);
+    let direct_red = pixel(&direct, overlap.0, overlap.1)[0];
+    let grouped_red = pixel(&grouped, overlap.0, overlap.1)[0];
+    assert!(
+        direct_red > grouped_red + 8,
+        "the overlap is {direct_red} drawn directly and {grouped_red} through a layer; \
+         a layer that composited per shape would make these equal"
+    );
+    // And grouped, the overlap matches the rest of the group exactly.
+    assert_eq!(
+        pixel(&grouped, overlap.0, overlap.1),
+        pixel(&grouped, outside.0, outside.1),
+        "the group was not composited as one image"
+    );
+}
+
+#[test]
+fn a_layer_composites_with_its_own_blend_mode() {
+    let Some(mut ctx) = context() else { return };
+    let mut canvas = Canvas::new(SIZE);
+    canvas.clear(Color::linear(0.0, 0.0, 1.0, 1.0));
+    canvas.save_layer(Layer::default().with_blend(BlendMode::Plus));
+    canvas
+        .draw_rect(
+            Rect::from_size(128.0, 128.0),
+            &Paint::fill(Color::linear(1.0, 0.0, 0.0, 1.0)).with_anti_alias(false),
+        )
+        .expect("rect");
+    canvas.restore();
+
+    let pixels = render(&mut ctx, canvas);
+    // Red added to blue rather than replacing it: the layer's blend mode
+    // governs how the finished group meets what was underneath.
+    assert_eq!(pixel(&pixels, 64, 64), [255, 0, 255, 255]);
+}
+
+#[test]
+fn layers_nest() {
+    let Some(mut ctx) = context() else { return };
+    let mut canvas = Canvas::new(SIZE);
+    canvas.clear(Color::linear(0.0, 0.0, 0.0, 1.0));
+    // Two halvings compose to a quarter. An inner layer composited into the
+    // outer one rather than straight onto the target is what makes this hold;
+    // if both went to the target the result would be a half.
+    canvas.save_layer(Layer::opacity(0.5));
+    canvas.save_layer(Layer::opacity(0.5));
+    canvas
+        .draw_rect(
+            Rect::from_size(128.0, 128.0),
+            &Paint::fill(Color::linear(1.0, 1.0, 1.0, 1.0)).with_anti_alias(false),
+        )
+        .expect("rect");
+    canvas.restore();
+    canvas.restore();
+
+    let pixels = render(&mut ctx, canvas);
+    let got = pixel(&pixels, 64, 64);
+    for (channel, want) in got.iter().take(3).zip([64u8, 64, 64]) {
+        assert!(
+            (*channel as i32 - want as i32).abs() <= 2,
+            "two half-opacity layers gave {got:?}, expected about a quarter"
+        );
+    }
+}
+
+#[test]
+fn a_clip_in_force_when_a_layer_opens_confines_the_result() {
+    let Some(mut ctx) = context() else { return };
+    let mut canvas = Canvas::new(SIZE);
+    canvas.clear(Color::linear(0.0, 0.0, 0.0, 1.0));
+    // The layer draws unclipped into its own target, and the draw that
+    // composites it is clipped instead. The visible result must be the same as
+    // if the clip had applied to every shape in the layer.
+    canvas
+        .clip_rect(Rect::new(0.0, 0.0, 64.0, 128.0))
+        .expect("clip");
+    canvas.save_layer(Layer::default());
+    canvas
+        .draw_rect(
+            Rect::from_size(128.0, 128.0),
+            &Paint::fill(Color::linear(1.0, 1.0, 1.0, 1.0)).with_anti_alias(false),
+        )
+        .expect("rect");
+    canvas.restore();
+
+    let pixels = render(&mut ctx, canvas);
+    assert_eq!(
+        pixel(&pixels, 32, 64),
+        [255, 255, 255, 255],
+        "inside the clip"
+    );
+    assert_eq!(pixel(&pixels, 96, 64), [0, 0, 0, 255], "outside the clip");
+}
+
+#[test]
+fn a_clip_inside_a_layer_does_not_escape_it() {
+    let Some(mut ctx) = context() else { return };
+    let mut canvas = Canvas::new(SIZE);
+    canvas.clear(Color::linear(0.0, 0.0, 0.0, 1.0));
+    canvas.save_layer(Layer::default());
+    canvas
+        .clip_rect(Rect::new(0.0, 0.0, 64.0, 128.0))
+        .expect("clip");
+    canvas
+        .draw_rect(
+            Rect::from_size(128.0, 128.0),
+            &Paint::fill(Color::linear(1.0, 0.0, 0.0, 1.0)).with_anti_alias(false),
+        )
+        .expect("clipped");
+    canvas.restore();
+    // Outside the layer the clip is gone again, so this covers everything.
+    canvas
+        .draw_rect(
+            Rect::new(64.0, 0.0, 128.0, 128.0),
+            &Paint::fill(Color::linear(0.0, 1.0, 0.0, 1.0)).with_anti_alias(false),
+        )
+        .expect("unclipped");
+
+    let pixels = render(&mut ctx, canvas);
+    assert_eq!(
+        pixel(&pixels, 32, 64),
+        [255, 0, 0, 255],
+        "inside the layer clip"
+    );
+    assert_eq!(
+        pixel(&pixels, 96, 64),
+        [0, 255, 0, 255],
+        "the layer's clip outlived the layer"
+    );
+}
+
+#[test]
+fn a_recording_without_layers_still_has_exactly_one_pass() {
+    let mut canvas = Canvas::new(SIZE);
+    canvas.clear(Color::linear(0.0, 0.0, 0.0, 1.0));
+    canvas
+        .draw_rect(Rect::from_size(16.0, 16.0), &Paint::fill(Color::WHITE))
+        .expect("rect");
+    let recording = canvas.finish();
+    assert_eq!(recording.layer_count(), 0);
+    assert_eq!(recording.passes.len(), 1);
+}
+
+#[test]
+fn a_layer_left_open_is_composited_rather_than_discarded() {
+    let Some(mut ctx) = context() else { return };
+    let mut canvas = Canvas::new(SIZE);
+    canvas.clear(Color::linear(0.0, 0.0, 0.0, 1.0));
+    canvas.save_layer(Layer::default());
+    canvas
+        .draw_rect(
+            Rect::from_size(128.0, 128.0),
+            &Paint::fill(Color::linear(1.0, 1.0, 1.0, 1.0)).with_anti_alias(false),
+        )
+        .expect("rect");
+    // No restore. An unbalanced save_layer is a caller mistake, and dropping
+    // everything drawn since it would look like a rendering fault instead.
+    let recording = canvas.finish();
+    assert_eq!(recording.layer_count(), 1);
+
+    let mut surface = ctx
+        .create_surface(SIZE, PixelFormat::Rgba8Unorm)
+        .expect("surface");
+    ctx.draw(&mut surface, &recording).expect("draw");
+    let pixels = ctx.read(&mut surface).expect("read");
+    ctx.destroy_surface(surface);
+    assert_eq!(pixel(&pixels, 64, 64), [255, 255, 255, 255]);
+}
+
+#[test]
+fn the_backends_agree_on_a_layered_frame() {
+    // Layers are the first thing here that renders more than one pass per
+    // frame and samples a render target, and the two backends allocate,
+    // transition and bind that target quite differently. Comparing the same
+    // recording through both is what catches a difference that each on its own
+    // would render plausibly.
+    let (Ok(mut vulkan), Ok(mut gles)) = (
+        Context::new(BackendPreference::Vulkan),
+        Context::new(BackendPreference::Gles),
+    ) else {
+        eprintln!("skipping: both backends are needed");
+        return;
+    };
+
+    let build = || {
+        let mut canvas = Canvas::new(SIZE);
+        canvas.clear(Color::linear(0.1, 0.1, 0.2, 1.0));
+        canvas.save_layer(Layer::opacity(0.6));
+        overlapping_circles(&mut canvas, 1.0);
+        canvas.save_layer(Layer::opacity(0.5).with_blend(BlendMode::Plus));
+        canvas
+            .draw_rect(
+                Rect::new(20.0, 20.0, 108.0, 60.0),
+                &Paint::fill(Color::linear(0.0, 0.8, 0.4, 1.0)).with_anti_alias(false),
+            )
+            .expect("rect");
+        canvas.restore();
+        canvas.restore();
+        canvas.finish()
+    };
+
+    let a = {
+        let mut surface = vulkan
+            .create_surface(SIZE, PixelFormat::Rgba8Unorm)
+            .expect("surface");
+        vulkan.draw(&mut surface, &build()).expect("draw");
+        let pixels = vulkan.read(&mut surface).expect("read");
+        vulkan.destroy_surface(surface);
+        pixels
+    };
+    let b = {
+        let mut surface = gles
+            .create_surface(SIZE, PixelFormat::Rgba8Unorm)
+            .expect("surface");
+        gles.draw(&mut surface, &build()).expect("draw");
+        let pixels = gles.read(&mut surface).expect("read");
+        gles.destroy_surface(surface);
+        pixels
+    };
+
+    // One unit: compositing a layer is arithmetic, converted to fixed point
+    // once per pass, and the two need not round it identically.
+    let worst = a
+        .iter()
+        .zip(&b)
+        .map(|(x, y)| (*x as i32 - *y as i32).abs())
+        .max()
+        .unwrap_or(0);
+    assert!(
+        worst <= 1,
+        "the backends differ by up to {worst} on a layered frame"
+    );
+    // And the frame is not simply the background: a comparison of two blank
+    // images would agree perfectly and prove nothing.
+    assert_ne!(
+        pixel(&a, 64, 40),
+        pixel(&a, 4, 124),
+        "the layered frame drew nothing"
+    );
 }

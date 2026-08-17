@@ -34,6 +34,12 @@ for features in vulkan gles vulkan,gles,drm; do
     step "$features" cargo check -p impeller --no-default-features --features "$features"
 done
 
+# The facade's default features compile only Vulkan, so the tests that compare
+# the two backends through the public API skip in the workspace run above.
+# Running them again with both compiled in is what makes those tests real
+# rather than a pair of early returns that always pass.
+step "both backends" cargo test -p impeller --features gles
+
 if [ "$fail" -eq 0 ]; then
     total=$(cargo test --workspace 2>&1 |
         awk -F'[ ;]' '/test result/ {s+=$4} END {print s}')

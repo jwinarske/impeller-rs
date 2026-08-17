@@ -171,6 +171,12 @@ pub trait HalContext {
     /// is what lets it be checked without a decoder: write known bytes, read
     /// them back, compare.
     ///
+    /// Color must be **premultiplied**, matching what a render target holds
+    /// and what a paint sampling this expects. A decoder usually produces
+    /// straight alpha, so converting is the caller's job. The distinction is
+    /// invisible for an opaque image, which is what makes it worth stating
+    /// here rather than leaving to be discovered.
+    ///
     /// Decoding images is out of scope for this project; getting already
     /// decoded pixels onto the device is not. Without this, an image shader
     /// could sample nothing but what the renderer itself had drawn.

@@ -12,8 +12,9 @@ through KMS with no compositor present.
 > as unavailable elsewhere rather than approximated. Clipping works on both
 > backends for rectangles and arbitrary paths, nests, and antialiases with the
 > shapes it confines. Images can be uploaded and drawn as a paint, with clamp,
-> repeat and decal tiling. Save layers, text, and windowed presentation are not
-> implemented yet.
+> repeat and decal tiling. Save layers give a subtree its own target, so group
+> opacity and layer-wide blend modes work and nest. Text and windowed
+> presentation are not implemented yet.
 
 ## Why
 

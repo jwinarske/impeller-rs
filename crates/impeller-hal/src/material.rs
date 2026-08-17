@@ -143,6 +143,12 @@ pub enum Material {
         /// Index into the texture table given at submission.
         slot: u32,
         /// Scales the sampled color, for drawing an image translucently.
+        ///
+        /// Applied to premultiplied color, so it scales the whole texel rather
+        /// than only its alpha. A texture holds premultiplied color whether it
+        /// was uploaded or rendered into, and treating a sample as straight
+        /// alpha would apply the alpha twice — invisible for an opaque image,
+        /// and plain the moment one translucent image is drawn into another.
         alpha: f32,
         tile: TileMode,
     },
