@@ -18,6 +18,7 @@ pub mod fence;
 pub mod hal;
 pub mod render;
 pub mod resource;
+pub mod stencil;
 pub mod validation;
 
 pub use device::{ContextConfig, DevicePreference, VulkanContext};

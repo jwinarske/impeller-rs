@@ -6,11 +6,12 @@
 
 use crate::image::Image;
 use crate::scene::{Fill, Item, Scene};
+use crate::shape::Shape;
 use glam::{Affine2, Mat2, Vec2};
 use impeller_geometry::transform::{transformed_bounds, viewport_projection};
 use impeller_hal::{
-    Batch, Extent2D, Hal, HalContext, Material, PassDescriptor, PixelFormat, Result, Scissor, Stop,
-    TextureDescriptor,
+    Batch, BlendMode, ClipState, Extent2D, Hal, HalContext, Material, PassDescriptor, PixelFormat,
+    Result, Scissor, Stop, TextureDescriptor,
 };
 use impeller_renderer::{Paint, Renderer, TOLERANCE};
 
@@ -108,16 +109,51 @@ pub fn record_scene(renderer: &mut Renderer, batch: &mut Batch, scene: &Scene) -
                 transformed_bounds(&transform, Vec2::new(left, top), Vec2::new(right, bottom));
             Scissor::from_device_bounds(min.into(), max.into(), scene.size)
         });
+        // A shape clip is built immediately before the item and stepped back
+        // immediately after, so items remain independent: nothing an item
+        // clips leaks into the next one.
+        let clip_paint = |stencil| Paint {
+            material: Material::solid([1.0, 1.0, 1.0, 1.0]),
+            blend: BlendMode::Src,
+            clip,
+            stencil,
+        };
+        let depth = if let Some(shape) = &item.clip_shape {
+            renderer.fill_into(
+                batch,
+                &shape.to_path(),
+                transform,
+                &clip_paint(ClipState::narrow(0)),
+            )?;
+            1
+        } else {
+            0
+        };
+
         let paint = Paint {
             material: material_for(item, transform, scene.size),
             blend: item.blend,
             clip,
+            stencil: ClipState::content(depth),
         };
         match &item.stroke {
             Some(spec) => {
                 renderer.stroke_into(batch, &path, &spec.to_style(), transform, &paint)?
             }
             None => renderer.fill_into(batch, &path, transform, &paint)?,
+        }
+
+        if depth > 0 {
+            let whole = Shape::Rect {
+                min: [0.0, 0.0],
+                max: [scene.size.width as f32, scene.size.height as f32],
+            };
+            renderer.fill_into(
+                batch,
+                &whole.to_path(),
+                Affine2::IDENTITY,
+                &clip_paint(ClipState::widen(1)),
+            )?;
         }
     }
     Ok(())

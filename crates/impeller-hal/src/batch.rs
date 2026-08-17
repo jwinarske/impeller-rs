@@ -8,6 +8,99 @@
 
 use crate::{BlendMode, Error, Material, Result, Scissor};
 
+/// What a draw does with the stencil buffer.
+///
+/// # Why the stencil holds a depth rather than a mask
+///
+/// The obvious encoding gives each clip a bit, which caps nesting at eight and
+/// makes intersecting two clips a per-bit affair. Storing the *nesting depth*
+/// instead lets a clip stack of any size fit in the same eight bits, and makes
+/// the test a single comparison: content belongs to depth `d` and draws where
+/// the stencil holds `d`, which is true only where every clip down to that
+/// depth admitted the pixel.
+///
+/// It also makes undoing a clip a local operation. Because a stack unwinds in
+/// the order it was built, no pixel can hold more than the depth being left, so
+/// stepping back is a decrement rather than a recomputation from the remaining
+/// clips.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub enum ClipRole {
+    /// Draw color where the stencil already matches. Leaves the stencil alone.
+    #[default]
+    Content,
+    /// Narrow the clip: step the stencil forward where it matches and this draw
+    /// covers. Writes no color.
+    ///
+    /// The geometry must be a triangulation of the clip region rather than an
+    /// overlapping set, since a pixel covered twice would step forward twice
+    /// and stop matching anything. The fill tessellator produces exactly that,
+    /// which is what lets this be a plain increment instead of the parity trick
+    /// an overlapping fan would need.
+    Narrow,
+    /// Widen the clip back: step the stencil back where it matches. Writes no
+    /// color.
+    Widen,
+}
+
+impl ClipRole {
+    /// Whether this role writes to the color attachment.
+    pub const fn writes_color(self) -> bool {
+        matches!(self, Self::Content)
+    }
+
+    /// Whether this role modifies the stencil.
+    pub const fn writes_stencil(self) -> bool {
+        !matches!(self, Self::Content)
+    }
+}
+
+/// The stencil state one draw needs.
+///
+/// `reference` is what the stencil is compared against, stated directly rather
+/// than derived from a nesting depth, so the HAL needs no notion of a clip
+/// stack: a narrowing draw compares against the depth it is leaving and a
+/// widening draw against the one it is leaving behind, and which is which is
+/// the recorder's business.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub struct ClipState {
+    pub reference: u32,
+    pub role: ClipRole,
+}
+
+impl ClipState {
+    /// Content outside any clip, which needs no stencil at all.
+    pub const UNCLIPPED: Self = Self {
+        reference: 0,
+        role: ClipRole::Content,
+    };
+
+    pub const fn content(reference: u32) -> Self {
+        Self {
+            reference,
+            role: ClipRole::Content,
+        }
+    }
+
+    pub const fn narrow(from: u32) -> Self {
+        Self {
+            reference: from,
+            role: ClipRole::Narrow,
+        }
+    }
+
+    pub const fn widen(from: u32) -> Self {
+        Self {
+            reference: from,
+            role: ClipRole::Widen,
+        }
+    }
+
+    /// Whether this needs a stencil attachment to mean anything.
+    pub const fn needs_stencil(self) -> bool {
+        self.reference != 0 || self.role.writes_stencil()
+    }
+}
+
 /// One draw within a batch.
 #[derive(Debug, Clone)]
 pub struct BatchDraw {
@@ -21,7 +114,13 @@ pub struct BatchDraw {
     /// to cover the target so a backend can tell "this draw was never clipped"
     /// from "this draw's clip works out to everything", and skip the state
     /// change in the first case without having to know the target's size.
+    ///
+    /// Independent of [`Self::stencil`], and both apply. An axis-aligned clip
+    /// stays here even where a stencil is already in play, because a scissor is
+    /// exact and costs nothing while a stencil pass costs a draw.
     pub clip: Option<Scissor>,
+    /// What this draw does with the stencil buffer.
+    pub stencil: ClipState,
 }
 
 /// Geometry and paint for a sequence of draws sharing one target.
@@ -75,6 +174,30 @@ impl Batch {
         blend: BlendMode,
         clip: Option<Scissor>,
     ) -> Result<()> {
+        self.push_with(
+            vertices,
+            indices,
+            material,
+            blend,
+            clip,
+            ClipState::UNCLIPPED,
+        )
+    }
+
+    /// Append a draw with an explicit stencil role.
+    ///
+    /// The general form the other two delegate to. A caller reaches for this
+    /// only when building or unwinding a clip, or when drawing content inside
+    /// one; everything else is confined by a scissor or not confined at all.
+    pub fn push_with(
+        &mut self,
+        vertices: &[[f32; 2]],
+        indices: &[u32],
+        material: Material,
+        blend: BlendMode,
+        clip: Option<Scissor>,
+        stencil: ClipState,
+    ) -> Result<()> {
         if clip.is_some_and(Scissor::is_empty) {
             return Ok(());
         }
@@ -111,6 +234,7 @@ impl Batch {
             material,
             blend,
             clip,
+            stencil,
         });
         Ok(())
     }
@@ -128,6 +252,32 @@ impl Batch {
 
     pub fn is_empty(&self) -> bool {
         self.draws.is_empty()
+    }
+
+    /// Whether recording this needs a stencil attachment.
+    ///
+    /// Derived from the draws rather than declared alongside them, so a batch
+    /// cannot ask for a clip and forget to say it needs somewhere to put it.
+    /// Most batches clip nothing, and those pay for no attachment.
+    pub fn uses_stencil(&self) -> bool {
+        self.draws.iter().any(|draw| draw.stencil.needs_stencil())
+    }
+
+    /// The largest stencil value this batch can produce.
+    ///
+    /// A backend checks this against what its attachment can hold. Eight bits
+    /// is the only depth every device is required to offer, so a clip stack
+    /// deeper than that is refused rather than silently wrapping around to
+    /// zero and admitting everything it was meant to exclude.
+    pub fn max_clip_depth(&self) -> u32 {
+        self.draws
+            .iter()
+            .map(|draw| match draw.stencil.role {
+                ClipRole::Narrow => draw.stencil.reference + 1,
+                _ => draw.stencil.reference,
+            })
+            .max()
+            .unwrap_or(0)
     }
 
     /// How many times a pipeline will be bound when this batch is recorded.

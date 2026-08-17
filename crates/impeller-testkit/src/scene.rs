@@ -137,6 +137,13 @@ pub struct Item {
     /// Confine this item to a rectangle, given in the item's own space as
     /// `[left, top, right, bottom]` and carried through its transform.
     pub clip: Option<[f32; 4]>,
+    /// Confine this item to an arbitrary shape, in the item's own space.
+    ///
+    /// Needs the stencil rather than the scissor, and so exercises a quite
+    /// different path from [`Self::clip`] even though both narrow what the item
+    /// may reach. Applied per item: the clip is built before the item and
+    /// stepped back after it, so items stay independent of each other.
+    pub clip_shape: Option<Shape>,
 }
 
 impl Item {
@@ -148,6 +155,7 @@ impl Item {
             fill: Fill::Solid(color),
             blend: BlendMode::Src,
             clip: None,
+            clip_shape: None,
         }
     }
 
@@ -165,6 +173,7 @@ impl Item {
             fill,
             blend: BlendMode::Src,
             clip: None,
+            clip_shape: None,
         }
     }
 
@@ -176,6 +185,7 @@ impl Item {
             fill: Fill::Solid(color),
             blend: BlendMode::Src,
             clip: None,
+            clip_shape: None,
         }
     }
 
@@ -187,6 +197,12 @@ impl Item {
     /// Confine this item to `[left, top, right, bottom]` in its own space.
     pub fn with_clip(mut self, clip: [f32; 4]) -> Self {
         self.clip = Some(clip);
+        self
+    }
+
+    /// Confine this item to a shape in its own space, through the stencil.
+    pub fn with_clip_shape(mut self, shape: Shape) -> Self {
+        self.clip_shape = Some(shape);
         self
     }
 
@@ -517,6 +533,68 @@ pub fn corpus() -> Vec<Scene> {
                 })
                 .with_clip([-40.0, -40.0, 10.0, 24.0]),
             ],
+        ),
+        // Clipping by a shape a rectangle cannot express, which goes through
+        // the stencil rather than the scissor. Like the scissor scenes these
+        // compare exactly: a pixel is either admitted or it is not, with no
+        // per-fragment arithmetic to permit a difference.
+        Scene::new(
+            "shape-clipped-fill",
+            vec![Item::fill(
+                Shape::Rect {
+                    min: [0.0, 0.0],
+                    max: [128.0, 128.0],
+                },
+                RED,
+            )
+            // A triangle whose bounding box reaches three corners the triangle
+            // itself misses, so clipping to its bounds would be a visibly
+            // different picture.
+            .with_clip_shape(Shape::Polygon(vec![
+                [64.0, 12.0],
+                [116.0, 104.0],
+                [20.0, 92.0],
+            ]))],
+        ),
+        Scene::new(
+            "shape-clip-and-scissor-together",
+            vec![Item::fill(
+                Shape::Circle {
+                    center: [64.0, 64.0],
+                    radius: 60.0,
+                },
+                GREEN,
+            )
+            // Both mechanisms at once on one item, which is the arrangement
+            // that would break if either were applied in place of the other
+            // rather than alongside it.
+            .with_clip_shape(Shape::Polygon(vec![
+                [10.0, 118.0],
+                [64.0, 8.0],
+                [118.0, 118.0],
+            ]))
+            .with_clip([0.0, 0.0, 78.0, 128.0])],
+        ),
+        Scene::new(
+            "shape-clip-follows-its-transform",
+            vec![Item::fill(
+                Shape::Rect {
+                    min: [-56.0, -56.0],
+                    max: [56.0, 56.0],
+                },
+                BLUE,
+            )
+            .with_transform(Transform {
+                scale: [1.0, 1.0],
+                // An eighth turn, which no scissor expresses: the clip becomes
+                // a diamond and its bounding box is visibly larger.
+                rotate: std::f32::consts::FRAC_PI_4,
+                translate: [64.0, 64.0],
+            })
+            .with_clip_shape(Shape::Rect {
+                min: [-38.0, -38.0],
+                max: [38.0, 38.0],
+            })],
         ),
         Scene::new(
             "stroke-caps-and-joins",

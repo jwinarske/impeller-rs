@@ -9,8 +9,8 @@
 use crate::context::GlesContext;
 use glow::HasContext;
 use impeller_hal::{
-    Batch, BlendMode, Error, Extent2D, PassDescriptor, PixelFormat, Result, Scissor,
-    TextureDescriptor,
+    Batch, BlendMode, ClipRole, ClipState, Error, Extent2D, PassDescriptor, PixelFormat, Result,
+    Scissor, TextureDescriptor,
 };
 
 /// A colour texture and the framebuffer that renders into it.
@@ -184,17 +184,48 @@ impl GlesContext {
         // created by this context.
         unsafe {
             gl.bind_framebuffer(glow::FRAMEBUFFER, Some(render_fbo));
+            // Attached to whichever framebuffer is being drawn into, for the
+            // duration of the pass only. The target's framebuffer outlives the
+            // pass, so this is detached again at the end rather than left on it
+            // -- a later pass that clips nothing should not be paying for a
+            // stencil buffer it never reads.
+            let stencil = if batch.uses_stencil() {
+                match attach_stencil(gl, extent, pass.samples) {
+                    Ok(renderbuffer) => Some(renderbuffer),
+                    Err(e) => {
+                        gl.bind_framebuffer(glow::FRAMEBUFFER, None);
+                        if let Some(ms) = multisample {
+                            ms.destroy(gl);
+                        }
+                        return Err(e);
+                    }
+                }
+            } else {
+                None
+            };
             gl.viewport(0, 0, extent.width as i32, extent.height as i32);
             gl.disable(glow::SCISSOR_TEST);
             gl.disable(glow::DEPTH_TEST);
             gl.disable(glow::CULL_FACE);
+            gl.disable(glow::STENCIL_TEST);
+            // Writing is enabled unconditionally before the clear, because a
+            // stencil clear is masked the same way a draw is: with the mask at
+            // zero the buffer keeps whatever the renderbuffer was allocated
+            // with, and every clip then tests against garbage.
+            gl.stencil_mask(0xff);
+            gl.color_mask(true, true, true, true);
 
             if let Some(color) = pass.clear {
                 gl.clear_color(color[0], color[1], color[2], color[3]);
-                gl.clear(glow::COLOR_BUFFER_BIT);
+                gl.clear_stencil(0);
+                // Clearing the stencil alongside the color even where there is
+                // no stencil attachment is harmless and keeps the two paths
+                // from differing in anything but the attachment itself.
+                gl.clear(glow::COLOR_BUFFER_BIT | glow::STENCIL_BUFFER_BIT);
             }
 
             if batch.is_empty() {
+                detach_stencil(gl, render_fbo, stencil);
                 resolve_and_unbind(gl, &multisample, target, extent);
                 if let Some(ms) = multisample {
                     ms.destroy(gl);
@@ -229,10 +260,15 @@ impl GlesContext {
             // `None` means the scissor test is off, which is how the pass
             // started and what an unclipped draw wants.
             let mut scissor: Option<Scissor> = None;
+            let mut stencil_state: Option<ClipState> = None;
             for draw in batch.draws() {
                 if current != Some(draw.blend) {
                     apply_blend(gl, draw.blend);
                     current = Some(draw.blend);
+                }
+                if stencil.is_some() && stencil_state != Some(draw.stencil) {
+                    apply_stencil(gl, draw.stencil);
+                    stencil_state = Some(draw.stencil);
                 }
                 // A clip covering the whole target is the same as none, and
                 // saying so keeps a run of unclipped draws from toggling the
@@ -292,7 +328,13 @@ impl GlesContext {
             }
 
             gl.disable(glow::BLEND);
+            // Both are global state that the next pass inherits, and a color
+            // mask left off by a clip draw makes the following frame render
+            // nothing at all.
+            gl.disable(glow::STENCIL_TEST);
+            gl.color_mask(true, true, true, true);
             gl.bind_vertex_array(None);
+            detach_stencil(gl, render_fbo, stencil);
             resolve_and_unbind(gl, &multisample, target, extent);
             if let Some(ms) = multisample {
                 ms.destroy(gl);
@@ -471,6 +513,118 @@ unsafe fn resolve_and_unbind(
         gl.bind_framebuffer(glow::DRAW_FRAMEBUFFER, None);
     }
     gl.bind_framebuffer(glow::FRAMEBUFFER, None);
+}
+
+/// Allocate a stencil renderbuffer and attach it to the bound framebuffer.
+///
+/// `STENCIL_INDEX8` is the only stencil format GLES 3.0 guarantees as
+/// renderbuffer storage, and eight bits is also what the clip depth is checked
+/// against, so the two limits agree by construction rather than by coincidence.
+///
+/// # Safety
+///
+/// A context must be current and a framebuffer must be bound.
+unsafe fn attach_stencil(
+    gl: &glow::Context,
+    extent: Extent2D,
+    samples: u32,
+) -> Result<glow::Renderbuffer> {
+    let renderbuffer = gl
+        .create_renderbuffer()
+        .map_err(|e| gl_err("create_renderbuffer", &e))?;
+    gl.bind_renderbuffer(glow::RENDERBUFFER, Some(renderbuffer));
+    // The sample count must match the color attachment beside it, which is
+    // also what antialiases a clip edge: with a per-sample stencil, a boundary
+    // crossing a pixel admits some of its samples and not others.
+    if samples > 1 {
+        gl.renderbuffer_storage_multisample(
+            glow::RENDERBUFFER,
+            samples as i32,
+            glow::STENCIL_INDEX8,
+            extent.width as i32,
+            extent.height as i32,
+        );
+    } else {
+        gl.renderbuffer_storage(
+            glow::RENDERBUFFER,
+            glow::STENCIL_INDEX8,
+            extent.width as i32,
+            extent.height as i32,
+        );
+    }
+    gl.framebuffer_renderbuffer(
+        glow::FRAMEBUFFER,
+        glow::STENCIL_ATTACHMENT,
+        glow::RENDERBUFFER,
+        Some(renderbuffer),
+    );
+    gl.bind_renderbuffer(glow::RENDERBUFFER, None);
+
+    let status = gl.check_framebuffer_status(glow::FRAMEBUFFER);
+    if status != glow::FRAMEBUFFER_COMPLETE {
+        gl.framebuffer_renderbuffer(
+            glow::FRAMEBUFFER,
+            glow::STENCIL_ATTACHMENT,
+            glow::RENDERBUFFER,
+            None,
+        );
+        gl.delete_renderbuffer(renderbuffer);
+        return Err(Error::Backend {
+            backend: "gles",
+            detail: format!("framebuffer incomplete with a stencil attachment: {status:#x}"),
+        });
+    }
+    Ok(renderbuffer)
+}
+
+/// Detach and delete a stencil renderbuffer.
+///
+/// # Safety
+///
+/// A context must be current and `framebuffer` must belong to it.
+unsafe fn detach_stencil(
+    gl: &glow::Context,
+    framebuffer: glow::Framebuffer,
+    renderbuffer: Option<glow::Renderbuffer>,
+) {
+    let Some(renderbuffer) = renderbuffer else {
+        return;
+    };
+    gl.bind_framebuffer(glow::FRAMEBUFFER, Some(framebuffer));
+    gl.framebuffer_renderbuffer(
+        glow::FRAMEBUFFER,
+        glow::STENCIL_ATTACHMENT,
+        glow::RENDERBUFFER,
+        None,
+    );
+    gl.delete_renderbuffer(renderbuffer);
+}
+
+/// Set the stencil test and write state one draw needs.
+///
+/// The color mask travels with it rather than being set separately, because the
+/// two always change together: a clip draw contributes shape and no color, and
+/// separating them leaves a state where one is set and the other is not.
+fn apply_stencil(gl: &glow::Context, state: ClipState) {
+    // SAFETY: a context is current.
+    unsafe {
+        gl.enable(glow::STENCIL_TEST);
+        gl.stencil_func(glow::EQUAL, state.reference as i32, 0xff);
+        let pass_op = match state.role {
+            ClipRole::Content => glow::KEEP,
+            // Saturating rather than wrapping, for the same reason the Vulkan
+            // side clamps: at the top of the range a wrap lands on zero and
+            // admits everything the clip excluded, where saturating merely
+            // fails to narrow further. Depth is checked against the limit
+            // before recording, so neither should arise.
+            ClipRole::Narrow => glow::INCR,
+            ClipRole::Widen => glow::DECR,
+        };
+        gl.stencil_op(glow::KEEP, glow::KEEP, pass_op);
+        gl.stencil_mask(if state.role.writes_stencil() { 0xff } else { 0 });
+        let color = state.role.writes_color();
+        gl.color_mask(color, color, color, color);
+    }
 }
 
 fn apply_blend(gl: &glow::Context, blend: BlendMode) {

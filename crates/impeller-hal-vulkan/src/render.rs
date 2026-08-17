@@ -11,7 +11,7 @@ use ash::vk;
 use gpu_allocator::vulkan::{Allocation, AllocationCreateDesc, AllocationScheme};
 use gpu_allocator::MemoryLocation;
 use impeller_hal::{
-    Batch, BlendMode, Error, PassDescriptor, Result, TextureDescriptor, TextureUsage,
+    Batch, BlendMode, ClipRole, Error, PassDescriptor, Result, TextureDescriptor, TextureUsage,
 };
 use std::collections::HashMap;
 
@@ -24,6 +24,12 @@ pub(crate) struct RenderPassKey {
     /// Sample count of the attachment being rendered into. Above one, the pass
     /// carries a resolve attachment as well.
     pub(crate) samples: u32,
+    /// The stencil attachment's format, or `None` for a pass that has none.
+    ///
+    /// Part of the key rather than a flag because passes are only compatible
+    /// when their attachment formats match, so a pipeline built against a pass
+    /// with a stencil cannot be used with one without.
+    pub(crate) stencil: Option<vk::Format>,
 }
 
 /// A pipeline is distinguished by format and blend state.
@@ -39,6 +45,14 @@ pub(crate) struct PipelineKey {
     /// Rasterization sample count, which is baked into a pipeline and must
     /// match the render pass it is used with.
     pub(crate) samples: u32,
+    /// The stencil attachment's format, or `None` where the pass has none.
+    pub(crate) stencil: Option<vk::Format>,
+    /// What this pipeline does with the stencil.
+    ///
+    /// The value compared against is dynamic state rather than part of the key,
+    /// so a clip stack of any depth costs three pipelines rather than three per
+    /// level. Only the operation differs between them, and that is baked in.
+    pub(crate) role: ClipRole,
 }
 
 /// Cached pipeline objects, built on demand and held for the context's life.
@@ -141,10 +155,12 @@ impl VulkanContext {
             };
         }
 
+        let stencil_format = self.stencil_format_for(batch)?;
         let pass_key = RenderPassKey {
             format,
             clears: clear.is_some(),
             samples: pass.samples,
+            stencil: stencil_format,
         };
         let render_pass = self.ensure_render_pass(pass_key)?;
         for draw in batch.draws() {
@@ -153,6 +169,8 @@ impl VulkanContext {
                     format,
                     blend: draw.blend,
                     samples: pass.samples,
+                    stencil: stencil_format,
+                    role: draw.stencil.role,
                 },
                 render_pass,
             )?;
@@ -177,6 +195,7 @@ impl VulkanContext {
             vertex_buffer.buffer,
             index_buffer.buffer,
             pass,
+            stencil_format,
         );
 
         self.release(vertex_buffer);
@@ -195,6 +214,7 @@ impl VulkanContext {
         vertex_buffer: vk::Buffer,
         index_buffer: vk::Buffer,
         pass: PassDescriptor,
+        stencil_format: Option<vk::Format>,
     ) -> Result<()> {
         let layout = self.pipeline_cache().layout().expect("ensured above");
         let extent = target.extent();
@@ -229,12 +249,32 @@ impl VulkanContext {
             None
         };
 
-        let attachments: Vec<vk::ImageView> = match &multisample {
+        // Matches the multisample buffer in lifetime and in reason: written
+        // during the pass, never read afterwards, discarded at the end.
+        let stencil = match stencil_format {
+            Some(format) => match crate::stencil::create(self, extent, pass.samples, format) {
+                Ok(buffer) => Some(buffer),
+                Err(e) => {
+                    unsafe { device.destroy_image_view(view, None) };
+                    if let Some((tex, ms_view)) = multisample {
+                        unsafe { device.destroy_image_view(ms_view, None) };
+                        self.destroy_texture(tex);
+                    }
+                    return Err(e);
+                }
+            },
+            None => None,
+        };
+
+        let mut attachments: Vec<vk::ImageView> = match &multisample {
             // Order matches the render pass: the multisample attachment first,
             // then the resolve target the caller reads.
             Some((_, ms_view)) => vec![*ms_view, view],
             None => vec![view],
         };
+        if let Some(stencil) = &stencil {
+            attachments.push(stencil.view);
+        }
         let fb_info = vk::FramebufferCreateInfo::default()
             .render_pass(render_pass)
             .attachments(&attachments)
@@ -248,6 +288,9 @@ impl VulkanContext {
                 if let Some((tex, ms_view)) = multisample {
                     unsafe { device.destroy_image_view(ms_view, None) };
                     self.destroy_texture(tex);
+                }
+                if let Some(stencil) = stencil {
+                    stencil.destroy(self);
                 }
                 return Err(backend_err("create_framebuffer", e));
             }
@@ -271,16 +314,16 @@ impl VulkanContext {
             }
 
             // One clear value per attachment, even though the resolve target's
-            // load operation discards it.
-            let clear_values = [
-                vk::ClearValue {
-                    color: vk::ClearColorValue {
-                        float32: clear.unwrap_or([0.0; 4]),
-                    },
+            // load operation discards it. The stencil starts at zero, which is
+            // the depth unclipped content draws at, so a pass with no clip
+            // draws behaves exactly as one with no stencil attachment.
+            let mut clear_values = vec![vk::ClearValue {
+                color: vk::ClearColorValue {
+                    float32: clear.unwrap_or([0.0; 4]),
                 },
-                vk::ClearValue::default(),
-            ];
-            let clear_values = &clear_values[..attachments.len()];
+            }];
+            clear_values.resize(attachments.len(), vk::ClearValue::default());
+            let clear_values = &clear_values[..];
             let area = vk::Rect2D {
                 offset: vk::Offset2D { x: 0, y: 0 },
                 extent: vk::Extent2D {
@@ -324,6 +367,8 @@ impl VulkanContext {
                             format,
                             blend: draw.blend,
                             samples: pass.samples,
+                            stencil: stencil_format,
+                            role: draw.stencil.role,
                         })
                         .expect("ensured above");
                     record_draw(&recording, draw, pipeline, &mut state);
@@ -345,6 +390,9 @@ impl VulkanContext {
             unsafe { device.destroy_image_view(ms_view, None) };
             self.destroy_texture(tex);
         }
+        if let Some(stencil) = stencil {
+            stencil.destroy(self);
+        }
 
         if outcome.is_ok() {
             // The render pass declares this as its final layout, so the next
@@ -356,6 +404,27 @@ impl VulkanContext {
     }
 
     /// Allocate a transient multisample colour buffer matching `target`.
+    /// The stencil format this submission needs, or `None` if it needs none.
+    ///
+    /// Resolved once per submission rather than per draw so that every key
+    /// built from it agrees, and refused up front where the clip stack is
+    /// deeper than a stencil can distinguish: past that point the value wraps
+    /// to zero and the clip admits everything it was meant to exclude, which is
+    /// a picture rather than an error.
+    fn stencil_format_for(&self, batch: &Batch) -> Result<Option<vk::Format>> {
+        if !batch.uses_stencil() {
+            return Ok(None);
+        }
+        if batch.max_clip_depth() > crate::stencil::MAX_CLIP_DEPTH {
+            return Err(Error::LimitExceeded {
+                what: "clip nesting depth",
+                requested: batch.max_clip_depth() as u64,
+                limit: crate::stencil::MAX_CLIP_DEPTH as u64,
+            });
+        }
+        crate::stencil::stencil_format(self).map(Some)
+    }
+
     fn create_multisample_buffer(
         &mut self,
         target: &VulkanTexture,
@@ -424,10 +493,12 @@ impl VulkanContext {
             return Err(Error::Unsupported("deferred submission of an empty batch"));
         }
 
+        let stencil_format = self.stencil_format_for(batch)?;
         let pass_key = RenderPassKey {
             format,
             clears: pass.clear.is_some(),
             samples: 1,
+            stencil: stencil_format,
         };
         let render_pass = self.ensure_render_pass(pass_key)?;
         for draw in batch.draws() {
@@ -436,6 +507,8 @@ impl VulkanContext {
                     format,
                     blend: draw.blend,
                     samples: 1,
+                    stencil: stencil_format,
+                    role: draw.stencil.role,
                 },
                 render_pass,
             )?;
@@ -460,6 +533,7 @@ impl VulkanContext {
             vertex_buffer.buffer,
             index_buffer.buffer,
             pass,
+            stencil_format,
         );
 
         // The geometry buffers are host-visible and were fully written before
@@ -495,6 +569,7 @@ impl VulkanContext {
         vertex_buffer: vk::Buffer,
         index_buffer: vk::Buffer,
         pass: PassDescriptor,
+        stencil_format: Option<vk::Format>,
     ) -> Result<crate::fence::VulkanFence> {
         let layout = self.pipeline_cache().layout().expect("ensured above");
         let extent = target.extent();
@@ -539,6 +614,8 @@ impl VulkanContext {
                         format,
                         blend: draw.blend,
                         samples: 1,
+                        stencil: stencil_format,
+                        role: draw.stencil.role,
                     })
                     .expect("ensured above")
             })
@@ -736,11 +813,32 @@ fn build_render_pass(device: &ash::Device, key: RenderPassKey) -> Result<vk::Ren
         .initial_layout(vk::ImageLayout::UNDEFINED)
         .final_layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL);
 
-    let attachments: Vec<vk::AttachmentDescription> = if key.samples > 1 {
+    // Cleared at pass start and discarded at the end. A clip stack is built
+    // and unwound entirely within one pass, so nothing outside it can read
+    // this, and on a tiler discarding keeps it in tile memory.
+    let stencil = key.stencil.map(|format| {
+        vk::AttachmentDescription::default()
+            .format(format)
+            .samples(sample_flags(key.samples))
+            .load_op(vk::AttachmentLoadOp::DONT_CARE)
+            .store_op(vk::AttachmentStoreOp::DONT_CARE)
+            .stencil_load_op(vk::AttachmentLoadOp::CLEAR)
+            .stencil_store_op(vk::AttachmentStoreOp::DONT_CARE)
+            .initial_layout(vk::ImageLayout::UNDEFINED)
+            .final_layout(vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL)
+    });
+
+    let mut attachments: Vec<vk::AttachmentDescription> = if key.samples > 1 {
         vec![color, resolve]
     } else {
         vec![color]
     };
+    // Last, so the color and resolve attachments keep the indices they had and
+    // the framebuffer built alongside this needs no reordering.
+    let stencil_index = attachments.len() as u32;
+    if let Some(stencil) = stencil {
+        attachments.push(stencil);
+    }
 
     let color_refs = [vk::AttachmentReference::default()
         .attachment(0)
@@ -748,12 +846,18 @@ fn build_render_pass(device: &ash::Device, key: RenderPassKey) -> Result<vk::Ren
     let resolve_refs = [vk::AttachmentReference::default()
         .attachment(1)
         .layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL)];
+    let stencil_ref = vk::AttachmentReference::default()
+        .attachment(stencil_index)
+        .layout(vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL);
 
     let mut subpass = vk::SubpassDescription::default()
         .pipeline_bind_point(vk::PipelineBindPoint::GRAPHICS)
         .color_attachments(&color_refs);
     if key.samples > 1 {
         subpass = subpass.resolve_attachments(&resolve_refs);
+    }
+    if key.stencil.is_some() {
+        subpass = subpass.depth_stencil_attachment(&stencil_ref);
     }
     let subpasses = [subpass];
     let info = vk::RenderPassCreateInfo::default()
@@ -845,8 +949,16 @@ fn build_pipeline(
     // over is ONE rather than SRC_ALPHA, since using SRC_ALPHA against an
     // already-scaled source applies alpha twice and darkens every translucent
     // edge.
-    let attachment = vk::PipelineColorBlendAttachmentState::default()
-        .color_write_mask(vk::ColorComponentFlags::RGBA);
+    // A clip draw contributes shape, not color. Masking every channel rather
+    // than relying on a blend mode that happens to discard the source keeps the
+    // clip geometry from touching the target even where blending is exotic.
+    let attachment = vk::PipelineColorBlendAttachmentState::default().color_write_mask(
+        if key.role.writes_color() {
+            vk::ColorComponentFlags::RGBA
+        } else {
+            vk::ColorComponentFlags::empty()
+        },
+    );
     let blend_attachments = [match key.blend.factors() {
         _ if key.blend.is_plain_write() => {
             // Writing the source outright needs no blend unit at all, which is
@@ -898,7 +1010,35 @@ fn build_pipeline(
         blend = blend.push_next(&mut advanced);
     }
 
-    let dynamic_states = [vk::DynamicState::VIEWPORT, vk::DynamicState::SCISSOR];
+    // The stencil operations differ per role and are baked in; the value they
+    // compare against is the clip depth, which is dynamic so that nesting
+    // deeper costs a state change rather than another pipeline.
+    let stencil_op = vk::StencilOpState::default()
+        .compare_op(vk::CompareOp::EQUAL)
+        .fail_op(vk::StencilOp::KEEP)
+        .depth_fail_op(vk::StencilOp::KEEP)
+        .pass_op(match key.role {
+            ClipRole::Content => vk::StencilOp::KEEP,
+            // Clamping rather than wrapping: at the top of the range a wrap
+            // lands back on zero and admits everything the clip excluded, where
+            // a clamp merely fails to narrow further. Neither is correct, and
+            // depth is checked against the limit before recording, so this is
+            // the safer of two states that should not arise.
+            ClipRole::Narrow => vk::StencilOp::INCREMENT_AND_CLAMP,
+            ClipRole::Widen => vk::StencilOp::DECREMENT_AND_CLAMP,
+        })
+        .compare_mask(0xff)
+        .write_mask(if key.role.writes_stencil() { 0xff } else { 0 });
+    let depth_stencil = vk::PipelineDepthStencilStateCreateInfo::default()
+        .stencil_test_enable(key.stencil.is_some())
+        .front(stencil_op)
+        .back(stencil_op);
+
+    let dynamic_states = [
+        vk::DynamicState::VIEWPORT,
+        vk::DynamicState::SCISSOR,
+        vk::DynamicState::STENCIL_REFERENCE,
+    ];
     let dynamic = vk::PipelineDynamicStateCreateInfo::default().dynamic_states(&dynamic_states);
 
     let info = vk::GraphicsPipelineCreateInfo::default()
@@ -908,6 +1048,7 @@ fn build_pipeline(
         .viewport_state(&viewport_state)
         .rasterization_state(&raster)
         .multisample_state(&multisample)
+        .depth_stencil_state(&depth_stencil)
         .color_blend_state(&blend)
         .dynamic_state(&dynamic)
         .layout(layout)
@@ -942,6 +1083,9 @@ struct PassRecording<'a> {
 struct RecordedState {
     pipeline: Option<vk::Pipeline>,
     scissor: vk::Rect2D,
+    /// `None` until the first draw sets it, since a pass begins with the
+    /// reference undefined rather than at any particular value.
+    stencil_reference: Option<u32>,
 }
 
 impl RecordedState {
@@ -951,6 +1095,7 @@ impl RecordedState {
         Self {
             pipeline: None,
             scissor: area,
+            stencil_reference: None,
         }
     }
 }
@@ -1012,6 +1157,17 @@ unsafe fn record_draw(
         if state.scissor != wanted {
             device.cmd_set_scissor(cmd, 0, &[wanted]);
             state.scissor = wanted;
+        }
+
+        // The clip depth is dynamic state, so nesting deeper is a state change
+        // rather than another pipeline. It is set even for a pass with no
+        // stencil attachment, where it is ignored -- writing it unconditionally
+        // is cheaper than deciding, and leaves no path where a pipeline that
+        // does test the stencil runs against a reference nobody set.
+        let reference = draw.stencil.reference;
+        if state.stencil_reference != Some(reference) {
+            device.cmd_set_stencil_reference(cmd, vk::StencilFaceFlags::FRONT_AND_BACK, reference);
+            state.stencil_reference = Some(reference);
         }
 
         device.cmd_push_constants(

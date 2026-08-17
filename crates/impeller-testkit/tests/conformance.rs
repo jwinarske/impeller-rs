@@ -251,7 +251,11 @@ fn clipped_scenes_differ_from_the_same_scenes_unclipped() {
     // the scene and the scissor unit would fail.
     let mut checked = 0;
     for scene in corpus() {
-        if !scene.items.iter().any(|item| item.clip.is_some()) {
+        if !scene
+            .items
+            .iter()
+            .any(|item| item.clip.is_some() || item.clip_shape.is_some())
+        {
             continue;
         }
         let Some(index) = first_device_for(&devices, &scene) else {
@@ -260,6 +264,7 @@ fn clipped_scenes_differ_from_the_same_scenes_unclipped() {
         let mut unclipped = scene.clone();
         for item in &mut unclipped.items {
             item.clip = None;
+            item.clip_shape = None;
         }
 
         let ctx = &mut devices[index];

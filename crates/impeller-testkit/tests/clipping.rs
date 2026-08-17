@@ -1,4 +1,5 @@
-//! Scissor clipping, at the HAL boundary and across both backends.
+//! Clipping at the HAL boundary, by scissor and by stencil, across both
+//! backends.
 //!
 //! The whole risk in this feature is orientation, in both directions. OpenGL
 //! measures its scissor box upward from the bottom where Vulkan measures
@@ -9,11 +10,13 @@
 //!
 //! Either mistake is invisible in a target symmetric about its horizontal
 //! center line, so every clip here sits deliberately off-center, with distinct
-//! distances from all four edges.
+//! distances from all four edges. The stencil tests further down inherit that
+//! discipline: clip space runs upward where an image's rows run downward, and
+//! getting the negation wrong shifts a clip rather than obviously breaking it.
 
 use impeller_hal::{
-    Batch, BlendMode, Extent2D, Hal, HalContext, Material, PassDescriptor, PixelFormat, Scissor,
-    TextureDescriptor,
+    Batch, BlendMode, ClipState, Extent2D, Hal, HalContext, Material, PassDescriptor, PixelFormat,
+    Scissor, TextureDescriptor,
 };
 use impeller_hal_gles::{DisplayTarget, GlesContext, GlesHal};
 use impeller_hal_vulkan::{DevicePreference, VulkanContext, VulkanHal};
@@ -297,4 +300,189 @@ fn an_empty_clip_draws_nothing() {
         0,
         "a draw that can write no pixel was still recorded"
     );
+}
+
+// --- Stencil clipping, which is what a clip that is not a rectangle needs. ---
+
+/// A rectangle in clip space, from one given in pixels with a top-left origin.
+///
+/// Y is negated because clip space follows the WGSL convention and runs upward,
+/// so the image's top row sits at positive one.
+fn clip_rect(x0: f32, y0: f32, x1: f32, y1: f32) -> [[f32; 2]; 4] {
+    let to_clip = |x: f32, y: f32| {
+        [
+            x / SIZE.width as f32 * 2.0 - 1.0,
+            1.0 - y / SIZE.height as f32 * 2.0,
+        ]
+    };
+    [
+        to_clip(x0, y0),
+        to_clip(x1, y0),
+        to_clip(x1, y1),
+        to_clip(x0, y1),
+    ]
+}
+
+/// Build a clip from a rectangle, then fill the target through it.
+fn stencil_clipped_batch(depth_two: bool) -> Batch {
+    let mut batch = Batch::new();
+    batch
+        .push_with(
+            &clip_rect(5.0, 3.0, 21.0, 26.0),
+            &QUAD,
+            Material::solid(FOREGROUND),
+            BlendMode::Src,
+            None,
+            ClipState::narrow(0),
+        )
+        .expect("outer");
+    if depth_two {
+        batch
+            .push_with(
+                &clip_rect(11.0, 9.0, 30.0, 30.0),
+                &QUAD,
+                Material::solid(FOREGROUND),
+                BlendMode::Src,
+                None,
+                ClipState::narrow(1),
+            )
+            .expect("inner");
+    }
+    batch
+        .push_with(
+            &FULL,
+            &QUAD,
+            Material::solid(FOREGROUND),
+            BlendMode::Src,
+            None,
+            ClipState::content(if depth_two { 2 } else { 1 }),
+        )
+        .expect("content");
+    batch
+}
+
+fn render_batch<H: Hal>(ctx: &mut H::Context, batch: &Batch, samples: u32) -> Vec<u8>
+where
+    H::Context: HalContext<Hal = H>,
+{
+    let mut target = ctx
+        .create_texture(&TextureDescriptor::offscreen(SIZE, PixelFormat::Rgba8Unorm))
+        .expect("texture");
+    ctx.submit_batch(
+        &mut target,
+        batch,
+        PassDescriptor::clear(BACKGROUND).with_samples(samples),
+    )
+    .expect("submit");
+    let pixels = ctx.read_texture(&mut target).expect("readback");
+    ctx.destroy_texture(target);
+    pixels
+}
+
+#[test]
+fn a_stencil_clip_confines_a_draw_on_both_backends() {
+    let batch = stencil_clipped_batch(false);
+    let want = Some(Scissor::new(5, 3, 16, 23));
+    let mut ran = 0;
+
+    if let Ok(mut ctx) = VulkanContext::new(DevicePreference::Auto) {
+        let pixels = render_batch::<VulkanHal>(&mut ctx, &batch, 1);
+        assert_eq!(covered_bounds(&pixels), want, "vulkan");
+        ran += 1;
+    }
+    if let Ok(mut ctx) = GlesContext::new(DisplayTarget::Surfaceless) {
+        let pixels = render_batch::<GlesHal>(&mut ctx, &batch, 1);
+        assert_eq!(covered_bounds(&pixels), want, "gles");
+        ran += 1;
+    }
+    assert!(ran > 0, "no backend available");
+}
+
+#[test]
+fn the_backends_agree_pixel_for_pixel_on_a_nested_stencil_clip() {
+    let Ok(mut vulkan) = VulkanContext::new(DevicePreference::Auto) else {
+        return;
+    };
+    let Ok(mut gles) = GlesContext::new(DisplayTarget::Surfaceless) else {
+        return;
+    };
+    // A stencil clip has no per-fragment arithmetic in it: a pixel is either
+    // admitted or not. So unlike a gradient or a blend, the two backends have
+    // to agree exactly, and any tolerance here would only hide a defect.
+    let batch = stencil_clipped_batch(true);
+    let a = render_batch::<VulkanHal>(&mut vulkan, &batch, 1);
+    let b = render_batch::<GlesHal>(&mut gles, &batch, 1);
+    assert_eq!(
+        covered_bounds(&a),
+        Some(Scissor::new(11, 9, 10, 17)),
+        "vulkan did not intersect the two clips"
+    );
+    assert_eq!(a, b, "the backends disagree about a stencil clip");
+}
+
+#[test]
+fn a_stencil_clip_leaves_no_trace_on_a_later_pass() {
+    // The GLES backend attaches its stencil buffer to the target's own
+    // framebuffer, which outlives the pass, and drives global state a later
+    // pass inherits. A color mask or a stencil test left on would make the
+    // second pass here render nothing at all, which no test of the first pass
+    // could catch.
+    let mut ran = 0;
+    if let Ok(mut ctx) = GlesContext::new(DisplayTarget::Surfaceless) {
+        let _ = render_batch::<GlesHal>(&mut ctx, &stencil_clipped_batch(true), 1);
+        let mut plain = Batch::new();
+        plain
+            .push(&FULL, &QUAD, Material::solid(FOREGROUND), BlendMode::Src)
+            .expect("push");
+        let pixels = render_batch::<GlesHal>(&mut ctx, &plain, 1);
+        assert_eq!(
+            covered_bounds(&pixels),
+            Some(Scissor::covering(SIZE)),
+            "gles carried clip state into a later pass"
+        );
+        ran += 1;
+    }
+    if let Ok(mut ctx) = VulkanContext::new(DevicePreference::Auto) {
+        let _ = render_batch::<VulkanHal>(&mut ctx, &stencil_clipped_batch(true), 1);
+        let mut plain = Batch::new();
+        plain
+            .push(&FULL, &QUAD, Material::solid(FOREGROUND), BlendMode::Src)
+            .expect("push");
+        let pixels = render_batch::<VulkanHal>(&mut ctx, &plain, 1);
+        assert_eq!(
+            covered_bounds(&pixels),
+            Some(Scissor::covering(SIZE)),
+            "vulkan carried clip state into a later pass"
+        );
+        ran += 1;
+    }
+    assert!(ran > 0, "no backend available");
+}
+
+#[test]
+fn a_multisampled_stencil_clip_agrees_between_the_backends() {
+    let Ok(mut vulkan) = VulkanContext::new(DevicePreference::Auto) else {
+        return;
+    };
+    let Ok(mut gles) = GlesContext::new(DisplayTarget::Surfaceless) else {
+        return;
+    };
+    if !(HalContext::capabilities(&vulkan).sample_counts.supports(4)
+        && HalContext::capabilities(&gles).sample_counts.supports(4))
+    {
+        eprintln!("skipping: 4x not supported on both backends");
+        return;
+    }
+    // The stencil attachment has to carry the color attachment's sample count
+    // on both, and the two allocate it in quite different ways -- an image
+    // beside the multisample color image on one, a renderbuffer on the other.
+    let batch = stencil_clipped_batch(true);
+    let a = render_batch::<VulkanHal>(&mut vulkan, &batch, 4);
+    let b = render_batch::<GlesHal>(&mut gles, &batch, 4);
+    assert_eq!(
+        covered_bounds(&a),
+        Some(Scissor::new(11, 9, 10, 17)),
+        "the multisampled clip landed somewhere else"
+    );
+    assert_eq!(a, b, "the backends disagree about a multisampled clip");
 }

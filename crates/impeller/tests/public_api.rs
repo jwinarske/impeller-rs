@@ -8,7 +8,7 @@
 
 use impeller::{
     BackendPreference, BlendMode, Canvas, Color, Context, Extent2D, GradientStop, Paint,
-    PixelFormat, Rect, Vec2,
+    PathBuilder, PixelFormat, Rect, Vec2,
 };
 
 const SIZE: Extent2D = Extent2D {
@@ -680,30 +680,38 @@ fn a_clip_moves_with_the_transform_that_was_in_force_when_it_was_set() {
 }
 
 #[test]
-fn a_rotated_clip_is_refused_rather_than_approximated() {
-    let Some(mut _ctx) = context() else { return };
+fn a_rotated_clip_is_the_rotated_shape_and_not_its_bounding_box() {
+    let Some(mut ctx) = context() else { return };
     let mut canvas = Canvas::new(SIZE);
+    canvas.clear(Color::linear(0.0, 0.0, 0.0, 1.0));
 
-    // A quarter turn keeps a rectangle a rectangle, so it is accepted.
-    canvas.save();
-    canvas.rotate(std::f32::consts::FRAC_PI_2);
+    // A square clip turned through an eighth turn is a diamond in device
+    // pixels. Its bounding box reaches the corners; the diamond does not, and
+    // the difference is the whole reason this cannot be approximated -- a
+    // bounding box would admit pixels the caller asked to remove.
+    canvas.translate(64.0, 64.0);
+    canvas.rotate(std::f32::consts::FRAC_PI_4);
     canvas
-        .clip_rect(Rect::new(-40.0, 0.0, 0.0, 40.0))
-        .expect("a quarter turn keeps a rectangle rectangular");
-    canvas.restore();
+        .clip_rect(Rect::new(-30.0, -30.0, 30.0, 30.0))
+        .expect("clip");
+    canvas
+        .draw_rect(
+            Rect::new(-128.0, -128.0, 128.0, 128.0),
+            &Paint::fill(Color::linear(1.0, 1.0, 1.0, 1.0)).with_anti_alias(false),
+        )
+        .expect("rect");
 
-    // An arbitrary rotation does not, and the honest answer is to say so. The
-    // alternative is the rotated shape's bounding box, which admits pixels the
-    // caller asked to remove and looks like a rendering bug rather than like a
-    // clip that was never applied.
-    canvas.rotate(0.4);
+    let pixels = render(&mut ctx, canvas);
+    let lit = |x, y| pixel(&pixels, x, y)[0] > 128;
+    assert!(lit(64, 64), "the middle of the clip was not drawn");
+    assert!(lit(64, 90), "a point inside the diamond was not drawn");
+    // Inside the bounding box, which spans about 22 to 106 on both axes, but
+    // outside the diamond. This is the pixel a bounding-box clip would keep.
     assert!(
-        matches!(
-            canvas.clip_rect(Rect::new(0.0, 0.0, 40.0, 40.0)),
-            Err(impeller::Error::Unsupported(_))
-        ),
-        "a rotated clip was accepted"
+        !lit(100, 100),
+        "the clip reached a corner only its bounding box covers"
     );
+    assert!(!lit(10, 64), "the clip reached outside its bounding box");
 }
 
 #[test]
@@ -736,4 +744,183 @@ fn a_clip_narrowed_to_nothing_draws_nothing() {
     ctx.destroy_surface(surface);
     // The clear still happens: an empty clip removes the drawing, not the frame.
     assert_eq!(pixel(&pixels, 64, 64), [51, 102, 153, 255]);
+}
+
+#[test]
+fn a_path_clip_confines_drawing_to_the_path() {
+    let Some(mut ctx) = context() else { return };
+    let mut canvas = Canvas::new(SIZE);
+    canvas.clear(Color::linear(0.0, 0.0, 0.0, 1.0));
+
+    // A triangle, which no rectangle approximates and no scissor expresses.
+    let mut builder = PathBuilder::new();
+    builder
+        .move_to(Vec2::new(64.0, 16.0))
+        .line_to(Vec2::new(112.0, 100.0))
+        .line_to(Vec2::new(16.0, 100.0))
+        .close();
+    canvas.clip_path(&builder.build()).expect("clip");
+    canvas
+        .draw_rect(
+            Rect::from_size(128.0, 128.0),
+            &Paint::fill(Color::linear(1.0, 1.0, 1.0, 1.0)).with_anti_alias(false),
+        )
+        .expect("rect");
+
+    let pixels = render(&mut ctx, canvas);
+    let lit = |x, y| pixel(&pixels, x, y)[0] > 128;
+    assert!(lit(64, 80), "the middle of the triangle was not drawn");
+    assert!(lit(64, 30), "near the apex was not drawn");
+    // The corners of the triangle's bounding box, which the triangle misses.
+    for (x, y, corner) in [(20, 20, "top-left"), (108, 20, "top-right")] {
+        assert!(
+            !lit(x, y),
+            "the {corner} corner outside the triangle was drawn"
+        );
+    }
+    assert!(!lit(64, 110), "below the triangle was drawn");
+}
+
+#[test]
+fn a_path_clip_intersects_with_a_rectangular_one() {
+    let Some(mut ctx) = context() else { return };
+    let mut canvas = Canvas::new(SIZE);
+    canvas.clear(Color::linear(0.0, 0.0, 0.0, 1.0));
+
+    // A scissor and a stencil clip in force at once. They are independent
+    // mechanisms and both apply, which is what lets an axis-aligned clip keep
+    // taking the cheap path even inside a path clip.
+    canvas
+        .clip_rect(Rect::new(0.0, 0.0, 64.0, 128.0))
+        .expect("rect clip");
+    let mut builder = PathBuilder::new();
+    builder
+        .move_to(Vec2::new(64.0, 16.0))
+        .line_to(Vec2::new(112.0, 100.0))
+        .line_to(Vec2::new(16.0, 100.0))
+        .close();
+    canvas.clip_path(&builder.build()).expect("path clip");
+    canvas
+        .draw_rect(
+            Rect::from_size(128.0, 128.0),
+            &Paint::fill(Color::linear(1.0, 1.0, 1.0, 1.0)).with_anti_alias(false),
+        )
+        .expect("rect");
+
+    let pixels = render(&mut ctx, canvas);
+    let lit = |x, y| pixel(&pixels, x, y)[0] > 128;
+    assert!(lit(50, 80), "the region both clips admit was not drawn");
+    assert!(
+        !lit(80, 80),
+        "a region inside the triangle but outside the rectangle was drawn"
+    );
+    assert!(
+        !lit(30, 30),
+        "a region inside the rectangle but outside the triangle was drawn"
+    );
+}
+
+#[test]
+fn restore_undoes_a_path_clip() {
+    let Some(mut ctx) = context() else { return };
+    let mut canvas = Canvas::new(SIZE);
+    canvas.clear(Color::linear(0.0, 0.0, 0.0, 1.0));
+
+    // A path clip lives in a buffer on the device rather than in the recorder,
+    // so restoring it is a draw rather than an assignment. Getting that wrong
+    // leaves every later shape confined to a clip that was supposed to have
+    // been lifted.
+    canvas.save();
+    let mut builder = PathBuilder::new();
+    builder
+        .move_to(Vec2::new(64.0, 16.0))
+        .line_to(Vec2::new(112.0, 100.0))
+        .line_to(Vec2::new(16.0, 100.0))
+        .close();
+    canvas.clip_path(&builder.build()).expect("clip");
+    canvas.restore();
+
+    canvas
+        .draw_rect(
+            Rect::from_size(128.0, 128.0),
+            &Paint::fill(Color::linear(1.0, 1.0, 1.0, 1.0)).with_anti_alias(false),
+        )
+        .expect("rect");
+
+    let pixels = render(&mut ctx, canvas);
+    for (x, y) in [(4, 4), (124, 4), (4, 124), (124, 124), (64, 64)] {
+        assert!(
+            pixel(&pixels, x, y)[0] > 128,
+            "({x}, {y}) was still confined by a clip that had been restored"
+        );
+    }
+}
+
+#[test]
+fn nested_path_clips_intersect_and_unwind_one_level_at_a_time() {
+    let Some(mut ctx) = context() else { return };
+    let mut canvas = Canvas::new(SIZE);
+    canvas.clear(Color::linear(0.0, 0.0, 0.0, 1.0));
+
+    let triangle = |apex_left: bool| {
+        let mut builder = PathBuilder::new();
+        if apex_left {
+            builder
+                .move_to(Vec2::new(16.0, 64.0))
+                .line_to(Vec2::new(100.0, 16.0))
+                .line_to(Vec2::new(100.0, 112.0))
+                .close();
+        } else {
+            builder
+                .move_to(Vec2::new(112.0, 64.0))
+                .line_to(Vec2::new(28.0, 16.0))
+                .line_to(Vec2::new(28.0, 112.0))
+                .close();
+        }
+        builder.build()
+    };
+
+    canvas.save();
+    canvas.clip_path(&triangle(true)).expect("outer");
+    canvas.save();
+    canvas.clip_path(&triangle(false)).expect("inner");
+    // Inside both triangles.
+    canvas
+        .draw_rect(
+            Rect::from_size(128.0, 128.0),
+            &Paint::fill(Color::linear(1.0, 1.0, 1.0, 1.0)).with_anti_alias(false),
+        )
+        .expect("rect");
+    let both = render(&mut ctx, canvas);
+
+    // Now the same thing, unwinding one level before drawing: only the outer
+    // triangle should confine it. A restore that stepped back too far or not
+    // far enough gives a different picture from either.
+    let mut canvas = Canvas::new(SIZE);
+    canvas.clear(Color::linear(0.0, 0.0, 0.0, 1.0));
+    canvas.save();
+    canvas.clip_path(&triangle(true)).expect("outer");
+    canvas.save();
+    canvas.clip_path(&triangle(false)).expect("inner");
+    canvas.restore();
+    canvas
+        .draw_rect(
+            Rect::from_size(128.0, 128.0),
+            &Paint::fill(Color::linear(1.0, 1.0, 1.0, 1.0)).with_anti_alias(false),
+        )
+        .expect("rect");
+    let outer_only = render(&mut ctx, canvas);
+
+    let lit = |p: &[u8], x, y| pixel(p, x, y)[0] > 128;
+    // A point inside the left-apex triangle but outside the right-apex one.
+    assert!(!lit(&both, 22, 64), "the two clips did not intersect");
+    assert!(
+        lit(&outer_only, 22, 64),
+        "restoring did not lift the inner clip"
+    );
+    // And the outer clip is still in force after the restore.
+    assert!(
+        !lit(&outer_only, 8, 64),
+        "restoring lifted the outer clip as well"
+    );
 }

@@ -357,7 +357,7 @@ pub(crate) fn backend_err(what: &str, e: vk::Result) -> Error {
 }
 
 /// Attach backend detail to an allocator failure without losing the category.
-trait WithDetail {
+pub(crate) trait WithDetail {
     fn with_detail<E: std::fmt::Display>(self, e: E) -> Error;
 }
 

@@ -10,7 +10,7 @@ use impeller_geometry::stroke::StrokeStyle;
 use impeller_geometry::tessellate::{Tessellator, VertexBuffers};
 use impeller_geometry::transform::{max_scale, transform_points, viewport_projection};
 use impeller_geometry::{flatten::DEFAULT_TOLERANCE, Path};
-use impeller_hal::{Batch, BlendMode, Extent2D, Material, Result, Scissor, Stop};
+use impeller_hal::{Batch, BlendMode, ClipState, Extent2D, Material, Result, Scissor, Stop};
 
 /// How a shape is painted.
 ///
@@ -28,6 +28,12 @@ pub struct Paint {
     /// same reason: the clip in force when a shape is recorded is a property of
     /// that shape's draw, not of the batch. `None` is the whole target.
     pub clip: Option<Scissor>,
+    /// What this draw does with the stencil.
+    ///
+    /// Independent of [`Self::clip`], and both apply. An axis-aligned clip
+    /// stays a scissor even where a stencil is in play, since a scissor is
+    /// exact and costs nothing while narrowing the stencil costs a draw.
+    pub stencil: ClipState,
 }
 
 impl Paint {
@@ -36,6 +42,7 @@ impl Paint {
             material: Material::solid(color),
             blend: BlendMode::default(),
             clip: None,
+            stencil: ClipState::UNCLIPPED,
         }
     }
 
@@ -62,6 +69,7 @@ impl Paint {
             },
             blend: BlendMode::default(),
             clip: None,
+            stencil: ClipState::UNCLIPPED,
         }
     }
 
@@ -72,6 +80,11 @@ impl Paint {
 
     pub fn with_clip(mut self, clip: Option<Scissor>) -> Self {
         self.clip = clip;
+        self
+    }
+
+    pub fn with_stencil(mut self, stencil: ClipState) -> Self {
+        self.stencil = stencil;
         self
     }
 }
@@ -167,12 +180,13 @@ impl Renderer {
         let geo = self.fill_path(path, transform);
         let positions = geo.positions();
         let indices = geo.indices.to_vec();
-        batch.push_clipped(
+        batch.push_with(
             &positions,
             &indices,
             paint.material.clone(),
             paint.blend,
             paint.clip,
+            paint.stencil,
         )
     }
 
@@ -188,12 +202,13 @@ impl Renderer {
         let geo = self.stroke_path(path, style, transform);
         let positions = geo.positions();
         let indices = geo.indices.to_vec();
-        batch.push_clipped(
+        batch.push_with(
             &positions,
             &indices,
             paint.material.clone(),
             paint.blend,
             paint.clip,
+            paint.stencil,
         )
     }
 

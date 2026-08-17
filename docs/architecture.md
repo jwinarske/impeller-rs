@@ -213,14 +213,51 @@ the moment it is applied, so a later transform moves the shapes drawn inside it
 without moving the clip.
 
 Where the current transform rotates or skews by anything but a quarter turn, a
-rectangular clip is refused rather than approximated. The tempting alternative
-is the rotated quadrilateral's bounding box, which admits pixels the caller
-asked to remove and produces a picture that reads as a rendering bug rather than
-as a clip that was never applied. Arbitrary clip shapes need a stencil pass,
-which is separate machinery. The quarter-turn case is accepted because a right
-angle keeps a rectangle rectangular; the test for that is relative rather than
-exact, since `cos` of a right angle in `f32` is about `-4.4e-8` and an exact
-comparison would refuse precisely what the caller asked for.
+rectangular clip stops being a rectangle and goes through the stencil instead.
+Taking its bounding box would admit pixels the caller asked to remove. The
+quarter-turn case stays on the scissor because a right angle keeps a rectangle
+rectangular; the test for that is relative rather than exact, since `cos` of a
+right angle in `f32` is about `-4.4e-8` and an exact comparison would refuse
+precisely what the caller asked for.
+
+**The stencil holds a clip's nesting depth, not a mask of which clips apply.**
+The obvious encoding gives each clip a bit, which caps nesting at eight and
+makes intersecting two clips a per-bit affair. A depth fits a stack of any size
+in the same eight bits and reduces the test to one comparison: content at depth
+`d` draws where the stencil holds `d`, which is true only where every clip down
+to that depth admitted the pixel. It also makes undoing a clip local — because a
+stack unwinds in the order it was built, no pixel can hold more than the depth
+being left, so stepping back is a decrement rather than a recomputation from the
+clips that remain.
+
+Clip geometry goes through the same fill tessellator as a drawn shape, which
+matters for more than consistency: the result is non-overlapping triangles, so
+the stencil steps forward once per covered pixel and needs no parity trick. Clip
+draws mask off every color channel rather than relying on a blend mode that
+happens to discard the source, so clip geometry cannot touch the target however
+exotic the blending is.
+
+Depth beyond 255 is refused rather than wrapped. Eight bits is the only stencil
+depth every device is required to offer, and past it the value returns to zero
+and the clip admits everything it was meant to exclude — a wrong picture rather
+than an error, which is why it is caught before recording.
+
+Restoring a scissor is an assignment; restoring a stencil clip is a draw, one
+per level being left. Those draws are deliberately unscissored: a step back
+lands exactly where its matching narrowing landed, because that is where the
+stencil holds the value being tested, so making it agree with a scissor that has
+already been restored to something else would only be a way to get it wrong.
+
+The two mechanisms are independent and both apply. That is what keeps the
+scissor from being a stepping stone: an axis-aligned clip stays on it even
+inside a path clip, because a scissor is exact and free where narrowing the
+stencil costs a draw.
+
+The stencil attachment is transient — cleared at pass start, discarded at the
+end, never stored — so a clip stack is built and unwound entirely within one
+pass and a tiler keeps it in tile memory. It carries the color attachment's
+sample count, which is also what antialiases a clip edge: with a per-sample
+stencil, a boundary crossing a pixel admits some of its samples and not others.
 
 A pixel belongs to a clip when its center does — the same rule the rasterizer
 applies to the shape being drawn — so a shape and a clip along the same edge

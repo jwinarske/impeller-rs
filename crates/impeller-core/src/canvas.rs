@@ -13,7 +13,9 @@ use impeller_geometry::transform::{
     preserves_axis_alignment, transformed_bounds, viewport_projection,
 };
 use impeller_geometry::{Path, PathBuilder};
-use impeller_hal::{Batch, Error, Extent2D, Material, PassDescriptor, Result, Scissor, Stop};
+use impeller_hal::{
+    Batch, BlendMode, ClipState, Extent2D, Material, PassDescriptor, Result, Scissor, Stop,
+};
 use impeller_renderer::{Paint as RenderPaint, Renderer, TOLERANCE};
 
 /// A rectangle in user coordinates.
@@ -87,6 +89,15 @@ impl Recording {
 struct SavedState {
     transform: Affine2,
     clip: Option<Scissor>,
+    depth: u32,
+}
+
+/// A rectangle covering the whole target, in device pixels.
+///
+/// Used for the draws that step a stencil clip back, which must reach every
+/// pixel the clip could have touched.
+fn full_target_path(extent: Extent2D) -> Path {
+    Rect::new(0.0, 0.0, extent.width as f32, extent.height as f32).to_path()
 }
 
 /// Records drawing commands for one frame.
@@ -100,6 +111,11 @@ pub struct Canvas {
     /// means: a clip is fixed at the moment it is applied, and a later
     /// transform moves the shapes drawn inside it without moving the clip.
     clip: Option<Scissor>,
+    /// How many clips of a shape a scissor cannot express are in force.
+    ///
+    /// Content draws where the stencil holds this, which is true only where
+    /// every one of those clips admitted the pixel.
+    depth: u32,
     stack: Vec<SavedState>,
     extent: Extent2D,
     background: Option<Color>,
@@ -123,6 +139,7 @@ impl Canvas {
             batch: Batch::new(),
             transform: Affine2::IDENTITY,
             clip: None,
+            depth: 0,
             stack: Vec::new(),
             extent,
             background: None,
@@ -177,10 +194,15 @@ impl Canvas {
     /// than like a clip that was never applied. Arbitrary clip shapes need a
     /// stencil pass, which is a separate piece of machinery.
     pub fn clip_rect(&mut self, rect: Rect) -> Result<&mut Self> {
+        // Under a transform that keeps rectangles rectangular, this is exactly
+        // a scissor, which costs nothing and is exact. Under anything else the
+        // result is a rotated quadrilateral, and taking its bounding box would
+        // admit pixels the caller asked to remove -- so it goes through the
+        // stencil like any other shape. That the fast path survives is the
+        // point: a scissor stays the right answer for an axis-aligned clip even
+        // now that the general one exists.
         if !preserves_axis_alignment(&self.transform) {
-            return Err(Error::Unsupported(
-                "clipping by a rotated or skewed rectangle; needs a stencil clip",
-            ));
+            return self.clip_path(&rect.to_path());
         }
         let (min, max) = transformed_bounds(
             &self.transform,
@@ -195,11 +217,45 @@ impl Canvas {
         Ok(self)
     }
 
+    /// Narrow the clip to an arbitrary path in user space.
+    ///
+    /// Intersects with the clip already in force, like [`Self::clip_rect`], and
+    /// like it the path travels through the current transform. The shape is
+    /// recorded into the batch as a draw that writes only the stencil, so it
+    /// costs one draw where a rectangular clip costs none.
+    ///
+    /// The path is filled by the same tessellator that fills a drawn shape, so
+    /// it obeys the same fill rule and produces the same edges. That matters
+    /// for more than consistency: the tessellation is a set of non-overlapping
+    /// triangles, which is what lets the stencil step forward by one rather
+    /// than needing the parity trick an overlapping fan would.
+    pub fn clip_path(&mut self, path: &Path) -> Result<&mut Self> {
+        if self.clip.is_some_and(Scissor::is_empty) {
+            // Already clipped to nothing; narrowing further changes nothing and
+            // the draw would be dropped anyway.
+            return Ok(self);
+        }
+        let paint = RenderPaint {
+            // Masked off entirely by a clip draw, but a material is still
+            // needed to build one. White says plainly that nothing here is a
+            // color decision.
+            material: Material::solid([1.0, 1.0, 1.0, 1.0]),
+            blend: BlendMode::Src,
+            clip: self.clip,
+            stencil: ClipState::narrow(self.depth),
+        };
+        self.renderer
+            .fill_into(&mut self.batch, path, self.transform, &paint)?;
+        self.depth += 1;
+        Ok(self)
+    }
+
     /// Save the transform and clip so a later `restore` can return to them.
     pub fn save(&mut self) -> &mut Self {
         self.stack.push(SavedState {
             transform: self.transform,
             clip: self.clip,
+            depth: self.depth,
         });
         self
     }
@@ -210,9 +266,38 @@ impl Canvas {
     /// panicking: an unbalanced pair is a caller bug, but taking down a frame
     /// loop for it is worse than continuing with what is already correct.
     pub fn restore(&mut self) -> &mut Self {
-        if let Some(previous) = self.stack.pop() {
-            self.transform = previous.transform;
-            self.clip = previous.clip;
+        let Some(previous) = self.stack.pop() else {
+            return self;
+        };
+        self.transform = previous.transform;
+        self.clip = previous.clip;
+
+        // A scissor is state the recorder holds, so restoring it is an
+        // assignment. A stencil clip lives in a buffer on the device, so
+        // restoring it is a draw: one covering the whole target per level being
+        // left, each stepping back the pixels that reached that level.
+        //
+        // Deliberately unscissored. The step back lands exactly where the
+        // matching narrowing landed, because that is where the stencil holds
+        // the value being tested for -- so it needs no help from a scissor, and
+        // asking it to agree with one that has already been restored to
+        // something else would be a way to get it wrong.
+        if self.depth > previous.depth {
+            // Stated in device pixels, so it goes through the identity rather
+            // than whatever transform happens to be in force.
+            let whole = full_target_path(self.extent);
+            while self.depth > previous.depth {
+                let paint = RenderPaint {
+                    material: Material::solid([1.0, 1.0, 1.0, 1.0]),
+                    blend: BlendMode::Src,
+                    clip: None,
+                    stencil: ClipState::widen(self.depth),
+                };
+                let _ = self
+                    .renderer
+                    .fill_into(&mut self.batch, &whole, Affine2::IDENTITY, &paint);
+                self.depth -= 1;
+            }
         }
         self
     }
@@ -264,6 +349,7 @@ impl Canvas {
             material: self.material_for(&paint.shader),
             blend: paint.blend,
             clip: self.clip,
+            stencil: ClipState::content(self.depth),
         };
         match &paint.style {
             Style::Fill => {
