@@ -5,7 +5,7 @@
 //! pixel. These tests assert on specific pixel coordinates so orientation
 //! errors cannot pass.
 
-use impeller_hal::{BlendMode, Extent2D, PixelFormat, TextureDescriptor};
+use impeller_hal::{BlendMode, Extent2D, Material, PixelFormat, TextureDescriptor};
 use impeller_hal_vulkan::{ContextConfig, DevicePreference, VulkanContext};
 
 const SIZE: u32 = 64;
@@ -67,7 +67,7 @@ fn draw(ctx: &mut VulkanContext, vertices: &[[f32; 2]], indices: &[u32]) -> Imag
         &mut tex,
         vertices,
         indices,
-        RED,
+        Material::solid(RED),
         BlendMode::Src,
         Some(CLEAR),
     )
@@ -211,7 +211,7 @@ fn an_out_of_range_index_is_refused_before_reaching_the_gpu() {
         &mut tex,
         &[[0.0, 0.0]],
         &[0, 1, 2],
-        RED,
+        Material::solid(RED),
         BlendMode::Src,
         Some(CLEAR),
     );
@@ -222,7 +222,7 @@ fn an_out_of_range_index_is_refused_before_reaching_the_gpu() {
         &mut tex,
         &[[0.0, 0.0]],
         &[0, 0],
-        RED,
+        Material::solid(RED),
         BlendMode::Src,
         Some(CLEAR),
     );

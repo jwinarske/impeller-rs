@@ -52,7 +52,7 @@ where
                 &mut batch,
                 path,
                 Affine2::IDENTITY,
-                Paint::solid(*color).with_blend(*blend),
+                &Paint::solid(*color).with_blend(*blend),
             )
             .expect("tessellate");
     }
@@ -194,7 +194,7 @@ fn a_scene_can_be_rendered_antialiased_through_the_trait() {
                 &mut batch,
                 &path,
                 Affine2::IDENTITY,
-                Paint::solid([1.0, 1.0, 1.0, 1.0]).with_blend(BlendMode::Src),
+                &Paint::solid([1.0, 1.0, 1.0, 1.0]).with_blend(BlendMode::Src),
             )
             .expect("tessellate");
 

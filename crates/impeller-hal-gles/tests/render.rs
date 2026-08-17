@@ -5,7 +5,9 @@
 //! divergence between the backends shows up as a specific failing property
 //! rather than as two suites that merely happen to pass.
 
-use impeller_hal::{Batch, BlendMode, Extent2D, PassDescriptor, PixelFormat, TextureDescriptor};
+use impeller_hal::{
+    Batch, BlendMode, Extent2D, Material, PassDescriptor, PixelFormat, TextureDescriptor,
+};
 use impeller_hal_gles::{DisplayTarget, GlesContext, GlesTexture};
 
 const SIZE: u32 = 32;
@@ -56,7 +58,12 @@ fn a_full_quad_covers_the_target_in_the_paint_colour() {
     let Some(mut ctx) = context() else { return };
     let mut batch = Batch::new();
     batch
-        .push(&FULL, &QUAD, [1.0, 0.0, 0.0, 1.0], BlendMode::Src)
+        .push(
+            &FULL,
+            &QUAD,
+            Material::solid([1.0, 0.0, 0.0, 1.0]),
+            BlendMode::Src,
+        )
         .expect("push");
     let pixels = render(&mut ctx, &batch);
 
@@ -78,7 +85,7 @@ fn each_channel_of_the_paint_arrives_independently() {
     ] {
         let mut batch = Batch::new();
         batch
-            .push(&FULL, &QUAD, color, BlendMode::Src)
+            .push(&FULL, &QUAD, Material::solid(color), BlendMode::Src)
             .expect("push");
         let pixels = render(&mut ctx, &batch);
         assert_eq!(pixel(&pixels, 4, 4), expected, "for {color:?}");
@@ -98,7 +105,7 @@ fn clip_space_follows_the_wgsl_convention_with_y_up() {
         .push(
             &band(-1.0, 0.0),
             &QUAD,
-            [1.0, 1.0, 1.0, 1.0],
+            Material::solid([1.0, 1.0, 1.0, 1.0]),
             BlendMode::Src,
         )
         .expect("push");
@@ -113,10 +120,20 @@ fn source_over_blends_against_what_is_already_there() {
     let Some(mut ctx) = context() else { return };
     let mut batch = Batch::new();
     batch
-        .push(&FULL, &QUAD, [0.0, 0.0, 1.0, 1.0], BlendMode::Src)
+        .push(
+            &FULL,
+            &QUAD,
+            Material::solid([0.0, 0.0, 1.0, 1.0]),
+            BlendMode::Src,
+        )
         .expect("push");
     batch
-        .push(&FULL, &QUAD, [1.0, 0.0, 0.0, 0.5], BlendMode::SrcOver)
+        .push(
+            &FULL,
+            &QUAD,
+            Material::solid([1.0, 0.0, 0.0, 0.5]),
+            BlendMode::SrcOver,
+        )
         .expect("push");
     let pixels = render(&mut ctx, &batch);
 
@@ -136,13 +153,18 @@ fn draws_within_a_batch_keep_their_order() {
     let Some(mut ctx) = context() else { return };
     let mut batch = Batch::new();
     batch
-        .push(&FULL, &QUAD, [1.0, 0.0, 0.0, 1.0], BlendMode::Src)
+        .push(
+            &FULL,
+            &QUAD,
+            Material::solid([1.0, 0.0, 0.0, 1.0]),
+            BlendMode::Src,
+        )
         .expect("push");
     batch
         .push(
             &band(-1.0, 0.0),
             &QUAD,
-            [0.0, 1.0, 0.0, 1.0],
+            Material::solid([0.0, 1.0, 0.0, 1.0]),
             BlendMode::Src,
         )
         .expect("push");
@@ -164,12 +186,17 @@ fn index_offsets_address_each_draw_correctly() {
         .push(
             &band(-1.0, -0.5),
             &QUAD,
-            [1.0, 0.0, 0.0, 1.0],
+            Material::solid([1.0, 0.0, 0.0, 1.0]),
             BlendMode::Src,
         )
         .expect("push");
     batch
-        .push(&band(0.5, 1.0), &QUAD, [0.0, 1.0, 0.0, 1.0], BlendMode::Src)
+        .push(
+            &band(0.5, 1.0),
+            &QUAD,
+            Material::solid([0.0, 1.0, 0.0, 1.0]),
+            BlendMode::Src,
+        )
         .expect("push");
     let pixels = render(&mut ctx, &batch);
 
@@ -209,7 +236,12 @@ const SHALLOW: [[f32; 2]; 3] = [[-1.0, -1.0], [1.0, -1.0], [-1.0, 0.35]];
 fn render_at(ctx: &mut GlesContext, samples: u32) -> Vec<u8> {
     let mut batch = Batch::new();
     batch
-        .push(&SHALLOW, &[0, 1, 2], [1.0, 1.0, 1.0, 1.0], BlendMode::Src)
+        .push(
+            &SHALLOW,
+            &[0, 1, 2],
+            Material::solid([1.0, 1.0, 1.0, 1.0]),
+            BlendMode::Src,
+        )
         .expect("push");
     let mut tex = target(ctx);
     ctx.submit_batch(
@@ -281,7 +313,7 @@ fn a_multisampled_pass_that_would_preserve_is_refused() {
     }
     let mut batch = Batch::new();
     batch
-        .push(&FULL, &QUAD, [1.0; 4], BlendMode::Src)
+        .push(&FULL, &QUAD, Material::solid([1.0; 4]), BlendMode::Src)
         .expect("push");
     let mut tex = target(&mut ctx);
     // Blitting single-sample into multisample is not legal, so there is no way
@@ -298,7 +330,7 @@ fn an_unsupported_sample_count_is_refused() {
     let Some(mut ctx) = context() else { return };
     let mut batch = Batch::new();
     batch
-        .push(&FULL, &QUAD, [1.0; 4], BlendMode::Src)
+        .push(&FULL, &QUAD, Material::solid([1.0; 4]), BlendMode::Src)
         .expect("push");
     let mut tex = target(&mut ctx);
     for samples in [3u32, 128] {
@@ -317,7 +349,12 @@ fn textures_can_be_created_and_destroyed_repeatedly() {
     let Some(mut ctx) = context() else { return };
     let mut batch = Batch::new();
     batch
-        .push(&FULL, &QUAD, [0.0, 1.0, 1.0, 1.0], BlendMode::Src)
+        .push(
+            &FULL,
+            &QUAD,
+            Material::solid([0.0, 1.0, 1.0, 1.0]),
+            BlendMode::Src,
+        )
         .expect("push");
     for i in 0..16 {
         let pixels = render(&mut ctx, &batch);

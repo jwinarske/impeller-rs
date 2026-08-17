@@ -6,7 +6,7 @@
 //! and handed over as a file descriptor, which is what the DRM presentation
 //! path will be built on.
 
-use impeller_hal::{BlendMode, Extent2D, PassDescriptor, PixelFormat};
+use impeller_hal::{BlendMode, Extent2D, Material, PassDescriptor, PixelFormat};
 use impeller_hal_vulkan::{ContextConfig, DevicePreference, VulkanContext};
 use impeller_present::{negotiate, PREFERRED_FORMATS};
 
@@ -151,7 +151,7 @@ fn an_exported_image_can_still_be_rendered_into() {
         .push(
             &[[-1.0, -1.0], [1.0, -1.0], [1.0, 1.0], [-1.0, 1.0]],
             &[0, 1, 2, 0, 2, 3],
-            [1.0, 0.0, 0.0, 1.0],
+            Material::solid([1.0, 0.0, 0.0, 1.0]),
             BlendMode::Src,
         )
         .expect("push");

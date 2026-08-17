@@ -18,7 +18,7 @@ pub mod paint;
 
 pub use canvas::{Canvas, Recording, Rect};
 pub use color::Color;
-pub use paint::{Paint, Style};
+pub use paint::{GradientStop, Paint, Shader, Style};
 
 // Geometry a caller builds paths with, re-exported so an application needs one
 // dependency rather than three.

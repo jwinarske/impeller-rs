@@ -24,14 +24,14 @@ where
         let path = item.shape.to_path();
         let transform = item.transform.to_affine();
         let paint = Paint {
-            color: item.color,
+            material: impeller_hal::Material::solid(item.color),
             blend: item.blend,
         };
         match &item.stroke {
             Some(spec) => {
-                renderer.stroke_into(&mut batch, &path, &spec.to_style(), transform, paint)?
+                renderer.stroke_into(&mut batch, &path, &spec.to_style(), transform, &paint)?
             }
-            None => renderer.fill_into(&mut batch, &path, transform, paint)?,
+            None => renderer.fill_into(&mut batch, &path, transform, &paint)?,
         }
     }
 

@@ -6,7 +6,7 @@
 //! produces, which is the property every other target will be held to when it
 //! arrives.
 
-use impeller_hal::{BlendMode, Extent2D, Hal, HalContext, PassDescriptor, PixelFormat};
+use impeller_hal::{BlendMode, Extent2D, Hal, HalContext, Material, PassDescriptor, PixelFormat};
 use impeller_hal_vulkan::{DevicePreference, VulkanContext, VulkanHal};
 use impeller_present::{OffscreenTarget, PresentTarget};
 use impeller_testkit::{corpus, render_scene, Scene};
@@ -45,15 +45,15 @@ where
         let path = item.shape.to_path();
         let transform = item.transform.to_affine();
         let paint = Paint {
-            color: item.color,
+            material: impeller_hal::Material::solid(item.color),
             blend: item.blend,
         };
         match &item.stroke {
             Some(spec) => renderer
-                .stroke_into(&mut batch, &path, &spec.to_style(), transform, paint)
+                .stroke_into(&mut batch, &path, &spec.to_style(), transform, &paint)
                 .expect("stroke"),
             None => renderer
-                .fill_into(&mut batch, &path, transform, paint)
+                .fill_into(&mut batch, &path, transform, &paint)
                 .expect("fill"),
         }
     }
@@ -129,7 +129,7 @@ fn a_target_keeps_its_contents_between_acquisitions() {
         .push(
             &[[-1.0, -1.0], [1.0, -1.0], [1.0, 1.0], [-1.0, 1.0]],
             &[0, 1, 2, 0, 2, 3],
-            [1.0, 0.0, 0.0, 1.0],
+            Material::solid([1.0, 0.0, 0.0, 1.0]),
             BlendMode::Src,
         )
         .expect("push");

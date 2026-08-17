@@ -33,9 +33,17 @@ impl GlesTexture {
 /// The compiled solid-colour program and the vertex state it draws with.
 pub(crate) struct SolidProgram {
     pub(crate) program: glow::Program,
-    /// Location of the paint uniform the shader translator lowered the push
-    /// constant to. Looked up by name, so the name is part of the contract.
-    pub(crate) color: Option<glow::UniformLocation>,
+    /// Locations of the paint uniform's members, which the shader translator
+    /// lowered the push constant to. Looked up by name, so those names are part
+    /// of the contract rather than an implementation detail.
+    ///
+    /// GLES has no push constants and no way to set a struct in one call, so
+    /// each member is set individually. The array of stops needs one location
+    /// per element for the same reason.
+    pub(crate) stops: [Option<glow::UniformLocation>; impeller_hal::MAX_STOPS],
+    pub(crate) offsets: Option<glow::UniformLocation>,
+    pub(crate) endpoints: Option<glow::UniformLocation>,
+    pub(crate) params: Option<glow::UniformLocation>,
     pub(crate) vao: glow::VertexArray,
     pub(crate) vertices: glow::Buffer,
     pub(crate) indices: glow::Buffer,
@@ -217,13 +225,44 @@ impl GlesContext {
                     apply_blend(gl, draw.blend);
                     current = Some(draw.blend);
                 }
-                if let Some(location) = &program.color {
+                let packed = draw.material.to_push_constants();
+                for (i, location) in program.stops.iter().enumerate() {
+                    if let Some(location) = location {
+                        let base = i * 4;
+                        gl.uniform_4_f32(
+                            Some(location),
+                            packed[base],
+                            packed[base + 1],
+                            packed[base + 2],
+                            packed[base + 3],
+                        );
+                    }
+                }
+                if let Some(location) = &program.offsets {
                     gl.uniform_4_f32(
                         Some(location),
-                        draw.color[0],
-                        draw.color[1],
-                        draw.color[2],
-                        draw.color[3],
+                        packed[16],
+                        packed[17],
+                        packed[18],
+                        packed[19],
+                    );
+                }
+                if let Some(location) = &program.endpoints {
+                    gl.uniform_4_f32(
+                        Some(location),
+                        packed[20],
+                        packed[21],
+                        packed[22],
+                        packed[23],
+                    );
+                }
+                if let Some(location) = &program.params {
+                    gl.uniform_4_f32(
+                        Some(location),
+                        packed[24],
+                        packed[25],
+                        packed[26],
+                        packed[27],
                     );
                 }
                 gl.draw_elements(
@@ -484,9 +523,18 @@ fn build_program(gl: &glow::Context) -> Result<SolidProgram> {
             gl.delete_shader(*shader);
         }
 
-        // The translator lowers the push constant to a uniform struct, so the
-        // member is addressed by its qualified name.
-        let color = gl.get_uniform_location(program, "_push_constant_binding_fs.color");
+        // The translator lowers the push constant to a uniform struct, so each
+        // member is addressed by its qualified name. A member the compiler
+        // decided was unused has no location, which is why these are optional
+        // rather than an error.
+        let mut stops = [const { None }; impeller_hal::MAX_STOPS];
+        for (i, slot) in stops.iter_mut().enumerate() {
+            *slot =
+                gl.get_uniform_location(program, &format!("_push_constant_binding_fs.stops[{i}]"));
+        }
+        let offsets = gl.get_uniform_location(program, "_push_constant_binding_fs.offsets");
+        let endpoints = gl.get_uniform_location(program, "_push_constant_binding_fs.endpoints");
+        let params = gl.get_uniform_location(program, "_push_constant_binding_fs.params");
 
         let vao = gl
             .create_vertex_array()
@@ -500,7 +548,10 @@ fn build_program(gl: &glow::Context) -> Result<SolidProgram> {
 
         Ok(SolidProgram {
             program,
-            color,
+            stops,
+            offsets,
+            endpoints,
+            params,
             vao,
             vertices,
             indices,

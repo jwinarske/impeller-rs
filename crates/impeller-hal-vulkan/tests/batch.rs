@@ -6,7 +6,9 @@
 //! trade-off, so most of these tests render the same scene both ways and
 //! compare the results directly.
 
-use impeller_hal::{Batch, BlendMode, Extent2D, PassDescriptor, PixelFormat, TextureDescriptor};
+use impeller_hal::{
+    Batch, BlendMode, Extent2D, Material, PassDescriptor, PixelFormat, TextureDescriptor,
+};
 use impeller_hal_vulkan::{ContextConfig, DevicePreference, VulkanContext};
 
 const SIZE: u32 = 32;
@@ -40,7 +42,9 @@ impl Scene {
     fn batched(&self, ctx: &mut VulkanContext) -> Vec<u8> {
         let mut batch = Batch::new();
         for (verts, color, blend) in &self.draws {
-            batch.push(verts, &QUAD, *color, *blend).expect("push");
+            batch
+                .push(verts, &QUAD, Material::solid(*color), *blend)
+                .expect("push");
         }
         let mut tex = target(ctx);
         ctx.submit_batch(&mut tex, &batch, PassDescriptor::clear(BLACK))
@@ -53,8 +57,15 @@ impl Scene {
         let mut tex = target(ctx);
         let mut clear = Some(BLACK);
         for (verts, color, blend) in &self.draws {
-            ctx.draw_indexed(&mut tex, verts, &QUAD, *color, *blend, clear)
-                .expect("draw");
+            ctx.draw_indexed(
+                &mut tex,
+                verts,
+                &QUAD,
+                Material::solid(*color),
+                *blend,
+                clear,
+            )
+            .expect("draw");
             clear = None;
         }
         finish(ctx, tex)
@@ -160,7 +171,9 @@ fn a_batch_binds_a_pipeline_only_when_it_changes() {
         BlendMode::SrcOver,
         BlendMode::Src,
     ] {
-        batch.push(&verts, &QUAD, [1.0; 4], blend).expect("push");
+        batch
+            .push(&verts, &QUAD, Material::solid([1.0; 4]), blend)
+            .expect("push");
     }
     // The saving batching exists for: five draws, three binds.
     assert_eq!(batch.draw_count(), 5);
@@ -180,7 +193,12 @@ fn many_draws_in_one_batch_all_land() {
         let y1 = -1.0 + 2.0 * (i + 1) as f32 / rows as f32;
         let shade = (i + 1) as f32 / rows as f32;
         batch
-            .push(&band(y0, y1), &QUAD, [shade, 0.0, 0.0, 1.0], BlendMode::Src)
+            .push(
+                &band(y0, y1),
+                &QUAD,
+                Material::solid([shade, 0.0, 0.0, 1.0]),
+                BlendMode::Src,
+            )
             .expect("push");
     }
     assert_eq!(batch.draw_count(), rows);
@@ -223,7 +241,7 @@ fn a_batch_can_be_reused_across_submissions() {
         .push(
             &band(-1.0, 0.0),
             &QUAD,
-            [1.0, 0.0, 0.0, 1.0],
+            Material::solid([1.0, 0.0, 0.0, 1.0]),
             BlendMode::Src,
         )
         .expect("push");
@@ -243,7 +261,7 @@ fn a_batch_can_be_reused_across_submissions() {
         .push(
             &band(-1.0, 0.0),
             &QUAD,
-            [1.0, 0.0, 0.0, 1.0],
+            Material::solid([1.0, 0.0, 0.0, 1.0]),
             BlendMode::Src,
         )
         .expect("push");

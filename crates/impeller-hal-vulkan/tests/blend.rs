@@ -5,7 +5,7 @@
 //! applying alpha twice by pairing a premultiplied source with a `SRC_ALPHA`
 //! blend factor — produces output that looks plausible and is simply too dark.
 
-use impeller_hal::{BlendMode, Extent2D, PixelFormat, TextureDescriptor};
+use impeller_hal::{BlendMode, Extent2D, Material, PixelFormat, TextureDescriptor};
 use impeller_hal_vulkan::{ContextConfig, DevicePreference, VulkanContext};
 
 const SIZE: u32 = 16;
@@ -40,8 +40,15 @@ fn composite(
 
     let mut clear = Some(background);
     for (color, blend) in draws {
-        ctx.draw_indexed(&mut tex, &FULL, &QUAD, *color, *blend, clear)
-            .expect("draw");
+        ctx.draw_indexed(
+            &mut tex,
+            &FULL,
+            &QUAD,
+            Material::solid(*color),
+            *blend,
+            clear,
+        )
+        .expect("draw");
         clear = None;
     }
 

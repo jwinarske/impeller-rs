@@ -1,8 +1,49 @@
 //! How a shape is drawn.
 
 use crate::color::Color;
+use glam::Vec2;
 use impeller_geometry::stroke::StrokeStyle;
 use impeller_hal::BlendMode;
+
+/// A colour stop in a gradient.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct GradientStop {
+    pub color: Color,
+    /// Position along the gradient, from zero to one.
+    pub offset: f32,
+}
+
+impl GradientStop {
+    pub fn new(color: Color, offset: f32) -> Self {
+        Self { color, offset }
+    }
+}
+
+/// What fills a shape.
+#[derive(Debug, Clone, PartialEq)]
+pub enum Shader {
+    Solid(Color),
+    /// A gradient along the line between two points **in user space**.
+    ///
+    /// The endpoints travel through the canvas transform with the geometry, so
+    /// a gradient rotates and scales with the shape it fills rather than
+    /// staying pinned to the screen.
+    LinearGradient {
+        start: Vec2,
+        end: Vec2,
+        stops: Vec<GradientStop>,
+    },
+}
+
+impl Shader {
+    /// Whether this would draw anything at all.
+    pub fn is_visible(&self) -> bool {
+        match self {
+            Self::Solid(color) => !color.is_invisible(),
+            Self::LinearGradient { stops, .. } => stops.iter().any(|s| !s.color.is_invisible()),
+        }
+    }
+}
 
 /// Fill the shape, or trace its outline.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -23,9 +64,9 @@ impl Default for Style {
 }
 
 /// Everything about how a shape is painted.
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Paint {
-    pub color: Color,
+    pub shader: Shader,
     pub style: Style,
     pub blend: BlendMode,
     /// Whether to antialias this shape's edges.
@@ -39,7 +80,7 @@ pub struct Paint {
 impl Default for Paint {
     fn default() -> Self {
         Self {
-            color: Color::BLACK,
+            shader: Shader::Solid(Color::BLACK),
             style: Style::Fill,
             blend: BlendMode::SrcOver,
             anti_alias: true,
@@ -51,7 +92,15 @@ impl Paint {
     /// A solid fill.
     pub fn fill(color: Color) -> Self {
         Self {
-            color,
+            shader: Shader::Solid(color),
+            ..Default::default()
+        }
+    }
+
+    /// A fill that runs between two colours along a line in user space.
+    pub fn linear_gradient(start: Vec2, end: Vec2, stops: Vec<GradientStop>) -> Self {
+        Self {
+            shader: Shader::LinearGradient { start, end, stops },
             ..Default::default()
         }
     }
@@ -59,10 +108,15 @@ impl Paint {
     /// A stroke of the given width, with default caps and joins.
     pub fn stroke(color: Color, width: f32) -> Self {
         Self {
-            color,
+            shader: Shader::Solid(color),
             style: Style::Stroke(StrokeStyle::new(width)),
             ..Default::default()
         }
+    }
+
+    pub fn with_shader(mut self, shader: Shader) -> Self {
+        self.shader = shader;
+        self
     }
 
     pub fn with_style(mut self, style: Style) -> Self {
@@ -86,7 +140,7 @@ impl Paint {
     /// skipping them early keeps empty geometry out of the batch rather than
     /// tessellating it and discovering it was empty.
     pub fn is_visible(&self) -> bool {
-        if self.color.is_invisible() {
+        if !self.shader.is_visible() {
             return false;
         }
         match &self.style {
@@ -114,6 +168,14 @@ mod tests {
         let clear = Color::WHITE.with_alpha(0.0);
         assert!(!Paint::fill(clear).is_visible());
         assert!(!Paint::stroke(clear, 4.0).is_visible());
+
+        // A gradient every stop of which is transparent draws nothing either.
+        let invisible = Paint::linear_gradient(
+            Vec2::ZERO,
+            Vec2::new(1.0, 0.0),
+            vec![GradientStop::new(clear, 0.0), GradientStop::new(clear, 1.0)],
+        );
+        assert!(!invisible.is_visible());
     }
 
     #[test]

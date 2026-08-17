@@ -7,7 +7,7 @@
 //! is a full frame of latency rather than a correctness problem — the kind of
 //! regression that is easy to introduce and hard to notice.
 
-use impeller_hal::{Batch, BlendMode, Extent2D, HalFence, PassDescriptor, PixelFormat};
+use impeller_hal::{Batch, BlendMode, Extent2D, HalFence, Material, PassDescriptor, PixelFormat};
 use impeller_hal::{TextureDescriptor, FRAME_WAIT_TIMEOUT};
 use impeller_hal_vulkan::{ContextConfig, DevicePreference, VulkanContext};
 
@@ -30,7 +30,12 @@ fn context() -> Option<VulkanContext> {
 fn scene() -> Batch {
     let mut batch = Batch::new();
     batch
-        .push(&FULL, &QUAD, [1.0, 0.0, 0.0, 1.0], BlendMode::Src)
+        .push(
+            &FULL,
+            &QUAD,
+            Material::solid([1.0, 0.0, 0.0, 1.0]),
+            BlendMode::Src,
+        )
         .expect("push");
     batch
 }

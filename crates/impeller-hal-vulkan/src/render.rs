@@ -88,19 +88,19 @@ impl PipelineCache {
 impl VulkanContext {
     /// Draw a single set of triangles. A convenience over [`Batch`].
     ///
-    /// `color` is in linear space with **straight alpha**; it is premultiplied
-    /// on the way to the target, which holds premultiplied color.
+    /// The material is in linear space with **straight alpha**; it is
+    /// premultiplied on the way to the target, which holds premultiplied color.
     pub fn draw_indexed(
         &mut self,
         target: &mut VulkanTexture,
         vertices: &[[f32; 2]],
         indices: &[u32],
-        color: [f32; 4],
+        material: impeller_hal::Material,
         blend: BlendMode,
         clear: Option<[f32; 4]>,
     ) -> Result<()> {
         let mut batch = Batch::new();
-        batch.push(vertices, indices, color, blend)?;
+        batch.push(vertices, indices, material, blend)?;
         self.submit_batch(target, &batch, PassDescriptor { clear, samples: 1 })
     }
 
@@ -331,7 +331,7 @@ impl VulkanContext {
                         layout,
                         vk::ShaderStageFlags::FRAGMENT,
                         0,
-                        cast_bytes(&draw.color),
+                        cast_bytes(&draw.material.to_push_constants()),
                     );
                     device.cmd_draw_indexed(cmd, draw.index_count, 1, draw.first_index, 0, 0);
                 }
@@ -610,7 +610,7 @@ impl VulkanContext {
                     layout,
                     vk::ShaderStageFlags::FRAGMENT,
                     0,
-                    cast_bytes(&draw.color),
+                    cast_bytes(&draw.material.to_push_constants()),
                 );
                 device.cmd_draw_indexed(cmd, draw.index_count, 1, draw.first_index, 0, 0);
             }
@@ -793,7 +793,7 @@ fn build_pipeline_layout(device: &ash::Device) -> Result<vk::PipelineLayout> {
     let ranges = [vk::PushConstantRange::default()
         .stage_flags(vk::ShaderStageFlags::FRAGMENT)
         .offset(0)
-        .size(std::mem::size_of::<[f32; 4]>() as u32)];
+        .size((impeller_hal::MATERIAL_FLOATS * 4) as u32)];
     let info = vk::PipelineLayoutCreateInfo::default().push_constant_ranges(&ranges);
     unsafe { device.create_pipeline_layout(&info, None) }
         .map_err(|e| backend_err("create_pipeline_layout", e))

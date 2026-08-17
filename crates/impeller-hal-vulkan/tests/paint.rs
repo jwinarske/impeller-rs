@@ -4,7 +4,7 @@
 //! that a color supplied per draw arrives intact, and that a second draw can
 //! add to a target instead of replacing it.
 
-use impeller_hal::{BlendMode, Extent2D, PixelFormat, TextureDescriptor};
+use impeller_hal::{BlendMode, Extent2D, Material, PixelFormat, TextureDescriptor};
 use impeller_hal_vulkan::{ContextConfig, DevicePreference, VulkanContext, VulkanTexture};
 
 const SIZE: u32 = 32;
@@ -71,7 +71,7 @@ fn each_channel_of_the_paint_arrives_independently() {
             &mut tex,
             &FULL,
             &QUAD,
-            color,
+            Material::solid(color),
             BlendMode::Src,
             Some([0.0, 0.0, 0.0, 1.0]),
         )
@@ -95,7 +95,7 @@ fn intermediate_values_survive_the_round_trip() {
         &mut tex,
         &FULL,
         &QUAD,
-        [0.25, 0.5, 0.75, 1.0],
+        Material::solid([0.25, 0.5, 0.75, 1.0]),
         BlendMode::Src,
         Some([0.0, 0.0, 0.0, 1.0]),
     )
@@ -125,7 +125,7 @@ fn paint_is_independent_of_the_clear_color() {
         &mut tex,
         &LEFT,
         &QUAD,
-        [1.0, 0.0, 0.0, 1.0],
+        Material::solid([1.0, 0.0, 0.0, 1.0]),
         BlendMode::Src,
         Some([0.0, 0.0, 1.0, 1.0]),
     )
@@ -156,7 +156,7 @@ fn a_second_draw_can_preserve_what_the_first_left() {
         &mut tex,
         &LEFT,
         &QUAD,
-        [1.0, 0.0, 0.0, 1.0],
+        Material::solid([1.0, 0.0, 0.0, 1.0]),
         BlendMode::Src,
         Some([0.0, 0.0, 0.0, 1.0]),
     )
@@ -166,7 +166,7 @@ fn a_second_draw_can_preserve_what_the_first_left() {
         &mut tex,
         &RIGHT,
         &QUAD,
-        [0.0, 1.0, 0.0, 1.0],
+        Material::solid([0.0, 1.0, 0.0, 1.0]),
         BlendMode::Src,
         None,
     )
@@ -195,7 +195,7 @@ fn a_later_draw_paints_over_an_earlier_one() {
         &mut tex,
         &FULL,
         &QUAD,
-        [1.0, 0.0, 0.0, 1.0],
+        Material::solid([1.0, 0.0, 0.0, 1.0]),
         BlendMode::Src,
         Some([0.0, 0.0, 0.0, 1.0]),
     )
@@ -204,7 +204,7 @@ fn a_later_draw_paints_over_an_earlier_one() {
         &mut tex,
         &FULL,
         &QUAD,
-        [0.0, 0.0, 1.0, 1.0],
+        Material::solid([0.0, 0.0, 1.0, 1.0]),
         BlendMode::Src,
         None,
     )
@@ -230,7 +230,7 @@ fn preserving_and_clearing_pipelines_are_cached_separately() {
             &mut tex,
             &FULL,
             &QUAD,
-            [1.0, 0.0, 0.0, 1.0],
+            Material::solid([1.0, 0.0, 0.0, 1.0]),
             BlendMode::Src,
             Some([0.0, 0.0, 0.0, 1.0]),
         )
@@ -239,7 +239,7 @@ fn preserving_and_clearing_pipelines_are_cached_separately() {
             &mut tex,
             &LEFT,
             &QUAD,
-            [0.0, 1.0, 0.0, 1.0],
+            Material::solid([0.0, 1.0, 0.0, 1.0]),
             BlendMode::Src,
             None,
         )
@@ -261,7 +261,7 @@ fn a_preserving_draw_with_no_geometry_leaves_the_target_alone() {
         &mut tex,
         &FULL,
         &QUAD,
-        [1.0, 0.0, 0.0, 1.0],
+        Material::solid([1.0, 0.0, 0.0, 1.0]),
         BlendMode::Src,
         Some([0.0, 0.0, 0.0, 1.0]),
     )
@@ -271,7 +271,7 @@ fn a_preserving_draw_with_no_geometry_leaves_the_target_alone() {
         &mut tex,
         &[],
         &[],
-        [0.0, 1.0, 0.0, 1.0],
+        Material::solid([0.0, 1.0, 0.0, 1.0]),
         BlendMode::Src,
         None,
     )

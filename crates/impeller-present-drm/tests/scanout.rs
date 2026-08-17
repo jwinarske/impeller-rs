@@ -11,7 +11,8 @@
 //! buffers. That is what the VKMS lane and the board rack are for.
 
 use impeller_hal::{
-    Batch, BlendMode, Extent2D, FormatModifierSet, Fourcc, Modifier, PassDescriptor, Result,
+    Batch, BlendMode, Extent2D, FormatModifierSet, Fourcc, Material, Modifier, PassDescriptor,
+    Result,
 };
 use impeller_hal_vulkan::{DevicePreference, VulkanContext, VulkanHal};
 use impeller_present::PresentTarget;
@@ -149,7 +150,7 @@ fn scene() -> Batch {
         .push(
             &[[-1.0, -1.0], [1.0, -1.0], [1.0, 1.0], [-1.0, 1.0]],
             &[0, 1, 2, 0, 2, 3],
-            [1.0, 0.0, 0.0, 1.0],
+            Material::solid([1.0, 0.0, 0.0, 1.0]),
             BlendMode::Src,
         )
         .expect("push");

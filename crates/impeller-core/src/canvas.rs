@@ -6,11 +6,12 @@
 //! described before any of it reaches the GPU — that separation is what lets
 //! draws be batched into one pass rather than submitted one at a time.
 
-use crate::paint::{Paint, Style};
+use crate::paint::{Paint, Shader, Style};
 use crate::Color;
 use glam::{Affine2, Vec2};
+use impeller_geometry::transform::viewport_projection;
 use impeller_geometry::{Path, PathBuilder};
-use impeller_hal::{Batch, Extent2D, PassDescriptor, Result};
+use impeller_hal::{Batch, Extent2D, Material, PassDescriptor, Result, Stop};
 use impeller_renderer::{Paint as RenderPaint, Renderer, TOLERANCE};
 
 /// A rectangle in user coordinates.
@@ -185,23 +186,49 @@ impl Canvas {
         }
 
         let render_paint = RenderPaint {
-            color: paint.color.to_array(),
+            material: self.material_for(&paint.shader),
             blend: paint.blend,
         };
         match &paint.style {
             Style::Fill => {
                 self.renderer
-                    .fill_into(&mut self.batch, path, self.transform, render_paint)?
+                    .fill_into(&mut self.batch, path, self.transform, &render_paint)?
             }
             Style::Stroke(stroke) => self.renderer.stroke_into(
                 &mut self.batch,
                 path,
                 stroke,
                 self.transform,
-                render_paint,
+                &render_paint,
             )?,
         }
         Ok(self)
+    }
+
+    /// Resolve a shader against the current transform.
+    ///
+    /// Gradient endpoints go through the same mapping the geometry does, so a
+    /// gradient rotates and scales with its shape rather than staying fixed to
+    /// the screen. Doing it here rather than in the fragment stage means the
+    /// shader receives clip-space endpoints and needs no transform of its own.
+    fn material_for(&self, shader: &Shader) -> Material {
+        match shader {
+            Shader::Solid(color) => Material::solid(color.to_array()),
+            Shader::LinearGradient { start, end, stops } => {
+                let to_clip =
+                    viewport_projection(self.extent.width, self.extent.height) * self.transform;
+                let start = to_clip.transform_point2(*start);
+                let end = to_clip.transform_point2(*end);
+                Material::LinearGradient {
+                    start: [start.x, start.y],
+                    end: [end.x, end.y],
+                    stops: stops
+                        .iter()
+                        .map(|s| Stop::new(s.color.to_array(), s.offset))
+                        .collect(),
+                }
+            }
+        }
     }
 
     pub fn draw_rect(&mut self, rect: Rect, paint: &Paint) -> Result<&mut Self> {

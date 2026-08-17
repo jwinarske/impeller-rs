@@ -6,7 +6,9 @@
 //! proportional to how much of the pixel the triangle covers. Counting those
 //! intermediate pixels is a direct measurement rather than an eyeball test.
 
-use impeller_hal::{Batch, BlendMode, Extent2D, PassDescriptor, PixelFormat, TextureDescriptor};
+use impeller_hal::{
+    Batch, BlendMode, Extent2D, Material, PassDescriptor, PixelFormat, TextureDescriptor,
+};
 use impeller_hal_vulkan::{ContextConfig, DevicePreference, VulkanContext};
 
 const SIZE: u32 = 64;
@@ -40,7 +42,12 @@ const COVERAGE: f32 = 0.3375;
 fn render(ctx: &mut VulkanContext, samples: u32) -> Vec<u8> {
     let mut batch = Batch::new();
     batch
-        .push(&DIAGONAL, &[0, 1, 2], [1.0, 1.0, 1.0, 1.0], BlendMode::Src)
+        .push(
+            &DIAGONAL,
+            &[0, 1, 2],
+            Material::solid([1.0, 1.0, 1.0, 1.0]),
+            BlendMode::Src,
+        )
         .expect("push");
 
     let mut tex = ctx
@@ -227,7 +234,12 @@ fn an_unsupported_sample_count_is_refused() {
     let Some(mut ctx) = context() else { return };
     let mut batch = Batch::new();
     batch
-        .push(&DIAGONAL, &[0, 1, 2], [1.0; 4], BlendMode::Src)
+        .push(
+            &DIAGONAL,
+            &[0, 1, 2],
+            Material::solid([1.0; 4]),
+            BlendMode::Src,
+        )
         .expect("push");
     let mut tex = ctx
         .create_texture(&TextureDescriptor::offscreen(
@@ -264,7 +276,12 @@ fn a_multisampled_pass_that_would_preserve_is_refused() {
     }
     let mut batch = Batch::new();
     batch
-        .push(&DIAGONAL, &[0, 1, 2], [1.0; 4], BlendMode::Src)
+        .push(
+            &DIAGONAL,
+            &[0, 1, 2],
+            Material::solid([1.0; 4]),
+            BlendMode::Src,
+        )
         .expect("push");
     let mut tex = ctx
         .create_texture(&TextureDescriptor::offscreen(

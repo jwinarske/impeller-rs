@@ -438,6 +438,22 @@ permutations on GLES.
   COLR/CPAL color glyphs as image quads.
 - **Color**: linear f32 internally, with sRGB conversion at the API boundary
   and at target write.
+- **Materials**: a paint resolved for a backend — colour or gradient, already
+  in clip space — packed into 112 bytes, inside the 128 of push constants every
+  device is required to offer. Staying within the guaranteed minimum is
+  deliberate: a part that provides only the minimum is exactly the embedded
+  hardware this renderer targets, and a material that did not fit there would
+  fall back to a uniform buffer on the devices least able to afford one. The
+  limit is a compile-time assertion rather than a test.
+
+**A gradient locates itself from an interpolated clip position, not from the
+fragment coordinate builtin.** That builtin's origin differs between the two
+graphics APIs, so using it would run gradients in opposite directions on each
+backend. Clip space is normalized by shader translation and agrees everywhere,
+and passing it as a varying also avoids a second vertex attribute that every
+solid draw would otherwise pay for. Gradient endpoints travel through the same
+transform the geometry does, so a gradient rotates and scales with its shape
+rather than staying pinned to the screen.
 
 ## Crate layout
 

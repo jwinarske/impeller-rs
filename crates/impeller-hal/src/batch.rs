@@ -6,14 +6,14 @@
 //! Vulkan backend binds pipelines only where they change, and a record-and-
 //! replay backend can inspect the whole batch before touching any state.
 
-use crate::{BlendMode, Error, Result};
+use crate::{BlendMode, Error, Material, Result};
 
 /// One draw within a batch.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 pub struct BatchDraw {
     pub first_index: u32,
     pub index_count: u32,
-    pub color: [f32; 4],
+    pub material: Material,
     pub blend: BlendMode,
 }
 
@@ -44,7 +44,7 @@ impl Batch {
         &mut self,
         vertices: &[[f32; 2]],
         indices: &[u32],
-        color: [f32; 4],
+        material: Material,
         blend: BlendMode,
     ) -> Result<()> {
         if indices.len() % 3 != 0 {
@@ -77,7 +77,7 @@ impl Batch {
         self.draws.push(BatchDraw {
             first_index,
             index_count: indices.len() as u32,
-            color,
+            material,
             blend,
         });
         Ok(())
@@ -142,10 +142,10 @@ mod tests {
     fn indices_are_rebased_onto_the_shared_buffer() {
         let mut batch = Batch::new();
         batch
-            .push(&TRI, &[0, 1, 2], [1.0; 4], BlendMode::Src)
+            .push(&TRI, &[0, 1, 2], Material::solid([1.0; 4]), BlendMode::Src)
             .unwrap();
         batch
-            .push(&TRI, &[0, 1, 2], [1.0; 4], BlendMode::Src)
+            .push(&TRI, &[0, 1, 2], Material::solid([1.0; 4]), BlendMode::Src)
             .unwrap();
 
         // The second draw's indices must point at its own vertices, not the
@@ -166,7 +166,9 @@ mod tests {
             BlendMode::SrcOver,
             BlendMode::Src,
         ] {
-            batch.push(&TRI, &[0, 1, 2], [1.0; 4], blend).unwrap();
+            batch
+                .push(&TRI, &[0, 1, 2], Material::solid([1.0; 4]), blend)
+                .unwrap();
         }
         // Five draws, three runs of like pipelines.
         assert_eq!(batch.draw_count(), 5);
@@ -176,7 +178,9 @@ mod tests {
     #[test]
     fn an_empty_draw_adds_nothing() {
         let mut batch = Batch::new();
-        batch.push(&[], &[], [1.0; 4], BlendMode::Src).unwrap();
+        batch
+            .push(&[], &[], Material::solid([1.0; 4]), BlendMode::Src)
+            .unwrap();
         assert!(batch.is_empty());
         assert_eq!(batch.draw_count(), 0);
     }
@@ -187,10 +191,20 @@ mod tests {
         // Catching this at push means the caller learns which draw was wrong,
         // rather than a whole batch failing later at submission.
         assert!(batch
-            .push(&[[0.0, 0.0]], &[0, 1, 2], [1.0; 4], BlendMode::Src)
+            .push(
+                &[[0.0, 0.0]],
+                &[0, 1, 2],
+                Material::solid([1.0; 4]),
+                BlendMode::Src
+            )
             .is_err());
         assert!(batch
-            .push(&[[0.0, 0.0]], &[0, 0], [1.0; 4], BlendMode::Src)
+            .push(
+                &[[0.0, 0.0]],
+                &[0, 0],
+                Material::solid([1.0; 4]),
+                BlendMode::Src
+            )
             .is_err());
         assert!(batch.is_empty(), "a refused draw must leave no residue");
     }
@@ -199,13 +213,13 @@ mod tests {
     fn clearing_keeps_the_batch_reusable() {
         let mut batch = Batch::new();
         batch
-            .push(&TRI, &[0, 1, 2], [1.0; 4], BlendMode::Src)
+            .push(&TRI, &[0, 1, 2], Material::solid([1.0; 4]), BlendMode::Src)
             .unwrap();
         batch.clear();
         assert!(batch.is_empty());
 
         batch
-            .push(&TRI, &[0, 1, 2], [1.0; 4], BlendMode::Src)
+            .push(&TRI, &[0, 1, 2], Material::solid([1.0; 4]), BlendMode::Src)
             .unwrap();
         // Rebasing must start from zero again rather than continuing from the
         // cleared contents.

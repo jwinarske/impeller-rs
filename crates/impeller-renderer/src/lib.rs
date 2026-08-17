@@ -10,24 +10,49 @@ use impeller_geometry::stroke::StrokeStyle;
 use impeller_geometry::tessellate::{Tessellator, VertexBuffers};
 use impeller_geometry::transform::{max_scale, transform_points, viewport_projection};
 use impeller_geometry::{flatten::DEFAULT_TOLERANCE, Path};
-use impeller_hal::{Batch, BlendMode, Extent2D, Result};
+use impeller_hal::{Batch, BlendMode, Extent2D, Material, Result, Stop};
 
 /// How a shape is painted.
 ///
 /// Grouped rather than passed as loose parameters because color and blend mode
 /// travel together everywhere and will grow into the material set: gradients,
 /// image shaders, and filters all attach here.
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Paint {
-    /// Linear color with straight alpha.
-    pub color: [f32; 4],
+    /// What fills the shape, already resolved into clip space.
+    pub material: Material,
     pub blend: BlendMode,
 }
 
 impl Paint {
     pub fn solid(color: [f32; 4]) -> Self {
         Self {
-            color,
+            material: Material::solid(color),
+            blend: BlendMode::default(),
+        }
+    }
+
+    /// A linear gradient between two points **in user space**.
+    ///
+    /// The endpoints are transformed alongside the geometry, so a gradient
+    /// rotates and scales with the shape it fills rather than staying pinned to
+    /// the screen.
+    pub fn linear_gradient(
+        start: Vec2,
+        end: Vec2,
+        stops: Vec<Stop>,
+        transform: Affine2,
+        target: Extent2D,
+    ) -> Self {
+        let to_clip = viewport_projection(target.width, target.height) * transform;
+        let start = to_clip.transform_point2(start);
+        let end = to_clip.transform_point2(end);
+        Self {
+            material: Material::LinearGradient {
+                start: [start.x, start.y],
+                end: [end.x, end.y],
+                stops,
+            },
             blend: BlendMode::default(),
         }
     }
@@ -124,12 +149,12 @@ impl Renderer {
         batch: &mut Batch,
         path: &Path,
         transform: Affine2,
-        paint: Paint,
+        paint: &Paint,
     ) -> Result<()> {
         let geo = self.fill_path(path, transform);
         let positions = geo.positions();
         let indices = geo.indices.to_vec();
-        batch.push(&positions, &indices, paint.color, paint.blend)
+        batch.push(&positions, &indices, paint.material.clone(), paint.blend)
     }
 
     /// Tessellate a stroked path and append it to a batch.
@@ -139,12 +164,12 @@ impl Renderer {
         path: &Path,
         style: &StrokeStyle,
         transform: Affine2,
-        paint: Paint,
+        paint: &Paint,
     ) -> Result<()> {
         let geo = self.stroke_path(path, style, transform);
         let positions = geo.positions();
         let indices = geo.indices.to_vec();
-        batch.push(&positions, &indices, paint.color, paint.blend)
+        batch.push(&positions, &indices, paint.material.clone(), paint.blend)
     }
 
     fn to_clip_space<'a>(
