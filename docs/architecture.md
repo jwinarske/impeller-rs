@@ -359,6 +359,42 @@ invisible for an opaque image — the two conventions agree there — which is w
 the first thing to expose it was a layer nested inside another layer, where a
 half inside a half came out an eighth.
 
+**Every vertex carries texture coordinates, including the ones that ignore
+them.** Most geometry here locates itself from the interpolated clip position: a
+solid fill and a gradient both do, and so does an image paint, whose mapping is
+an affine in the material. A glyph run cannot. A run is many quads reading
+different parts of one atlas, and a material is per draw, so coordinates carried
+in the paint would mean a draw per glyph — and text is the highest draw-count
+content there is, which makes that the wrong place to spend.
+
+The cost is eight bytes on every vertex. The alternative, a second vertex format
+and a second pipeline for text, spends more in pipeline state and in the code
+deciding which of two shapes a batch is in, to save memory on the geometry that
+was already cheapest to store.
+
+**A glyph atlas holds coverage, not color.** The glyph material reads one
+channel and scales a solid with it, which is what antialiased text is; an image
+paint replaces color instead. The two differ in the material and in where the
+coordinates come from, and share the binding machinery underneath.
+
+Rasterizing an outline needs a font parser, and font parsing is out of scope —
+bring `swash` or `ttf-parser` and hand over the coverage. That boundary is worth
+more than tidiness: it lets the atlas be exercised with no font anywhere in the
+tree, against bitmaps whose every texel is known, rather than against whatever a
+hinter produced.
+
+Packing is by shelves — a glyph goes on the first shelf tall enough with room to
+its right. That loses the space above a short glyph on a tall shelf, which a
+skyline packer would recover. It is the right trade here because the input is a
+stream of boxes of very similar height, so shelves fill densely in practice, and
+because the packer runs once per glyph per size rather than per frame. Each
+glyph is padded by a texel: a linear filter samples a neighborhood, so a glyph
+flush against its neighbor bleeds that neighbor into its own edge.
+
+The atlas holds its texels rather than a device texture, and says when it is
+dirty. Uploading is the caller's, because only they know which device the
+texture lives on and when in the frame it is safe to write.
+
 **Multisampling is a pass property, not a target property.** A pass renders
 into a transient multisample buffer and resolves into the target, so the target
 stays single-sampled and directly readable. Each backend realizes that

@@ -11,3 +11,4 @@ glam = { workspace = true }
 impeller-geometry = { workspace = true }
 impeller-hal = { workspace = true }
 impeller-renderer = { workspace = true }
+impeller-text = { workspace = true }

@@ -13,8 +13,9 @@ through KMS with no compositor present.
 > backends for rectangles and arbitrary paths, nests, and antialiases with the
 > shapes it confines. Images can be uploaded and drawn as a paint, with clamp,
 > repeat and decal tiling. Save layers give a subtree its own target, so group
-> opacity and layer-wide blend modes work and nest. Text and windowed
-> presentation are not implemented yet.
+> opacity and layer-wide blend modes work and nest. A glyph atlas packs
+> caller-supplied coverage and draws a run of any length as one draw; bring
+> your own rasterizer. Windowed presentation is not implemented yet.
 
 ## Why
 

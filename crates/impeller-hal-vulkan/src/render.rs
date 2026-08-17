@@ -956,13 +956,20 @@ fn build_pipeline(
 
     let bindings = [vk::VertexInputBindingDescription::default()
         .binding(0)
-        .stride(std::mem::size_of::<[f32; 2]>() as u32)
+        .stride(std::mem::size_of::<impeller_hal::Vertex>() as u32)
         .input_rate(vk::VertexInputRate::VERTEX)];
-    let attributes = [vk::VertexInputAttributeDescription::default()
-        .location(0)
-        .binding(0)
-        .format(vk::Format::R32G32_SFLOAT)
-        .offset(0)];
+    let attributes = [
+        vk::VertexInputAttributeDescription::default()
+            .location(0)
+            .binding(0)
+            .format(vk::Format::R32G32_SFLOAT)
+            .offset(0),
+        vk::VertexInputAttributeDescription::default()
+            .location(1)
+            .binding(0)
+            .format(vk::Format::R32G32_SFLOAT)
+            .offset(std::mem::size_of::<[f32; 2]>() as u32),
+    ];
     let vertex_input = vk::PipelineVertexInputStateCreateInfo::default()
         .vertex_binding_descriptions(&bindings)
         .vertex_attribute_descriptions(&attributes);

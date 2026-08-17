@@ -290,8 +290,15 @@ impl GlesContext {
                 glow::STREAM_DRAW,
             );
 
+            // Position then texture coordinates, interleaved in one buffer.
+            // The stride comes from the shared vertex type rather than a
+            // literal, so adding a member cannot leave the two backends
+            // disagreeing about where the next vertex starts.
+            let stride = std::mem::size_of::<impeller_hal::Vertex>() as i32;
             gl.enable_vertex_attrib_array(0);
-            gl.vertex_attrib_pointer_f32(0, 2, glow::FLOAT, false, 8, 0);
+            gl.vertex_attrib_pointer_f32(0, 2, glow::FLOAT, false, stride, 0);
+            gl.enable_vertex_attrib_array(1);
+            gl.vertex_attrib_pointer_f32(1, 2, glow::FLOAT, false, stride, 8);
 
             // Blend and scissor state are both global, so each is set only
             // where a draw actually needs a different one. Tracking them here

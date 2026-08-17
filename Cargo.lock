@@ -232,6 +232,7 @@ dependencies = [
  "impeller-geometry",
  "impeller-hal",
  "impeller-renderer",
+ "impeller-text",
 ]
 
 [[package]]

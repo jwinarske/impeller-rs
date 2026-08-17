@@ -59,6 +59,7 @@ pub mod kind {
     pub const RADIAL: f32 = 2.0;
     pub const SWEEP: f32 = 3.0;
     pub const IMAGE: f32 = 4.0;
+    pub const GLYPH: f32 = 5.0;
 }
 
 /// Tile mode selector shared with the shader.
@@ -152,6 +153,19 @@ pub enum Material {
         alpha: f32,
         tile: TileMode,
     },
+    /// Coverage sampled from an atlas, tinting one color.
+    ///
+    /// Distinct from [`Self::Image`] in two ways that matter. The texture is
+    /// read as *coverage* rather than as color — one channel scaling a solid,
+    /// which is what antialiased text is — and the coordinates come from the
+    /// vertices rather than from a mapping in the paint, so a run of glyphs
+    /// reading different parts of one atlas is a single draw.
+    Glyph {
+        /// Linear color with straight alpha, as the text is painted.
+        color: [f32; 4],
+        /// Index into the texture table given at submission.
+        slot: u32,
+    },
 }
 
 /// What happens outside an image's own bounds.
@@ -187,13 +201,14 @@ impl Material {
             // What the texture holds is unknown here, so only a zero alpha
             // makes an image provably invisible.
             Self::Image { alpha, .. } => *alpha <= 0.0,
+            Self::Glyph { color, .. } => color[3] <= 0.0,
         }
     }
 
     /// The texture slot this samples, for a backend building its bindings.
     pub fn texture_slot(&self) -> Option<u32> {
         match self {
-            Self::Image { slot, .. } => Some(*slot),
+            Self::Image { slot, .. } | Self::Glyph { slot, .. } => Some(*slot),
             _ => None,
         }
     }
@@ -201,7 +216,7 @@ impl Material {
     /// The stops, for any material that has them.
     fn stops(&self) -> &[Stop] {
         match self {
-            Self::Solid(_) | Self::Image { .. } => &[],
+            Self::Solid(_) | Self::Image { .. } | Self::Glyph { .. } => &[],
             Self::LinearGradient { stops, .. }
             | Self::RadialGradient { stops, .. }
             | Self::SweepGradient { stops, .. } => stops,
@@ -220,6 +235,15 @@ impl Material {
             out[layout::STOPS..layout::STOPS + 4].copy_from_slice(color);
             out[layout::PARAMS] = 1.0;
             out[layout::PARAMS + 1] = kind::SOLID;
+            return out;
+        }
+
+        // A glyph is a solid color plus a texture read; the coordinates come
+        // from the vertices, so nothing about the mapping is packed here.
+        if let Self::Glyph { color, .. } = self {
+            out[layout::STOPS..layout::STOPS + 4].copy_from_slice(color);
+            out[layout::PARAMS] = 1.0;
+            out[layout::PARAMS + 1] = kind::GLYPH;
             return out;
         }
 
@@ -264,7 +288,9 @@ impl Material {
         }
 
         match self {
-            Self::Solid(_) | Self::Image { .. } => unreachable!("handled above"),
+            Self::Solid(_) | Self::Image { .. } | Self::Glyph { .. } => {
+                unreachable!("handled above")
+            }
             Self::LinearGradient { start, end, .. } => {
                 out[layout::GEOMETRY] = start[0];
                 out[layout::GEOMETRY + 1] = start[1];

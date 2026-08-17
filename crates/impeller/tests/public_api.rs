@@ -7,8 +7,8 @@
 //! works.
 
 use impeller::{
-    BackendPreference, BlendMode, Canvas, Color, Context, Extent2D, GradientStop, Layer, Paint,
-    PathBuilder, PixelFormat, Rect, Vec2,
+    Atlas, BackendPreference, BlendMode, Canvas, Color, Context, Coverage, Extent2D, GlyphKey,
+    GradientStop, Layer, Paint, PathBuilder, PixelFormat, PositionedGlyph, Rect, Vec2,
 };
 
 const SIZE: Extent2D = Extent2D {
@@ -1327,5 +1327,300 @@ fn the_backends_agree_on_a_layered_frame() {
         pixel(&a, 64, 40),
         pixel(&a, 4, 124),
         "the layered frame drew nothing"
+    );
+}
+
+/// An atlas holding two glyphs of known coverage.
+///
+/// Synthetic rather than rasterized from a font: shaping and font parsing are
+/// out of scope, and coverage whose every texel is known exactly is a far
+/// better thing to assert against than whatever a hinter produced.
+fn two_glyph_atlas() -> (Atlas, GlyphKey, GlyphKey) {
+    let mut atlas = Atlas::new(64);
+    let solid = GlyphKey {
+        font: 1,
+        glyph: 1,
+        size: 16,
+    };
+    let half = GlyphKey {
+        font: 1,
+        glyph: 2,
+        size: 16,
+    };
+    atlas
+        .insert(
+            solid,
+            &Coverage {
+                width: 8,
+                height: 8,
+                texels: vec![255; 64],
+            },
+        )
+        .expect("solid glyph");
+    atlas
+        .insert(
+            half,
+            &Coverage {
+                width: 8,
+                height: 8,
+                texels: vec![128; 64],
+            },
+        )
+        .expect("half glyph");
+    (atlas, solid, half)
+}
+
+/// Upload an atlas as an image this context can sample.
+fn upload_atlas(ctx: &mut Context, atlas: &Atlas) -> impeller::Image {
+    let mut image = ctx
+        .create_image(
+            Extent2D::new(atlas.size(), atlas.size()),
+            PixelFormat::Rgba8Unorm,
+        )
+        .expect("atlas image");
+    // Coverage is one byte per texel and the format is four, so it is repeated
+    // across the channels. The shader reads red; storing it four times costs
+    // memory a single-channel format would save, and changes nothing else.
+    let mut rgba = Vec::with_capacity(atlas.texels().len() * 4);
+    for coverage in atlas.texels() {
+        rgba.extend_from_slice(&[*coverage; 4]);
+    }
+    ctx.write_image(&mut image, &rgba).expect("upload");
+    image
+}
+
+#[test]
+fn a_glyph_run_draws_its_coverage_tinted_by_the_paint() {
+    let Some(mut ctx) = context() else { return };
+    let (atlas, solid, half) = two_glyph_atlas();
+    let image = upload_atlas(&mut ctx, &atlas);
+
+    let mut canvas = Canvas::new(SIZE);
+    canvas.clear(Color::linear(0.0, 0.0, 0.0, 1.0));
+    canvas
+        .draw_glyphs(
+            &[
+                PositionedGlyph::new(solid, [16.0, 16.0], atlas.get(solid).unwrap()),
+                PositionedGlyph::new(half, [48.0, 16.0], atlas.get(half).unwrap()),
+            ],
+            &atlas,
+            0,
+            &Paint::fill(Color::linear(1.0, 0.0, 0.0, 1.0)),
+        )
+        .expect("glyphs");
+
+    let mut surface = ctx
+        .create_surface(SIZE, PixelFormat::Rgba8Unorm)
+        .expect("surface");
+    ctx.draw_with_images(&mut surface, &canvas.finish(), &[&image])
+        .expect("draw");
+    let pixels = ctx.read(&mut surface).expect("read");
+    ctx.destroy_surface(surface);
+    ctx.destroy_image(image);
+
+    // Full coverage gives the paint's color outright; half coverage gives it at
+    // half alpha, premultiplied. That the two differ is the point: an atlas
+    // read as color rather than as coverage would make both fully red.
+    assert_eq!(pixel(&pixels, 20, 20), [255, 0, 0, 255], "the solid glyph");
+    let faint = pixel(&pixels, 52, 20);
+    assert!(
+        (faint[0] as i32 - 128).abs() <= 2 && faint[1] == 0 && faint[2] == 0,
+        "the half-coverage glyph came back {faint:?}"
+    );
+    // And nothing was drawn where no glyph was placed.
+    assert_eq!(
+        pixel(&pixels, 100, 100),
+        [0, 0, 0, 255],
+        "between the glyphs"
+    );
+}
+
+#[test]
+fn a_run_of_many_glyphs_is_one_draw() {
+    // The reason vertices carry texture coordinates at all. A paint is per
+    // draw, so coordinates carried there would mean a draw per glyph, and text
+    // is the highest draw-count content there is.
+    let (atlas, solid, _) = two_glyph_atlas();
+    let rect = atlas.get(solid).unwrap();
+    let glyphs: Vec<PositionedGlyph> = (0..24)
+        .map(|i| PositionedGlyph::new(solid, [i as f32 * 5.0, 40.0], rect))
+        .collect();
+
+    let mut canvas = Canvas::new(SIZE);
+    canvas
+        .draw_glyphs(&glyphs, &atlas, 0, &Paint::fill(Color::WHITE))
+        .expect("glyphs");
+    let recording = canvas.finish();
+    assert_eq!(
+        recording.draw_count(),
+        1,
+        "a run of {} glyphs should be one draw",
+        glyphs.len()
+    );
+}
+
+#[test]
+fn a_glyph_run_travels_with_the_transform_and_the_clip() {
+    let Some(mut ctx) = context() else { return };
+    let (atlas, solid, _) = two_glyph_atlas();
+    let image = upload_atlas(&mut ctx, &atlas);
+    let rect = atlas.get(solid).unwrap();
+
+    let mut canvas = Canvas::new(SIZE);
+    canvas.clear(Color::linear(0.0, 0.0, 0.0, 1.0));
+    // Clipped to the left half, then moved right by a translation. A run whose
+    // quads were built in device pixels would ignore both.
+    canvas
+        .clip_rect(Rect::new(0.0, 0.0, 64.0, 128.0))
+        .expect("clip");
+    canvas.translate(24.0, 24.0);
+    canvas
+        .draw_glyphs(
+            &[
+                PositionedGlyph::new(solid, [0.0, 0.0], rect),
+                PositionedGlyph::new(solid, [56.0, 0.0], rect),
+            ],
+            &atlas,
+            0,
+            &Paint::fill(Color::WHITE),
+        )
+        .expect("glyphs");
+
+    let mut surface = ctx
+        .create_surface(SIZE, PixelFormat::Rgba8Unorm)
+        .expect("surface");
+    ctx.draw_with_images(&mut surface, &canvas.finish(), &[&image])
+        .expect("draw");
+    let pixels = ctx.read(&mut surface).expect("read");
+    ctx.destroy_surface(surface);
+    ctx.destroy_image(image);
+
+    // The first glyph moved with the translation and survives the clip.
+    assert_eq!(
+        pixel(&pixels, 28, 28),
+        [255, 255, 255, 255],
+        "the first glyph"
+    );
+    // The second lands past the clip's edge and must not appear.
+    assert_eq!(pixel(&pixels, 84, 28), [0, 0, 0, 255], "the second glyph");
+}
+
+#[test]
+fn a_glyph_missing_from_the_atlas_is_refused() {
+    let (atlas, solid, _) = two_glyph_atlas();
+    let absent = GlyphKey {
+        font: 9,
+        glyph: 9,
+        size: 9,
+    };
+    let mut canvas = Canvas::new(SIZE);
+    // Sampling a glyph nobody added would read whatever texel sits at the
+    // origin and draw a plausible smudge, which is worse than failing.
+    let result = canvas.draw_glyphs(
+        &[PositionedGlyph::new(
+            absent,
+            [0.0, 0.0],
+            atlas.get(solid).unwrap(),
+        )],
+        &atlas,
+        0,
+        &Paint::fill(Color::WHITE),
+    );
+    assert!(result.is_err(), "a glyph outside the atlas was accepted");
+}
+
+#[test]
+fn glyphs_take_a_solid_color_rather_than_a_gradient() {
+    let (atlas, solid, _) = two_glyph_atlas();
+    let mut canvas = Canvas::new(SIZE);
+    // An atlas supplies coverage, not color, so a gradient has nowhere to go.
+    // Picking its first stop would draw something plausible and wrong.
+    let result = canvas.draw_glyphs(
+        &[PositionedGlyph::new(
+            solid,
+            [0.0, 0.0],
+            atlas.get(solid).unwrap(),
+        )],
+        &atlas,
+        0,
+        &Paint::linear_gradient(
+            Vec2::new(0.0, 0.0),
+            Vec2::new(64.0, 0.0),
+            vec![
+                GradientStop::new(Color::WHITE, 0.0),
+                GradientStop::new(Color::linear(0.0, 0.0, 0.0, 1.0), 1.0),
+            ],
+        ),
+    );
+    assert!(result.is_err(), "a gradient paint was accepted for glyphs");
+}
+
+#[test]
+fn the_backends_agree_on_a_glyph_run() {
+    // A run is the first geometry here whose vertices carry texture
+    // coordinates, and the two backends declare that attribute separately —
+    // one in a pipeline's vertex input state, the other as a pointer into an
+    // interleaved buffer. A stride or offset wrong on either produces a
+    // plausible smear rather than nothing.
+    let (Ok(mut vulkan), Ok(mut gles)) = (
+        Context::new(BackendPreference::Vulkan),
+        Context::new(BackendPreference::Gles),
+    ) else {
+        eprintln!("skipping: both backends are needed");
+        return;
+    };
+    let (atlas, solid, half) = two_glyph_atlas();
+
+    let build = || {
+        let mut canvas = Canvas::new(SIZE);
+        canvas.clear(Color::linear(0.0, 0.0, 0.1, 1.0));
+        let glyphs: Vec<PositionedGlyph> = (0..6)
+            .map(|i| {
+                let key = if i % 2 == 0 { solid } else { half };
+                PositionedGlyph::new(key, [8.0 + i as f32 * 18.0, 40.0], atlas.get(key).unwrap())
+            })
+            .collect();
+        canvas
+            .draw_glyphs(
+                &glyphs,
+                &atlas,
+                0,
+                &Paint::fill(Color::linear(1.0, 0.8, 0.2, 1.0)),
+            )
+            .expect("glyphs");
+        canvas.finish()
+    };
+
+    let render_on = |ctx: &mut Context| {
+        let image = upload_atlas(ctx, &atlas);
+        let mut surface = ctx
+            .create_surface(SIZE, PixelFormat::Rgba8Unorm)
+            .expect("surface");
+        ctx.draw_with_images(&mut surface, &build(), &[&image])
+            .expect("draw");
+        let pixels = ctx.read(&mut surface).expect("read");
+        ctx.destroy_surface(surface);
+        ctx.destroy_image(image);
+        pixels
+    };
+
+    let a = render_on(&mut vulkan);
+    let b = render_on(&mut gles);
+    let worst = a
+        .iter()
+        .zip(&b)
+        .map(|(x, y)| (*x as i32 - *y as i32).abs())
+        .max()
+        .unwrap_or(0);
+    assert!(
+        worst <= 1,
+        "the backends differ by up to {worst} on a glyph run"
+    );
+    // And something was actually drawn, so this is not two blank frames
+    // agreeing perfectly.
+    assert_ne!(
+        pixel(&a, 12, 44),
+        pixel(&a, 120, 120),
+        "the glyph run drew nothing"
     );
 }

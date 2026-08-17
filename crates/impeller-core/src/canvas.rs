@@ -14,10 +14,11 @@ use impeller_geometry::transform::{
 };
 use impeller_geometry::{Path, PathBuilder};
 use impeller_hal::{
-    Batch, BlendMode, ClipState, Extent2D, Material, PassDescriptor, Result, Scissor, Stop,
-    TileMode,
+    Batch, BlendMode, ClipState, Error, Extent2D, Material, PassDescriptor, Result, Scissor, Stop,
+    TileMode, Vertex,
 };
 use impeller_renderer::{Paint as RenderPaint, Renderer, TOLERANCE};
+use impeller_text::{Atlas, PositionedGlyph};
 
 /// A rectangle in user coordinates.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -652,6 +653,95 @@ impl Canvas {
         }
         let path = circle_path(center, radius);
         self.draw_path(&path, paint)
+    }
+
+    /// Draw a run of positioned glyphs from one atlas, as a single draw.
+    ///
+    /// `atlas_slot` indexes the image table supplied at draw time, and each
+    /// glyph names where in that atlas its coverage sits. A run is one draw
+    /// however many glyphs it holds, because the coordinates travel on the
+    /// vertices rather than in the paint — which is the reason vertices carry
+    /// them at all, text being the highest draw-count content there is.
+    ///
+    /// The paint's color is the text color; its shader is otherwise ignored,
+    /// since the atlas supplies coverage rather than color. Gradient-filled
+    /// text needs the run drawn into a layer and the gradient drawn through it,
+    /// which is a thing a caller can already build out of what is here.
+    pub fn draw_glyphs(
+        &mut self,
+        glyphs: &[PositionedGlyph],
+        atlas: &Atlas,
+        atlas_slot: u32,
+        paint: &Paint,
+    ) -> Result<&mut Self> {
+        if glyphs.is_empty() || !paint.is_visible() {
+            return Ok(self);
+        }
+        if self.clip.is_some_and(Scissor::is_empty) {
+            return Ok(self);
+        }
+
+        let color = match &paint.shader {
+            Shader::Solid(color) => color.to_array(),
+            // A run tints one color, so anything else has no meaning here. The
+            // first stop of a gradient is a guess at what was meant, and a
+            // guess drawn is worse than a refusal read.
+            _ => {
+                return Err(Error::Unsupported(
+                    "glyphs take a solid color; fill a layer through a gradient instead",
+                ))
+            }
+        };
+
+        let to_clip = viewport_projection(self.extent.width, self.extent.height) * self.transform;
+        let mut vertices = Vec::with_capacity(glyphs.len() * 4);
+        let mut indices = Vec::with_capacity(glyphs.len() * 6);
+        for glyph in glyphs {
+            let Some(rect) = atlas.get(glyph.key) else {
+                // A glyph nobody added would sample whatever texel happens to
+                // sit at the origin, which draws a plausible smudge. Refusing
+                // names the glyph instead.
+                return Err(Error::Unsupported(
+                    "a glyph in this run is not in the atlas",
+                ));
+            };
+            if rect.width == 0 || rect.height == 0 {
+                // A space occupies no texels and needs no quad, but it still
+                // travelled through the run rather than being the caller's to
+                // filter out.
+                continue;
+            }
+
+            let [u0, v0, u1, v1] = rect.uv(atlas.size());
+            let [x, y] = glyph.position;
+            let [w, h] = glyph.size;
+            let corners = [
+                ([x, y], [u0, v0]),
+                ([x + w, y], [u1, v0]),
+                ([x + w, y + h], [u1, v1]),
+                ([x, y + h], [u0, v1]),
+            ];
+            let base = vertices.len() as u32;
+            for ([px, py], uv) in corners {
+                let clip = to_clip.transform_point2(Vec2::new(px, py));
+                vertices.push(Vertex::new([clip.x, clip.y], uv));
+            }
+            indices.extend_from_slice(&[base, base + 1, base + 2, base, base + 2, base + 3]);
+        }
+        if indices.is_empty() {
+            return Ok(self);
+        }
+
+        let slot = self.slot_for(TextureSource::Image(atlas_slot));
+        self.batch.push_mesh(
+            &vertices,
+            &indices,
+            Material::Glyph { color, slot },
+            paint.blend,
+            self.clip,
+            ClipState::content(self.depth),
+        )?;
+        Ok(self)
     }
 
     pub fn draw_line(&mut self, from: Vec2, to: Vec2, paint: &Paint) -> Result<&mut Self> {

@@ -101,6 +101,42 @@ impl ClipState {
     }
 }
 
+/// One vertex: where it is, and where it reads from.
+///
+/// # Why every vertex carries texture coordinates
+///
+/// Most geometry here does not need them — a solid fill and a gradient both
+/// locate themselves from the interpolated clip position. A glyph run does: a
+/// run is many quads reading different parts of one atlas, and a material is
+/// per draw, so coordinates carried in the paint would mean a draw per glyph.
+/// Text is the highest draw-count content there is, so that is the wrong place
+/// to spend.
+///
+/// The cost is eight bytes on every vertex, including the ones that ignore
+/// them. The alternative — a second vertex format and a second pipeline for
+/// text — spends more in pipeline state and in the code that has to decide
+/// which of two shapes a batch is in, to save memory on the geometry that is
+/// already the cheapest to store.
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+#[repr(C)]
+pub struct Vertex {
+    pub position: [f32; 2],
+    /// Where in a sampled texture this vertex reads, if the material samples
+    /// one. Zero where it does not, which costs nothing to interpolate.
+    pub uv: [f32; 2],
+}
+
+impl Vertex {
+    pub const fn new(position: [f32; 2], uv: [f32; 2]) -> Self {
+        Self { position, uv }
+    }
+
+    /// A vertex that samples nothing.
+    pub const fn at(position: [f32; 2]) -> Self {
+        Self::new(position, [0.0, 0.0])
+    }
+}
+
 /// One draw within a batch.
 #[derive(Debug, Clone)]
 pub struct BatchDraw {
@@ -132,7 +168,7 @@ pub struct BatchDraw {
 /// that belongs to the layer that knows what the draws represent.
 #[derive(Debug, Default, Clone)]
 pub struct Batch {
-    vertices: Vec<[f32; 2]>,
+    vertices: Vec<Vertex>,
     indices: Vec<u32>,
     draws: Vec<BatchDraw>,
 }
@@ -191,7 +227,27 @@ impl Batch {
     /// one; everything else is confined by a scissor or not confined at all.
     pub fn push_with(
         &mut self,
-        vertices: &[[f32; 2]],
+        positions: &[[f32; 2]],
+        indices: &[u32],
+        material: Material,
+        blend: BlendMode,
+        clip: Option<Scissor>,
+        stencil: ClipState,
+    ) -> Result<()> {
+        // Tessellated geometry has no texture coordinates of its own, and the
+        // materials it carries do not read them.
+        let vertices: Vec<Vertex> = positions.iter().copied().map(Vertex::at).collect();
+        self.push_mesh(&vertices, indices, material, blend, clip, stencil)
+    }
+
+    /// Append a draw whose vertices carry texture coordinates.
+    ///
+    /// The form a glyph run takes: one draw over many quads, each reading a
+    /// different part of the same atlas.
+    #[allow(clippy::too_many_arguments)]
+    pub fn push_mesh(
+        &mut self,
+        vertices: &[Vertex],
         indices: &[u32],
         material: Material,
         blend: BlendMode,
@@ -314,8 +370,8 @@ impl Batch {
 }
 
 impl Batch {
-    /// Shared vertex buffer, in clip space.
-    pub fn vertices(&self) -> &[[f32; 2]] {
+    /// Shared vertex buffer, positions in clip space.
+    pub fn vertices(&self) -> &[Vertex] {
         &self.vertices
     }
 

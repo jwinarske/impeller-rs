@@ -44,7 +44,7 @@ pub mod resource;
 pub mod scissor;
 pub mod sync;
 
-pub use batch::{Batch, BatchDraw, ClipRole, ClipState};
+pub use batch::{Batch, BatchDraw, ClipRole, ClipState, Vertex};
 pub use blend::{BlendFactor, BlendFactors, BlendMode};
 pub use capabilities::{Capabilities, DmaBufSupport, SampleCounts, SyncSupport};
 pub use error::{Error, Result};

@@ -59,13 +59,20 @@ var<push_constant> paint: Paint;
 struct VertexOutput {
     @builtin(position) position: vec4<f32>,
     @location(0) clip: vec2<f32>,
+    // Where this vertex reads from a sampled texture. Zero for geometry that
+    // samples nothing, which costs an interpolation nobody looks at.
+    @location(1) uv: vec2<f32>,
 };
 
 @vertex
-fn vs_main(@location(0) position: vec2<f32>) -> VertexOutput {
+fn vs_main(
+    @location(0) position: vec2<f32>,
+    @location(1) uv: vec2<f32>,
+) -> VertexOutput {
     var out: VertexOutput;
     out.position = vec4<f32>(position, 0.0, 1.0);
     out.clip = position;
+    out.uv = uv;
     return out;
 }
 
@@ -173,8 +180,21 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     // sweep arm tests only a lower bound and would otherwise claim this kind
     // as well. Returned directly, since a sampled texel is premultiplied
     // already and the conversion below would apply alpha a second time.
-    if (kind > 3.5) {
+    if (kind > 3.5 && kind < 4.5) {
         return sample_image(in.clip);
+    }
+    if (kind > 4.5) {
+        // Coverage rather than color: one channel scaling a solid, which is
+        // what an antialiased glyph is. The coordinates are the vertex's own,
+        // so a run of glyphs reading different parts of one atlas needs one
+        // draw and one paint between them.
+        //
+        // Read from the red channel, which is where a single-channel atlas
+        // puts it and where a four-channel one repeats it.
+        let coverage = textureSampleLevel(image_texture, image_sampler, in.uv, 0.0).r;
+        let tint = paint.stops[0];
+        let alpha = tint.a * coverage;
+        return vec4<f32>(tint.rgb * alpha, alpha);
     }
 
     // Colours are linear here. Conversion to the target's transfer function is

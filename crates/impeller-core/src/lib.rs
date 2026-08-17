@@ -18,6 +18,7 @@ pub mod paint;
 
 pub use canvas::{Canvas, Layer, Pass, Recording, Rect, TextureSource};
 pub use color::Color;
+pub use impeller_text::{Atlas, AtlasError, AtlasRect, Coverage, GlyphKey, PositionedGlyph};
 pub use paint::{GradientStop, Paint, Shader, Style};
 
 // Geometry a caller builds paths with, re-exported so an application needs one
