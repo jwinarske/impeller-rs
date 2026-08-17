@@ -14,7 +14,7 @@ use impeller_hal::{
     Batch, BlendMode, Extent2D, FormatModifierSet, Fourcc, Material, Modifier, PassDescriptor,
     Result,
 };
-use impeller_hal_vulkan::{DevicePreference, VulkanContext, VulkanHal};
+use impeller_hal_vulkan::{ContextConfig, DevicePreference, VulkanContext, VulkanHal};
 use impeller_present::PresentTarget;
 use impeller_present_drm::{
     output::{CommitRequest, DmaBufPlanes, OutputEvent, ScanoutOutput},
@@ -130,13 +130,33 @@ impl ScanoutOutput for FakeOutput {
 }
 
 fn context() -> Option<VulkanContext> {
-    match VulkanContext::new(DevicePreference::Auto) {
+    // Validation on, because these drive the deferred submission path and the
+    // fences that gate it, and that is where a resource freed while the GPU is
+    // still reading it shows up. Nothing about such a bug reaches the pixels:
+    // the frame renders correctly right up until the memory is reused.
+    match VulkanContext::with_config(ContextConfig {
+        device: DevicePreference::Auto,
+        validation: true,
+    }) {
         Ok(ctx) => Some(ctx),
         Err(e) => {
             eprintln!("skipping: no usable Vulkan device ({e})");
             None
         }
     }
+}
+
+/// Fail if the validation layer reported anything.
+fn assert_validation_clean(ctx: &VulkanContext) {
+    if !ctx.validation_active() {
+        return;
+    }
+    let errors: Vec<_> = ctx
+        .validation_messages()
+        .into_iter()
+        .filter(|m| m.severity == impeller_hal_vulkan::ValidationSeverity::Error)
+        .collect();
+    assert!(errors.is_empty(), "validation errors: {errors:?}");
 }
 
 /// Formats the display accepts: whatever the device can render into.
@@ -195,6 +215,7 @@ fn a_ring_is_built_from_exported_buffers() {
 
     target.destroy(&mut ctx);
     assert_eq!(log.lock().unwrap().released.len(), 3, "framebuffers leaked");
+    assert_validation_clean(&ctx);
 }
 
 #[test]
@@ -222,6 +243,7 @@ fn the_first_commit_allows_a_modeset_and_later_ones_do_not() {
     );
     drop(recorded);
     target.destroy(&mut ctx);
+    assert_validation_clean(&ctx);
 }
 
 #[test]
@@ -260,6 +282,7 @@ fn every_commit_carries_the_render_done_signal() {
     );
     drop(recorded);
     target.destroy(&mut ctx);
+    assert_validation_clean(&ctx);
 }
 
 #[test]
@@ -293,6 +316,7 @@ fn a_buffer_still_on_screen_is_never_handed_back() {
     );
 
     target.destroy(&mut ctx);
+    assert_validation_clean(&ctx);
 }
 
 #[test]
@@ -314,6 +338,7 @@ fn a_flip_frees_the_buffer_it_replaced() {
     }
 
     target.destroy(&mut ctx);
+    assert_validation_clean(&ctx);
 }
 
 #[test]
@@ -330,6 +355,7 @@ fn presenting_without_acquiring_is_refused() {
     // on screen.
     assert!(target.present(&mut ctx).is_err());
     target.destroy(&mut ctx);
+    assert_validation_clean(&ctx);
 }
 
 #[test]

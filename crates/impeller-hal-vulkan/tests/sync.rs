@@ -234,3 +234,82 @@ fn a_deferred_multisampled_pass_is_refused_rather_than_leaking() {
     ctx.destroy_texture(tex);
     assert_clean(&ctx);
 }
+
+#[test]
+fn retiring_one_frame_does_not_free_another_frame_s_resources() {
+    let Some(mut ctx) = context() else { return };
+    let batch = scene();
+
+    // Every other test here retires a fence before submitting again, so only
+    // one submission is ever outstanding. A frame loop that runs two frames
+    // deep does not, and that is a different thing: the resources a submission
+    // is reading have to belong to *that* submission rather than to a list the
+    // context drains whenever any fence retires.
+    //
+    // This is the shape that broke. Buffers were retained on the context, so
+    // retiring the first frame released the second frame's geometry while the
+    // GPU was still reading it — which renders correctly right up until the
+    // memory is reused, and is reported by nothing but the validation layer.
+    let mut first_target = target(&mut ctx);
+    let mut second_target = target(&mut ctx);
+
+    let first = ctx
+        .submit_batch_deferred(&mut first_target, &batch, PassDescriptor::clear([0.0; 4]))
+        .expect("first submission");
+    let second = ctx
+        .submit_batch_deferred(&mut second_target, &batch, PassDescriptor::clear([0.0; 4]))
+        .expect("second submission");
+
+    // Retired in order, with the second still in flight when the first goes.
+    assert!(first.wait(FRAME_WAIT_TIMEOUT).expect("wait"));
+    ctx.retire_fence(first);
+    assert!(second.wait(FRAME_WAIT_TIMEOUT).expect("wait"));
+    ctx.retire_fence(second);
+
+    // Both frames drew what they were asked to, which is what says the geometry
+    // survived long enough to be read.
+    for tex in [&mut first_target, &mut second_target] {
+        let pixels = ctx.read_texture(tex).expect("readback");
+        assert_eq!(&pixels[..4], &[255, 0, 0, 255]);
+    }
+    ctx.destroy_texture(first_target);
+    ctx.destroy_texture(second_target);
+    assert_clean(&ctx);
+}
+
+#[test]
+fn frames_may_be_retired_out_of_the_order_they_were_submitted() {
+    let Some(mut ctx) = context() else { return };
+    let batch = scene();
+    // Nothing requires a caller to retire in submission order, and a target
+    // holding a slot per frame retires whichever slot comes round next. This
+    // pins that the API allows it and stays clean.
+    //
+    // It is the weaker of the two: run against the shared release list this
+    // replaced, it passed, because by the time the newer frame completes the
+    // older one has as well. The test above is the one that reproduces that
+    // defect, and this one is here because the ordering it permits is worth
+    // stating rather than because it catches anything on its own.
+    let mut first_target = target(&mut ctx);
+    let mut second_target = target(&mut ctx);
+
+    let first = ctx
+        .submit_batch_deferred(&mut first_target, &batch, PassDescriptor::clear([0.0; 4]))
+        .expect("first submission");
+    let second = ctx
+        .submit_batch_deferred(&mut second_target, &batch, PassDescriptor::clear([0.0; 4]))
+        .expect("second submission");
+
+    assert!(second.wait(FRAME_WAIT_TIMEOUT).expect("wait"));
+    ctx.retire_fence(second);
+    assert!(first.wait(FRAME_WAIT_TIMEOUT).expect("wait"));
+    ctx.retire_fence(first);
+
+    for tex in [&mut first_target, &mut second_target] {
+        let pixels = ctx.read_texture(tex).expect("readback");
+        assert_eq!(&pixels[..4], &[255, 0, 0, 255]);
+    }
+    ctx.destroy_texture(first_target);
+    ctx.destroy_texture(second_target);
+    assert_clean(&ctx);
+}

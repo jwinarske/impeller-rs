@@ -7,7 +7,7 @@
 //! arrives.
 
 use impeller_hal::{BlendMode, Extent2D, Hal, HalContext, Material, PassDescriptor, PixelFormat};
-use impeller_hal_vulkan::{DevicePreference, VulkanContext, VulkanHal};
+use impeller_hal_vulkan::{ContextConfig, DevicePreference, VulkanContext, VulkanHal};
 use impeller_present::{OffscreenTarget, PresentTarget};
 use impeller_testkit::{corpus, render_scene, Scene};
 
@@ -17,13 +17,33 @@ const SIZE: Extent2D = Extent2D {
 };
 
 fn context() -> Option<VulkanContext> {
-    match VulkanContext::new(DevicePreference::Auto) {
+    // Validation on, because these drive the deferred submission path and the
+    // fences that gate it, and that is where a resource freed while the GPU is
+    // still reading it shows up. Nothing about such a bug reaches the pixels:
+    // the frame renders correctly right up until the memory is reused.
+    match VulkanContext::with_config(ContextConfig {
+        device: DevicePreference::Auto,
+        validation: true,
+    }) {
         Ok(ctx) => Some(ctx),
         Err(e) => {
             eprintln!("skipping: no usable Vulkan device ({e})");
             None
         }
     }
+}
+
+/// Fail if the validation layer reported anything.
+fn assert_validation_clean(ctx: &VulkanContext) {
+    if !ctx.validation_active() {
+        return;
+    }
+    let errors: Vec<_> = ctx
+        .validation_messages()
+        .into_iter()
+        .filter(|m| m.severity == impeller_hal_vulkan::ValidationSeverity::Error)
+        .collect();
+    assert!(errors.is_empty(), "validation errors: {errors:?}");
 }
 
 /// Render one scene through a presentation target, as a frame loop would.
@@ -91,6 +111,7 @@ fn a_frame_loop_over_a_target_matches_rendering_to_a_texture() {
         failures.is_empty(),
         "presenting changed the result for: {failures:?}"
     );
+    assert_validation_clean(&ctx);
 }
 
 #[test]
@@ -106,6 +127,7 @@ fn presenting_counts_frames() {
         assert_eq!(target.presented_frames(), expected);
     }
     target.destroy(&mut ctx);
+    assert_validation_clean(&ctx);
 }
 
 #[test]
@@ -136,6 +158,7 @@ fn a_target_keeps_its_contents_between_acquisitions() {
     let pixels = target.read(&mut ctx).expect("read");
     assert_eq!(&pixels[..4], &[255, 0, 0, 255]);
     target.destroy(&mut ctx);
+    assert_validation_clean(&ctx);
 }
 
 #[test]
@@ -157,6 +180,7 @@ fn reconfiguring_changes_the_extent_and_keeps_the_target_usable() {
     assert_eq!(pixels.len(), (bigger.area() * 4) as usize);
 
     target.destroy(&mut ctx);
+    assert_validation_clean(&ctx);
 }
 
 #[test]
@@ -172,6 +196,7 @@ fn reconfiguring_to_the_same_extent_is_a_no_op() {
     }
     assert_eq!(target.extent(), SIZE);
     target.destroy(&mut ctx);
+    assert_validation_clean(&ctx);
 }
 
 /// Reach a texture's extent through the HAL trait rather than the backend type.

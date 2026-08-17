@@ -460,6 +460,16 @@ frame is in flight; with two, retiring the older fence frees the newer frame's
 geometry out from under the GPU. Holding them on the fence makes "still in use"
 a property of the submission it actually describes.
 
+That defect lived under a test suite that already ran the deferred path with
+validation on, and survived because every test in it retired a fence before
+submitting again — so only one submission was ever outstanding, which is the one
+arrangement in which the bug cannot happen. Coverage of a path is not coverage
+of the states that path can be in, and a frame loop running two frames deep is a
+state worth naming. **Anything that touches a device runs under the validation
+layer**, and the presentation suites do now as well: they drive the deferred
+submissions and the fences that gate them, which is exactly where a resource
+freed early shows up, and nowhere that a picture would.
+
 **Multisampling is a pass property, not a target property.** A pass renders
 into a transient multisample buffer and resolves into the target, so the target
 stays single-sampled and directly readable. Each backend realizes that
