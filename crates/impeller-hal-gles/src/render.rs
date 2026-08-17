@@ -162,6 +162,7 @@ impl GlesContext {
                 "a multisampled pass must clear; preserving needs a single-to-multisample copy",
             ));
         }
+        self.capabilities().check_blend_modes(batch)?;
         self.ensure_program()?;
 
         let extent = target.extent;
@@ -444,7 +445,16 @@ fn apply_blend(gl: &glow::Context, blend: BlendMode) {
         // Factors come from the shared table rather than being restated here,
         // so the two backends cannot disagree about what a mode means. It
         // assumes premultiplied colour, which is what the shader emits.
-        let factors = blend.factors();
+        //
+        // An advanced mode has no factors at all, and submission has already
+        // refused the batch by the time this runs, since this backend reports
+        // no advanced-blend capability. Leaving blending disabled rather than
+        // guessing keeps a future gap in that check visible as a missing blend
+        // rather than as a plausible-looking wrong one.
+        let Some(factors) = blend.factors() else {
+            gl.disable(glow::BLEND);
+            return;
+        };
         let src = gl_blend_factor(factors.src);
         let dst = gl_blend_factor(factors.dst);
         gl.enable(glow::BLEND);

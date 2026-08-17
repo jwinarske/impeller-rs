@@ -44,7 +44,7 @@ pub struct ContextConfig {
     pub validation: bool,
 }
 
-/// Extensions the DRM presentation path depends on.
+/// Extensions this backend asks for when the device offers them.
 ///
 /// Absence is not an error — it selects a different path, and which one is
 /// reported through [`Capabilities`] rather than inferred from the backend.
@@ -58,6 +58,10 @@ mod ext {
     /// Promoted to core in 1.2, so on the 1.1 baseline it must be requested
     /// explicitly as a dependency of the modifier extension.
     pub const IMAGE_FORMAT_LIST: &str = "VK_KHR_image_format_list";
+    /// The separable blend modes, which no combination of blend factors can
+    /// express. Unrelated to the DRM path; gated the same way because the
+    /// answer to "can this device do it" is a capability either way.
+    pub const BLEND_OPERATION_ADVANCED: &str = "VK_EXT_blend_operation_advanced";
 }
 
 /// Extensions each wanted extension depends on, beyond what the 1.1 baseline
@@ -74,6 +78,36 @@ fn required_dependencies(name: &str) -> &'static [&'static str] {
         ext::EXTERNAL_MEMORY_DMA_BUF => &[ext::EXTERNAL_MEMORY_FD],
         _ => &[],
     }
+}
+
+/// Whether this device can do every separable blend mode, coherently.
+///
+/// Three conditions, all required, and all reported as one flag because a
+/// caller cannot do anything useful with two of the three. `allOperations`
+/// covers the modes themselves; the coherent feature is what lets overlapping
+/// draws share a pass without a barrier between them; and the attachment limit
+/// has to cover what a pass actually binds. Anything short of all three reports
+/// false, and the modes are then refused rather than approximated.
+fn probe_advanced_blend(
+    instance: &ash::Instance,
+    physical_device: vk::PhysicalDevice,
+    enabled: &HashSet<String>,
+) -> bool {
+    if !enabled.contains(ext::BLEND_OPERATION_ADVANCED) {
+        return false;
+    }
+
+    let mut properties = vk::PhysicalDeviceBlendOperationAdvancedPropertiesEXT::default();
+    let mut properties2 = vk::PhysicalDeviceProperties2::default().push_next(&mut properties);
+    unsafe { instance.get_physical_device_properties2(physical_device, &mut properties2) };
+
+    let mut features = vk::PhysicalDeviceBlendOperationAdvancedFeaturesEXT::default();
+    let mut features2 = vk::PhysicalDeviceFeatures2::default().push_next(&mut features);
+    unsafe { instance.get_physical_device_features2(physical_device, &mut features2) };
+
+    properties.advanced_blend_all_operations == vk::TRUE
+        && features.advanced_blend_coherent_operations == vk::TRUE
+        && properties.advanced_blend_max_color_attachments >= 1
 }
 
 /// Expand the wanted set to include dependencies, dropping anything whose
@@ -224,9 +258,9 @@ impl VulkanContext {
             }
         };
 
-        // Request every DRM-relevant extension the device offers. Enabling one
-        // that goes unused costs nothing; discovering later that it was not
-        // enabled costs a device recreation.
+        // Request every extension the device offers that anything here can use.
+        // Enabling one that goes unused costs nothing; discovering later that it
+        // was not enabled costs a device recreation.
         let wanted = [
             ext::EXTERNAL_MEMORY_DMA_BUF,
             ext::EXTERNAL_MEMORY_FD,
@@ -234,8 +268,10 @@ impl VulkanContext {
             ext::EXTERNAL_FENCE_FD,
             ext::EXTERNAL_SEMAPHORE_FD,
             ext::PHYSICAL_DEVICE_DRM,
+            ext::BLEND_OPERATION_ADVANCED,
         ];
         let enabled = resolve_extensions(&wanted, &available);
+        let advanced_blend = probe_advanced_blend(&instance, physical_device, &enabled);
 
         let queue_family_index = match select_queue_family(&instance, physical_device) {
             Ok(i) => i,
@@ -257,9 +293,20 @@ impl VulkanContext {
             .queue_family_index(queue_family_index)
             .queue_priorities(&priorities);
         let queue_infos = [queue_info];
-        let device_info = vk::DeviceCreateInfo::default()
+        let mut device_info = vk::DeviceCreateInfo::default()
             .queue_create_infos(&queue_infos)
             .enabled_extension_names(&enabled_ptrs);
+
+        // Coherent advanced blending has to be asked for at device creation.
+        // Without it, overlapping draws in one pass need an explicit barrier
+        // between them; the pipeline below refuses the modes outright unless
+        // this came back enabled, so there is no path where a batch silently
+        // reads a destination another draw has not finished writing.
+        let mut advanced_features = vk::PhysicalDeviceBlendOperationAdvancedFeaturesEXT::default()
+            .advanced_blend_coherent_operations(true);
+        if advanced_blend {
+            device_info = device_info.push_next(&mut advanced_features);
+        }
 
         let device = match unsafe { instance.create_device(physical_device, &device_info, None) } {
             Ok(d) => d,
@@ -270,7 +317,8 @@ impl VulkanContext {
         };
 
         let queue = unsafe { device.get_device_queue(queue_family_index, 0) };
-        let capabilities = detect_capabilities(&instance, physical_device, &enabled);
+        let capabilities =
+            detect_capabilities(&instance, physical_device, &enabled, advanced_blend);
 
         let allocator =
             gpu_allocator::vulkan::Allocator::new(&gpu_allocator::vulkan::AllocatorCreateDesc {
@@ -648,6 +696,7 @@ fn detect_capabilities(
     instance: &ash::Instance,
     pd: vk::PhysicalDevice,
     enabled: &HashSet<String>,
+    advanced_blend: bool,
 ) -> Capabilities {
     // Modifier queries need the extension enabled; without it the only honest
     // answer about layouts is that nothing is known.
@@ -669,6 +718,7 @@ fn detect_capabilities(
     let modifiers = enabled.contains(ext::IMAGE_DRM_FORMAT_MODIFIER);
 
     Capabilities {
+        advanced_blend,
         max_texture_size: limits.max_image_dimension2_d,
         sample_counts: SampleCounts::from_mask(sample_mask.as_raw()),
         dma_buf: DmaBufSupport {

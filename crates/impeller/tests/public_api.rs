@@ -7,8 +7,8 @@
 //! works.
 
 use impeller::{
-    BackendPreference, Canvas, Color, Context, Extent2D, GradientStop, Paint, PixelFormat, Rect,
-    Vec2,
+    BackendPreference, BlendMode, Canvas, Color, Context, Extent2D, GradientStop, Paint,
+    PixelFormat, Rect, Vec2,
 };
 
 const SIZE: Extent2D = Extent2D {
@@ -501,4 +501,59 @@ fn a_sweep_gradient_runs_around_its_centre() {
     // angle and lands late in the sweep.
     let above = pixel(&pixels, 64, 64 - 40);
     assert_ne!(near, above, "a sweep should vary with angle");
+}
+
+#[test]
+fn an_advanced_blend_mode_is_either_available_or_refused_through_the_api() {
+    let Some(mut ctx) = context() else { return };
+
+    // The whole contract in one place: a caller asks what the device can do,
+    // and gets either the mode or an error. What must not happen is the third
+    // outcome — a drawing that succeeds and is quietly source-over instead.
+    let available = ctx.capabilities().advanced_blend;
+
+    let mut canvas = Canvas::new(SIZE);
+    canvas.clear(Color::linear(0.6, 0.6, 0.6, 1.0));
+    canvas
+        .draw_rect(
+            Rect::from_size(128.0, 128.0),
+            &Paint::fill(Color::linear(0.5, 0.5, 0.5, 1.0))
+                .with_blend(BlendMode::Multiply)
+                .with_anti_alias(false),
+        )
+        .expect("rect");
+
+    let mut surface = ctx
+        .create_surface(SIZE, PixelFormat::Rgba8Unorm)
+        .expect("surface");
+    let drawn = ctx.draw(&mut surface, &canvas.finish());
+
+    if available {
+        drawn.expect("draw");
+        let pixels = ctx.read(&mut surface).expect("read");
+        let got = pixel(&pixels, 64, 64);
+        // Multiplying two opaque mid-grays gives their product, which is darker
+        // than either. Asserting the direction rather than the value keeps this
+        // about the API carrying the mode through, and leaves the arithmetic to
+        // the conformance tests that check all eleven modes against the formula.
+        let backdrop = pixel(
+            &render(&mut ctx, {
+                let mut plain = Canvas::new(SIZE);
+                plain.clear(Color::linear(0.6, 0.6, 0.6, 1.0));
+                plain
+            }),
+            64,
+            64,
+        );
+        assert!(
+            got[0] < backdrop[0],
+            "multiply gave {got:?}, which is not darker than the backdrop {backdrop:?}"
+        );
+    } else {
+        assert!(
+            matches!(drawn, Err(impeller::Error::Unsupported(_))),
+            "the device reports no advanced blending but the draw was not refused"
+        );
+    }
+    ctx.destroy_surface(surface);
 }

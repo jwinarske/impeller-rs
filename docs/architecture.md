@@ -150,10 +150,52 @@ alpha uses the same factors as colour: with premultiplied colour the alpha
 channel is not a special case, and giving it different factors is what breaks
 compositing a layer onto something else.
 
-The separable and non-separable modes — multiply, screen, overlay, hue and the
-rest — need an advanced-blend extension and are therefore capability-gated when
-they arrive. A renderer that could not composite at all without one would be
-unusable on the hardware least likely to have it.
+The separable modes — multiply, screen, overlay and the rest — mix the two sides
+arithmetically rather than deciding where each survives, which no combination of
+blend factors expresses. They need an advanced-blend extension and are
+capability-gated. A renderer that could not composite at all without one would
+be unusable on the hardware least likely to have it, which is why the
+fixed-function set came first. `BlendMode::factors` returns an option rather
+than a plausible pair for these, so a backend cannot silently render one as
+something close: a wrong blend mode is a picture nobody can debug from, and the
+check that refuses it lives in `Capabilities` so both backends refuse the same
+batch for the same reason.
+
+Their formulas are fixed by the compositing specification, and it is transcribed
+once in the HAL. The conformance tests check the hardware against that
+transcription; each backend's mapping from mode to blend op shares no code with
+it, which is what makes checking one against the other mean something. The
+transcription is not a second implementation for the sake of testing — a
+software path would evaluate the same function.
+
+**Advanced blending is the first genuinely Vulkan-first feature.** Vulkan gets
+it through `VK_EXT_blend_operation_advanced`, gated on all operations being
+present, the coherent feature being available, and the attachment limit covering
+what a pass binds — reported as one flag, since a caller can do nothing useful
+with two of the three. Coherency is not taken on the driver's word: a test
+renders overlapping draws as one batch and as two submissions, which differ only
+if the second draw blends against a stale destination.
+
+GLES has `GL_KHR_blend_equation_advanced`, but reaching it needs a hand-written
+GLSL ES fragment stage. The extension requires the shader to declare
+`layout(blend_support_all_equations) out;`, and naga's GLSL backend cannot emit
+that qualifier from WGSL — this is the "hand-written overrides where translation
+falls short" path, and it is the first thing to need it. Where the coherent
+variant of the extension is absent, it additionally needs `glBlendBarrierKHR`
+between overlapping draws, which changes how a batch is recorded rather than
+merely which enum is set. Until that lands, the GLES backend reports the
+capability as false and refuses the modes.
+
+That asymmetry is why the scene corpus derives what a scene *requires* from what
+it contains, alongside deriving its tolerance. A scene refused by a device that
+declares it needs nothing special is a defect; a scene refused by a device the
+scene says cannot render it is a declared gap, and the corpus reports the second
+as coverage it did not get rather than as a pass. Deriving rather than declaring
+matters for the same reason it does for tolerance: a requirement written
+alongside a scene is one that can be forgotten, and a forgotten one turns a
+known gap into a reported regression. Scenes are run on the first available
+device that supports them rather than only on the preferred one, since the
+extension can sit on a device the preference order does not pick.
 
 **Multisampling is a pass property, not a target property.** A pass renders
 into a transient multisample buffer and resolves into the target, so the target

@@ -114,6 +114,7 @@ impl VulkanContext {
         let format = vk_format(target.format());
         let clear = pass.clear;
 
+        self.capabilities().check_blend_modes(batch)?;
         if !pass.samples.is_power_of_two() {
             return Err(Error::Unsupported("sample count is not a power of two"));
         }
@@ -859,28 +860,56 @@ fn build_pipeline(
     // edge.
     let attachment = vk::PipelineColorBlendAttachmentState::default()
         .color_write_mask(vk::ColorComponentFlags::RGBA);
-    let blend_attachments = [if key.blend.is_plain_write() {
-        // Writing the source outright needs no blend unit at all, which is
-        // worth switching off rather than expressing as ONE and ZERO.
-        attachment.blend_enable(false)
-    } else {
-        let factors = key.blend.factors();
-        let src = vk_blend_factor(factors.src);
-        let dst = vk_blend_factor(factors.dst);
-        attachment
+    let blend_attachments = [match key.blend.factors() {
+        _ if key.blend.is_plain_write() => {
+            // Writing the source outright needs no blend unit at all, which is
+            // worth switching off rather than expressing as ONE and ZERO.
+            attachment.blend_enable(false)
+        }
+        Some(factors) => {
+            let src = vk_blend_factor(factors.src);
+            let dst = vk_blend_factor(factors.dst);
+            attachment
+                .blend_enable(true)
+                .src_color_blend_factor(src)
+                .dst_color_blend_factor(dst)
+                .color_blend_op(vk::BlendOp::ADD)
+                // The same factors for alpha as for colour: with premultiplied
+                // colour the alpha channel is not a special case, and giving it
+                // different factors is what breaks compositing a layer onto
+                // something else.
+                .src_alpha_blend_factor(src)
+                .dst_alpha_blend_factor(dst)
+                .alpha_blend_op(vk::BlendOp::ADD)
+        }
+        // An advanced mode names the whole equation in the blend op, so the
+        // factors are ignored by the hardware entirely. They are still left at
+        // ONE and ZERO rather than whatever the defaults happen to be, so a
+        // driver that reads them cannot produce something arbitrary.
+        None => attachment
             .blend_enable(true)
-            .src_color_blend_factor(src)
-            .dst_color_blend_factor(dst)
-            .color_blend_op(vk::BlendOp::ADD)
-            // The same factors for alpha as for colour: with premultiplied
-            // colour the alpha channel is not a special case, and giving it
-            // different factors is what breaks compositing a layer onto
-            // something else.
-            .src_alpha_blend_factor(src)
-            .dst_alpha_blend_factor(dst)
-            .alpha_blend_op(vk::BlendOp::ADD)
+            .src_color_blend_factor(vk::BlendFactor::ONE)
+            .dst_color_blend_factor(vk::BlendFactor::ZERO)
+            .color_blend_op(vk_advanced_blend_op(key.blend))
+            .src_alpha_blend_factor(vk::BlendFactor::ONE)
+            .dst_alpha_blend_factor(vk::BlendFactor::ZERO)
+            .alpha_blend_op(vk_advanced_blend_op(key.blend)),
     }];
-    let blend = vk::PipelineColorBlendStateCreateInfo::default().attachments(&blend_attachments);
+    let mut blend =
+        vk::PipelineColorBlendStateCreateInfo::default().attachments(&blend_attachments);
+
+    // Both sides arrive premultiplied, and saying so is what makes the hardware
+    // divide the alpha back out before evaluating the blend function; claiming
+    // otherwise renders every translucent advanced blend at the wrong strength.
+    // UNCORRELATED is the overlap model the compositing specification defines,
+    // so it is what the reference formula in the HAL agrees with.
+    let mut advanced = vk::PipelineColorBlendAdvancedStateCreateInfoEXT::default()
+        .src_premultiplied(true)
+        .dst_premultiplied(true)
+        .blend_overlap(vk::BlendOverlapEXT::UNCORRELATED);
+    if key.blend.is_advanced() {
+        blend = blend.push_next(&mut advanced);
+    }
 
     let dynamic_states = [vk::DynamicState::VIEWPORT, vk::DynamicState::SCISSOR];
     let dynamic = vk::PipelineDynamicStateCreateInfo::default().dynamic_states(&dynamic_states);
@@ -907,6 +936,32 @@ fn build_pipeline(
     match created {
         Ok(pipelines) => Ok(pipelines[0]),
         Err((_, e)) => Err(backend_err("create_graphics_pipelines", e)),
+    }
+}
+
+/// Translate an advanced blend mode to the blend op that names its equation.
+///
+/// Every arm is a mode the extension defines with the same formula as the
+/// compositing specification, which is what lets the conformance tests check
+/// the hardware against the reference in the HAL. Panicking on a Porter-Duff
+/// mode is right: callers reach this only through the `None` arm of `factors`,
+/// so arriving here with one means the two classifications have diverged, and
+/// guessing an op would turn that into a wrong picture instead of a crash.
+fn vk_advanced_blend_op(mode: impeller_hal::BlendMode) -> vk::BlendOp {
+    use impeller_hal::BlendMode;
+    match mode {
+        BlendMode::Multiply => vk::BlendOp::MULTIPLY_EXT,
+        BlendMode::Screen => vk::BlendOp::SCREEN_EXT,
+        BlendMode::Overlay => vk::BlendOp::OVERLAY_EXT,
+        BlendMode::Darken => vk::BlendOp::DARKEN_EXT,
+        BlendMode::Lighten => vk::BlendOp::LIGHTEN_EXT,
+        BlendMode::ColorDodge => vk::BlendOp::COLORDODGE_EXT,
+        BlendMode::ColorBurn => vk::BlendOp::COLORBURN_EXT,
+        BlendMode::HardLight => vk::BlendOp::HARDLIGHT_EXT,
+        BlendMode::SoftLight => vk::BlendOp::SOFTLIGHT_EXT,
+        BlendMode::Difference => vk::BlendOp::DIFFERENCE_EXT,
+        BlendMode::Exclusion => vk::BlendOp::EXCLUSION_EXT,
+        other => unreachable!("{other} is not an advanced blend mode"),
     }
 }
 

@@ -97,6 +97,15 @@ pub struct Capabilities {
     pub dma_buf: DmaBufSupport,
     /// Cross-component synchronization.
     pub sync: SyncSupport,
+    /// Whether the separable blend modes are available.
+    ///
+    /// These need a hardware extension and cannot be emulated with blend
+    /// factors, so a device without it refuses [`BlendMode::is_advanced`] modes
+    /// rather than substituting the nearest expressible one. Callers check this
+    /// before using one; nothing branches on which backend is in play.
+    ///
+    /// [`BlendMode::is_advanced`]: crate::BlendMode::is_advanced
+    pub advanced_blend: bool,
     /// Formats and layouts this device can render into and export.
     ///
     /// One half of format negotiation; the presentation target supplies the
@@ -116,6 +125,23 @@ impl Capabilities {
     /// still lack fence export, in which case the path works with a CPU wait.
     pub fn supports_scanout(&self) -> bool {
         self.dma_buf.can_allocate_scanout() || self.dma_buf.import
+    }
+
+    /// Whether every blend mode a batch uses is available on this device.
+    ///
+    /// Lives here rather than in each backend so the two refuse the same batch
+    /// for the same reason: a Vulkan device without the advanced-blend
+    /// extension and a GLES context without it are the same problem, and a
+    /// check written twice is a check that eventually disagrees with itself.
+    /// Refusing is deliberate — the alternative is substituting the nearest
+    /// expressible mode, which produces a picture nobody can debug from.
+    pub fn check_blend_modes(&self, batch: &crate::Batch) -> crate::Result<()> {
+        if !self.advanced_blend && batch.draws().iter().any(|draw| draw.blend.is_advanced()) {
+            return Err(crate::Error::Unsupported(
+                "advanced blend modes; this device has no advanced-blend extension",
+            ));
+        }
+        Ok(())
     }
 
     /// Whether an extent fits within the device's texture limit.

@@ -64,6 +64,14 @@ fn a_frame_loop_over_a_target_matches_rendering_to_a_texture() {
     let mut failures = Vec::new();
 
     for scene in corpus() {
+        // Both halves of the comparison render on this device, so a scene it
+        // cannot render has nothing to say about whether presenting changes the
+        // result. Skipping is right here in a way it would not be in the
+        // conformance corpus: this test is about the presentation path, and the
+        // capability being absent is not a gap in that path's coverage.
+        if !scene.supported_by(HalContext::capabilities(&ctx)) {
+            continue;
+        }
         let mut target =
             OffscreenTarget::<VulkanHal>::new(&mut ctx, scene.size, PixelFormat::Rgba8Unorm)
                 .expect("target");

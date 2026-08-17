@@ -32,31 +32,61 @@ fn the_corpus_matches_across_backends() {
     );
 
     let mut compared = 0;
-    let mut skipped = Vec::new();
+    let mut gaps = Vec::new();
     let mut failures = Vec::new();
+    let mut surprises = Vec::new();
 
     for scene in corpus() {
-        let from_vulkan = render_scene::<VulkanHal>(&mut vulkan, &scene).expect("vulkan");
+        // A scene either backend says it cannot render is a declared gap, not a
+        // silent skip: the comparison is not available for it, and reporting
+        // that is the point. Deciding this from what the scene needs, rather
+        // than from whether rendering happened to fail, is what keeps a genuine
+        // regression from being absorbed as a gap.
+        let on_vulkan = scene.supported_by(HalContext::capabilities(&vulkan));
+        let on_gles = scene.supported_by(HalContext::capabilities(&gles));
+        if !(on_vulkan && on_gles) {
+            let which = match (on_vulkan, on_gles) {
+                (false, false) => "either backend",
+                (false, true) => "vulkan",
+                _ => "gles",
+            };
+            gaps.push(format!("  {:<26} not available on {which}", scene.name));
+            continue;
+        }
+
+        let from_vulkan = match render_scene::<VulkanHal>(&mut vulkan, &scene) {
+            Ok(image) => image,
+            Err(e) => {
+                surprises.push(format!("  {}: vulkan refused it: {e}", scene.name));
+                continue;
+            }
+        };
         let from_gles = match render_scene::<GlesHal>(&mut gles, &scene) {
             Ok(image) => image,
             Err(e) => {
-                // Both backends currently cover the whole corpus, so an
-                // unsupported scene is a regression rather than a known gap.
-                // When a feature legitimately lands on one backend first, this
-                // wants an explicit per-scene gate rather than a silent skip,
-                // so that the gap is declared instead of discovered.
-                skipped.push(format!("  {}: {e}", scene.name));
+                // The scene said this device could render it and the device
+                // disagreed. One of the two is wrong, and neither is a gap.
+                surprises.push(format!("  {}: gles refused it: {e}", scene.name));
                 continue;
             }
         };
 
         let difference = compare(&from_vulkan, &from_gles).expect("same size");
         if accepts(&difference, scene.tolerance()) {
-            eprintln!("  {:<22} {difference}", scene.name);
+            eprintln!("  {:<26} {difference}", scene.name);
             compared += 1;
         } else {
             failures.push(format!("  {}: {difference}", scene.name));
         }
+    }
+
+    if !gaps.is_empty() {
+        eprintln!(
+            "{} of {} scene(s) not compared, by declared capability:\n{}",
+            gaps.len(),
+            corpus().len(),
+            gaps.join("\n")
+        );
     }
 
     assert!(
@@ -66,16 +96,15 @@ fn the_corpus_matches_across_backends() {
         failures.join("\n")
     );
     assert!(
-        skipped.is_empty(),
-        "{} scene(s) could not run on GLES; declare the gap explicitly if it is \
-         intended:\n{}",
-        skipped.len(),
-        skipped.join("\n")
+        surprises.is_empty(),
+        "{} scene(s) were refused by a backend that claims to support them:\n{}",
+        surprises.len(),
+        surprises.join("\n")
     );
     assert_eq!(
-        compared,
+        compared + gaps.len(),
         corpus().len(),
-        "not every scene was compared across backends"
+        "not every scene was either compared or declared unavailable"
     );
 }
 

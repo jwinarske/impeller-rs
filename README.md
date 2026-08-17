@@ -4,10 +4,13 @@ A tessellation-based 2D vector graphics renderer for Rust, targeting everything
 from desktop discrete GPUs down to embedded SoCs driving panels directly
 through KMS with no compositor present.
 
-> **Status: early development.** Solid fills, strokes, blending, and
-> antialiasing render on both backends and are verified against real hardware
-> and a software reference. Gradients, image shaders, text, and windowed
-> presentation are not implemented yet.
+> **Status: early development.** Solid fills, strokes, antialiasing, gradients
+> (linear, radial, sweep), and the Porter-Duff blend modes render on both
+> backends and are verified against real hardware and a software reference. The
+> separable blend modes — multiply, screen, overlay and the rest — render on
+> Vulkan where the device offers the advanced-blend extension, and are reported
+> as unavailable elsewhere rather than approximated. Clipping, save layers,
+> image shaders, text, and windowed presentation are not implemented yet.
 
 ## Why
 

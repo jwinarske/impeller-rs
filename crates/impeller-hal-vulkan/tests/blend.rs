@@ -209,3 +209,84 @@ fn the_software_reference_blends_identically() {
     // driver bug being papered over.
     assert_near(hardware, software, "blending diverged across drivers");
 }
+
+/// A context on the device that offers advanced blending, with validation on.
+///
+/// Which physical device that is varies by machine: the extension is not
+/// guaranteed on the preferred device, and here it happens to be the software
+/// rasterizer that has it. Both are tried rather than assuming either.
+fn advanced_context() -> Option<VulkanContext> {
+    for device in [DevicePreference::Auto, DevicePreference::Software] {
+        let Ok(ctx) = VulkanContext::with_config(ContextConfig {
+            device,
+            validation: true,
+        }) else {
+            continue;
+        };
+        if ctx.capabilities().advanced_blend {
+            return Some(ctx);
+        }
+    }
+    eprintln!("skipping: no device offers advanced blending");
+    None
+}
+
+#[test]
+fn the_advanced_blend_pipeline_state_is_valid() {
+    let Some(mut ctx) = advanced_context() else {
+        return;
+    };
+    if !ctx.validation_active() {
+        eprintln!("skipping: no validation layer installed");
+        return;
+    }
+    // An advanced mode extends the color blend state through `pNext`, which is
+    // where this can go wrong in ways that still produce a picture: a structure
+    // chained without its feature enabled, or premultiplication declared the
+    // way it is not. Neither shows up in the output reliably, and both are
+    // exactly what the validation layer exists to catch. Every mode is drawn
+    // because each builds its own pipeline.
+    //
+    // `composite` asserts the log is clean after each draw, so the assertion is
+    // in the drawing rather than after it.
+    for mode in BlendMode::ADVANCED {
+        composite(
+            &mut ctx,
+            [0.2, 0.5, 0.7, 1.0],
+            &[([0.8, 0.3, 0.6, 0.6], *mode)],
+        );
+    }
+}
+
+#[test]
+fn a_device_without_the_extension_refuses_advanced_modes() {
+    let Some(mut ctx) = context() else { return };
+    if ctx.capabilities().advanced_blend {
+        eprintln!("skipping: the preferred device offers advanced blending");
+        return;
+    }
+    // Reported as unsupported rather than drawn as something else. A backend
+    // that quietly fell back to source-over would produce a picture that is
+    // wrong in a way no test of the output would name.
+    let mut tex = ctx
+        .create_texture(&TextureDescriptor::offscreen(
+            Extent2D::new(SIZE, SIZE),
+            PixelFormat::Rgba8Unorm,
+        ))
+        .expect("texture");
+    for mode in BlendMode::ADVANCED {
+        let result = ctx.draw_indexed(
+            &mut tex,
+            &FULL,
+            &QUAD,
+            Material::solid([1.0, 0.0, 0.0, 0.5]),
+            *mode,
+            None,
+        );
+        assert!(
+            matches!(result, Err(impeller_hal::Error::Unsupported(_))),
+            "{mode} was accepted by a device that cannot do it"
+        );
+    }
+    ctx.destroy_texture(tex);
+}

@@ -244,12 +244,78 @@ impl Scene {
             crate::image::Tolerance::EXACT
         }
     }
+
+    /// Whether a device can render this scene at all.
+    ///
+    /// Derived from what the scene contains, for the same reason the tolerance
+    /// is: a requirement written alongside the scene is one that can be
+    /// forgotten, and a scene needing a capability nobody declared would be
+    /// reported as a backend regression rather than as the known gap it is.
+    ///
+    /// The distinction this draws matters to the cross-backend comparison. A
+    /// scene refused by a device that the scene says needs nothing special is a
+    /// defect; a scene refused by a device the scene says cannot render it is a
+    /// gap, and the corpus reports the second as coverage it did not get rather
+    /// than as a pass.
+    pub fn supported_by(&self, capabilities: &impeller_hal::Capabilities) -> bool {
+        if !capabilities.sample_counts.supports(self.samples) {
+            return false;
+        }
+        if !capabilities.advanced_blend && self.items.iter().any(|item| item.blend.is_advanced()) {
+            return false;
+        }
+        true
+    }
 }
 
 const WHITE: [f32; 4] = [1.0, 1.0, 1.0, 1.0];
 const RED: [f32; 4] = [1.0, 0.2, 0.2, 1.0];
 const GREEN: [f32; 4] = [0.2, 1.0, 0.2, 1.0];
 const BLUE: [f32; 4] = [0.2, 0.2, 1.0, 1.0];
+
+/// A backdrop and three overlapping translucent circles, one per mode.
+///
+/// The backdrop is a gradient rather than a flat color because several of these
+/// modes are functions of the backdrop's value — dodge, burn and the two
+/// contrast modes all behave differently at each end — and a flat backdrop
+/// would exercise one point of each curve. The circles overlap each other so
+/// the second and third blend against a result the first produced, which is
+/// what a coherent blend has to get right and an incoherent one does not.
+fn advanced_blend_items(modes: &[BlendMode; 3]) -> Vec<Item> {
+    let mut items = vec![Item::filled(
+        Shape::Rect {
+            min: [0.0, 0.0],
+            max: [128.0, 128.0],
+        },
+        Fill::LinearGradient {
+            start: [0.0, 0.0],
+            end: [128.0, 128.0],
+            stops: vec![
+                Stop::new([0.05, 0.1, 0.35, 1.0], 0.0),
+                Stop::new([0.6, 0.55, 0.2, 1.0], 0.5),
+                Stop::new([0.95, 0.9, 0.85, 1.0], 1.0),
+            ],
+        },
+    )];
+    let placements = [
+        ([48.0, 44.0], [0.9, 0.35, 0.2, 0.8]),
+        ([80.0, 56.0], [0.25, 0.7, 0.85, 0.8]),
+        ([64.0, 88.0], [0.6, 0.85, 0.3, 0.8]),
+    ];
+    for (mode, (center, color)) in modes.iter().zip(placements) {
+        items.push(
+            Item::fill(
+                Shape::Circle {
+                    center,
+                    radius: 34.0,
+                },
+                color,
+            )
+            .with_blend(*mode),
+        );
+    }
+    items
+}
 
 /// The scene corpus.
 ///
@@ -340,6 +406,34 @@ pub fn corpus() -> Vec<Scene> {
                 )
                 .with_blend(BlendMode::SrcOver),
             ],
+        ),
+        // The separable blend modes, three per scene so the mixing is visible
+        // where they overlap each other as well as the backdrop. These need an
+        // advanced-blend extension, so a device without one reports them as a
+        // declared gap through `supported_by` rather than failing to render.
+        Scene::new(
+            "advanced-blend-darkening",
+            advanced_blend_items(&[BlendMode::Multiply, BlendMode::ColorBurn, BlendMode::Darken]),
+        ),
+        Scene::new(
+            "advanced-blend-lightening",
+            advanced_blend_items(&[BlendMode::Screen, BlendMode::ColorDodge, BlendMode::Lighten]),
+        ),
+        Scene::new(
+            "advanced-blend-contrast",
+            advanced_blend_items(&[
+                BlendMode::Overlay,
+                BlendMode::HardLight,
+                BlendMode::SoftLight,
+            ]),
+        ),
+        Scene::new(
+            "advanced-blend-inverting",
+            advanced_blend_items(&[
+                BlendMode::Difference,
+                BlendMode::Exclusion,
+                BlendMode::Multiply,
+            ]),
         ),
         Scene::new(
             "stroke-caps-and-joins",

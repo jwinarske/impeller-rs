@@ -337,6 +337,14 @@ fn detect_capabilities(gl: &glow::Context, egl_extensions: &HashSet<String>) -> 
 
     let fence = egl_extensions.contains(ext::NATIVE_FENCE_SYNC);
     Capabilities {
+        // No advanced blending: the extension GLES exposes for it requires the
+        // fragment shader to declare `blend_support_all_equations`, and the
+        // shader translator this backend generates GLSL with cannot emit that
+        // qualifier. Reporting true and hoping would produce plain source-over
+        // silently. Lifting this needs a hand-written GLSL fragment stage plus
+        // blend barriers between overlapping draws wherever the coherent
+        // variant of the extension is missing.
+        advanced_blend: false,
         max_texture_size,
         sample_counts: SampleCounts::from_mask(mask),
         dma_buf,
