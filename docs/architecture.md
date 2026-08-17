@@ -73,6 +73,21 @@ display when no windowing system exists. Any design that treats DRM as a
 backend, or that couples a rendering backend to a presentation path, is wrong
 by construction.
 
+**The scanout path is implemented above KMS and not yet down to it.** What
+exists and is tested: the frame loop's buffer ring, the fence plumbing, format
+and modifier negotiation, and dma-buf export from Vulkan. What does not: any
+implementation of `ScanoutOutput`, which is where opening a card, importing a
+buffer as a framebuffer, committing, and reading events all live. The trait is
+driven by a recording stand-in, which is the right way to test ring accounting
+and the wrong way to learn whether a display controller accepts the buffers.
+
+Closing it needs a device this project can become master of, and that is a
+property of the machine rather than of the code: a compositor holds master on
+any card driving a display, so it means a bare VT or the virtual KMS driver.
+`cargo xtask drm` reports which of those a given machine offers. Writing the
+layer against neither would be exactly the untested KMS code this document's
+testing model exists to rule out.
+
 ### Configuration matrix
 
 |            | WSI (windowed)      | DRM (direct scanout)                          |

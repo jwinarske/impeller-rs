@@ -46,8 +46,15 @@ alongside windowed surfaces, not a third rendering backend.
 | **Vulkan** | `VkSwapchainKHR`    | VkImage → dma-buf export → drm-rs FB → commit |
 | **GLES**   | EGL window surface  | EGL on GBM → gbm_surface → drm-rs FB → commit |
 
-All four combinations are Tier 1 on Linux and all four work today, against
-surfaces a caller supplies.
+All four are Tier 1 on Linux. The windowed column works today against a surface
+the caller supplies. The scanout column is **partial**: the frame loop above
+KMS is implemented and tested — the buffer ring, fence plumbing, and format and
+modifier negotiation — and dma-buf export from Vulkan is real. What is missing
+is the KMS layer underneath: opening a card, importing a buffer as a
+framebuffer, and committing. `ScanoutOutput` is the trait that would sit there
+and nothing in the tree implements it, so today a caller would have to.
+
+`cargo xtask drm` says whether a given machine could run that lane.
 
 ```rust
 use impeller::{BackendPreference, Canvas, Color, Context, Extent2D, Paint, PixelFormat, Rect};
