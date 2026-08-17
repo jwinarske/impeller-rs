@@ -14,8 +14,8 @@ through KMS with no compositor present.
 > shapes it confines. Images can be uploaded and drawn as a paint, with clamp,
 > repeat and decal tiling. Save layers give a subtree its own target, so group
 > opacity and layer-wide blend modes work and nest. A glyph atlas packs
-> caller-supplied coverage, evicts what a frame stops using, and draws a run of
-> any length as one draw; bring your own rasterizer. Vulkan windowed presentation works through a swapchain
+> caller-supplied single-channel coverage, evicts what a frame stops using,
+> and draws a run of any length as one draw; bring your own rasterizer. Vulkan windowed presentation works through a swapchain
 > built on a surface the caller supplies; the GLES window path is not
 > implemented yet.
 

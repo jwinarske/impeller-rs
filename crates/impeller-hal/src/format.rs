@@ -47,6 +47,12 @@ pub enum PixelFormat {
     Rgb10A2Unorm,
     /// 16-bit float per channel, for intermediate targets.
     Rgba16Float,
+    /// One 8-bit channel, unsigned normalized.
+    ///
+    /// For data that is coverage rather than color — a glyph atlas is the
+    /// case — where storing the same byte four times costs four times the
+    /// memory and four times the bandwidth to sample it.
+    R8Unorm,
 }
 
 impl PixelFormat {
@@ -58,6 +64,7 @@ impl PixelFormat {
             | Self::Bgra8UnormSrgb
             | Self::Rgb10A2Unorm => 4,
             Self::Rgba16Float => 8,
+            Self::R8Unorm => 1,
         }
     }
 
@@ -75,7 +82,10 @@ impl PixelFormat {
             Self::Rgba8Unorm | Self::Rgba8UnormSrgb => Some(Fourcc::ABGR8888),
             Self::Bgra8Unorm | Self::Bgra8UnormSrgb => Some(Fourcc::ARGB8888),
             Self::Rgb10A2Unorm => Some(Fourcc::XRGB2101010),
-            Self::Rgba16Float => None,
+            // Neither is anything a display controller scans out: one is an
+            // intermediate precision and the other is coverage rather than
+            // color. Returning nothing is what keeps both out of negotiation.
+            Self::Rgba16Float | Self::R8Unorm => None,
         }
     }
 }

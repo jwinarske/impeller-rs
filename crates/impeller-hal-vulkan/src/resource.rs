@@ -117,6 +117,7 @@ pub(crate) fn vk_format(format: PixelFormat) -> vk::Format {
         PixelFormat::Bgra8UnormSrgb => vk::Format::B8G8R8A8_SRGB,
         PixelFormat::Rgb10A2Unorm => vk::Format::A2B10G10R10_UNORM_PACK32,
         PixelFormat::Rgba16Float => vk::Format::R16G16B16A16_SFLOAT,
+        PixelFormat::R8Unorm => vk::Format::R8_UNORM,
     }
 }
 

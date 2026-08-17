@@ -389,3 +389,140 @@ fn a_rendered_target_can_be_sampled_by_a_later_pass() {
         "the layer did not survive being sampled"
     );
 }
+
+/// A four-by-four single-channel image with a distinct value per texel.
+fn coverage_pixels() -> Vec<u8> {
+    (0..16u8).map(|i| i * 16 + 8).collect()
+}
+
+#[test]
+fn a_single_channel_texture_round_trips_on_both_backends() {
+    // Coverage is one byte per texel, and storing it four times over costs four
+    // times the memory and four times the bandwidth to sample. The transfer
+    // paths had the four wired in as a literal, so this is what says they read
+    // the format instead: a one-byte format with a four-byte assumption
+    // anywhere reads three texels past the end of every row.
+    let want = coverage_pixels();
+    let mut ran = 0;
+
+    if let Ok(mut ctx) = VulkanContext::new(DevicePreference::Auto) {
+        let mut texture = ctx
+            .create_texture(&TextureDescriptor::offscreen(SOURCE, PixelFormat::R8Unorm))
+            .expect("texture");
+        ctx.write_texture(&mut texture, &want).expect("upload");
+        let got = ctx.read_texture(&mut texture).expect("readback");
+        ctx.destroy_texture(texture);
+        assert_eq!(
+            got, want,
+            "vulkan changed a single-channel image in transit"
+        );
+        ran += 1;
+    }
+    if let Ok(mut ctx) = GlesContext::new(DisplayTarget::Surfaceless) {
+        let mut texture = ctx
+            .create_texture(&TextureDescriptor::offscreen(SOURCE, PixelFormat::R8Unorm))
+            .expect("texture");
+        ctx.write_texture(&mut texture, &want).expect("upload");
+        let got = ctx.read_texture(&mut texture).expect("readback");
+        ctx.destroy_texture(texture);
+        assert_eq!(got, want, "gles changed a single-channel image in transit");
+        ran += 1;
+    }
+    assert!(ran > 0, "no backend available");
+}
+
+#[test]
+fn a_single_channel_texture_samples_as_coverage() {
+    // The shader reads the red channel, which is where a one-channel texture
+    // puts its only value and where a four-channel one repeats it. Sampling one
+    // as coverage gives that value alone, which is what the glyph material
+    // scales a solid by.
+    //
+    // Left half fully covered and right half half-covered, so a swapped axis or
+    // a wrong row stride is a visibly different picture rather than a uniform
+    // one.
+    let mut texels = vec![0u8; SOURCE.area() as usize];
+    for y in 0..SOURCE.height {
+        for x in 0..SOURCE.width {
+            texels[(y * SOURCE.width + x) as usize] = if x < SOURCE.width / 2 { 255 } else { 128 };
+        }
+    }
+
+    let mut ran = 0;
+    if let Ok(mut ctx) = VulkanContext::new(DevicePreference::Auto) {
+        assert_coverage(&render_coverage::<VulkanHal>(&mut ctx, &texels), "vulkan");
+        ran += 1;
+    }
+    if let Ok(mut ctx) = GlesContext::new(DisplayTarget::Surfaceless) {
+        assert_coverage(&render_coverage::<GlesHal>(&mut ctx, &texels), "gles");
+        ran += 1;
+    }
+    assert!(ran > 0, "no backend available");
+}
+
+/// Full coverage on the left, half on the right, both tinted white.
+fn assert_coverage(pixels: &[u8], backend: &str) {
+    assert_eq!(
+        pixel(pixels, 4, 16),
+        [255, 255, 255, 255],
+        "{backend}: left"
+    );
+    let right = pixel(pixels, 27, 16);
+    assert!(
+        (right[0] as i32 - 128).abs() <= 2 && right[3] == right[0],
+        "{backend}: half coverage came back {right:?}"
+    );
+}
+
+/// Upload single-channel coverage and draw it through the glyph material.
+fn render_coverage<H: Hal>(ctx: &mut H::Context, texels: &[u8]) -> Vec<u8>
+where
+    H::Context: HalContext<Hal = H>,
+{
+    use impeller_hal::Vertex;
+
+    let mut source = ctx
+        .create_texture(&TextureDescriptor::offscreen(SOURCE, PixelFormat::R8Unorm))
+        .expect("source texture");
+    ctx.write_texture(&mut source, texels).expect("upload");
+
+    // The glyph material takes its coordinates from the vertices, so the quad
+    // carries them rather than the paint.
+    let corners = [
+        ([-1.0f32, -1.0], [0.0f32, 1.0]),
+        ([1.0, -1.0], [1.0, 1.0]),
+        ([1.0, 1.0], [1.0, 0.0]),
+        ([-1.0, 1.0], [0.0, 0.0]),
+    ];
+    let vertices: Vec<Vertex> = corners.iter().map(|(p, uv)| Vertex::new(*p, *uv)).collect();
+
+    let mut batch = Batch::new();
+    batch
+        .push_mesh(
+            &vertices,
+            &QUAD,
+            Material::Glyph {
+                color: [1.0, 1.0, 1.0, 1.0],
+                slot: 0,
+            },
+            BlendMode::Src,
+            None,
+            impeller_hal::ClipState::UNCLIPPED,
+        )
+        .expect("push");
+
+    let mut target = ctx
+        .create_texture(&TextureDescriptor::offscreen(SIZE, PixelFormat::Rgba8Unorm))
+        .expect("target");
+    ctx.submit_batch_textured(
+        &mut target,
+        &batch,
+        PassDescriptor::clear([0.0, 0.0, 0.0, 1.0]),
+        &[&source],
+    )
+    .expect("submit");
+    let pixels = ctx.read_texture(&mut target).expect("readback");
+    ctx.destroy_texture(target);
+    ctx.destroy_texture(source);
+    pixels
+}

@@ -388,10 +388,19 @@ and a second pipeline for text, spends more in pipeline state and in the code
 deciding which of two shapes a batch is in, to save memory on the geometry that
 was already cheapest to store.
 
-**A glyph atlas holds coverage, not color.** The glyph material reads one
-channel and scales a solid with it, which is what antialiased text is; an image
-paint replaces color instead. The two differ in the material and in where the
-coordinates come from, and share the binding machinery underneath.
+**A glyph atlas holds coverage, not color**, in a single-channel format. The
+glyph material reads one channel and scales a solid with it, which is what
+antialiased text is; an image paint replaces color instead. The two differ in
+the material and in where the coordinates come from, and share the binding
+machinery underneath. Storing the same byte four times over works — the shader
+reads red either way — and costs four times the memory and four times the
+bandwidth to sample it.
+
+The transfer paths had four bytes per pixel written in as a literal, which stays
+invisible until a format has one. The size a caller must supply, the size read
+back, and the channel layout a transfer names are all properties of the format,
+and getting the last of those wrong reads three texels past the end of every
+row.
 
 Rasterizing an outline needs a font parser, and font parsing is out of scope —
 bring `swash` or `ttf-parser` and hand over the coverage. That boundary is worth
@@ -449,6 +458,18 @@ presentation and recreation all run — and all are checked — on a machine wit
 display, no compositor, and no window system library linked. What a real window
 adds and this cannot reach is an extent the surface dictates and a surface going
 out of date underneath a frame; both are handled, and both are unverified here.
+
+**The GLES window surface is the one cell still empty, and orientation is why.**
+An EGL pbuffer would serve as the headless case a headless Vulkan surface does,
+and the context already selects a config that permits one. The obstacle is that
+the shader translator negates Y for GLSL, so a framebuffer's row zero holds the
+image's *top* row — which is what makes readback need no flip and what makes the
+two backends agree. A window system displays a framebuffer with row zero at the
+bottom, so handing it that same content shows the frame upside down, and a
+pbuffer read back cannot tell the difference. Closing this cell means rendering
+to a window surface without the negation: a second orientation convention chosen
+by where the image is going, which is not a thing to write against a test that
+cannot see it.
 
 A swapchain is built at a size the caller asks for. There is no useful default:
 a surface that defers its size clamps an unstated one up from zero to its

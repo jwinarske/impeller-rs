@@ -430,7 +430,7 @@ impl GlesContext {
     /// look wrong.
     pub fn write_texture(&mut self, texture: &mut GlesTexture, pixels: &[u8]) -> Result<()> {
         let extent = texture.extent;
-        let size = (extent.area() * 4) as usize;
+        let size = (extent.area() * texture.format.bytes_per_pixel() as u64) as usize;
         if pixels.len() != size {
             return Err(Error::Backend {
                 backend: "gles",
@@ -451,7 +451,7 @@ impl GlesContext {
                 0,
                 extent.width as i32,
                 extent.height as i32,
-                glow::RGBA,
+                transfer_format(texture.format),
                 glow::UNSIGNED_BYTE,
                 glow::PixelUnpackData::Slice(pixels),
             );
@@ -470,7 +470,7 @@ impl GlesContext {
 
     pub fn read_texture(&mut self, texture: &mut GlesTexture) -> Result<Vec<u8>> {
         let extent = texture.extent;
-        let size = (extent.area() * 4) as usize;
+        let size = (extent.area() * texture.format.bytes_per_pixel() as u64) as usize;
         let mut pixels = vec![0u8; size];
 
         let gl = self.raw_gl();
@@ -484,7 +484,7 @@ impl GlesContext {
                 0,
                 extent.width as i32,
                 extent.height as i32,
-                glow::RGBA,
+                transfer_format(texture.format),
                 glow::UNSIGNED_BYTE,
                 glow::PixelPackData::Slice(&mut pixels),
             );
@@ -916,6 +916,20 @@ fn internal_format(format: PixelFormat) -> u32 {
         PixelFormat::Bgra8UnormSrgb => glow::SRGB8_ALPHA8,
         PixelFormat::Rgb10A2Unorm => glow::RGB10_A2,
         PixelFormat::Rgba16Float => glow::RGBA16F,
+        PixelFormat::R8Unorm => glow::R8,
+    }
+}
+
+/// The channel layout a transfer uses for a format.
+///
+/// Distinct from the sized internal format above: that one says how the texture
+/// stores its texels, this says how the bytes a caller hands over are arranged.
+/// A single-channel texture takes and gives one byte per texel, and asking for
+/// four would read three past the end of every row.
+fn transfer_format(format: PixelFormat) -> u32 {
+    match format {
+        PixelFormat::R8Unorm => glow::RED,
+        _ => glow::RGBA,
     }
 }
 

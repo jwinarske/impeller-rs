@@ -1372,20 +1372,16 @@ fn two_glyph_atlas() -> (Atlas, GlyphKey, GlyphKey) {
 
 /// Upload an atlas as an image this context can sample.
 fn upload_atlas(ctx: &mut Context, atlas: &Atlas) -> impeller::Image {
+    // One byte per texel, which is what an atlas holds. The shader reads the
+    // red channel either way, so a four-channel atlas would work and cost four
+    // times the memory and four times the bandwidth to sample.
     let mut image = ctx
         .create_image(
             Extent2D::new(atlas.size(), atlas.size()),
-            PixelFormat::Rgba8Unorm,
+            PixelFormat::R8Unorm,
         )
         .expect("atlas image");
-    // Coverage is one byte per texel and the format is four, so it is repeated
-    // across the channels. The shader reads red; storing it four times costs
-    // memory a single-channel format would save, and changes nothing else.
-    let mut rgba = Vec::with_capacity(atlas.texels().len() * 4);
-    for coverage in atlas.texels() {
-        rgba.extend_from_slice(&[*coverage; 4]);
-    }
-    ctx.write_image(&mut image, &rgba).expect("upload");
+    ctx.write_image(&mut image, atlas.texels()).expect("upload");
     image
 }
 
