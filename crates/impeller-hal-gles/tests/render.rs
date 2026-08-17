@@ -199,22 +199,116 @@ fn an_empty_batch_still_clears() {
     assert_eq!(pixel(&pixels, 0, 0), [0, 0, 255, 255]);
 }
 
+/// A triangle with a shallow edge, so partial coverage is measurable.
+///
+/// Not 45 degrees: sample patterns are symmetric about the diagonal, so an
+/// exactly diagonal edge yields only zero, half, or full coverage no matter how
+/// many samples are taken.
+const SHALLOW: [[f32; 2]; 3] = [[-1.0, -1.0], [1.0, -1.0], [-1.0, 0.35]];
+
+fn render_at(ctx: &mut GlesContext, samples: u32) -> Vec<u8> {
+    let mut batch = Batch::new();
+    batch
+        .push(&SHALLOW, &[0, 1, 2], [1.0, 1.0, 1.0, 1.0], BlendMode::Src)
+        .expect("push");
+    let mut tex = target(ctx);
+    ctx.submit_batch(
+        &mut tex,
+        &batch,
+        PassDescriptor::clear(BLACK).with_samples(samples),
+    )
+    .expect("submit");
+    let pixels = ctx.read_texture(&mut tex).expect("readback");
+    ctx.destroy_texture(tex);
+    pixels
+}
+
+fn partial_coverage(pixels: &[u8]) -> usize {
+    pixels
+        .chunks_exact(4)
+        .filter(|p| p[0] > 0 && p[0] < 255)
+        .count()
+}
+
 #[test]
-fn a_multisampled_pass_is_refused_rather_than_rendered_aliased() {
+fn multisampling_produces_partial_coverage_along_the_edge() {
+    let Some(mut ctx) = context() else { return };
+    if !ctx.capabilities().sample_counts.supports(4) {
+        eprintln!("skipping: 4x not supported");
+        return;
+    }
+    assert_eq!(partial_coverage(&render_at(&mut ctx, 1)), 0, "aliased");
+    let partial = partial_coverage(&render_at(&mut ctx, 4));
+    assert!(
+        partial >= SIZE as usize / 2,
+        "expected partial coverage along the edge, got {partial} pixels"
+    );
+}
+
+#[test]
+fn the_requested_sample_count_is_actually_used() {
+    let Some(mut ctx) = context() else { return };
+    // Resolving N samples yields at most N+1 distinct levels, so rendering at a
+    // lower count than requested shows up as too few levels. The resolve here
+    // is a blit rather than a render-pass attachment, so this checks a
+    // genuinely different mechanism from the Vulkan side.
+    let mut seen = Vec::new();
+    for samples in [1u32, 2, 4] {
+        if !ctx.capabilities().sample_counts.supports(samples) {
+            continue;
+        }
+        let pixels = render_at(&mut ctx, samples);
+        let levels = pixels
+            .chunks_exact(4)
+            .map(|p| p[0])
+            .collect::<std::collections::BTreeSet<u8>>()
+            .len();
+        assert!(
+            levels <= samples as usize + 1,
+            "{samples}x produced {levels} levels, more than resolving {samples} samples allows"
+        );
+        seen.push((samples, levels));
+    }
+    let best = seen.last().copied().expect("at least one count");
+    assert!(best.1 > 2, "{}x produced only {} levels", best.0, best.1);
+}
+
+#[test]
+fn a_multisampled_pass_that_would_preserve_is_refused() {
+    let Some(mut ctx) = context() else { return };
+    if !ctx.capabilities().sample_counts.supports(4) {
+        return;
+    }
+    let mut batch = Batch::new();
+    batch
+        .push(&FULL, &QUAD, [1.0; 4], BlendMode::Src)
+        .expect("push");
+    let mut tex = target(&mut ctx);
+    // Blitting single-sample into multisample is not legal, so there is no way
+    // to seed the buffer with what the target held. The Vulkan backend refuses
+    // for the same reason, which makes this a property of the technique rather
+    // than of one backend.
+    let result = ctx.submit_batch(&mut tex, &batch, PassDescriptor::preserve().with_samples(4));
+    assert!(result.is_err());
+    ctx.destroy_texture(tex);
+}
+
+#[test]
+fn an_unsupported_sample_count_is_refused() {
     let Some(mut ctx) = context() else { return };
     let mut batch = Batch::new();
     batch
         .push(&FULL, &QUAD, [1.0; 4], BlendMode::Src)
         .expect("push");
     let mut tex = target(&mut ctx);
-    // Reporting success while producing aliased output would make the corpus
-    // silently compare an antialiased image against an aliased one.
-    let result = ctx.submit_batch(
-        &mut tex,
-        &batch,
-        PassDescriptor::clear(BLACK).with_samples(4),
-    );
-    assert!(result.is_err());
+    for samples in [3u32, 128] {
+        let result = ctx.submit_batch(
+            &mut tex,
+            &batch,
+            PassDescriptor::clear(BLACK).with_samples(samples),
+        );
+        assert!(result.is_err(), "{samples}x should be refused");
+    }
     ctx.destroy_texture(tex);
 }
 

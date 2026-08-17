@@ -143,12 +143,16 @@ symmetric top-to-bottom, since a symmetric one proves nothing.
 
 **Multisampling is a pass property, not a target property.** A pass renders
 into a transient multisample buffer and resolves into the target, so the target
-stays single-sampled and directly readable. The multisample attachment is never
+stays single-sampled and directly readable. Each backend realizes that
+differently — a resolve attachment on one, a blit resolve on the other — and
+both produce identical pixels, which is the kind of agreement the pass-level
+description is meant to allow. The multisample attachment is never
 stored — its contents are consumed by the resolve — which on a tiler keeps it in
-tile memory rather than writing it out. A multisampled pass must clear: seeding
-the multisample buffer from a target's existing contents has no reverse-resolve
-to do it with, so preserving is refused rather than silently discarding what was
-there.
+tile memory rather than writing it out. A multisampled pass must clear. Seeding the multisample buffer from a target's
+existing contents has no reverse-resolve to do it with on one backend and no
+legal single-to-multisample blit on the other, so this is a property of the
+technique rather than of a backend, and preserving is refused rather than
+silently discarding what was there.
 
 **Draws within a batch keep submission order.** Sorting by pipeline would cut
 bindings further, but 2D drawing is painter's-algorithm ordered and reordering

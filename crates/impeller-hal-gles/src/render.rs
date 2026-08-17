@@ -134,23 +134,42 @@ impl GlesContext {
         batch: &Batch,
         pass: PassDescriptor,
     ) -> Result<()> {
-        if pass.is_multisampled() {
-            // Multisampling here means a multisample renderbuffer and a blit
-            // resolve, which is a different framebuffer shape rather than a
-            // flag. Refusing beats rendering aliased output and reporting
-            // success.
+        if !pass.samples.is_power_of_two() {
+            return Err(Error::Unsupported("sample count is not a power of two"));
+        }
+        if !self.capabilities().sample_counts.supports(pass.samples) {
+            return Err(Error::Unsupported("sample count not supported by device"));
+        }
+        if pass.is_multisampled() && pass.clear.is_none() {
+            // Seeding the multisample buffer from the target would need a blit
+            // from single-sample to multisample, which is not a legal blit.
+            // Refusing matches the Vulkan backend, which cannot do it either,
+            // so the restriction is a property of the technique rather than of
+            // one backend.
             return Err(Error::Unsupported(
-                "multisampled passes on the GLES backend",
+                "a multisampled pass must clear; preserving needs a single-to-multisample copy",
             ));
         }
         self.ensure_program()?;
 
         let extent = target.extent;
+        // Rendering goes to a transient multisample framebuffer and is resolved
+        // into the target afterwards, so the target stays single-sampled and
+        // directly readable, exactly as on the Vulkan side.
+        let multisample = if pass.is_multisampled() {
+            Some(self.create_multisample_target(extent, target.format, pass.samples)?)
+        } else {
+            None
+        };
+        let render_fbo = multisample
+            .as_ref()
+            .map_or(target.framebuffer, |ms| ms.framebuffer);
+
         let gl = self.raw_gl();
         // SAFETY: a context is current, and every object bound below was
         // created by this context.
         unsafe {
-            gl.bind_framebuffer(glow::FRAMEBUFFER, Some(target.framebuffer));
+            gl.bind_framebuffer(glow::FRAMEBUFFER, Some(render_fbo));
             gl.viewport(0, 0, extent.width as i32, extent.height as i32);
             gl.disable(glow::SCISSOR_TEST);
             gl.disable(glow::DEPTH_TEST);
@@ -162,7 +181,10 @@ impl GlesContext {
             }
 
             if batch.is_empty() {
-                gl.bind_framebuffer(glow::FRAMEBUFFER, None);
+                resolve_and_unbind(gl, &multisample, target, extent);
+                if let Some(ms) = multisample {
+                    ms.destroy(gl);
+                }
                 return Ok(());
             }
 
@@ -215,7 +237,10 @@ impl GlesContext {
 
             gl.disable(glow::BLEND);
             gl.bind_vertex_array(None);
-            gl.bind_framebuffer(glow::FRAMEBUFFER, None);
+            resolve_and_unbind(gl, &multisample, target, extent);
+            if let Some(ms) = multisample {
+                ms.destroy(gl);
+            }
 
             let error = gl.get_error();
             if error != glow::NO_ERROR {
@@ -268,6 +293,63 @@ impl GlesContext {
         Ok(pixels)
     }
 
+    /// Allocate a transient multisample framebuffer matching a target.
+    fn create_multisample_target(
+        &self,
+        extent: Extent2D,
+        format: PixelFormat,
+        samples: u32,
+    ) -> Result<MultisampleTarget> {
+        let gl = self.raw_gl();
+        // SAFETY: a context is current; every object is deleted on the failure
+        // paths below.
+        unsafe {
+            let renderbuffer = gl
+                .create_renderbuffer()
+                .map_err(|e| gl_err("create_renderbuffer", &e))?;
+            gl.bind_renderbuffer(glow::RENDERBUFFER, Some(renderbuffer));
+            gl.renderbuffer_storage_multisample(
+                glow::RENDERBUFFER,
+                samples as i32,
+                internal_format(format),
+                extent.width as i32,
+                extent.height as i32,
+            );
+
+            let framebuffer = match gl.create_framebuffer() {
+                Ok(fb) => fb,
+                Err(e) => {
+                    gl.delete_renderbuffer(renderbuffer);
+                    return Err(gl_err("create_framebuffer", &e));
+                }
+            };
+            gl.bind_framebuffer(glow::FRAMEBUFFER, Some(framebuffer));
+            gl.framebuffer_renderbuffer(
+                glow::FRAMEBUFFER,
+                glow::COLOR_ATTACHMENT0,
+                glow::RENDERBUFFER,
+                Some(renderbuffer),
+            );
+
+            let status = gl.check_framebuffer_status(glow::FRAMEBUFFER);
+            gl.bind_framebuffer(glow::FRAMEBUFFER, None);
+            gl.bind_renderbuffer(glow::RENDERBUFFER, None);
+            if status != glow::FRAMEBUFFER_COMPLETE {
+                gl.delete_framebuffer(framebuffer);
+                gl.delete_renderbuffer(renderbuffer);
+                return Err(Error::Backend {
+                    backend: "gles",
+                    detail: format!("multisample framebuffer incomplete: {status:#x}"),
+                });
+            }
+
+            Ok(MultisampleTarget {
+                framebuffer,
+                renderbuffer,
+            })
+        }
+    }
+
     fn ensure_program(&mut self) -> Result<()> {
         if self.program().is_some() {
             return Ok(());
@@ -276,6 +358,57 @@ impl GlesContext {
         self.set_program(built);
         Ok(())
     }
+}
+
+/// A transient multisample framebuffer, resolved into a target and discarded.
+struct MultisampleTarget {
+    framebuffer: glow::Framebuffer,
+    renderbuffer: glow::Renderbuffer,
+}
+
+impl MultisampleTarget {
+    /// # Safety
+    ///
+    /// A context must be current and the objects must belong to it.
+    unsafe fn destroy(&self, gl: &glow::Context) {
+        gl.delete_framebuffer(self.framebuffer);
+        gl.delete_renderbuffer(self.renderbuffer);
+    }
+}
+
+/// Resolve a multisample framebuffer into the target, then unbind.
+///
+/// # Safety
+///
+/// A context must be current and both framebuffers must be complete.
+unsafe fn resolve_and_unbind(
+    gl: &glow::Context,
+    multisample: &Option<MultisampleTarget>,
+    target: &GlesTexture,
+    extent: Extent2D,
+) {
+    if let Some(ms) = multisample {
+        gl.bind_framebuffer(glow::READ_FRAMEBUFFER, Some(ms.framebuffer));
+        gl.bind_framebuffer(glow::DRAW_FRAMEBUFFER, Some(target.framebuffer));
+        // NEAREST, not LINEAR: a blit whose read buffer is multisampled and
+        // whose draw buffer is not must use NEAREST, and the resolve itself is
+        // what averages the samples.
+        gl.blit_framebuffer(
+            0,
+            0,
+            extent.width as i32,
+            extent.height as i32,
+            0,
+            0,
+            extent.width as i32,
+            extent.height as i32,
+            glow::COLOR_BUFFER_BIT,
+            glow::NEAREST,
+        );
+        gl.bind_framebuffer(glow::READ_FRAMEBUFFER, None);
+        gl.bind_framebuffer(glow::DRAW_FRAMEBUFFER, None);
+    }
+    gl.bind_framebuffer(glow::FRAMEBUFFER, None);
 }
 
 fn apply_blend(gl: &glow::Context, blend: BlendMode) {

@@ -54,9 +54,11 @@ fn the_corpus_matches_across_backends() {
         let from_gles = match render_scene::<GlesHal>(&mut gles, &scene) {
             Ok(image) => image,
             Err(e) => {
-                // A backend that cannot yet do what a scene needs is recorded
-                // rather than passed over silently, so the gap stays visible in
-                // the run's output instead of being mistaken for coverage.
+                // Both backends currently cover the whole corpus, so an
+                // unsupported scene is a regression rather than a known gap.
+                // When a feature legitimately lands on one backend first, this
+                // wants an explicit per-scene gate rather than a silent skip,
+                // so that the gap is declared instead of discovered.
                 skipped.push(format!("  {}: {e}", scene.name));
                 continue;
             }
@@ -71,9 +73,6 @@ fn the_corpus_matches_across_backends() {
         }
     }
 
-    if !skipped.is_empty() {
-        eprintln!("unsupported on GLES:\n{}", skipped.join("\n"));
-    }
     assert!(
         failures.is_empty(),
         "{} scene(s) diverged between backends:\n{}",
@@ -81,8 +80,16 @@ fn the_corpus_matches_across_backends() {
         failures.join("\n")
     );
     assert!(
-        compared > 0,
-        "no scene was actually compared across backends"
+        skipped.is_empty(),
+        "{} scene(s) could not run on GLES; declare the gap explicitly if it is \
+         intended:\n{}",
+        skipped.len(),
+        skipped.join("\n")
+    );
+    assert_eq!(
+        compared,
+        corpus().len(),
+        "not every scene was compared across backends"
     );
 }
 

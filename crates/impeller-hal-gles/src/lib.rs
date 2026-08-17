@@ -10,10 +10,9 @@
 //!
 //! # Status
 //!
-//! Offscreen rendering of solid-colour geometry, with blending. Multisampling
-//! is not implemented: it needs a multisample renderbuffer and a blit resolve,
-//! which is a different framebuffer shape rather than a flag, and a
-//! multisampled pass is refused rather than silently rendering aliased.
+//! Offscreen rendering of solid-colour geometry, with blending and
+//! multisampling. Rendering to a window or to a GBM surface for direct scanout
+//! is not implemented yet.
 
 pub mod context;
 pub mod hal;
