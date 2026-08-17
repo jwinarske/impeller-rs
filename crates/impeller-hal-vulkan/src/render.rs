@@ -1323,6 +1323,13 @@ fn vk_advanced_blend_op(mode: impeller_hal::BlendMode) -> vk::BlendOp {
         BlendMode::SoftLight => vk::BlendOp::SOFTLIGHT_EXT,
         BlendMode::Difference => vk::BlendOp::DIFFERENCE_EXT,
         BlendMode::Exclusion => vk::BlendOp::EXCLUSION_EXT,
+        // The non-separable four. Named HSL by the extension for the attributes
+        // they exchange, which is the same thing the compositing specification
+        // calls hue, saturation, color and luminosity.
+        BlendMode::Hue => vk::BlendOp::HSL_HUE_EXT,
+        BlendMode::Saturation => vk::BlendOp::HSL_SATURATION_EXT,
+        BlendMode::Color => vk::BlendOp::HSL_COLOR_EXT,
+        BlendMode::Luminosity => vk::BlendOp::HSL_LUMINOSITY_EXT,
         other => unreachable!("{other} is not an advanced blend mode"),
     }
 }

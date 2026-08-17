@@ -44,9 +44,24 @@ const DST: [f32; 4] = [0.0, 0.0, 0.75, 0.75];
 /// channels where one is zero is usually zero. Every channel here is distinct
 /// and away from both ends, which is also what keeps dodge and burn off their
 /// saturating branches where they would agree with screen and multiply.
-const ADV_SRC: [f32; 4] = [0.9, 0.4, 0.15, 0.7];
-/// The destination for the separable modes, premultiplied at alpha 0.55.
-const ADV_DST: [f32; 4] = [0.11, 0.33, 0.4675, 0.55];
+/// Both sides are near-opaque rather than half transparent, and that is about
+/// sensitivity rather than realism. The composite scales a blend function's
+/// contribution by the product of the two alphas, so at a half each the
+/// difference between a right formula and a wrong one arrives at the target
+/// attenuated to about a third — small enough that a two-percent error in a
+/// luminosity landed inside the one-unit tolerance and passed. Near one, almost
+/// all of it survives, and the premultiplied round trip is still exercised
+/// because neither side is actually opaque.
+/// The channels also stay clear of where the formulas turn. Dodge and burn
+/// clamp at a ratio of one, hard-light and overlay switch branches at a half,
+/// and soft-light switches at a quarter; a channel sitting on one of those is a
+/// knife edge where the hardware's un-premultiply and this one's need only
+/// disagree in their last bit to fall on opposite sides. The first destination
+/// tried here put burn exactly on its clamp in two channels and disagreed by
+/// four units for that reason alone.
+const ADV_SRC: [f32; 4] = [0.9, 0.4, 0.15, 0.92];
+/// The destination for the advanced modes, premultiplied at alpha 0.88.
+const ADV_DST: [f32; 4] = [0.264, 0.396, 0.616, 0.88];
 
 /// Evaluate a factor the way the hardware does.
 fn factor_value(factor: BlendFactor, src: [f32; 4], dst: [f32; 4], channel: usize) -> f32 {

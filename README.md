@@ -7,9 +7,9 @@ through KMS with no compositor present.
 > **Status: early development.** Solid fills, strokes, antialiasing, gradients
 > (linear, radial, sweep), and the Porter-Duff blend modes render on both
 > backends and are verified against real hardware and a software reference. The
-> separable blend modes — multiply, screen, overlay and the rest — render on
-> Vulkan where the device offers the advanced-blend extension, and are reported
-> as unavailable elsewhere rather than approximated. Clipping works on both
+> advanced blend modes — separable and non-separable both, all fifteen — render
+> on Vulkan where the device offers the advanced-blend extension, and are
+> reported as unavailable elsewhere rather than approximated. Clipping works on both
 > backends for rectangles and arbitrary paths, nests, and antialiases with the
 > shapes it confines. Images can be uploaded and drawn as a paint, with clamp,
 > repeat and decal tiling. Save layers give a subtree its own target, so group

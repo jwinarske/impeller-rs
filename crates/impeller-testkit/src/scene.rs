@@ -456,6 +456,14 @@ pub fn corpus() -> Vec<Scene> {
             ]),
         ),
         Scene::new(
+            "advanced-blend-non-separable",
+            advanced_blend_items(&[BlendMode::Hue, BlendMode::Saturation, BlendMode::Color]),
+        ),
+        Scene::new(
+            "advanced-blend-luminosity",
+            advanced_blend_items(&[BlendMode::Luminosity, BlendMode::Hue, BlendMode::Luminosity]),
+        ),
+        Scene::new(
             "advanced-blend-inverting",
             advanced_blend_items(&[
                 BlendMode::Difference,

@@ -151,8 +151,10 @@ channel is not a special case, and giving it different factors is what breaks
 compositing a layer onto something else.
 
 The separable modes — multiply, screen, overlay and the rest — mix the two sides
-arithmetically rather than deciding where each survives, which no combination of
-blend factors expresses. They need an advanced-blend extension and are
+arithmetically rather than deciding where each survives, and the non-separable
+four — hue, saturation, color and luminosity — exchange whole attributes of a
+color, so each output channel depends on all three inputs. Neither is expressible
+as blend factors. They need an advanced-blend extension and are
 capability-gated. A renderer that could not composite at all without one would
 be unusable on the hardware least likely to have it, which is why the
 fixed-function set came first. `BlendMode::factors` returns an option rather
@@ -162,7 +164,21 @@ check that refuses it lives in `Capabilities` so both backends refuse the same
 batch for the same reason.
 
 Their formulas are fixed by the compositing specification, and it is transcribed
-once in the HAL. The conformance tests check the hardware against that
+once in the HAL. The non-separable four are checked against *what they are named
+for* rather than against values — whether hue kept the backdrop's luminosity,
+whether saturation took the source's — which is both a stronger statement and
+one that reads as the definition it is.
+
+Two things about testing them against hardware were learned by getting them
+wrong. The composite scales a blend function's contribution by the product of
+the two alphas, so with both sides half transparent a wrong formula arrives at
+the target attenuated to a third, and a two-percent error in a luminosity landed
+inside the one-unit tolerance and passed. Near-opaque sides recover the
+sensitivity while still exercising the premultiplied round trip. And the inputs
+have to stay clear of where the formulas turn — dodge and burn clamp at a ratio
+of one, hard-light at a half, soft-light at a quarter — because a channel
+sitting on one of those is a knife edge where the hardware's un-premultiply and
+this one's need differ only in their last bit to fall on opposite sides. The conformance tests check the hardware against that
 transcription; each backend's mapping from mode to blend op shares no code with
 it, which is what makes checking one against the other mean something. The
 transcription is not a second implementation for the sake of testing — a

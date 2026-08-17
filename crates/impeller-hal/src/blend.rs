@@ -15,6 +15,13 @@
 //! what makes them testable against a computed expectation rather than against
 //! a recorded picture.
 //!
+//! The non-separable modes — hue, saturation, color and luminosity — need the
+//! same extension and differ again in kind: each output channel depends on all
+//! three input channels, because they are stated in terms of a color's hue,
+//! saturation and luminosity rather than of its components. They are checked
+//! against what they are named for rather than against values: whether hue kept
+//! the backdrop's luminosity, whether saturation took the source's.
+//!
 //! Every mode assumes **premultiplied** colour, which is what the render target
 //! holds. The factors differ from the straight-alpha forms: source-over is
 //! `ONE` rather than `SRC_ALPHA`, because the source has already been scaled.
@@ -50,9 +57,10 @@ impl BlendFactors {
 
 /// How a draw combines with what a target already holds.
 ///
-/// The Porter-Duff set, which covers compositing: which of the source and
-/// destination survive, and where. Modes that mix colour channels arithmetically
-/// arrive with advanced blending.
+/// Three families: the Porter-Duff set, which decides which of the source and
+/// destination survive and where; the separable modes, which mix the two
+/// arithmetically channel by channel; and the non-separable modes, which
+/// exchange whole attributes of a color. Only the first works everywhere.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub enum BlendMode {
     /// Leave nothing behind. Neither source nor destination survives.
@@ -118,6 +126,18 @@ pub enum BlendMode {
     Difference,
     /// Like difference, but with a softer response near the midpoint.
     Exclusion,
+
+    // Everything below is non-separable: each output channel depends on all
+    // three input channels, because these are stated in terms of a color's
+    // hue, saturation and luminosity rather than of its components.
+    /// The source's hue, with the backdrop's saturation and luminosity.
+    Hue,
+    /// The source's saturation, with the backdrop's hue and luminosity.
+    Saturation,
+    /// The source's hue and saturation, with the backdrop's luminosity.
+    Color,
+    /// The source's luminosity, with the backdrop's hue and saturation.
+    Luminosity,
 }
 
 impl BlendMode {
@@ -152,6 +172,10 @@ impl BlendMode {
         Self::SoftLight,
         Self::Difference,
         Self::Exclusion,
+        Self::Hue,
+        Self::Saturation,
+        Self::Color,
+        Self::Luminosity,
     ];
 
     /// Every mode, for exhaustive tests and reporting.
@@ -184,6 +208,10 @@ impl BlendMode {
         Self::SoftLight,
         Self::Difference,
         Self::Exclusion,
+        Self::Hue,
+        Self::Saturation,
+        Self::Color,
+        Self::Luminosity,
     ];
 
     /// Whether this mode needs advanced blending.
@@ -290,6 +318,10 @@ impl BlendMode {
             Self::SoftLight => "soft-light",
             Self::Difference => "difference",
             Self::Exclusion => "exclusion",
+            Self::Hue => "hue",
+            Self::Saturation => "saturation",
+            Self::Color => "color",
+            Self::Luminosity => "luminosity",
         }
     }
 }
@@ -372,6 +404,104 @@ pub fn separable_blend(mode: BlendMode, backdrop: f32, source: f32) -> Option<f3
     })
 }
 
+/// The non-separable blend function, on unpremultiplied color.
+///
+/// These are stated in terms of a color's luminosity and saturation rather than
+/// of its components, so each output channel depends on all three inputs — the
+/// reason they cannot go through [`separable_blend`] and the reason they are a
+/// separate family rather than four more entries in the same table.
+///
+/// The helpers below are the specification's, transcribed directly. The one
+/// that repays reading is the clip: setting a luminosity can push a channel
+/// outside zero to one, and clipping each channel independently would change
+/// the hue that the whole operation exists to preserve. Scaling the color
+/// toward its own luminosity instead brings it back into range along a line
+/// that holds hue fixed.
+///
+/// Returns `None` for a mode that is not non-separable-advanced.
+pub fn nonseparable_blend(
+    mode: BlendMode,
+    backdrop: [f32; 3],
+    source: [f32; 3],
+) -> Option<[f32; 3]> {
+    // The specification's coefficients, which weight green far above blue
+    // because the eye does. Not the same as any of the standard luma matrices,
+    // and deliberately so: this is what the compositing specification says.
+    fn lum(c: [f32; 3]) -> f32 {
+        0.3 * c[0] + 0.59 * c[1] + 0.11 * c[2]
+    }
+
+    fn clip_color(mut c: [f32; 3]) -> [f32; 3] {
+        let l = lum(c);
+        let n = c[0].min(c[1]).min(c[2]);
+        let x = c[0].max(c[1]).max(c[2]);
+        if n < 0.0 {
+            // Guarded because a color whose luminosity equals its darkest
+            // channel is already flat, and the scale would divide by zero.
+            let span = l - n;
+            if span > 0.0 {
+                for channel in &mut c {
+                    *channel = l + (*channel - l) * l / span;
+                }
+            }
+        }
+        if x > 1.0 {
+            let span = x - l;
+            if span > 0.0 {
+                for channel in &mut c {
+                    *channel = l + (*channel - l) * (1.0 - l) / span;
+                }
+            }
+        }
+        c
+    }
+
+    fn set_lum(mut c: [f32; 3], l: f32) -> [f32; 3] {
+        let d = l - lum(c);
+        for channel in &mut c {
+            *channel += d;
+        }
+        clip_color(c)
+    }
+
+    fn sat(c: [f32; 3]) -> f32 {
+        c[0].max(c[1]).max(c[2]) - c[0].min(c[1]).min(c[2])
+    }
+
+    /// Rescale a color to a given saturation, keeping which channel is which.
+    ///
+    /// Written by index rather than by sorting the components, because the
+    /// result has to go back where it came from: the middle channel of the
+    /// input stays the middle channel of the output.
+    fn set_sat(c: [f32; 3], s: f32) -> [f32; 3] {
+        let mut order = [0usize, 1, 2];
+        order.sort_by(|a, b| {
+            c[*a]
+                .partial_cmp(&c[*b])
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
+        let (low, mid, high) = (order[0], order[1], order[2]);
+        let mut out = [0.0f32; 3];
+        if c[high] > c[low] {
+            out[mid] = (c[mid] - c[low]) * s / (c[high] - c[low]);
+            out[high] = s;
+        }
+        // A flat color has no saturation to scale, so it stays flat at zero
+        // rather than being given one arbitrarily.
+        out[low] = 0.0;
+        out
+    }
+
+    let (cb, cs) = (backdrop, source);
+    Some(match mode {
+        BlendMode::Hue => set_lum(set_sat(cs, sat(cb)), lum(cb)),
+        BlendMode::Saturation => set_lum(set_sat(cb, sat(cs)), lum(cb)),
+        BlendMode::Color => set_lum(cs, lum(cb)),
+        BlendMode::Luminosity => set_lum(cb, lum(cs)),
+        _ => return None,
+    })
+}
+
 /// An advanced mode applied to premultiplied colors, giving premultiplied color.
 ///
 /// The blend function itself is defined on unpremultiplied channels, so this
@@ -382,22 +512,38 @@ pub fn blend_advanced(mode: BlendMode, source: [f32; 4], backdrop: [f32; 4]) -> 
     let (a_s, a_b) = (source[3], backdrop[3]);
     let mut out = [0.0f32; 4];
     out[3] = a_s + a_b - a_s * a_b;
+
+    // Dividing by a zero alpha would give a NaN that then propagates through a
+    // term the same alpha multiplies away, so the color under a fully
+    // transparent side is taken as zero rather than computed.
+    let straight = |c: [f32; 4], a: f32| {
+        if a > 0.0 {
+            [c[0] / a, c[1] / a, c[2] / a]
+        } else {
+            [0.0; 3]
+        }
+    };
+    let cs = straight(source, a_s);
+    let cb = straight(backdrop, a_b);
+
+    // The whole-color family first. A non-separable mode has no per-channel
+    // form, and trying the separable table first would have it fall through to
+    // a `None` that reads as "not an advanced mode at all".
+    let blended = match nonseparable_blend(mode, cb, cs) {
+        Some(blended) => blended,
+        None => {
+            let mut per_channel = [0.0f32; 3];
+            for (channel, slot) in per_channel.iter_mut().enumerate() {
+                *slot = separable_blend(mode, cb[channel], cs[channel])?;
+            }
+            per_channel
+        }
+    };
+
     for channel in 0..3 {
-        // Dividing by a zero alpha would give a NaN that then propagates
-        // through a term the same alpha multiplies away, so the color under a
-        // fully transparent side is taken as zero rather than computed.
-        let cs = if a_s > 0.0 {
-            source[channel] / a_s
-        } else {
-            0.0
-        };
-        let cb = if a_b > 0.0 {
-            backdrop[channel] / a_b
-        } else {
-            0.0
-        };
-        let blended = separable_blend(mode, cb, cs)?;
-        out[channel] = a_s * (1.0 - a_b) * cs + a_s * a_b * blended + (1.0 - a_s) * a_b * cb;
+        out[channel] = a_s * (1.0 - a_b) * cs[channel]
+            + a_s * a_b * blended[channel]
+            + (1.0 - a_s) * a_b * cb[channel];
     }
     Some(out)
 }
@@ -605,6 +751,105 @@ mod tests {
     }
 
     #[test]
+    fn the_non_separable_modes_take_what_they_are_named_for() {
+        // Each of these is defined as taking some attributes from one side and
+        // the rest from the other, so the check is which side each attribute
+        // came from rather than a value someone recorded.
+        fn lum(c: [f32; 3]) -> f32 {
+            0.3 * c[0] + 0.59 * c[1] + 0.11 * c[2]
+        }
+        fn sat(c: [f32; 3]) -> f32 {
+            c[0].max(c[1]).max(c[2]) - c[0].min(c[1]).min(c[2])
+        }
+
+        // Two requirements on these inputs, and both were found by getting them
+        // wrong. They must differ in luminosity and in saturation, or two of
+        // these four modes look identical — the first pair tried here agreed on
+        // luminosity exactly, by coincidence. And the results must stay inside
+        // zero to one, because the clip that brings an out-of-range color back
+        // reduces its saturation; that is correct behavior and would make the
+        // exact assertions below wrong, so the clip has a test of its own.
+        let cb = [0.15, 0.55, 0.35];
+        let cs = [0.75, 0.5, 0.45];
+        assert!((lum(cb) - lum(cs)).abs() > 0.05);
+        assert!((sat(cb) - sat(cs)).abs() > 0.05);
+
+        let close = |a: f32, b: f32| (a - b).abs() < 1e-4;
+
+        let hue = nonseparable_blend(BlendMode::Hue, cb, cs).unwrap();
+        assert!(close(lum(hue), lum(cb)), "hue kept the wrong luminosity");
+        assert!(close(sat(hue), sat(cb)), "hue kept the wrong saturation");
+
+        let saturation = nonseparable_blend(BlendMode::Saturation, cb, cs).unwrap();
+        assert!(
+            close(lum(saturation), lum(cb)),
+            "saturation moved luminosity"
+        );
+        assert!(
+            close(sat(saturation), sat(cs)),
+            "saturation did not take the source's"
+        );
+
+        let color = nonseparable_blend(BlendMode::Color, cb, cs).unwrap();
+        assert!(close(lum(color), lum(cb)), "color moved luminosity");
+
+        let luminosity = nonseparable_blend(BlendMode::Luminosity, cb, cs).unwrap();
+        assert!(
+            close(lum(luminosity), lum(cs)),
+            "luminosity did not take the source's"
+        );
+        assert!(
+            close(sat(luminosity), sat(cb)),
+            "luminosity moved saturation"
+        );
+    }
+
+    #[test]
+    fn setting_a_luminosity_keeps_every_channel_in_range() {
+        // Shifting a color's luminosity pushes channels outside zero to one,
+        // and clipping each independently would change the hue the operation
+        // exists to preserve. Scaling toward the luminosity is what brings them
+        // back along a line that holds hue fixed -- so this checks the range
+        // and, separately, that the result is still a scaling of the original.
+        for (cb, cs) in [
+            ([0.02, 0.02, 0.9], [0.99, 0.99, 0.99]),
+            ([0.99, 0.5, 0.02], [0.01, 0.01, 0.01]),
+            ([0.0, 0.0, 0.0], [1.0, 1.0, 1.0]),
+            ([1.0, 1.0, 1.0], [0.0, 0.0, 0.0]),
+        ] {
+            for mode in [BlendMode::Color, BlendMode::Luminosity, BlendMode::Hue] {
+                let out = nonseparable_blend(mode, cb, cs).unwrap();
+                for channel in out {
+                    assert!(
+                        (-1e-5..=1.0 + 1e-5).contains(&channel),
+                        "{mode} on {cb:?} and {cs:?} gave {out:?}"
+                    );
+                    assert!(channel.is_finite(), "{mode} produced {out:?}");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn a_flat_backdrop_has_no_saturation_to_take() {
+        // A grey has no hue and no saturation, so a mode asking for either gets
+        // a grey back. The guard that makes this work is also the one that
+        // stops a division by zero, which is why it is worth pinning.
+        let grey = [0.4, 0.4, 0.4];
+        let colorful = [0.9, 0.2, 0.5];
+        let hue = nonseparable_blend(BlendMode::Hue, grey, colorful).unwrap();
+        assert!(
+            hue.iter().all(|c| (c - hue[0]).abs() < 1e-5),
+            "hue from a grey backdrop came back colored: {hue:?}"
+        );
+        let saturation = nonseparable_blend(BlendMode::Saturation, grey, colorful).unwrap();
+        assert!(
+            saturation.iter().all(|c| (c - saturation[0]).abs() < 1e-5),
+            "saturating a grey produced color from nothing: {saturation:?}"
+        );
+    }
+
+    #[test]
     fn the_two_families_do_not_overlap() {
         // Every mode belongs to exactly one family, and the family it claims
         // agrees with whether it has factors.
@@ -618,10 +863,19 @@ mod tests {
                 mode.factors().is_none(),
                 "{mode} disagrees with itself about which family it is in"
             );
+            let has_formula = separable_blend(*mode, 0.5, 0.5).is_some()
+                || nonseparable_blend(*mode, [0.5; 3], [0.5; 3]).is_some();
             assert_eq!(
                 mode.is_advanced(),
-                separable_blend(*mode, 0.5, 0.5).is_some(),
-                "{mode} has no separable formula but claims to be advanced"
+                has_formula,
+                "{mode} has no advanced formula but claims to be advanced"
+            );
+            // And never both, since the two families are evaluated differently
+            // and a mode in both would take whichever path was tried first.
+            assert!(
+                !(separable_blend(*mode, 0.5, 0.5).is_some()
+                    && nonseparable_blend(*mode, [0.5; 3], [0.5; 3]).is_some()),
+                "{mode} has a formula in both families"
             );
         }
     }
