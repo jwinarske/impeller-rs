@@ -557,3 +557,183 @@ fn an_advanced_blend_mode_is_either_available_or_refused_through_the_api() {
     }
     ctx.destroy_surface(surface);
 }
+
+#[test]
+fn a_clip_confines_drawing_to_a_rectangle() {
+    let Some(mut ctx) = context() else { return };
+    let mut canvas = Canvas::new(SIZE);
+    canvas.clear(Color::linear(0.0, 0.0, 0.0, 1.0));
+    // A clip nowhere near the middle of the target, so getting the origin or
+    // an axis wrong lands somewhere visibly different rather than merely being
+    // a pixel off.
+    canvas
+        .clip_rect(Rect::new(20.0, 10.0, 60.0, 40.0))
+        .expect("clip");
+    canvas
+        .draw_rect(
+            Rect::from_size(128.0, 128.0),
+            &Paint::fill(Color::linear(1.0, 1.0, 1.0, 1.0)).with_anti_alias(false),
+        )
+        .expect("rect");
+
+    let pixels = render(&mut ctx, canvas);
+    let lit = |x, y| pixel(&pixels, x, y)[0] > 128;
+    assert!(lit(30, 20), "the middle of the clip was not drawn");
+    assert!(
+        lit(21, 11),
+        "the top-left corner inside the clip was not drawn"
+    );
+    assert!(
+        lit(59, 39),
+        "the bottom-right corner inside the clip was not drawn"
+    );
+    for (x, y, where_) in [
+        (19, 20, "left of the clip"),
+        (60, 20, "right of the clip"),
+        (30, 9, "above the clip"),
+        (30, 40, "below the clip"),
+        (100, 100, "far outside the clip"),
+    ] {
+        assert!(!lit(x, y), "{where_} was drawn anyway");
+    }
+}
+
+#[test]
+fn clips_intersect_rather_than_replacing_one_another() {
+    let Some(mut ctx) = context() else { return };
+    let mut canvas = Canvas::new(SIZE);
+    canvas.clear(Color::linear(0.0, 0.0, 0.0, 1.0));
+    // Two overlapping clips. Only their shared region may be drawn; a clip that
+    // replaced its predecessor would leave the second rectangle whole.
+    canvas.clip_rect(Rect::new(10.0, 10.0, 70.0, 50.0)).unwrap();
+    canvas
+        .clip_rect(Rect::new(40.0, 30.0, 100.0, 90.0))
+        .unwrap();
+    canvas
+        .draw_rect(
+            Rect::from_size(128.0, 128.0),
+            &Paint::fill(Color::linear(1.0, 1.0, 1.0, 1.0)).with_anti_alias(false),
+        )
+        .expect("rect");
+
+    let pixels = render(&mut ctx, canvas);
+    let lit = |x, y| pixel(&pixels, x, y)[0] > 128;
+    assert!(lit(50, 40), "the shared region was not drawn");
+    assert!(
+        !lit(20, 20),
+        "a region only the first clip allowed was drawn"
+    );
+    assert!(
+        !lit(80, 70),
+        "a region only the second clip allowed was drawn"
+    );
+}
+
+#[test]
+fn restore_returns_the_clip_along_with_the_transform() {
+    let Some(mut ctx) = context() else { return };
+    let mut canvas = Canvas::new(SIZE);
+    canvas.clear(Color::linear(0.0, 0.0, 0.0, 1.0));
+
+    canvas.save();
+    canvas.clip_rect(Rect::new(0.0, 0.0, 20.0, 20.0)).unwrap();
+    canvas.restore();
+
+    // With the clip restored to nothing, this covers the whole target. A clip
+    // that outlived its save would confine it to the top-left corner.
+    canvas
+        .draw_rect(
+            Rect::from_size(128.0, 128.0),
+            &Paint::fill(Color::linear(1.0, 1.0, 1.0, 1.0)).with_anti_alias(false),
+        )
+        .expect("rect");
+
+    let pixels = render(&mut ctx, canvas);
+    assert!(
+        pixel(&pixels, 100, 100)[0] > 128,
+        "a clip outlived the save that scoped it"
+    );
+}
+
+#[test]
+fn a_clip_moves_with_the_transform_that_was_in_force_when_it_was_set() {
+    let Some(mut ctx) = context() else { return };
+    let mut canvas = Canvas::new(SIZE);
+    canvas.clear(Color::linear(0.0, 0.0, 0.0, 1.0));
+
+    // The clip is given in user space, so the translation applies to it. A clip
+    // taken in device pixels instead would sit at the origin.
+    canvas.translate(64.0, 64.0);
+    canvas.clip_rect(Rect::new(0.0, 0.0, 40.0, 40.0)).unwrap();
+    canvas
+        .draw_rect(
+            Rect::new(-128.0, -128.0, 128.0, 128.0),
+            &Paint::fill(Color::linear(1.0, 1.0, 1.0, 1.0)).with_anti_alias(false),
+        )
+        .expect("rect");
+
+    let pixels = render(&mut ctx, canvas);
+    let lit = |x, y| pixel(&pixels, x, y)[0] > 128;
+    assert!(lit(70, 70), "the clip did not travel with the transform");
+    assert!(!lit(20, 20), "the clip stayed at the device origin");
+    assert!(!lit(110, 110), "the clip extended past where it was placed");
+}
+
+#[test]
+fn a_rotated_clip_is_refused_rather_than_approximated() {
+    let Some(mut _ctx) = context() else { return };
+    let mut canvas = Canvas::new(SIZE);
+
+    // A quarter turn keeps a rectangle a rectangle, so it is accepted.
+    canvas.save();
+    canvas.rotate(std::f32::consts::FRAC_PI_2);
+    canvas
+        .clip_rect(Rect::new(-40.0, 0.0, 0.0, 40.0))
+        .expect("a quarter turn keeps a rectangle rectangular");
+    canvas.restore();
+
+    // An arbitrary rotation does not, and the honest answer is to say so. The
+    // alternative is the rotated shape's bounding box, which admits pixels the
+    // caller asked to remove and looks like a rendering bug rather than like a
+    // clip that was never applied.
+    canvas.rotate(0.4);
+    assert!(
+        matches!(
+            canvas.clip_rect(Rect::new(0.0, 0.0, 40.0, 40.0)),
+            Err(impeller::Error::Unsupported(_))
+        ),
+        "a rotated clip was accepted"
+    );
+}
+
+#[test]
+fn a_clip_narrowed_to_nothing_draws_nothing() {
+    let Some(mut ctx) = context() else { return };
+    let mut canvas = Canvas::new(SIZE);
+    canvas.clear(Color::linear(0.2, 0.4, 0.6, 1.0));
+    // Two disjoint clips. This is a normal state for a subtree scrolled out of
+    // view, not an error, so recording continues and simply produces nothing.
+    canvas.clip_rect(Rect::new(0.0, 0.0, 20.0, 20.0)).unwrap();
+    canvas.clip_rect(Rect::new(60.0, 60.0, 80.0, 80.0)).unwrap();
+    canvas
+        .draw_rect(
+            Rect::from_size(128.0, 128.0),
+            &Paint::fill(Color::linear(1.0, 1.0, 1.0, 1.0)),
+        )
+        .expect("rect");
+
+    let recording = canvas.finish();
+    assert!(
+        recording.is_empty(),
+        "a draw that could reach no pixel was still recorded"
+    );
+
+    let mut surface = ctx
+        .create_surface(SIZE, PixelFormat::Rgba8Unorm)
+        .expect("surface");
+    ctx.draw(&mut surface, &recording).expect("draw");
+    let pixels = ctx.read(&mut surface).expect("read");
+    ctx.destroy_surface(surface);
+    // The clear still happens: an empty clip removes the drawing, not the frame.
+    assert_eq!(pixel(&pixels, 64, 64), [51, 102, 153, 255]);
+}

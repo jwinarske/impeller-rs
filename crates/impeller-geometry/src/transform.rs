@@ -48,6 +48,57 @@ pub fn max_scale(transform: &Affine2) -> f32 {
     x.max(y)
 }
 
+/// Whether a transform maps axis-aligned rectangles to axis-aligned rectangles.
+///
+/// True for any composition of translation, scale, reflection, and quarter
+/// turns; false as soon as an arbitrary rotation or a skew is involved. This is
+/// what decides whether a rectangular clip can be handed to the fixed-function
+/// scissor unit exactly, or whether it needs machinery that can express a
+/// rotated quadrilateral.
+///
+/// The comparison is relative rather than exact because a quarter turn does not
+/// produce exact zeros: `cos` of a right angle in `f32` is about `-4.4e-8`, so
+/// a caller who asked for exactly that rotation would otherwise be told their
+/// rectangle is no longer one. The threshold is scaled by the transform's own
+/// magnitude, since an absolute one means something different at a scale of a
+/// thousand than at a scale of a thousandth.
+pub fn preserves_axis_alignment(transform: &Affine2) -> bool {
+    let m = transform.matrix2;
+    let magnitude = max_scale(transform);
+    if magnitude == 0.0 || !magnitude.is_finite() {
+        // A degenerate transform collapses every rectangle to a line or a
+        // point. That is a rectangle in the trivial sense and an empty clip in
+        // practice, so it is left to the caller's intersection to resolve
+        // rather than reported as an unsupported shape.
+        return true;
+    }
+    let epsilon = 1e-6 * magnitude;
+    // Diagonal is a scale, possibly reflected; anti-diagonal is that composed
+    // with a quarter turn. Anything else rotates or skews.
+    let diagonal = m.x_axis.y.abs() <= epsilon && m.y_axis.x.abs() <= epsilon;
+    let anti_diagonal = m.x_axis.x.abs() <= epsilon && m.y_axis.y.abs() <= epsilon;
+    diagonal || anti_diagonal
+}
+
+/// The bounds of a rectangle's corners after a transform.
+///
+/// Exact when [`preserves_axis_alignment`] holds, and the bounding box of a
+/// rotated quadrilateral otherwise — which is why callers that need the clip to
+/// be the region asked for must check that first rather than relying on this to
+/// tell them.
+pub fn transformed_bounds(transform: &Affine2, min: Vec2, max: Vec2) -> (Vec2, Vec2) {
+    let corners = [
+        transform.transform_point2(min),
+        transform.transform_point2(Vec2::new(max.x, min.y)),
+        transform.transform_point2(max),
+        transform.transform_point2(Vec2::new(min.x, max.y)),
+    ];
+    corners.iter().fold(
+        (corners[0], corners[0]),
+        |(lo, hi): (Vec2, Vec2), c: &Vec2| (lo.min(*c), hi.max(*c)),
+    )
+}
+
 /// Apply a transform to every point in place.
 pub fn transform_points(points: &mut [Vec2], transform: &Affine2) {
     for p in points.iter_mut() {
@@ -58,6 +109,79 @@ pub fn transform_points(points: &mut [Vec2], transform: &Affine2) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn scales_translations_and_quarter_turns_keep_rectangles_rectangular() {
+        let quarter = std::f32::consts::FRAC_PI_2;
+        for transform in [
+            Affine2::IDENTITY,
+            Affine2::from_translation(Vec2::new(13.0, -4.0)),
+            Affine2::from_scale(Vec2::new(3.0, 0.5)),
+            // A reflection, which is a negative scale rather than a rotation.
+            Affine2::from_scale(Vec2::new(-1.0, 1.0)),
+            Affine2::from_angle(quarter),
+            Affine2::from_angle(-quarter),
+            Affine2::from_angle(2.0 * quarter),
+            // Composition of all of them is still axis-preserving.
+            Affine2::from_angle(quarter)
+                * Affine2::from_scale(Vec2::new(2.0, 7.0))
+                * Affine2::from_translation(Vec2::new(1.0, 1.0)),
+        ] {
+            assert!(
+                preserves_axis_alignment(&transform),
+                "{transform:?} was rejected"
+            );
+        }
+    }
+
+    #[test]
+    fn arbitrary_rotations_and_skews_do_not() {
+        let mut skew = Affine2::IDENTITY;
+        skew.matrix2.y_axis.x = 0.4;
+        for transform in [
+            Affine2::from_angle(0.3),
+            Affine2::from_angle(std::f32::consts::FRAC_PI_4),
+            skew,
+        ] {
+            assert!(
+                !preserves_axis_alignment(&transform),
+                "{transform:?} was accepted"
+            );
+        }
+    }
+
+    #[test]
+    fn the_threshold_scales_with_the_transform() {
+        // The same tiny skew is noise beside a large scale and the whole of the
+        // transform beside a small one. An absolute threshold would call both
+        // the same thing.
+        let skew = 1e-3;
+        let mut large = Affine2::from_scale(Vec2::splat(1e4));
+        large.matrix2.y_axis.x = skew;
+        assert!(preserves_axis_alignment(&large));
+
+        let mut small = Affine2::from_scale(Vec2::splat(1e-2));
+        small.matrix2.y_axis.x = skew;
+        assert!(!preserves_axis_alignment(&small));
+    }
+
+    #[test]
+    fn a_quarter_turn_maps_a_rectangle_onto_the_other_axis() {
+        let quarter = Affine2::from_angle(std::f32::consts::FRAC_PI_2);
+        let (min, max) = transformed_bounds(&quarter, Vec2::new(0.0, 0.0), Vec2::new(4.0, 1.0));
+        // Width and height exchange places; the corner positions follow the
+        // rotation rather than staying put.
+        assert!(
+            (max.x - min.x - 1.0).abs() < 1e-5,
+            "width became {}",
+            max.x - min.x
+        );
+        assert!(
+            (max.y - min.y - 4.0).abs() < 1e-5,
+            "height became {}",
+            max.y - min.y
+        );
+    }
 
     fn approx(a: Vec2, b: Vec2) -> bool {
         (a - b).length() < 1e-5

@@ -237,3 +237,44 @@ fn to_bytes(color: [f32; 4]) -> [u8; 4] {
     }
     out
 }
+
+#[test]
+fn clipped_scenes_differ_from_the_same_scenes_unclipped() {
+    let mut devices = available_devices();
+    if devices.is_empty() {
+        return;
+    }
+    // Comparing a clipped scene between two implementations proves they agree,
+    // not that either applied the clip: both ignoring it agree perfectly. This
+    // renders each clipped scene a second time with the clips stripped and
+    // requires the two to differ, which is what a clip dropped anywhere between
+    // the scene and the scissor unit would fail.
+    let mut checked = 0;
+    for scene in corpus() {
+        if !scene.items.iter().any(|item| item.clip.is_some()) {
+            continue;
+        }
+        let Some(index) = first_device_for(&devices, &scene) else {
+            continue;
+        };
+        let mut unclipped = scene.clone();
+        for item in &mut unclipped.items {
+            item.clip = None;
+        }
+
+        let ctx = &mut devices[index];
+        let with = render_scene::<VulkanHal>(ctx, &scene).expect("clipped");
+        let without = render_scene::<VulkanHal>(ctx, &unclipped).expect("unclipped");
+        let difference = compare(&with, &without).expect("same size");
+        assert!(
+            difference.max_delta > 0,
+            "{} rendered identically with and without its clips",
+            scene.name
+        );
+        checked += 1;
+    }
+    assert!(
+        checked > 0,
+        "no scene in the corpus carries a clip, so nothing here was checked"
+    );
+}

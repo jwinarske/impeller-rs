@@ -7,9 +7,9 @@
 use crate::image::Image;
 use crate::scene::{Fill, Item, Scene};
 use glam::{Affine2, Mat2, Vec2};
-use impeller_geometry::transform::viewport_projection;
+use impeller_geometry::transform::{transformed_bounds, viewport_projection};
 use impeller_hal::{
-    Batch, Extent2D, Hal, HalContext, Material, PassDescriptor, PixelFormat, Result, Stop,
+    Batch, Extent2D, Hal, HalContext, Material, PassDescriptor, PixelFormat, Result, Scissor, Stop,
     TextureDescriptor,
 };
 use impeller_renderer::{Paint, Renderer, TOLERANCE};
@@ -100,9 +100,18 @@ pub fn record_scene(renderer: &mut Renderer, batch: &mut Batch, scene: &Scene) -
     for item in &scene.items {
         let path = item.shape.to_path();
         let transform = item.transform.to_affine();
+        // The clip travels through the item's own transform, exactly as the
+        // canvas does it, so a scene exercises the same conversion the public
+        // API uses rather than a second one written for tests.
+        let clip = item.clip.map(|[left, top, right, bottom]| {
+            let (min, max) =
+                transformed_bounds(&transform, Vec2::new(left, top), Vec2::new(right, bottom));
+            Scissor::from_device_bounds(min.into(), max.into(), scene.size)
+        });
         let paint = Paint {
             material: material_for(item, transform, scene.size),
             blend: item.blend,
+            clip,
         };
         match &item.stroke {
             Some(spec) => {

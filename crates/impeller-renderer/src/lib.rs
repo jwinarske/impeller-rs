@@ -10,7 +10,7 @@ use impeller_geometry::stroke::StrokeStyle;
 use impeller_geometry::tessellate::{Tessellator, VertexBuffers};
 use impeller_geometry::transform::{max_scale, transform_points, viewport_projection};
 use impeller_geometry::{flatten::DEFAULT_TOLERANCE, Path};
-use impeller_hal::{Batch, BlendMode, Extent2D, Material, Result, Stop};
+use impeller_hal::{Batch, BlendMode, Extent2D, Material, Result, Scissor, Stop};
 
 /// How a shape is painted.
 ///
@@ -22,6 +22,12 @@ pub struct Paint {
     /// What fills the shape, already resolved into clip space.
     pub material: Material,
     pub blend: BlendMode,
+    /// The region of the target this may write to, in device pixels.
+    ///
+    /// Per-draw state exactly like the blend mode, and carried here for the
+    /// same reason: the clip in force when a shape is recorded is a property of
+    /// that shape's draw, not of the batch. `None` is the whole target.
+    pub clip: Option<Scissor>,
 }
 
 impl Paint {
@@ -29,6 +35,7 @@ impl Paint {
         Self {
             material: Material::solid(color),
             blend: BlendMode::default(),
+            clip: None,
         }
     }
 
@@ -54,11 +61,17 @@ impl Paint {
                 stops,
             },
             blend: BlendMode::default(),
+            clip: None,
         }
     }
 
     pub fn with_blend(mut self, blend: BlendMode) -> Self {
         self.blend = blend;
+        self
+    }
+
+    pub fn with_clip(mut self, clip: Option<Scissor>) -> Self {
+        self.clip = clip;
         self
     }
 }
@@ -154,7 +167,13 @@ impl Renderer {
         let geo = self.fill_path(path, transform);
         let positions = geo.positions();
         let indices = geo.indices.to_vec();
-        batch.push(&positions, &indices, paint.material.clone(), paint.blend)
+        batch.push_clipped(
+            &positions,
+            &indices,
+            paint.material.clone(),
+            paint.blend,
+            paint.clip,
+        )
     }
 
     /// Tessellate a stroked path and append it to a batch.
@@ -169,7 +188,13 @@ impl Renderer {
         let geo = self.stroke_path(path, style, transform);
         let positions = geo.positions();
         let indices = geo.indices.to_vec();
-        batch.push(&positions, &indices, paint.material.clone(), paint.blend)
+        batch.push_clipped(
+            &positions,
+            &indices,
+            paint.material.clone(),
+            paint.blend,
+            paint.clip,
+        )
     }
 
     fn to_clip_space<'a>(

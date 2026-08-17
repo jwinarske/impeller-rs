@@ -41,6 +41,7 @@ pub mod error;
 pub mod format;
 pub mod material;
 pub mod resource;
+pub mod scissor;
 pub mod sync;
 
 pub use batch::{Batch, BatchDraw};
@@ -50,6 +51,7 @@ pub use error::{Error, Result};
 pub use format::{Extent2D, FormatModifierSet, Fourcc, Modifier, PixelFormat};
 pub use material::{Material, MaterialVariant, Stop, MATERIAL_FLOATS, MAX_STOPS};
 pub use resource::{BufferDescriptor, BufferUsage, TextureDescriptor, TextureUsage};
+pub use scissor::Scissor;
 pub use sync::{HalFence, FRAME_WAIT_TIMEOUT};
 
 #[cfg(unix)]

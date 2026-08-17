@@ -107,7 +107,7 @@ pub trait HalContext {
         &mut self,
         target: &mut <Self::Hal as Hal>::Texture,
         batch: &Batch,
-        clear: Option<[f32; 4]>,
+        pass: PassDescriptor,
     ) -> Result<()>;
     fn read_texture(&mut self, texture: &mut <Self::Hal as Hal>::Texture) -> Result<Vec<u8>>;
 }
@@ -196,6 +196,53 @@ alongside a scene is one that can be forgotten, and a forgotten one turns a
 known gap into a reported regression. Scenes are run on the first available
 device that supports them rather than only on the preferred one, since the
 extension can sit on a device the preference order does not pick.
+
+**Clipping starts with the scissor, and that is not a placeholder.** An
+axis-aligned rectangle in device pixels is expressible directly through the
+fixed-function scissor unit on every device, exactly and at no cost. That stays
+true once stencil-backed clipping exists, so an axis-aligned clip should keep
+using it rather than paying for a stencil pass. The HAL type is named `Scissor`
+for that reason: a clip in a drawing API is whatever region a caller asked for,
+and only some of those are rectangles.
+
+`Canvas::clip_rect` intersects rather than replaces, so a subtree can only
+narrow what its parent allowed, and the clip saves and restores alongside the
+transform in one stack — letting the two unwind independently would let a caller
+balance one while leaving the other adrift. A clip is fixed in device pixels at
+the moment it is applied, so a later transform moves the shapes drawn inside it
+without moving the clip.
+
+Where the current transform rotates or skews by anything but a quarter turn, a
+rectangular clip is refused rather than approximated. The tempting alternative
+is the rotated quadrilateral's bounding box, which admits pixels the caller
+asked to remove and produces a picture that reads as a rendering bug rather than
+as a clip that was never applied. Arbitrary clip shapes need a stencil pass,
+which is separate machinery. The quarter-turn case is accepted because a right
+angle keeps a rectangle rectangular; the test for that is relative rather than
+exact, since `cos` of a right angle in `f32` is about `-4.4e-8` and an exact
+comparison would refuse precisely what the caller asked for.
+
+A pixel belongs to a clip when its center does — the same rule the rasterizer
+applies to the shape being drawn — so a shape and a clip along the same edge
+agree about which pixels lie on it. Rounding outward would admit pixels the
+caller excluded; rounding inward would drop ones they kept.
+
+**Neither backend converts the scissor's vertical axis**, which is the opposite
+of what the two APIs' conventions suggest. OpenGL numbers window rows upward
+from the bottom, so a conversion looks obligatory; it is not, because the shader
+translator already negates Y for GLSL and geometry lands in the GL framebuffer
+with its top row at GL's zero. That is the same cancellation that makes reading
+a target back need no row flip, and converting anyway mirrors the clip for
+exactly the reason an added row flip mirrors the image. Both mistakes are
+invisible in a target symmetric about its horizontal center line, so every clip
+under test sits deliberately off-center.
+
+Two things a clip must *not* restrict follow from the same care. A GL clear is
+subject to the scissor test where a Vulkan load-op clear is not, so the GLES
+backend disables the test across the clear; and a blit is subject to it too, so
+the test is disabled before a multisample resolve rather than at each call site
+that resolves. A clip left enabled across either would leave most of the target
+holding whatever it held before.
 
 **Multisampling is a pass property, not a target property.** A pass renders
 into a transient multisample buffer and resolves into the target, so the target

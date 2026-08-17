@@ -9,9 +9,11 @@
 use crate::paint::{Paint, Shader, Style};
 use crate::Color;
 use glam::{Affine2, Mat2, Vec2};
-use impeller_geometry::transform::viewport_projection;
+use impeller_geometry::transform::{
+    preserves_axis_alignment, transformed_bounds, viewport_projection,
+};
 use impeller_geometry::{Path, PathBuilder};
-use impeller_hal::{Batch, Extent2D, Material, PassDescriptor, Result, Stop};
+use impeller_hal::{Batch, Error, Extent2D, Material, PassDescriptor, Result, Scissor, Stop};
 use impeller_renderer::{Paint as RenderPaint, Renderer, TOLERANCE};
 
 /// A rectangle in user coordinates.
@@ -76,12 +78,29 @@ impl Recording {
     }
 }
 
+/// Transform and clip, saved together.
+///
+/// One stack rather than two: a `save` and its `restore` bracket a subtree, and
+/// letting the two pieces of state unwind independently would mean a caller
+/// could balance one while leaving the other adrift.
+#[derive(Debug, Clone, Copy)]
+struct SavedState {
+    transform: Affine2,
+    clip: Option<Scissor>,
+}
+
 /// Records drawing commands for one frame.
 pub struct Canvas {
     renderer: Renderer,
     batch: Batch,
     transform: Affine2,
-    stack: Vec<Affine2>,
+    /// The region drawing is confined to, or `None` for the whole target.
+    ///
+    /// Kept in device pixels rather than user space because that is what it
+    /// means: a clip is fixed at the moment it is applied, and a later
+    /// transform moves the shapes drawn inside it without moving the clip.
+    clip: Option<Scissor>,
+    stack: Vec<SavedState>,
     extent: Extent2D,
     background: Option<Color>,
     /// Set once anything asks for antialiasing.
@@ -103,6 +122,7 @@ impl Canvas {
             renderer,
             batch: Batch::new(),
             transform: Affine2::IDENTITY,
+            clip: None,
             stack: Vec::new(),
             extent,
             background: None,
@@ -132,20 +152,67 @@ impl Canvas {
         self.transform
     }
 
-    /// Save the transform so a later `restore` can return to it.
+    /// The region drawing is currently confined to, in device pixels.
+    ///
+    /// `None` is the whole target.
+    pub fn clip(&self) -> Option<Scissor> {
+        self.clip
+    }
+
+    /// Narrow the clip to a rectangle in user space.
+    ///
+    /// Intersects with the clip already in force rather than replacing it,
+    /// which is what makes the clip stack compose: a subtree can only ever
+    /// narrow what its parent allowed. The rectangle goes through the current
+    /// transform, so it moves with the coordinate system the caller set up.
+    ///
+    /// # Rotation
+    ///
+    /// Returns [`Error::Unsupported`] when the current transform rotates or
+    /// skews by anything other than a quarter turn, because the result is then
+    /// a rotated quadrilateral and this clip is a rectangle. Refusing is the
+    /// point: the tempting alternative is to use the rotated shape's bounding
+    /// box, which admits pixels the caller asked to remove, and produces a
+    /// picture that is wrong in a way that looks like a rendering bug rather
+    /// than like a clip that was never applied. Arbitrary clip shapes need a
+    /// stencil pass, which is a separate piece of machinery.
+    pub fn clip_rect(&mut self, rect: Rect) -> Result<&mut Self> {
+        if !preserves_axis_alignment(&self.transform) {
+            return Err(Error::Unsupported(
+                "clipping by a rotated or skewed rectangle; needs a stencil clip",
+            ));
+        }
+        let (min, max) = transformed_bounds(
+            &self.transform,
+            Vec2::new(rect.left, rect.top),
+            Vec2::new(rect.right, rect.bottom),
+        );
+        let narrowed = Scissor::from_device_bounds(min.into(), max.into(), self.extent);
+        self.clip = Some(match self.clip {
+            Some(existing) => existing.intersect(narrowed),
+            None => narrowed,
+        });
+        Ok(self)
+    }
+
+    /// Save the transform and clip so a later `restore` can return to them.
     pub fn save(&mut self) -> &mut Self {
-        self.stack.push(self.transform);
+        self.stack.push(SavedState {
+            transform: self.transform,
+            clip: self.clip,
+        });
         self
     }
 
-    /// Return to the most recently saved transform.
+    /// Return to the most recently saved transform and clip.
     ///
-    /// Restoring without a matching save leaves the transform alone rather than
+    /// Restoring without a matching save leaves both alone rather than
     /// panicking: an unbalanced pair is a caller bug, but taking down a frame
     /// loop for it is worse than continuing with what is already correct.
     pub fn restore(&mut self) -> &mut Self {
         if let Some(previous) = self.stack.pop() {
-            self.transform = previous;
+            self.transform = previous.transform;
+            self.clip = previous.clip;
         }
         self
     }
@@ -185,9 +252,18 @@ impl Canvas {
             self.anti_alias = true;
         }
 
+        // A clip narrowed to nothing means this shape cannot reach any pixel.
+        // Tessellating it to find that out is wasted work, and it is a normal
+        // state rather than an error: a subtree scrolled out of view is clipped
+        // away every frame it stays there.
+        if self.clip.is_some_and(Scissor::is_empty) {
+            return Ok(self);
+        }
+
         let render_paint = RenderPaint {
             material: self.material_for(&paint.shader),
             blend: paint.blend,
+            clip: self.clip,
         };
         match &paint.style {
             Style::Fill => {

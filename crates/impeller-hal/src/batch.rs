@@ -6,7 +6,7 @@
 //! Vulkan backend binds pipelines only where they change, and a record-and-
 //! replay backend can inspect the whole batch before touching any state.
 
-use crate::{BlendMode, Error, Material, Result};
+use crate::{BlendMode, Error, Material, Result, Scissor};
 
 /// One draw within a batch.
 #[derive(Debug, Clone)]
@@ -15,6 +15,13 @@ pub struct BatchDraw {
     pub index_count: u32,
     pub material: Material,
     pub blend: BlendMode,
+    /// The region of the target this draw may write to.
+    ///
+    /// `None` is the whole target. It is distinct from a rectangle that happens
+    /// to cover the target so a backend can tell "this draw was never clipped"
+    /// from "this draw's clip works out to everything", and skip the state
+    /// change in the first case without having to know the target's size.
+    pub clip: Option<Scissor>,
 }
 
 /// Geometry and paint for a sequence of draws sharing one target.
@@ -36,7 +43,7 @@ impl Batch {
         Self::default()
     }
 
-    /// Append a draw.
+    /// Append a draw covering the whole target.
     ///
     /// Indices are relative to `vertices` and are rebased onto the batch's
     /// shared buffer, so a caller need not know what came before it.
@@ -47,6 +54,30 @@ impl Batch {
         material: Material,
         blend: BlendMode,
     ) -> Result<()> {
+        self.push_clipped(vertices, indices, material, blend, None)
+    }
+
+    /// Append a draw confined to a region of the target.
+    ///
+    /// A separate entry point rather than an extra parameter on [`Self::push`]:
+    /// most draws are unclipped, and threading `None` through every call site
+    /// makes the ones that do carry a clip harder to pick out, not easier.
+    ///
+    /// An empty scissor drops the draw. Recording something that provably
+    /// writes no pixel would cost a pipeline bind and a draw call to produce
+    /// the same target, and a clip stack that has narrowed to nothing is a
+    /// normal state for a scrolled-away subtree rather than an error.
+    pub fn push_clipped(
+        &mut self,
+        vertices: &[[f32; 2]],
+        indices: &[u32],
+        material: Material,
+        blend: BlendMode,
+        clip: Option<Scissor>,
+    ) -> Result<()> {
+        if clip.is_some_and(Scissor::is_empty) {
+            return Ok(());
+        }
         if indices.len() % 3 != 0 {
             return Err(Error::Unsupported("index count is not a whole triangle"));
         }
@@ -79,6 +110,7 @@ impl Batch {
             index_count: indices.len() as u32,
             material,
             blend,
+            clip,
         });
         Ok(())
     }

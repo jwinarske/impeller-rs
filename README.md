@@ -9,8 +9,10 @@ through KMS with no compositor present.
 > backends and are verified against real hardware and a software reference. The
 > separable blend modes — multiply, screen, overlay and the rest — render on
 > Vulkan where the device offers the advanced-blend extension, and are reported
-> as unavailable elsewhere rather than approximated. Clipping, save layers,
-> image shaders, text, and windowed presentation are not implemented yet.
+> as unavailable elsewhere rather than approximated. Rectangular clipping works
+> on both backends, including under scale, translation and quarter turns;
+> arbitrary clip shapes, save layers, image shaders, text, and windowed
+> presentation are not implemented yet.
 
 ## Why
 

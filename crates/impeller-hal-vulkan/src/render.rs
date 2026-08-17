@@ -310,31 +310,23 @@ impl VulkanContext {
                 device.cmd_bind_vertex_buffers(cmd, 0, &[vertex_buffer], &[0]);
                 device.cmd_bind_index_buffer(cmd, index_buffer, 0, vk::IndexType::UINT32);
 
-                // Bind only when the pipeline actually changes. Draws stay in
-                // submission order, so consecutive draws sharing a blend mode
-                // are common and rebinding each time is pure overhead.
-                let mut bound: Option<BlendMode> = None;
+                let recording = PassRecording {
+                    device,
+                    cmd,
+                    layout,
+                    area,
+                };
+                let mut state = RecordedState::at_pass_start(area);
                 for draw in batch.draws() {
-                    if bound != Some(draw.blend) {
-                        let pipeline = self
-                            .pipeline_cache()
-                            .pipeline(PipelineKey {
-                                format,
-                                blend: draw.blend,
-                                samples: pass.samples,
-                            })
-                            .expect("ensured above");
-                        device.cmd_bind_pipeline(cmd, vk::PipelineBindPoint::GRAPHICS, pipeline);
-                        bound = Some(draw.blend);
-                    }
-                    device.cmd_push_constants(
-                        cmd,
-                        layout,
-                        vk::ShaderStageFlags::FRAGMENT,
-                        0,
-                        cast_bytes(&draw.material.to_push_constants()),
-                    );
-                    device.cmd_draw_indexed(cmd, draw.index_count, 1, draw.first_index, 0, 0);
+                    let pipeline = self
+                        .pipeline_cache()
+                        .pipeline(PipelineKey {
+                            format,
+                            blend: draw.blend,
+                            samples: pass.samples,
+                        })
+                        .expect("ensured above");
+                    record_draw(&recording, draw, pipeline, &mut state);
                 }
 
                 device.cmd_end_render_pass(cmd);
@@ -600,20 +592,15 @@ impl VulkanContext {
             device.cmd_bind_vertex_buffers(cmd, 0, &[vertex_buffer], &[0]);
             device.cmd_bind_index_buffer(cmd, index_buffer, 0, vk::IndexType::UINT32);
 
-            let mut bound: Option<vk::Pipeline> = None;
+            let recording = PassRecording {
+                device,
+                cmd,
+                layout,
+                area,
+            };
+            let mut state = RecordedState::at_pass_start(area);
             for (draw, pipeline) in batch.draws().iter().zip(&pipelines) {
-                if bound != Some(*pipeline) {
-                    device.cmd_bind_pipeline(cmd, vk::PipelineBindPoint::GRAPHICS, *pipeline);
-                    bound = Some(*pipeline);
-                }
-                device.cmd_push_constants(
-                    cmd,
-                    layout,
-                    vk::ShaderStageFlags::FRAGMENT,
-                    0,
-                    cast_bytes(&draw.material.to_push_constants()),
-                );
-                device.cmd_draw_indexed(cmd, draw.index_count, 1, draw.first_index, 0, 0);
+                record_draw(&recording, draw, *pipeline, &mut state);
             }
             device.cmd_end_render_pass(cmd);
         }
@@ -936,6 +923,105 @@ fn build_pipeline(
     match created {
         Ok(pipelines) => Ok(pipelines[0]),
         Err((_, e)) => Err(backend_err("create_graphics_pipelines", e)),
+    }
+}
+
+/// What every draw in one pass shares.
+struct PassRecording<'a> {
+    device: &'a ash::Device,
+    cmd: vk::CommandBuffer,
+    layout: vk::PipelineLayout,
+    /// The whole render area, which is also what an unclipped draw scissors to.
+    area: vk::Rect2D,
+}
+
+/// What has already been recorded, so each piece is set only where it changes.
+///
+/// Draws stay in submission order, and consecutive draws sharing a pipeline or
+/// a clip are the common case rather than the exception.
+struct RecordedState {
+    pipeline: Option<vk::Pipeline>,
+    scissor: vk::Rect2D,
+}
+
+impl RecordedState {
+    /// The state a pass begins in, having just set the scissor to the whole
+    /// render area.
+    fn at_pass_start(area: vk::Rect2D) -> Self {
+        Self {
+            pipeline: None,
+            scissor: area,
+        }
+    }
+}
+
+/// Record the per-draw state and the draw itself.
+///
+/// Shared between the waiting and deferred submission paths, which differ only
+/// in how they resolve a pipeline. Keeping this in one place is what stops the
+/// two from drifting: a scissor set in one and not the other would clip
+/// correctly right up until a caller started presenting its frames.
+///
+/// # Safety
+///
+/// `cmd` must be recording, inside a render pass compatible with `pipeline`,
+/// with the vertex and index buffers the draw's indices address already bound.
+unsafe fn record_draw(
+    pass: &PassRecording,
+    draw: &impeller_hal::BatchDraw,
+    pipeline: vk::Pipeline,
+    state: &mut RecordedState,
+) {
+    let PassRecording {
+        device,
+        cmd,
+        layout,
+        area,
+    } = *pass;
+    unsafe {
+        if state.pipeline != Some(pipeline) {
+            device.cmd_bind_pipeline(cmd, vk::PipelineBindPoint::GRAPHICS, pipeline);
+            state.pipeline = Some(pipeline);
+        }
+
+        // Vulkan's framebuffer origin is the top-left corner, which is the
+        // convention `Scissor` is already stated in, so this is a widening
+        // rather than a transformation. Clamping to the render area is not
+        // optional: a scissor reaching outside it is invalid, and a clip
+        // computed against a target the caller resized is exactly how that
+        // happens.
+        let wanted = match draw.clip {
+            Some(clip) => {
+                let clip = clip.clamped_to(impeller_hal::Extent2D::new(
+                    area.extent.width,
+                    area.extent.height,
+                ));
+                vk::Rect2D {
+                    offset: vk::Offset2D {
+                        x: clip.x as i32,
+                        y: clip.y as i32,
+                    },
+                    extent: vk::Extent2D {
+                        width: clip.width,
+                        height: clip.height,
+                    },
+                }
+            }
+            None => area,
+        };
+        if state.scissor != wanted {
+            device.cmd_set_scissor(cmd, 0, &[wanted]);
+            state.scissor = wanted;
+        }
+
+        device.cmd_push_constants(
+            cmd,
+            layout,
+            vk::ShaderStageFlags::FRAGMENT,
+            0,
+            cast_bytes(&draw.material.to_push_constants()),
+        );
+        device.cmd_draw_indexed(cmd, draw.index_count, 1, draw.first_index, 0, 0);
     }
 }
 

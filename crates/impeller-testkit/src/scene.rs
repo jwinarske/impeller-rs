@@ -134,6 +134,9 @@ pub struct Item {
     pub transform: Transform,
     pub fill: Fill,
     pub blend: BlendMode,
+    /// Confine this item to a rectangle, given in the item's own space as
+    /// `[left, top, right, bottom]` and carried through its transform.
+    pub clip: Option<[f32; 4]>,
 }
 
 impl Item {
@@ -144,6 +147,7 @@ impl Item {
             transform: Transform::default(),
             fill: Fill::Solid(color),
             blend: BlendMode::Src,
+            clip: None,
         }
     }
 
@@ -160,6 +164,7 @@ impl Item {
             transform: Transform::default(),
             fill,
             blend: BlendMode::Src,
+            clip: None,
         }
     }
 
@@ -170,11 +175,18 @@ impl Item {
             transform: Transform::default(),
             fill: Fill::Solid(color),
             blend: BlendMode::Src,
+            clip: None,
         }
     }
 
     pub fn with_blend(mut self, blend: BlendMode) -> Self {
         self.blend = blend;
+        self
+    }
+
+    /// Confine this item to `[left, top, right, bottom]` in its own space.
+    pub fn with_clip(mut self, clip: [f32; 4]) -> Self {
+        self.clip = Some(clip);
         self
     }
 
@@ -434,6 +446,77 @@ pub fn corpus() -> Vec<Scene> {
                 BlendMode::Exclusion,
                 BlendMode::Multiply,
             ]),
+        ),
+        // Clipping. A scissor is exact, so these compare bit-for-bit between
+        // backends and devices -- which is what makes them worth having:
+        // an off-by-one or a mirrored axis shows up as a hard failure rather
+        // than as something within tolerance.
+        Scene::new(
+            "clipped-circle",
+            vec![Item::fill(
+                Shape::Circle {
+                    center: [64.0, 64.0],
+                    radius: 56.0,
+                },
+                RED,
+            )
+            // Deliberately off-center, and clipping the circle on three
+            // sides but not the fourth, so a mirrored or transposed clip
+            // produces a different picture rather than the same one.
+            .with_clip([20.0, 8.0, 100.0, 72.0])],
+        ),
+        Scene::new(
+            "clip-varies-between-draws",
+            vec![
+                // Overlapping bands, each clipped differently, with an
+                // unclipped shape between them. Clip state persists until it is
+                // set again, so this catches a clip leaking into a later draw
+                // as well as one never being applied.
+                Item::fill(
+                    Shape::Rect {
+                        min: [0.0, 0.0],
+                        max: [128.0, 128.0],
+                    },
+                    BLUE,
+                )
+                .with_clip([0.0, 0.0, 40.0, 128.0]),
+                Item::fill(
+                    Shape::Rect {
+                        min: [48.0, 48.0],
+                        max: [80.0, 80.0],
+                    },
+                    WHITE,
+                ),
+                Item::fill(
+                    Shape::Rect {
+                        min: [0.0, 0.0],
+                        max: [128.0, 128.0],
+                    },
+                    GREEN,
+                )
+                .with_clip([96.0, 24.0, 128.0, 104.0]),
+            ],
+        ),
+        Scene::new(
+            "clip-follows-its-transform",
+            vec![
+                // The clip is stated in the item's own space, so it travels
+                // through the rotation and scale with the shape. A clip applied
+                // in device pixels instead would sit at the target's origin.
+                Item::fill(
+                    Shape::Rect {
+                        min: [-40.0, -40.0],
+                        max: [40.0, 40.0],
+                    },
+                    RED,
+                )
+                .with_transform(Transform {
+                    scale: [1.0, 1.0],
+                    rotate: std::f32::consts::FRAC_PI_2,
+                    translate: [72.0, 56.0],
+                })
+                .with_clip([-40.0, -40.0, 10.0, 24.0]),
+            ],
         ),
         Scene::new(
             "stroke-caps-and-joins",

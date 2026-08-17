@@ -9,7 +9,8 @@
 use crate::context::GlesContext;
 use glow::HasContext;
 use impeller_hal::{
-    Batch, BlendMode, Error, Extent2D, PassDescriptor, PixelFormat, Result, TextureDescriptor,
+    Batch, BlendMode, Error, Extent2D, PassDescriptor, PixelFormat, Result, Scissor,
+    TextureDescriptor,
 };
 
 /// A colour texture and the framebuffer that renders into it.
@@ -221,14 +222,47 @@ impl GlesContext {
             gl.enable_vertex_attrib_array(0);
             gl.vertex_attrib_pointer_f32(0, 2, glow::FLOAT, false, 8, 0);
 
-            // Blend state is global, so it is set only where a draw actually
-            // needs a different mode. Tracking it here is the direct analogue
-            // of binding a pipeline only on change.
+            // Blend and scissor state are both global, so each is set only
+            // where a draw actually needs a different one. Tracking them here
+            // is the direct analogue of binding a pipeline only on change.
             let mut current: Option<BlendMode> = None;
+            // `None` means the scissor test is off, which is how the pass
+            // started and what an unclipped draw wants.
+            let mut scissor: Option<Scissor> = None;
             for draw in batch.draws() {
                 if current != Some(draw.blend) {
                     apply_blend(gl, draw.blend);
                     current = Some(draw.blend);
+                }
+                // A clip covering the whole target is the same as none, and
+                // saying so keeps a run of unclipped draws from toggling the
+                // test on and off around them.
+                let wanted = draw
+                    .clip
+                    .map(|clip| clip.clamped_to(extent))
+                    .filter(|clip| !clip.covers(extent));
+                if scissor != wanted {
+                    match wanted {
+                        Some(clip) => {
+                            // No vertical conversion, despite GL numbering
+                            // window rows upward from the bottom. The shader
+                            // translator already negates Y for GLSL, which puts
+                            // the image's top row at GL's y of zero -- the same
+                            // cancellation that makes readback need no row
+                            // flip. Converting here mirrors the clip for
+                            // exactly the reason an added row flip mirrors the
+                            // image.
+                            gl.enable(glow::SCISSOR_TEST);
+                            gl.scissor(
+                                clip.x as i32,
+                                clip.y as i32,
+                                clip.width as i32,
+                                clip.height as i32,
+                            );
+                        }
+                        None => gl.disable(glow::SCISSOR_TEST),
+                    }
+                    scissor = wanted;
                 }
                 let packed = draw.material.to_push_constants();
                 let set = |location: &Option<glow::UniformLocation>, at: usize| {
@@ -409,6 +443,12 @@ unsafe fn resolve_and_unbind(
     target: &GlesTexture,
     extent: Extent2D,
 ) {
+    // A blit is subject to the scissor test, so a clip left enabled from the
+    // last draw would resolve only the part of the frame that draw could touch
+    // and leave the rest of the target holding whatever it held before. Turning
+    // it off here rather than at the call site covers every path that resolves,
+    // including the early return for an empty batch.
+    gl.disable(glow::SCISSOR_TEST);
     if let Some(ms) = multisample {
         gl.bind_framebuffer(glow::READ_FRAMEBUFFER, Some(ms.framebuffer));
         gl.bind_framebuffer(glow::DRAW_FRAMEBUFFER, Some(target.framebuffer));
