@@ -374,3 +374,67 @@ fn negotiation_runs_against_what_the_display_advertises() {
     let result = DrmScanoutTarget::<VulkanHal, _>::new(&mut ctx, output, 2);
     assert!(result.is_err(), "a target was built with no shared format");
 }
+
+#[test]
+fn negotiation_against_a_real_plane_agrees_on_a_layout() {
+    // Until now both halves of format negotiation came from the same place in
+    // a test: the render side from a device, and the display side from a list
+    // the test wrote. This is the first time the display's half is what a
+    // display actually advertises, which is the only way to learn that the two
+    // agree on hardware rather than on paper.
+    //
+    // Reading a plane's formats needs no master, so this runs on an ordinary
+    // desktop with a compositor driving the card.
+    use impeller_present_drm::device::DrmDevice;
+
+    let Some(ctx) = context() else { return };
+    let Some(card) = std::fs::read_dir("/dev/dri")
+        .ok()
+        .into_iter()
+        .flatten()
+        .flatten()
+        .map(|e| e.path())
+        .find(|p| {
+            p.file_name()
+                .and_then(|n| n.to_str())
+                .is_some_and(|n| n.starts_with("card"))
+        })
+    else {
+        eprintln!("skipping: no card node on this machine");
+        return;
+    };
+    let device = match DrmDevice::open(&card.to_string_lossy()) {
+        Ok(device) => device,
+        Err(e) => {
+            eprintln!("skipping: {e}");
+            return;
+        }
+    };
+    let scanout = device.scanout_formats().expect("plane formats");
+    if scanout.is_empty() {
+        eprintln!("skipping: this plane advertises nothing");
+        return;
+    }
+
+    let render = display_formats(&ctx);
+    let preferred = [Fourcc::ARGB8888, Fourcc::XRGB8888, Fourcc::ABGR8888];
+    let agreed = impeller_present::negotiate::negotiate(&render, &scanout, &preferred)
+        .expect("the render device and this plane share no layout at all");
+
+    // Agreeing linear is a valid outcome and a slow one, and on hardware where
+    // both sides advertise tiled layouts it means the modifier lists were
+    // intersected wrongly rather than that nothing better existed.
+    let both_have_tiled = render
+        .iter()
+        .any(|s| s.modifiers.iter().any(|m| !m.is_linear()))
+        && scanout
+            .iter()
+            .any(|s| s.modifiers.iter().any(|m| !m.is_linear()));
+    if both_have_tiled {
+        assert!(
+            !agreed.is_linear(),
+            "both sides advertise tiled layouts and negotiation settled for linear: {agreed:?}"
+        );
+    }
+    assert_validation_clean(&ctx);
+}

@@ -49,10 +49,12 @@ alongside windowed surfaces, not a third rendering backend.
 All four are Tier 1 on Linux. The windowed column works today against a surface
 the caller supplies. The scanout column is **partial**: the frame loop above
 KMS is implemented and tested — the buffer ring, fence plumbing, and format and
-modifier negotiation — and dma-buf export from Vulkan is real. What is missing
-is the KMS layer underneath: opening a card, importing a buffer as a
-framebuffer, and committing. `ScanoutOutput` is the trait that would sit there
-and nothing in the tree implements it, so today a caller would have to.
+modifier negotiation — and dma-buf export from Vulkan is real. Reading what a KMS
+device advertises — connectors, modes, planes, and the formats and modifiers a
+plane accepts — is real too, and needs no privilege. What is missing is the
+half that does: importing a buffer as a framebuffer, committing, and reading
+events. `ScanoutOutput` is the trait that would sit there and nothing in the
+tree implements it, so today a caller would have to.
 
 `cargo xtask drm` says whether a given machine could run that lane.
 

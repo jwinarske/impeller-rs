@@ -10,3 +10,4 @@ license.workspace = true
 impeller-hal = { workspace = true }
 impeller-hal-vulkan = { workspace = true }
 impeller-hal-gles = { workspace = true }
+impeller-present-drm = { workspace = true }

@@ -115,6 +115,52 @@ fn connectors_of(sys_drm: &Path, card: &str) -> Vec<(String, String)> {
     found
 }
 
+/// What a card's primary plane says it can scan out.
+///
+/// Read from the device rather than from sysfs, because this is the half of
+/// format negotiation the display supplies and nothing else exposes it. A
+/// failure is reported inline rather than propagated: the rest of the report is
+/// still worth printing, and why one card would not answer is itself the
+/// finding.
+fn scanout_formats(path: &str) -> String {
+    use impeller_present_drm::device::DrmDevice;
+
+    let formats = match DrmDevice::open(path).and_then(|d| d.scanout_formats()) {
+        Ok(formats) => formats,
+        Err(e) => return format!("  scanout formats  unavailable: {e}\n"),
+    };
+    if formats.is_empty() {
+        return "  scanout formats  none advertised\n".to_string();
+    }
+    let mut out = String::new();
+    for set in &formats {
+        // The fourcc as its four characters, which is how anyone reading a
+        // modifier table or a driver source will recognise it.
+        let code = set.fourcc.0.to_le_bytes();
+        let name: String = code
+            .iter()
+            .map(|b| {
+                if b.is_ascii_graphic() {
+                    *b as char
+                } else {
+                    '?'
+                }
+            })
+            .collect();
+        let _ = writeln!(
+            out,
+            "  {name:<16} {} modifier(s){}",
+            set.modifiers.len(),
+            if set.modifiers.contains(&impeller_hal::Modifier::LINEAR) {
+                ", linear among them"
+            } else {
+                ""
+            }
+        );
+    }
+    out
+}
+
 /// A human-readable report, and what it means for the lane.
 pub fn text(survey: &Survey) -> String {
     let mut out = String::new();
@@ -128,6 +174,9 @@ pub fn text(survey: &Survey) -> String {
         let _ = writeln!(out, "{} ({kind}, {driver})", node.path);
         for (connector, status) in &node.connectors {
             let _ = writeln!(out, "  {connector:<16} {status}");
+        }
+        if node.modeset {
+            out.push_str(&scanout_formats(&node.path));
         }
     }
 

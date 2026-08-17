@@ -11,6 +11,7 @@
 //! other, and makes the parts most worth testing — ring accounting and fence
 //! plumbing — testable without a display attached.
 
+pub mod device;
 pub mod output;
 pub mod target;
 

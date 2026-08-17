@@ -81,12 +81,34 @@ buffer as a framebuffer, committing, and reading events all live. The trait is
 driven by a recording stand-in, which is the right way to test ring accounting
 and the wrong way to learn whether a display controller accepts the buffers.
 
-Closing it needs a device this project can become master of, and that is a
+The half of it that needs no privilege now exists and is real. Enumerating
+connectors, modes and planes, and reading the format and modifier lists a plane
+advertises, all work on a card another process is master of — which is what
+makes them checkable on an ordinary desktop. `DrmDevice` does that, and is
+deliberately not a `ScanoutOutput`: a type implementing half of that trait would
+be one whose other half fails at run time.
+
+Two things about reading a plane are worth knowing before doing it again.
+`IN_FORMATS` has to be parsed by hand, because nothing in the crate graph does;
+its modifier entries carry a mask whose lowest bit means "the format at this
+entry's offset" rather than "the first format", so reading the offset as zero
+attributes layouts to formats that never claimed them. And a plane list comes
+back holding only overlay planes unless the universal-planes client capability
+is set first — the symptom is a device that appears to have no primary plane at
+all.
+
+What that buys immediately is a negotiation checked against hardware rather than
+against a list a test wrote. Both halves used to come from the same place; the
+display's half is now what a display advertises, and on this machine the two
+agree on a tiled layout rather than falling back to linear.
+
+Closing the rest needs a device this project can become master of, and that is a
 property of the machine rather than of the code: a compositor holds master on
 any card driving a display, so it means a bare VT or the virtual KMS driver.
-`cargo xtask drm` reports which of those a given machine offers. Writing the
-layer against neither would be exactly the untested KMS code this document's
-testing model exists to rule out.
+`cargo xtask drm` reports which of those a given machine offers, and now also
+what its primary plane would accept. Writing the committing half against neither
+would be exactly the untested KMS code this document's testing model exists to
+rule out.
 
 ### Configuration matrix
 
