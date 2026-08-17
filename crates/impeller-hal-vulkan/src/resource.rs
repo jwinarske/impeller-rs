@@ -45,9 +45,42 @@ pub(crate) enum TextureMemory {
     Pooled(Allocation),
     /// A whole allocation of its own, which is what export requires.
     Dedicated(vk::DeviceMemory),
+    /// Memory somebody else owns, and an image somebody else created.
+    ///
+    /// A swapchain's images are the case: the presentation engine allocates
+    /// them, hands them out, and destroys them with the swapchain. Destroying
+    /// one here would free a handle the engine still holds, so this variant
+    /// exists to say "wrap it, do not own it" — a distinction the type system
+    /// then keeps for us rather than leaving to a comment.
+    Borrowed,
 }
 
 impl VulkanTexture {
+    /// Wrap an image this backend did not create.
+    ///
+    /// The caller keeps ownership: destroying the returned texture releases
+    /// nothing, which is what makes it safe to hand back a swapchain image the
+    /// presentation engine still owns.
+    pub fn wrap_image(
+        image: vk::Image,
+        extent: Extent2D,
+        format: PixelFormat,
+        layout: vk::ImageLayout,
+    ) -> VulkanTexture {
+        VulkanTexture {
+            image,
+            memory: TextureMemory::Borrowed,
+            extent,
+            format,
+            layout: std::cell::Cell::new(layout),
+            usage: TextureUsage {
+                render_target: true,
+                sampled: false,
+                ..TextureUsage::default()
+            },
+        }
+    }
+
     pub fn extent(&self) -> Extent2D {
         self.extent
     }
@@ -181,11 +214,39 @@ impl VulkanContext {
                 // submission using the image was waited on.
                 unsafe { self.raw_device().free_memory(memory, None) };
             }
+            // Nothing to free and nothing to destroy: whoever created the
+            // image will do both.
+            TextureMemory::Borrowed => return,
         }
         // SAFETY: the caller has given up the texture, and every submission
         // that used it was waited on before returning from the call that made
         // it.
         unsafe { self.raw_device().destroy_image(texture.image, None) };
+    }
+
+    /// Put a texture into the layout the presentation engine reads from.
+    ///
+    /// A presented image is read by something outside this device's command
+    /// stream, so it has to be transitioned rather than left in whatever the
+    /// last pass wanted. Doing it here keeps the layout bookkeeping with
+    /// everything else that knows about layouts, instead of in a presentation
+    /// target that would have to reach into a texture's internals.
+    pub fn transition_for_present(&mut self, texture: &VulkanTexture) -> Result<()> {
+        if texture.layout() == vk::ImageLayout::PRESENT_SRC_KHR {
+            return Ok(());
+        }
+        let device = self.raw_device().clone();
+        let cmd = self.begin_one_shot()?;
+        transition(
+            &device,
+            cmd,
+            texture.raw_image(),
+            texture.layout(),
+            vk::ImageLayout::PRESENT_SRC_KHR,
+        );
+        self.submit_one_shot(cmd)?;
+        texture.set_layout(vk::ImageLayout::PRESENT_SRC_KHR);
+        Ok(())
     }
 
     /// Clear a texture to a solid color.

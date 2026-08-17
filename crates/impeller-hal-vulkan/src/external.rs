@@ -251,6 +251,13 @@ impl VulkanContext {
                     "a suballocated image cannot be exported on its own",
                 ))
             }
+            // A swapchain image's memory belongs to the presentation engine,
+            // which never offered a handle to it.
+            TextureMemory::Borrowed => {
+                return Err(Error::Unsupported(
+                    "an image this backend did not allocate cannot be exported",
+                ))
+            }
         };
 
         let loader =

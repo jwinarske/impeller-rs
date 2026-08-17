@@ -44,6 +44,26 @@ pub struct ContextConfig {
     pub validation: bool,
 }
 
+/// Instance extensions a presentation target may need.
+///
+/// `VK_KHR_surface` first because every other one depends on it. The platform
+/// ones follow, and the headless surface last: it creates a surface with no
+/// window behind it, which is what makes the swapchain path — capability
+/// queries, format negotiation, acquire, present, recreation — checkable on a
+/// machine with no display at all.
+///
+/// Creating windows is not this project's business, any more than mode setting
+/// is. A caller brings a surface; these are what let one exist.
+pub fn surface_extensions() -> &'static [&'static str] {
+    &[
+        "VK_KHR_surface",
+        "VK_KHR_wayland_surface",
+        "VK_KHR_xcb_surface",
+        "VK_KHR_xlib_surface",
+        "VK_EXT_headless_surface",
+    ]
+}
+
 /// Extensions this backend asks for when the device offers them.
 ///
 /// Absence is not an error — it selects a different path, and which one is
@@ -62,6 +82,10 @@ mod ext {
     /// express. Unrelated to the DRM path; gated the same way because the
     /// answer to "can this device do it" is a capability either way.
     pub const BLEND_OPERATION_ADVANCED: &str = "VK_EXT_blend_operation_advanced";
+    /// Presenting into a surface. Absent on a device that can render but not
+    /// display, which is a normal thing for a compute-only or headless card to
+    /// be.
+    pub const SWAPCHAIN: &str = "VK_KHR_swapchain";
 }
 
 /// Extensions each wanted extension depends on, beyond what the 1.1 baseline
@@ -210,12 +234,21 @@ impl VulkanContext {
         } else {
             Vec::new()
         };
-        let debug_ext = CString::new("VK_EXT_debug_utils").unwrap();
-        let ext_ptrs: Vec<*const c_char> = if want_validation {
-            vec![debug_ext.as_ptr()]
-        } else {
-            Vec::new()
-        };
+        // Surface extensions are requested wherever the loader offers them, so
+        // that a caller who later wants to present into a window finds the
+        // instance already able to. Enabling one that goes unused costs
+        // nothing; discovering it was missing costs recreating the instance,
+        // and by then the device and every resource on it exist too.
+        let mut instance_extensions: Vec<CString> = Vec::new();
+        if want_validation {
+            instance_extensions.push(CString::new("VK_EXT_debug_utils").unwrap());
+        }
+        for &name in surface_extensions() {
+            if instance_extension_available(&entry, name) {
+                instance_extensions.push(CString::new(name).unwrap());
+            }
+        }
+        let ext_ptrs: Vec<*const c_char> = instance_extensions.iter().map(|s| s.as_ptr()).collect();
 
         let create_info = vk::InstanceCreateInfo::default()
             .application_info(&app_info)
@@ -283,6 +316,7 @@ impl VulkanContext {
             ext::EXTERNAL_SEMAPHORE_FD,
             ext::PHYSICAL_DEVICE_DRM,
             ext::BLEND_OPERATION_ADVANCED,
+            ext::SWAPCHAIN,
         ];
         let enabled = resolve_extensions(&wanted, &available);
         let advanced_blend = probe_advanced_blend(&instance, physical_device, &enabled);
@@ -481,6 +515,12 @@ impl VulkanContext {
 
     pub fn raw_device(&self) -> &ash::Device {
         &self.device
+    }
+
+    /// The loader, for a presentation target that needs an instance extension
+    /// this crate does not itself use.
+    pub fn raw_entry(&self) -> &ash::Entry {
+        &self._entry
     }
 
     pub fn raw_instance(&self) -> &ash::Instance {

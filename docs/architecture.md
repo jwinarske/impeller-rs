@@ -395,6 +395,45 @@ The atlas holds its texels rather than a device texture, and says when it is
 dirty. Uploading is the caller's, because only they know which device the
 texture lives on and when in the frame it is safe to write.
 
+**A presentation target takes a surface; it does not make one.** Creating
+windows is no more this project's business than mode setting is. An application
+already has a window system connection and a window, and turning those into a
+`VkSurfaceKHR` is one call, where owning that relationship would mean owning a
+windowing library and its platform matrix.
+
+That boundary is also what makes the swapchain path testable.
+`VK_EXT_headless_surface` produces a surface with no window behind it, so
+capability queries, format negotiation, present mode selection, acquisition,
+presentation and recreation all run — and all are checked — on a machine with no
+display, no compositor, and no window system library linked. What a real window
+adds and this cannot reach is an extent the surface dictates and a surface going
+out of date underneath a frame; both are handled, and both are unverified here.
+
+A swapchain is built at a size the caller asks for. There is no useful default:
+a surface that defers its size clamps an unstated one up from zero to its
+minimum, which produces a swapchain one pixel across that behaves correctly in
+every other respect — it acquires, presents, cycles images and rebuilds, and
+only a test that reads pixels back notices.
+
+Surface formats are chosen non-sRGB. Color is linear inside the renderer and the
+attachment format applies the transfer function, so an sRGB surface format would
+apply it to values that already carry it. Present mode falls back rather than
+failing: FIFO is required of every implementation and mailbox is a latency
+preference, not a correctness requirement.
+
+Swapchain images are wrapped, not owned. The presentation engine allocates them
+and destroys them with the swapchain, so the texture type carries a third memory
+kind that frees nothing — a distinction the type system keeps rather than a
+comment.
+
+Presentation currently costs one CPU wait per frame. Acquisition signals a fence
+that is waited on before the image is handed out, because the HAL's submission
+takes no wait semaphore to hand it to; and the present needs no wait semaphore
+of its own because submission has already waited for completion. Those waits are
+counted and reported, exactly as the scanout target counts its own: a number
+that should reach zero when submissions learn to take wait and signal
+semaphores, and a frame of latency each until they do.
+
 **Multisampling is a pass property, not a target property.** A pass renders
 into a transient multisample buffer and resolves into the target, so the target
 stays single-sampled and directly readable. Each backend realizes that

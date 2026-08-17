@@ -304,6 +304,12 @@ version = "0.1.0"
 [[package]]
 name = "impeller-present-vk"
 version = "0.1.0"
+dependencies = [
+ "ash",
+ "impeller-hal",
+ "impeller-hal-vulkan",
+ "impeller-present",
+]
 
 [[package]]
 name = "impeller-renderer"

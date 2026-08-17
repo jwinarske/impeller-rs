@@ -15,7 +15,9 @@ through KMS with no compositor present.
 > repeat and decal tiling. Save layers give a subtree its own target, so group
 > opacity and layer-wide blend modes work and nest. A glyph atlas packs
 > caller-supplied coverage and draws a run of any length as one draw; bring
-> your own rasterizer. Windowed presentation is not implemented yet.
+> your own rasterizer. Vulkan windowed presentation works through a swapchain
+> built on a surface the caller supplies; the GLES window path is not
+> implemented yet.
 
 ## Why
 
@@ -44,8 +46,8 @@ alongside windowed surfaces, not a third rendering backend.
 | **Vulkan** | `VkSwapchainKHR`    | VkImage → dma-buf export → drm-rs FB → commit |
 | **GLES**   | EGL window surface  | EGL on GBM → gbm_surface → drm-rs FB → commit |
 
-All four combinations are Tier 1 on Linux. Offscreen and direct scanout work
-today; the windowed column is not implemented.
+All four combinations are Tier 1 on Linux. Offscreen, direct scanout, and
+Vulkan WSI work today; the GLES window surface is not implemented.
 
 ```rust
 use impeller::{BackendPreference, Canvas, Color, Context, Extent2D, Paint, PixelFormat, Rect};
