@@ -22,7 +22,7 @@ pub mod sampling;
 pub mod stencil;
 pub mod validation;
 
-pub use device::{ContextConfig, DevicePreference, VulkanContext};
+pub use device::{ContextConfig, DevicePreference, FrameSync, VulkanContext};
 pub use fence::VulkanFence;
 pub use hal::VulkanHal;
 pub use resource::VulkanTexture;

@@ -24,6 +24,11 @@ pub(crate) struct RenderPassKey {
     /// Sample count of the attachment being rendered into. Above one, the pass
     /// carries a resolve attachment as well.
     pub(crate) samples: u32,
+    /// Whether the pass leaves its target ready for presentation.
+    ///
+    /// Part of the key because it changes an attachment's final layout, and
+    /// two passes whose attachments differ are not compatible.
+    pub(crate) presents: bool,
     /// The stencil attachment's format, or `None` for a pass that has none.
     ///
     /// Part of the key rather than a flag because passes are only compatible
@@ -172,6 +177,7 @@ impl VulkanContext {
             format,
             clears: clear.is_some(),
             samples: pass.samples,
+            presents: false,
             stencil: stencil_format,
         };
         let render_pass = self.ensure_render_pass(pass_key)?;
@@ -505,6 +511,23 @@ impl VulkanContext {
         batch: &Batch,
         pass: PassDescriptor,
     ) -> Result<crate::fence::VulkanFence> {
+        self.submit_batch_deferred_synchronized(target, batch, pass, Default::default())
+    }
+
+    /// Submit without waiting, gating the work on semaphores the caller owns.
+    ///
+    /// What a swapchain needs: the render must not touch the image before
+    /// acquisition has signalled, and presentation must not read it before the
+    /// render has. Neither is expressible with a fence, because both are
+    /// device-side orderings that no one should be blocking a thread to
+    /// enforce.
+    pub fn submit_batch_deferred_synchronized(
+        &mut self,
+        target: &mut VulkanTexture,
+        batch: &Batch,
+        pass: PassDescriptor,
+        sync: crate::device::FrameSync<'_>,
+    ) -> Result<crate::fence::VulkanFence> {
         if pass.is_multisampled() {
             // The transient multisample buffer would have to outlive the
             // submission too. Supporting it means putting it in the fence
@@ -523,6 +546,7 @@ impl VulkanContext {
             format,
             clears: pass.clear.is_some(),
             samples: 1,
+            presents: sync.presents,
             stencil: stencil_format,
         };
         let render_pass = self.ensure_render_pass(pass_key)?;
@@ -559,14 +583,18 @@ impl VulkanContext {
             index_buffer.buffer,
             pass,
             stencil_format,
+            sync,
         );
 
         // The geometry buffers are host-visible and were fully written before
         // submission, so releasing them here would free memory the GPU is still
         // reading. They are retained until the fence retires.
         match result {
-            Ok(fence) => {
-                self.retain_until_retired(vertex_buffer, index_buffer);
+            Ok(mut fence) => {
+                // Held by this fence rather than by the context, so that
+                // retiring one frame cannot free another's geometry.
+                fence.retained.push(vertex_buffer);
+                fence.retained.push(index_buffer);
                 Ok(fence)
             }
             Err(e) => {
@@ -579,8 +607,12 @@ impl VulkanContext {
 
     /// Release a deferred submission once its work has completed.
     pub fn retire_fence(&mut self, mut fence: crate::fence::VulkanFence) {
+        // Waits for the submission, then releases what it held -- in that
+        // order, since the buffers are what the submission was reading.
         fence.retire();
-        self.release_retained();
+        for buffer in std::mem::take(&mut fence.retained) {
+            self.release(buffer);
+        }
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -595,6 +627,7 @@ impl VulkanContext {
         index_buffer: vk::Buffer,
         pass: PassDescriptor,
         stencil_format: Option<vk::Format>,
+        sync: crate::device::FrameSync<'_>,
     ) -> Result<crate::fence::VulkanFence> {
         // A deferred submission samples nothing yet, so the context's own
         // placeholder set serves and no pool has to outlive the fence.
@@ -711,8 +744,12 @@ impl VulkanContext {
             device.cmd_end_render_pass(cmd);
         }
 
-        let fence = self.submit_exportable(cmd, framebuffer, view)?;
-        target.set_layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL);
+        let fence = self.submit_exportable(cmd, framebuffer, view, sync)?;
+        target.set_layout(if sync.presents {
+            vk::ImageLayout::PRESENT_SRC_KHR
+        } else {
+            vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL
+        });
         Ok(fence)
     }
 
@@ -831,7 +868,7 @@ fn build_render_pass(device: &ash::Device, key: RenderPassKey) -> Result<vk::Ren
         .stencil_load_op(vk::AttachmentLoadOp::DONT_CARE)
         .stencil_store_op(vk::AttachmentStoreOp::DONT_CARE)
         .initial_layout(initial_layout)
-        .final_layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL);
+        .final_layout(final_layout(key, false));
 
     // The resolve target is the texture the caller reads. Its prior contents
     // are irrelevant because the resolve overwrites every pixel the pass
@@ -844,7 +881,7 @@ fn build_render_pass(device: &ash::Device, key: RenderPassKey) -> Result<vk::Ren
         .stencil_load_op(vk::AttachmentLoadOp::DONT_CARE)
         .stencil_store_op(vk::AttachmentStoreOp::DONT_CARE)
         .initial_layout(vk::ImageLayout::UNDEFINED)
-        .final_layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL);
+        .final_layout(final_layout(key, true));
 
     // Cleared at pass start and discarded at the end. A clip stack is built
     // and unwound entirely within one pass, so nothing outside it can read
@@ -899,6 +936,21 @@ fn build_render_pass(device: &ash::Device, key: RenderPassKey) -> Result<vk::Ren
 
     unsafe { device.create_render_pass(&info, None) }
         .map_err(|e| backend_err("create_render_pass", e))
+}
+
+/// The layout an attachment is left in.
+///
+/// A multisampled pass writes into the multisample attachment and resolves into
+/// the target, so it is the resolve attachment the caller reads and the resolve
+/// attachment that has to be ready to present. The multisample one is discarded
+/// either way.
+fn final_layout(key: RenderPassKey, is_resolve: bool) -> vk::ImageLayout {
+    let read_by_the_caller = is_resolve || key.samples == 1;
+    if key.presents && read_by_the_caller {
+        vk::ImageLayout::PRESENT_SRC_KHR
+    } else {
+        vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL
+    }
 }
 
 pub(crate) fn sample_flags(count: u32) -> vk::SampleCountFlags {

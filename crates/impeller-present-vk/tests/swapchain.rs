@@ -12,7 +12,7 @@
 //! window would have to confirm.
 
 use impeller_hal::{Batch, BlendMode, Extent2D, Material, PassDescriptor, PixelFormat, Vertex};
-use impeller_hal_vulkan::{DevicePreference, VulkanContext};
+use impeller_hal_vulkan::{ContextConfig, DevicePreference, VulkanContext};
 use impeller_present::PresentTarget;
 use impeller_present_vk::{create_headless_surface, destroy_surface, PresentMode, SwapchainTarget};
 
@@ -25,7 +25,14 @@ const QUAD: [u32; 6] = [0, 1, 2, 0, 2, 3];
 
 /// A context and a headless surface, or nothing if either is unavailable.
 fn setup() -> Option<(VulkanContext, ash::vk::SurfaceKHR)> {
-    let ctx = match VulkanContext::new(DevicePreference::Auto) {
+    // Validation on, because this is where it earns its keep. A semaphore
+    // signalled and never waited on, a wait on one nothing signals, an image
+    // presented in the wrong layout: none of those show in the pixels, and two
+    // of them are what the synchronization here exists to arrange.
+    let ctx = match VulkanContext::with_config(ContextConfig {
+        device: DevicePreference::Auto,
+        validation: true,
+    }) {
         Ok(ctx) => ctx,
         Err(e) => {
             eprintln!("skipping: no Vulkan device ({e})");
@@ -55,6 +62,13 @@ fn with_target(mode: PresentMode, body: impl FnOnce(&mut VulkanContext, &mut Swa
     };
     body(&mut ctx, &mut target);
     target.destroy(&mut ctx);
+
+    let errors: Vec<_> = ctx
+        .validation_messages()
+        .into_iter()
+        .filter(|m| m.severity == impeller_hal_vulkan::ValidationSeverity::Error)
+        .collect();
+    assert!(errors.is_empty(), "validation errors: {errors:?}");
     // SAFETY: the swapchain built on it has just been destroyed.
     unsafe { destroy_surface(&ctx, surface) };
 }
@@ -96,7 +110,7 @@ fn acquiring_and_presenting_advances_the_frame_count() {
     with_target(PresentMode::Fifo, |ctx, target| {
         assert_eq!(target.presented_frames(), 0);
         for expected in 1..=6u64 {
-            let image = target.acquire(ctx).expect("acquire");
+            target.acquire(ctx).expect("acquire");
             // Something has to be drawn, or the image is never transitioned out
             // of the undefined layout the engine handed it over in.
             let mut batch = Batch::new();
@@ -109,7 +123,8 @@ fn acquiring_and_presenting_advances_the_frame_count() {
                     BlendMode::Src,
                 )
                 .expect("push");
-            ctx.submit_batch(image, &batch, PassDescriptor::clear([0.0, 0.0, 0.0, 1.0]))
+            target
+                .submit(ctx, &batch, PassDescriptor::clear([0.0, 0.0, 0.0, 1.0]))
                 .expect("submit");
             target.present(ctx).expect("present");
             assert_eq!(target.presented_frames(), expected);
@@ -132,7 +147,8 @@ fn the_images_are_cycled_rather_than_reused_immediately() {
             batch
                 .push(&FULL, &QUAD, Material::solid([1.0; 4]), BlendMode::Src)
                 .expect("push");
-            ctx.submit_batch(image, &batch, PassDescriptor::clear([0.0; 4]))
+            target
+                .submit(ctx, &batch, PassDescriptor::clear([0.0; 4]))
                 .expect("submit");
             target.present(ctx).expect("present");
         }
@@ -186,6 +202,7 @@ fn reconfiguring_rebuilds_at_the_new_size() {
         let after = target.extent();
         let image = target.acquire(ctx).expect("acquire after reconfigure");
         assert_eq!(image.extent(), after);
+        let _ = image;
         let mut batch = Batch::new();
         batch
             .push(
@@ -195,7 +212,8 @@ fn reconfiguring_rebuilds_at_the_new_size() {
                 BlendMode::Src,
             )
             .expect("push");
-        ctx.submit_batch(image, &batch, PassDescriptor::clear([0.0; 4]))
+        target
+            .submit(ctx, &batch, PassDescriptor::clear([0.0; 4]))
             .expect("submit");
         target.present(ctx).expect("present");
     });
@@ -208,7 +226,7 @@ fn a_presented_frame_holds_what_was_drawn_into_it() {
         // half that is: the image handed out is a real render target, and what
         // is drawn into it is there afterwards. Without this the tests above
         // would pass on a target that handed back an image nothing reached.
-        let image = target.acquire(ctx).expect("acquire");
+        let _ = target.acquire(ctx).expect("acquire");
         let mut batch = Batch::new();
         batch
             .push(
@@ -218,9 +236,11 @@ fn a_presented_frame_holds_what_was_drawn_into_it() {
                 BlendMode::Src,
             )
             .expect("push");
-        ctx.submit_batch(image, &batch, PassDescriptor::clear([0.0; 4]))
+        target
+            .submit(ctx, &batch, PassDescriptor::clear([0.0; 4]))
             .expect("submit");
 
+        let image = target.acquired_image().expect("acquired image");
         let extent = image.extent();
         let format = image.format();
         let pixels = ctx.read_texture(image).expect("readback");
@@ -254,12 +274,13 @@ fn a_mailbox_request_falls_back_rather_than_failing() {
     // Mailbox is optional, and a surface without it should still give a working
     // swapchain: it is a latency preference, not a correctness requirement.
     with_target(PresentMode::Mailbox, |ctx, target| {
-        let image = target.acquire(ctx).expect("acquire");
+        target.acquire(ctx).expect("acquire");
         let mut batch = Batch::new();
         batch
             .push(&FULL, &QUAD, Material::solid([1.0; 4]), BlendMode::Src)
             .expect("push");
-        ctx.submit_batch(image, &batch, PassDescriptor::clear([0.0; 4]))
+        target
+            .submit(ctx, &batch, PassDescriptor::clear([0.0; 4]))
             .expect("submit");
         target.present(ctx).expect("present");
         assert_eq!(target.presented_frames(), 1);
@@ -267,23 +288,46 @@ fn a_mailbox_request_falls_back_rather_than_failing() {
 }
 
 #[test]
-fn the_cpu_waits_are_counted_rather_than_hidden() {
+fn nothing_blocks_until_the_frames_in_flight_are_exhausted() {
     with_target(PresentMode::Fifo, |ctx, target| {
-        // One per acquisition, until the HAL grows submissions that take wait
-        // semaphores. Counting it is what keeps the cost visible; a number
-        // nobody reports is a cost nobody removes.
-        assert_eq!(target.cpu_waits(), 0);
-        for expected in 1..=3u64 {
-            let image = target.acquire(ctx).expect("acquire");
+        // Acquiring and drawing are ordered by semaphores, so the first frames
+        // do not block at all. A wait appears only once a slot has to be
+        // reused, which is what bounds how far ahead of the display the
+        // renderer runs — the mechanism working rather than a defect.
+        assert_eq!(target.throttle_waits(), 0);
+        for _ in 0..2 {
+            target.acquire(ctx).expect("acquire");
             let mut batch = Batch::new();
             batch
                 .push(&FULL, &QUAD, Material::solid([1.0; 4]), BlendMode::Src)
                 .expect("push");
-            ctx.submit_batch(image, &batch, PassDescriptor::clear([0.0; 4]))
+            target
+                .submit(ctx, &batch, PassDescriptor::clear([0.0; 4]))
                 .expect("submit");
             target.present(ctx).expect("present");
-            assert_eq!(target.cpu_waits(), expected);
         }
+        assert_eq!(
+            target.throttle_waits(),
+            0,
+            "a frame blocked before any slot needed reusing"
+        );
+
+        // The third frame reuses the first slot, and only then is there
+        // anything to wait for.
+        target.acquire(ctx).expect("acquire");
+        let mut batch = Batch::new();
+        batch
+            .push(&FULL, &QUAD, Material::solid([1.0; 4]), BlendMode::Src)
+            .expect("push");
+        target
+            .submit(ctx, &batch, PassDescriptor::clear([0.0; 4]))
+            .expect("submit");
+        target.present(ctx).expect("present");
+        assert_eq!(
+            target.throttle_waits(),
+            1,
+            "reusing a frame slot did not wait for the frame that held it"
+        );
     });
 }
 
@@ -295,7 +339,7 @@ fn a_swapchain_image_carries_texture_coordinates_like_any_other_target() {
     // wrong. A target that only worked for solid fills would pass everything
     // above.
     with_target(PresentMode::Fifo, |ctx, target| {
-        let image = target.acquire(ctx).expect("acquire");
+        let _ = target.acquire(ctx).expect("acquire");
         let mut batch = Batch::new();
         let vertices: Vec<Vertex> = FULL.iter().map(|p| Vertex::at(*p)).collect();
         batch
@@ -315,9 +359,11 @@ fn a_swapchain_image_carries_texture_coordinates_like_any_other_target() {
                 impeller_hal::ClipState::UNCLIPPED,
             )
             .expect("push");
-        ctx.submit_batch(image, &batch, PassDescriptor::clear([0.0; 4]))
+        target
+            .submit(ctx, &batch, PassDescriptor::clear([0.0; 4]))
             .expect("submit");
 
+        let image = target.acquired_image().expect("acquired image");
         let extent = image.extent();
         let pixels = ctx.read_texture(image).expect("readback");
         let at = |x: u32| ((extent.height / 2 * extent.width + x) * 4) as usize;
@@ -327,6 +373,33 @@ fn a_swapchain_image_carries_texture_coordinates_like_any_other_target() {
             left, right,
             "a gradient rendered flat into a swapchain image"
         );
+        target.present(ctx).expect("present");
+    });
+}
+
+#[test]
+fn presenting_a_frame_drawn_the_generic_way_is_refused() {
+    with_target(PresentMode::Fifo, |ctx, target| {
+        // Drawing through the backend-agnostic submission leaves acquisition's
+        // semaphore signalled and never waited on, and presentation about to
+        // wait on one nothing signalled. That hangs rather than looking wrong,
+        // so it is refused instead.
+        let image = target.acquire(ctx).expect("acquire");
+        let mut batch = Batch::new();
+        batch
+            .push(&FULL, &QUAD, Material::solid([1.0; 4]), BlendMode::Src)
+            .expect("push");
+        ctx.submit_batch(image, &batch, PassDescriptor::clear([0.0; 4]))
+            .expect("submit");
+        assert!(
+            target.present(ctx).is_err(),
+            "a frame drawn without the target's own submit was presented"
+        );
+
+        // And the frame is still recoverable: drawing it properly presents.
+        target
+            .submit(ctx, &batch, PassDescriptor::clear([0.0; 4]))
+            .expect("submit");
         target.present(ctx).expect("present");
     });
 }

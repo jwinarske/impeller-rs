@@ -44,6 +44,14 @@ pub struct VulkanFence {
     /// Carried here rather than reached for through a context, because the HAL
     /// trait exports from a fence alone and a fence has no way back to one.
     export: Option<ash::khr::external_semaphore_fd::Device>,
+    /// Geometry the submission is still reading.
+    ///
+    /// Held by the fence rather than by the context, because "still in use"
+    /// is a property of one submission and the context may have several
+    /// outstanding. A single list on the context is correct only while at most
+    /// one frame is in flight; with two, retiring the older fence frees the
+    /// newer frame's buffers out from under the GPU.
+    pub(crate) retained: Vec<crate::render::StagedBuffer>,
     retired: bool,
 }
 
@@ -68,6 +76,7 @@ impl VulkanFence {
             view,
             semaphore,
             export,
+            retained: Vec::new(),
             retired: false,
         }
     }

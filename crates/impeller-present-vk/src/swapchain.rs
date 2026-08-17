@@ -15,21 +15,27 @@
 //!
 //! # Synchronization
 //!
-//! Acquisition signals a semaphore, rendering waits on it, and presentation
-//! waits on rendering. That is the shape the specification is written for, and
-//! the rendering half of it is not reachable through the HAL as it stands:
-//! `submit_batch` waits for completion on the CPU before returning, so by the
-//! time a frame is presented the work is provably done and the present needs no
-//! wait semaphore of its own.
+//! Acquisition signals a semaphore, rendering waits on it and signals another,
+//! and presentation waits on that. All three orderings are device-side: no
+//! thread blocks to enforce any of them, which is the point — a CPU wait
+//! between acquiring and drawing costs a frame of latency every frame.
 //!
-//! Acquisition is therefore gated with a fence and a CPU wait. Those waits are
-//! counted rather than hidden, exactly as the scanout target counts its own:
-//! a number that should be zero once the HAL grows submissions that take wait
-//! and signal semaphores, and that is a frame of latency each until then.
+//! One CPU wait remains, and it is the one that should. Before reusing a
+//! frame's semaphores and command resources, the frame that last used them has
+//! to have finished. Waiting on that is what bounds how far ahead of the
+//! display the renderer may run; without it the queue grows without limit and
+//! latency with it. It normally does not block at all, because the frame being
+//! waited on is two frames old.
+//!
+//! Two semaphores per frame is not enough, and this is the detail worth being
+//! careful about. The render-finished semaphore must be per *image* rather than
+//! per frame slot, because presentation waits on it and the engine decides when
+//! it is done with an image — reusing one while a present still refers to it is
+//! a wait on a payload that has already been consumed.
 
 use ash::vk;
-use impeller_hal::{Error, Extent2D, PixelFormat, Result, FRAME_WAIT_TIMEOUT};
-use impeller_hal_vulkan::{VulkanContext, VulkanHal, VulkanTexture};
+use impeller_hal::{Error, Extent2D, HalFence, PixelFormat, Result, FRAME_WAIT_TIMEOUT};
+use impeller_hal_vulkan::{VulkanContext, VulkanFence, VulkanHal, VulkanTexture};
 use impeller_present::PresentTarget;
 
 /// How the presentation engine should pace frames.
@@ -61,6 +67,30 @@ impl PresentMode {
 /// One acquired-but-not-presented frame.
 struct Acquired {
     index: u32,
+    /// Which slot's semaphores and fence this frame is using.
+    slot: usize,
+    /// Whether the frame was drawn through [`SwapchainTarget::submit`].
+    submitted: bool,
+}
+
+/// How many frames may be recorded before one must have finished.
+///
+/// Two: one being displayed, one being drawn. A third adds latency for
+/// throughput the renderer does not need, since a frame is submitted as a whole
+/// rather than trickled out.
+const FRAMES_IN_FLIGHT: usize = 2;
+
+/// Per-frame synchronization, reused round-robin.
+struct FrameSlot {
+    /// Signalled by acquisition, waited on by the render.
+    acquired: vk::Semaphore,
+    /// The render submitted with this slot, if it has not been retired.
+    ///
+    /// Held rather than waited on immediately: retiring releases the geometry
+    /// buffers and framebuffer that submission used, and doing that here rather
+    /// than in the target is what keeps the resources alive exactly as long as
+    /// the GPU is reading them.
+    in_flight: Option<VulkanFence>,
 }
 
 /// A swapchain, its images, and the frame in flight.
@@ -70,9 +100,16 @@ pub struct SwapchainTarget {
     loader: ash::khr::swapchain::Device,
     surface_loader: ash::khr::surface::Instance,
     images: Vec<VulkanTexture>,
+    /// Signalled when an image's render is done, waited on by presentation.
+    ///
+    /// One per image rather than per frame slot: presentation waits on it and
+    /// the engine decides when it is finished with the image, so a semaphore
+    /// reused while a present still refers to it would be waited on twice for
+    /// one signal.
+    rendered: Vec<vk::Semaphore>,
+    slots: Vec<FrameSlot>,
+    slot: usize,
     acquired: Option<Acquired>,
-    /// Signalled by acquisition, waited on before the image is handed out.
-    acquire_fence: vk::Fence,
     extent: Extent2D,
     format: PixelFormat,
     vk_format: vk::Format,
@@ -125,9 +162,22 @@ impl SwapchainTarget {
             ));
         }
 
-        let fence_info = vk::FenceCreateInfo::default();
-        let acquire_fence = unsafe { ctx.raw_device().create_fence(&fence_info, None) }
-            .map_err(|e| backend_err("create_fence", e))?;
+        let mut slots = Vec::with_capacity(FRAMES_IN_FLIGHT);
+        for _ in 0..FRAMES_IN_FLIGHT {
+            let info = vk::SemaphoreCreateInfo::default();
+            match unsafe { ctx.raw_device().create_semaphore(&info, None) } {
+                Ok(acquired) => slots.push(FrameSlot {
+                    acquired,
+                    in_flight: None,
+                }),
+                Err(e) => {
+                    for slot in slots {
+                        unsafe { ctx.raw_device().destroy_semaphore(slot.acquired, None) };
+                    }
+                    return Err(backend_err("create_semaphore", e));
+                }
+            }
+        }
 
         let mut target = Self {
             surface,
@@ -135,8 +185,10 @@ impl SwapchainTarget {
             loader,
             surface_loader,
             images: Vec::new(),
+            rendered: Vec::new(),
+            slots,
+            slot: 0,
             acquired: None,
-            acquire_fence,
             extent: Extent2D::new(0, 0),
             format: PixelFormat::Bgra8Unorm,
             vk_format: vk::Format::B8G8R8A8_UNORM,
@@ -147,7 +199,7 @@ impl SwapchainTarget {
             stale: false,
         };
         if let Err(e) = target.rebuild(ctx, Some(extent)) {
-            unsafe { ctx.raw_device().destroy_fence(acquire_fence, None) };
+            target.release_slots(ctx);
             return Err(e);
         }
         Ok(target)
@@ -158,12 +210,17 @@ impl SwapchainTarget {
         self.presented
     }
 
-    /// How many times a frame blocked the CPU waiting for an acquisition.
+    /// How many times a frame blocked waiting for an older frame to finish.
     ///
-    /// Counted rather than hidden because it is the cost of the HAL not yet
-    /// taking wait semaphores, and a number nobody reports is a cost nobody
-    /// removes.
-    pub fn cpu_waits(&self) -> u64 {
+    /// This is the wait that bounds how far ahead of the display the renderer
+    /// may run, so a nonzero count is the mechanism working rather than a
+    /// defect. It is reported because the number climbing to one per frame
+    /// means the GPU has become the limit, which is worth being able to see
+    /// without a profiler.
+    ///
+    /// Nothing waits between acquiring an image and drawing into it, or between
+    /// drawing and presenting: both of those are semaphores.
+    pub fn throttle_waits(&self) -> u64 {
         self.cpu_waits
     }
 
@@ -174,6 +231,20 @@ impl SwapchainTarget {
 
     pub fn present_mode(&self) -> PresentMode {
         self.mode
+    }
+
+    /// The image acquired for this frame, for reading back what was drawn.
+    ///
+    /// A presented frame is not observable without a display, so this is how a
+    /// test — or a screenshot — sees one. It reads the image the caller drew
+    /// into rather than anything the engine has shown.
+    pub fn acquired_image(&mut self) -> Result<&mut VulkanTexture> {
+        let index = self
+            .acquired
+            .as_ref()
+            .ok_or(Error::Unsupported("no frame is acquired"))?
+            .index as usize;
+        Ok(&mut self.images[index])
     }
 
     /// Rebuild the swapchain, keeping the old one alive during the transition.
@@ -263,7 +334,10 @@ impl SwapchainTarget {
             .map_err(|e| backend_err("create_swapchain", e))?;
 
         // The old swapchain is retired by creating the new one but still has to
-        // be destroyed, and only after nothing is using its images.
+        // be destroyed, and only after nothing is using its images. That is the
+        // one place a full stall is unavoidable: the alternative is freeing an
+        // image the GPU is drawing into.
+        self.drain_in_flight(ctx);
         self.release_images(ctx);
         if self.swapchain != vk::SwapchainKHR::null() {
             unsafe { self.loader.destroy_swapchain(self.swapchain, None) };
@@ -282,6 +356,14 @@ impl SwapchainTarget {
             })
             .collect();
 
+        self.rendered.clear();
+        for _ in 0..self.images.len() {
+            let info = vk::SemaphoreCreateInfo::default();
+            let semaphore = unsafe { ctx.raw_device().create_semaphore(&info, None) }
+                .map_err(|e| backend_err("create_semaphore", e))?;
+            self.rendered.push(semaphore);
+        }
+
         self.extent = extent;
         self.format = format;
         self.vk_format = vk_format;
@@ -295,26 +377,91 @@ impl SwapchainTarget {
             // Releases the wrapper and nothing else: the engine owns these.
             ctx.destroy_texture(texture);
         }
+        // SAFETY: every submission that signalled one of these was waited on
+        // by `drain_in_flight` before this runs.
+        for semaphore in self.rendered.drain(..) {
+            unsafe { ctx.raw_device().destroy_semaphore(semaphore, None) };
+        }
         self.acquired = None;
     }
 
-    /// Wait for the acquisition fence and reset it for the next frame.
-    fn wait_for_acquisition(&mut self, ctx: &VulkanContext) -> Result<()> {
-        let device = ctx.raw_device();
-        self.cpu_waits += 1;
-        // SAFETY: the fence was submitted to by the acquisition above and is
-        // not being waited on elsewhere.
+    /// Wait for everything still referring to this target's objects.
+    ///
+    /// Called before anything a submission or a presentation might still be
+    /// using is destroyed. A real stall, and it happens only where the
+    /// alternative is freeing an image the GPU is drawing into or a semaphore a
+    /// present is waiting on: rebuilding and shutting down.
+    ///
+    /// Waiting on the render fences alone is not enough, and the validation
+    /// layer is what says so. A fence covers the submission that signalled it;
+    /// presentation is a separate queue operation that consumes the
+    /// render-finished semaphore, and nothing tells us when it has. Idling the
+    /// queue is what covers both.
+    fn drain_in_flight(&mut self, ctx: &mut VulkanContext) {
+        for index in 0..self.slots.len() {
+            if let Some(fence) = self.slots[index].in_flight.take() {
+                let _ = fence.wait(FRAME_WAIT_TIMEOUT);
+                ctx.retire_fence(fence);
+            }
+        }
+        // SAFETY: no other thread submits to this queue.
         unsafe {
-            device
-                .wait_for_fences(
-                    &[self.acquire_fence],
-                    true,
-                    FRAME_WAIT_TIMEOUT.as_nanos() as u64,
-                )
-                .map_err(|e| backend_err("wait_for_fences", e))?;
-            device
-                .reset_fences(&[self.acquire_fence])
-                .map_err(|e| backend_err("reset_fences", e))?;
+            let _ = ctx.raw_device().queue_wait_idle(ctx.raw_queue());
+        }
+    }
+
+    fn release_slots(&mut self, ctx: &mut VulkanContext) {
+        self.drain_in_flight(ctx);
+        for slot in self.slots.drain(..) {
+            // SAFETY: nothing is waiting on these; every submission that used
+            // one has completed.
+            unsafe { ctx.raw_device().destroy_semaphore(slot.acquired, None) };
+        }
+    }
+
+    /// Draw a batch into the acquired image, ordered by this frame's semaphores.
+    ///
+    /// **The way to draw a frame for this target.** Presentation needs the
+    /// render to wait on acquisition and to signal something presentation can
+    /// wait on in turn, and neither is expressible through the
+    /// backend-agnostic submission: that one waits for completion before it
+    /// returns, which would put a stall exactly where these semaphores exist to
+    /// remove one, and would leave acquisition's semaphore signalled and never
+    /// waited on.
+    ///
+    /// The scanout target asks the same of its callers for the same reason.
+    /// Presenting a frame drawn any other way is refused rather than
+    /// half-synchronized.
+    pub fn submit(
+        &mut self,
+        ctx: &mut VulkanContext,
+        batch: &impeller_hal::Batch,
+        pass: impeller_hal::PassDescriptor,
+    ) -> Result<()> {
+        let Some(acquired) = self.acquired.as_ref() else {
+            return Err(Error::Unsupported("submit without a matching acquire"));
+        };
+        let (index, slot) = (acquired.index as usize, acquired.slot);
+
+        let wait = [self.slots[slot].acquired];
+        let signal = [self.rendered[index]];
+        let fence = ctx.submit_batch_deferred_synchronized(
+            &mut self.images[index],
+            batch,
+            pass,
+            impeller_hal_vulkan::FrameSync {
+                wait: &wait,
+                signal: &signal,
+                // The render pass leaves the image ready to present, so
+                // nothing has to transition it afterwards -- and nothing
+                // could, without a second submission that no semaphore orders
+                // after this one.
+                presents: true,
+            },
+        )?;
+        self.slots[slot].in_flight = Some(fence);
+        if let Some(acquired) = self.acquired.as_mut() {
+            acquired.submitted = true;
         }
         Ok(())
     }
@@ -339,6 +486,17 @@ impl PresentTarget<VulkanHal> for SwapchainTarget {
             self.rebuild(ctx, None)?;
         }
 
+        // Before reusing this slot's semaphores, the frame that last used them
+        // has to have finished. This is what bounds how far ahead of the
+        // display the renderer runs, and it normally does not block: the frame
+        // being waited on is two frames old.
+        let slot = self.slot;
+        if let Some(fence) = self.slots[slot].in_flight.take() {
+            self.cpu_waits += 1;
+            fence.wait(FRAME_WAIT_TIMEOUT)?;
+            ctx.retire_fence(fence);
+        }
+
         // Two attempts at most: the first may find the swapchain out of date,
         // and the rebuild that follows produces one that matches the surface,
         // so a second failure is a real error rather than a race.
@@ -347,8 +505,8 @@ impl PresentTarget<VulkanHal> for SwapchainTarget {
                 self.loader.acquire_next_image(
                     self.swapchain,
                     FRAME_WAIT_TIMEOUT.as_nanos() as u64,
-                    vk::Semaphore::null(),
-                    self.acquire_fence,
+                    self.slots[slot].acquired,
+                    vk::Fence::null(),
                 )
             };
             match result {
@@ -357,8 +515,14 @@ impl PresentTarget<VulkanHal> for SwapchainTarget {
                 // on the next acquisition instead.
                 Ok((index, suboptimal)) => {
                     self.stale = suboptimal;
-                    self.wait_for_acquisition(ctx)?;
-                    self.acquired = Some(Acquired { index });
+                    // No wait here at all: the render will wait on the
+                    // semaphore acquisition signals, on the device.
+                    self.acquired = Some(Acquired {
+                        index,
+                        slot,
+                        submitted: false,
+                    });
+                    self.slot = (slot + 1) % self.slots.len();
                     return Ok(&mut self.images[index as usize]);
                 }
                 Err(vk::Result::ERROR_OUT_OF_DATE_KHR) if attempt == 0 => {
@@ -373,24 +537,46 @@ impl PresentTarget<VulkanHal> for SwapchainTarget {
     }
 
     fn present(&mut self, ctx: &mut VulkanContext) -> Result<()> {
-        let Some(acquired) = self.acquired.take() else {
+        let Some((index, submitted)) = self
+            .acquired
+            .as_ref()
+            .map(|a| (a.index as usize, a.submitted))
+        else {
             return Err(Error::Unsupported("present without a matching acquire"));
         };
 
-        // Presenting reads the image, so it has to be in the layout the engine
-        // expects rather than whatever the last pass left it in.
-        ctx.transition_for_present(&self.images[acquired.index as usize])?;
+        if !submitted {
+            // Acquisition signalled a semaphore that nothing waited on, and
+            // presentation is about to wait on one nothing signalled. Neither
+            // is recoverable here, and presenting anyway would hang rather than
+            // merely look wrong.
+            // The frame stays acquired: it can still be drawn properly and
+            // presented, which is more useful than forcing the caller to
+            // reacquire an image that is already theirs.
+            return Err(Error::Unsupported(
+                "this frame was not drawn through SwapchainTarget::submit",
+            ));
+        }
+        self.acquired = None;
+
+        // Normally nothing: the render pass already left the image ready to
+        // present, which is the whole point of asking it to. It matters where
+        // something else touched the image in between -- reading it back
+        // leaves it in a transfer layout -- and there a transition is both
+        // needed and safely ordered, since a readback waits for completion.
+        ctx.transition_for_present(&self.images[index])?;
 
         let swapchains = [self.swapchain];
-        let indices = [acquired.index];
+        let indices = [index as u32];
+        // Waits on the render, on the device: the engine will not read the
+        // image before the draw that filled it has completed, and no thread
+        // blocks to arrange that.
+        let wait = [self.rendered[index]];
         let info = vk::PresentInfoKHR::default()
+            .wait_semaphores(&wait)
             .swapchains(&swapchains)
             .image_indices(&indices);
 
-        // No wait semaphore: submission waits for completion on the CPU before
-        // returning, so the work is provably finished by the time this runs.
-        // That is the stall `cpu_waits` counts, and the place a signal
-        // semaphore belongs once the HAL can take one.
         let result = unsafe { self.loader.queue_present(ctx.raw_queue(), &info) };
         match result {
             Ok(suboptimal) => {
@@ -413,14 +599,14 @@ impl PresentTarget<VulkanHal> for SwapchainTarget {
     }
 
     fn destroy(mut self, ctx: &mut VulkanContext) {
+        self.release_slots(ctx);
         self.release_images(ctx);
-        // SAFETY: every submission was waited on before the call that made it
-        // returned, so nothing is reading these.
+        // SAFETY: every frame in flight was waited on above, so nothing is
+        // reading the swapchain or its images.
         unsafe {
             if self.swapchain != vk::SwapchainKHR::null() {
                 self.loader.destroy_swapchain(self.swapchain, None);
             }
-            ctx.raw_device().destroy_fence(self.acquire_fence, None);
         }
         // The surface is the caller's, and stays.
     }

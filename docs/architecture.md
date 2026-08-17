@@ -426,13 +426,39 @@ and destroys them with the swapchain, so the texture type carries a third memory
 kind that frees nothing — a distinction the type system keeps rather than a
 comment.
 
-Presentation currently costs one CPU wait per frame. Acquisition signals a fence
-that is waited on before the image is handed out, because the HAL's submission
-takes no wait semaphore to hand it to; and the present needs no wait semaphore
-of its own because submission has already waited for completion. Those waits are
-counted and reported, exactly as the scanout target counts its own: a number
-that should reach zero when submissions learn to take wait and signal
-semaphores, and a frame of latency each until they do.
+**Presentation is ordered on the device, not by blocking a thread.**
+Acquisition signals a semaphore, the render waits on it and signals another, and
+presentation waits on that. Nothing blocks between acquiring an image and
+drawing into it, or between drawing and presenting.
+
+One wait remains and it is the one that should: before reusing a frame slot's
+semaphores, the frame that last held them has to have finished. That is what
+bounds how far ahead of the display the renderer may run, and it is reported —
+a count climbing to one per frame means the GPU has become the limit, which is
+worth seeing without a profiler.
+
+The render-finished semaphore is per *image*, not per frame slot. Presentation
+waits on it and the engine decides when it is done with an image, so one reused
+while a present still refers to it is a wait on a payload already consumed.
+
+The present layout is the render pass's final layout rather than a transition
+afterwards, and that is correctness rather than economy: a separate transition
+is a separate submission, and nothing orders it after a render that has not been
+waited for.
+
+Because those semaphores cannot travel through the backend-agnostic submission —
+which waits for completion, putting a stall exactly where they exist to remove
+one — a swapchain frame is drawn through the target's own `submit`, as a scanout
+frame already is. Presenting a frame drawn any other way is refused rather than
+half-synchronized: acquisition's semaphore would be signalled and never waited
+on, and presentation would wait on one nothing signalled, which hangs rather
+than looking wrong.
+
+**Transient resources belong to the submission that reads them, not to the
+context.** A single list of retained buffers is correct only while at most one
+frame is in flight; with two, retiring the older fence frees the newer frame's
+geometry out from under the GPU. Holding them on the fence makes "still in use"
+a property of the submission it actually describes.
 
 **Multisampling is a pass property, not a target property.** A pass renders
 into a transient multisample buffer and resolves into the target, so the target

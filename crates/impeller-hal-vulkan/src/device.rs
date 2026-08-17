@@ -64,6 +64,34 @@ pub fn surface_extensions() -> &'static [&'static str] {
     ]
 }
 
+/// Semaphores a submission waits on and signals.
+///
+/// Grouped rather than passed loose so that adding a timeline value or a second
+/// stage mask later changes one type rather than every signature between here
+/// and a presentation target.
+///
+/// Vulkan-specific on purpose. The HAL's own synchronization is a fence and an
+/// exported `sync_file`, which is what crosses to a display controller; a
+/// swapchain's semaphores never leave the device and have no counterpart on a
+/// backend that has no swapchain. A Vulkan presentation target using Vulkan
+/// semaphores is not the layering violation that a renderer asking "is this
+/// Vulkan?" would be.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct FrameSync<'a> {
+    /// Waited on before the colour attachment is written.
+    pub wait: &'a [vk::Semaphore],
+    /// Signalled when the submission completes.
+    pub signal: &'a [vk::Semaphore],
+    /// Leave the target in the layout a presentation engine reads from.
+    ///
+    /// Folded into the render pass rather than done as a transition afterwards,
+    /// and not as an optimisation: a separate transition is a separate
+    /// submission, and nothing orders it after a render that has not been
+    /// waited for. Doing it here makes the ordering the render pass's, which is
+    /// where it can be expressed without a stall.
+    pub presents: bool,
+}
+
 /// Extensions this backend asks for when the device offers them.
 ///
 /// Absence is not an error — it selects a different path, and which one is
@@ -167,8 +195,6 @@ pub struct VulkanContext {
     // is why it is an Option -- Drop takes it and drops it explicitly first.
     allocator: Option<gpu_allocator::vulkan::Allocator>,
     pipelines: PipelineCache,
-    /// Geometry buffers a deferred submission is still reading.
-    retained: Vec<crate::render::StagedBuffer>,
     command_pool: vk::CommandPool,
     device: ash::Device,
     physical_device: vk::PhysicalDevice,
@@ -393,7 +419,6 @@ impl VulkanContext {
             validation_log,
             allocator: Some(allocator),
             pipelines: PipelineCache::default(),
-            retained: Vec::new(),
             command_pool,
             device,
             physical_device,
@@ -556,6 +581,7 @@ impl VulkanContext {
         cmd: vk::CommandBuffer,
         framebuffer: vk::Framebuffer,
         view: vk::ImageView,
+        sync: FrameSync<'_>,
     ) -> Result<crate::fence::VulkanFence> {
         unsafe { self.device.end_command_buffer(cmd) }
             .map_err(|e| backend_err("end_command_buffer", e))?;
@@ -587,9 +613,24 @@ impl VulkanContext {
         };
 
         let cmds = [cmd];
-        let signals: Vec<vk::Semaphore> = semaphore.into_iter().collect();
+        // The exportable semaphore and whatever the caller asked to signal are
+        // both signalled by this one submission, so their payloads represent
+        // exactly the same completion. A presentation target waits on its own;
+        // a scanout path exports ours.
+        let signals: Vec<vk::Semaphore> = semaphore
+            .into_iter()
+            .chain(sync.signal.iter().copied())
+            .collect();
+        // Colour output is the only stage that touches the attachment, so
+        // earlier stages may run before the wait is satisfied. Waiting at the
+        // top of the pipe instead would serialise vertex work behind an image
+        // the vertex stage never reads.
+        let wait_stages: Vec<vk::PipelineStageFlags> =
+            vec![vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT; sync.wait.len()];
         let submit = vk::SubmitInfo::default()
             .command_buffers(&cmds)
+            .wait_semaphores(sync.wait)
+            .wait_dst_stage_mask(&wait_stages)
             .signal_semaphores(&signals);
         if let Err(e) = unsafe { self.device.queue_submit(self.queue, &[submit], fence) } {
             unsafe {
@@ -613,24 +654,6 @@ impl VulkanContext {
             semaphore,
             loader,
         ))
-    }
-
-    /// Hold buffers a deferred submission is still reading.
-    pub(crate) fn retain_until_retired(
-        &mut self,
-        vertices: crate::render::StagedBuffer,
-        indices: crate::render::StagedBuffer,
-    ) {
-        self.retained.push(vertices);
-        self.retained.push(indices);
-    }
-
-    /// Release buffers held for a submission that has now completed.
-    pub(crate) fn release_retained(&mut self) {
-        let retained = std::mem::take(&mut self.retained);
-        for buffer in retained {
-            self.release(buffer);
-        }
     }
 
     /// Allocate and begin a command buffer for a single submission.
@@ -697,7 +720,6 @@ impl Drop for VulkanContext {
     fn drop(&mut self) {
         // The allocator must free its memory while the device is still alive,
         // so it is dropped explicitly before anything else is destroyed.
-        self.release_retained();
         self.pipelines.destroy(&self.device);
         // Before the allocator, since the placeholder holds an allocation.
         if let Some(texture) = self.placeholder.take() {
