@@ -13,6 +13,7 @@
 //! specifics.
 
 pub mod device;
+pub mod external;
 pub mod hal;
 pub mod render;
 pub mod resource;

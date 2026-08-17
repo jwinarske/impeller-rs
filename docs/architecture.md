@@ -305,7 +305,17 @@ accepted on Tier-1 hardware.
 ### Format and modifier negotiation
 
 Presentation targets advertise `(fourcc, modifier[])` sets; the HAL context
-advertises what it can render to and export. The intersection is chosen from,
+advertises what it can render to and export, queried from the device rather
+than assumed. Without a real advertisement the only safe assumption is linear,
+which works everywhere and wastes bandwidth everywhere.
+
+An exportable image differs from an ordinary one in two ways, both fixed at
+creation. It is created with an explicit modifier chosen from the negotiated
+set, because an optimally-tiled image has a layout only its own GPU
+understands. And its memory is a dedicated allocation rather than a
+suballocation, because a dma-buf hands over a whole allocation — an image
+sharing one with other resources cannot be exported without exporting them
+too, so that case is refused rather than over-shared. The intersection is chosen from,
 preferring non-linear vendor modifiers when both sides accept them and falling
 back to `DRM_FORMAT_MOD_LINEAR` only when necessary.
 

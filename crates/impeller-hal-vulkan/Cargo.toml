@@ -11,3 +11,6 @@ ash = { workspace = true }
 gpu-allocator = { workspace = true }
 impeller-hal = { workspace = true }
 impeller-shaders = { workspace = true }
+
+[dev-dependencies]
+impeller-present = { workspace = true }

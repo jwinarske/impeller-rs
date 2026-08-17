@@ -9,7 +9,7 @@ use crate::device::VulkanContext;
 use ash::vk;
 use gpu_allocator::vulkan::{Allocation, AllocationCreateDesc, AllocationScheme};
 use gpu_allocator::MemoryLocation;
-use impeller_hal::{Error, Extent2D, PixelFormat, Result, TextureDescriptor};
+use impeller_hal::{Error, Extent2D, PixelFormat, Result, TextureDescriptor, TextureUsage};
 
 /// An image, its backing memory, and the state needed to transition it.
 ///
@@ -19,12 +19,25 @@ use impeller_hal::{Error, Extent2D, PixelFormat, Result, TextureDescriptor};
 /// is asynchronous work to track.
 pub struct VulkanTexture {
     pub(crate) image: vk::Image,
-    pub(crate) allocation: Option<Allocation>,
+    pub(crate) memory: TextureMemory,
     pub(crate) extent: Extent2D,
     pub(crate) format: PixelFormat,
     /// The layout the image is currently in, so the next operation knows what
     /// to transition from.
     pub(crate) layout: vk::ImageLayout,
+    pub(crate) usage: TextureUsage,
+}
+
+/// Where a texture's memory came from.
+///
+/// The distinction matters only at export: a dma-buf hands over a whole
+/// allocation, so an image sharing one with other resources cannot be exported
+/// without exporting them too.
+pub(crate) enum TextureMemory {
+    /// Suballocated from a pool. The common case, and not exportable.
+    Pooled(Allocation),
+    /// A whole allocation of its own, which is what export requires.
+    Dedicated(vk::DeviceMemory),
 }
 
 impl VulkanTexture {
@@ -140,17 +153,27 @@ impl VulkanContext {
 
         Ok(VulkanTexture {
             image,
-            allocation: Some(allocation),
+            memory: TextureMemory::Pooled(allocation),
             extent: desc.extent,
             format: desc.format,
             layout: vk::ImageLayout::UNDEFINED,
+            usage: desc.usage,
         })
     }
 
     /// Release a texture and its memory.
-    pub fn destroy_texture(&mut self, mut texture: VulkanTexture) {
-        if let Some(allocation) = texture.allocation.take() {
-            let _ = self.allocator_mut().free(allocation);
+    pub fn destroy_texture(&mut self, texture: VulkanTexture) {
+        // Freeing has to match how the memory was obtained, or the pool is told
+        // about an allocation it never made.
+        match texture.memory {
+            TextureMemory::Pooled(allocation) => {
+                let _ = self.allocator_mut().free(allocation);
+            }
+            TextureMemory::Dedicated(memory) => {
+                // SAFETY: nothing else holds this allocation, and every
+                // submission using the image was waited on.
+                unsafe { self.raw_device().free_memory(memory, None) };
+            }
         }
         // SAFETY: the caller has given up the texture, and every submission
         // that used it was waited on before returning from the call that made

@@ -343,6 +343,10 @@ impl VulkanContext {
         &self.device
     }
 
+    pub fn raw_instance(&self) -> &ash::Instance {
+        &self.instance
+    }
+
     pub fn raw_physical_device(&self) -> vk::PhysicalDevice {
         self.physical_device
     }
@@ -557,6 +561,9 @@ fn detect_capabilities(
     pd: vk::PhysicalDevice,
     enabled: &HashSet<String>,
 ) -> Capabilities {
+    // Modifier queries need the extension enabled; without it the only honest
+    // answer about layouts is that nothing is known.
+    let modifiers_known = enabled.contains(ext::IMAGE_DRM_FORMAT_MODIFIER);
     let props = unsafe { instance.get_physical_device_properties(pd) };
     let limits = props.limits;
 
@@ -585,7 +592,11 @@ fn detect_capabilities(
             export_sync_file: enabled.contains(ext::EXTERNAL_FENCE_FD),
             import_sync_file: enabled.contains(ext::EXTERNAL_FENCE_FD),
         },
-        render_formats: Vec::new(),
+        render_formats: if modifiers_known {
+            crate::external::render_formats(instance, pd)
+        } else {
+            Vec::new()
+        },
         device_name: device_name(&props),
         driver_name: format!("vulkan {}", api_version_string(props.api_version)),
     }
