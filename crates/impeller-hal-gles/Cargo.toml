@@ -5,3 +5,11 @@ edition.workspace = true
 rust-version.workspace = true
 publish.workspace = true
 license.workspace = true
+
+[dependencies]
+glow = { workspace = true }
+impeller-hal = { workspace = true }
+# "dynamic" dlopens libEGL at runtime. Never "static": that needs libEGL and
+# pkg-config at link time, which breaks clean cross-builds and is banned by
+# deny.toml.
+khronos-egl = { workspace = true }
