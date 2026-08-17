@@ -407,6 +407,31 @@ because the packer runs once per glyph per size rather than per frame. Each
 glyph is padded by a texel: a linear filter samples a neighborhood, so a glyph
 flush against its neighbor bleeds that neighbor into its own edge.
 
+**Room is made by compacting, not by freeing.** Shelves cannot release a glyph
+in place — a hole in the middle of one is reusable only by a glyph of the same
+height, and tracking holes is most of what makes a general packer expensive. So
+a full atlas keeps what the current frame has asked for, discards the rest, and
+repacks from scratch. That is heavier than freeing an entry and far easier to be
+sure of, and its cost is bounded by how rarely it can happen: it runs only when
+an insertion would otherwise fail, and it cannot run twice in a frame without
+the second failing outright, since everything left after the first is something
+that frame needs.
+
+An atlas whose every glyph is in use reports itself full rather than evicting
+one about to be drawn. Text that genuinely needs more than an atlas holds is a
+case for a second page, not for a cleverer packer.
+
+A glyph counts as used when it is *inserted*, not when it is looked up. That is
+the usage the atlas is built around — a caller offers every glyph of every run
+each frame and pays only for the new ones — and marking on lookup would need a
+unique borrow at the point where a run is being recorded from a shared one. An
+atlas never told that a frame ended keeps everything, which is correct rather
+than a leak: a caller that has never said a frame ended has never said any glyph
+stopped mattering.
+
+Compaction moves every surviving glyph, so a repacked atlas reports itself dirty
+and the coordinates a run reads are the ones current when it was recorded.
+
 The atlas holds its texels rather than a device texture, and says when it is
 dirty. Uploading is the caller's, because only they know which device the
 texture lives on and when in the frame it is safe to write.

@@ -21,6 +21,21 @@
 //! packer runs once per glyph per size rather than per frame. A packer with
 //! better worst-case density would cost more per insertion and more to read for
 //! a gain that the input's own shape mostly removes.
+//!
+//! # Making room
+//!
+//! Shelves cannot free a glyph in place: a hole in the middle of one is not
+//! reusable by anything but a glyph of the same height, and tracking holes is
+//! most of what makes a general packer expensive. So room is made by compacting
+//! — keeping the glyphs this frame has asked for, discarding the rest, and
+//! repacking from scratch.
+//!
+//! That is a heavier operation than freeing one entry and a much simpler one to
+//! be sure of, and its cost is bounded by how often it can happen: it runs only
+//! when an insertion would otherwise fail, and it cannot run twice in a frame
+//! without the second one failing outright, because everything left after the
+//! first is something this frame needs. Text that genuinely needs more than an
+//! atlas holds is a case for a second page, not for a cleverer packer.
 
 use std::collections::HashMap;
 
@@ -124,8 +139,23 @@ pub struct Atlas {
     size: u32,
     texels: Vec<u8>,
     shelves: Vec<Shelf>,
-    placed: HashMap<GlyphKey, AtlasRect>,
+    placed: HashMap<GlyphKey, Placed>,
+    frame: u64,
     dirty: bool,
+    compactions: u64,
+}
+
+/// Where a glyph is, and when it was last asked for.
+#[derive(Debug, Clone, Copy)]
+struct Placed {
+    rect: AtlasRect,
+    /// The frame this glyph was most recently inserted in.
+    ///
+    /// Insertion rather than lookup, because insertion is what a caller does
+    /// for every glyph of every run each frame — that is the usage the atlas is
+    /// built around — and marking on lookup would need a unique borrow at the
+    /// point where a run is being recorded from a shared one.
+    used: u64,
 }
 
 /// Blank texels around each glyph.
@@ -144,7 +174,9 @@ impl Atlas {
             texels: vec![0; (size as usize) * (size as usize)],
             shelves: Vec::new(),
             placed: HashMap::new(),
+            frame: 0,
             dirty: false,
+            compactions: 0,
         }
     }
 
@@ -179,7 +211,27 @@ impl Atlas {
 
     /// Where a glyph sits, if it is present.
     pub fn get(&self, key: GlyphKey) -> Option<AtlasRect> {
-        self.placed.get(&key).copied()
+        self.placed.get(&key).map(|placed| placed.rect)
+    }
+
+    /// Begin a new frame, after which glyphs not inserted again are evictable.
+    ///
+    /// Nothing happens here but a counter moving. A caller that never calls it
+    /// keeps every glyph forever, which is correct rather than a leak: without
+    /// frame boundaries nothing is stale, and an atlas that filled would be
+    /// genuinely out of room.
+    pub fn begin_frame(&mut self) {
+        self.frame += 1;
+    }
+
+    /// How many times room has been made by repacking.
+    ///
+    /// Worth reporting because it is the number that says the atlas is too
+    /// small for the text going through it: a compaction or two as a working
+    /// set settles is ordinary, and one per frame means every frame is
+    /// repacking everything.
+    pub fn compactions(&self) -> u64 {
+        self.compactions
     }
 
     /// Add a glyph, or return where it already is.
@@ -188,8 +240,12 @@ impl Atlas {
     /// and pay only for the ones that are new. That is the usage this is for:
     /// deciding what is already present is exactly what an atlas is.
     pub fn insert(&mut self, key: GlyphKey, coverage: &Coverage) -> Result<AtlasRect, AtlasError> {
-        if let Some(rect) = self.placed.get(&key) {
-            return Ok(*rect);
+        if let Some(placed) = self.placed.get_mut(&key) {
+            // Refreshed rather than merely found: a glyph asked for again this
+            // frame is one this frame needs, and that is what keeps it from
+            // being the one compaction discards.
+            placed.used = self.frame;
+            return Ok(placed.rect);
         }
         if !coverage.is_consistent() {
             return Err(AtlasError::Inconsistent);
@@ -204,20 +260,99 @@ impl Atlas {
                 width: 0,
                 height: 0,
             };
-            self.placed.insert(key, rect);
+            self.placed.insert(
+                key,
+                Placed {
+                    rect,
+                    used: self.frame,
+                },
+            );
             return Ok(rect);
         }
 
-        let rect = self.allocate(coverage.width, coverage.height)?;
+        let rect = match self.allocate(coverage.width, coverage.height) {
+            Ok(rect) => rect,
+            // Only fullness is worth retrying. A glyph larger than the atlas
+            // does not fit an empty one either, and compacting to discover that
+            // would throw away everything for nothing.
+            Err(AtlasError::Full) => {
+                if !self.compact() {
+                    return Err(AtlasError::Full);
+                }
+                self.allocate(coverage.width, coverage.height)?
+            }
+            Err(e) => return Err(e),
+        };
         for row in 0..coverage.height {
             let from = (row * coverage.width) as usize;
             let to = ((rect.y + row) * self.size + rect.x) as usize;
             self.texels[to..to + coverage.width as usize]
                 .copy_from_slice(&coverage.texels[from..from + coverage.width as usize]);
         }
-        self.placed.insert(key, rect);
+        self.placed.insert(
+            key,
+            Placed {
+                rect,
+                used: self.frame,
+            },
+        );
         self.dirty = true;
         Ok(rect)
+    }
+
+    /// Discard glyphs this frame has not asked for, and repack the rest.
+    ///
+    /// Returns whether anything was freed. False means every glyph present is
+    /// one this frame needs, so there is nothing to give up and the atlas is
+    /// genuinely too small for the text going through it.
+    fn compact(&mut self) -> bool {
+        let survivors: Vec<(GlyphKey, Placed)> = self
+            .placed
+            .iter()
+            .filter(|(_, placed)| placed.used == self.frame)
+            .map(|(key, placed)| (*key, *placed))
+            .collect();
+        if survivors.len() == self.placed.len() {
+            return false;
+        }
+
+        // Copied out before anything is cleared, since the atlas's own texels
+        // are the only place a glyph's coverage still exists — the bitmaps a
+        // caller supplied were borrowed and are long gone.
+        let coverage: Vec<(GlyphKey, Coverage)> = survivors
+            .iter()
+            .map(|(key, placed)| (*key, self.extract(placed.rect)))
+            .collect();
+
+        self.texels.fill(0);
+        self.shelves.clear();
+        self.placed.clear();
+        self.compactions += 1;
+        self.dirty = true;
+
+        for (key, coverage) in coverage {
+            // Everything here fitted a moment ago and is being packed into an
+            // atlas holding a subset of what it held then, so this cannot fail.
+            // If it somehow does, dropping the glyph is better than refusing
+            // the insertion that triggered the compaction: the caller will
+            // offer it again next frame.
+            let _ = self.insert(key, &coverage);
+        }
+        true
+    }
+
+    /// Read a glyph's coverage back out of the atlas.
+    fn extract(&self, rect: AtlasRect) -> Coverage {
+        let mut texels = Vec::with_capacity((rect.width * rect.height) as usize);
+        for row in 0..rect.height {
+            let from = ((rect.y + row) * self.size + rect.x) as usize;
+            texels.extend_from_slice(&self.texels[from..from + rect.width as usize]);
+        }
+        Coverage {
+            width: rect.width,
+            height: rect.height,
+            texels,
+        }
     }
 
     /// Find room for a glyph and reserve it.
@@ -466,6 +601,153 @@ mod tests {
             !atlas.is_dirty(),
             "a glyph already present dirtied the atlas"
         );
+    }
+
+    /// Fill an atlas until it refuses, returning how many glyphs fitted.
+    fn fill(atlas: &mut Atlas, from: u16) -> u16 {
+        let mut glyph = from;
+        while atlas.insert(key(glyph), &solid(6, 6, 255)).is_ok() {
+            glyph += 1;
+            assert!(glyph < from + 200, "the atlas never filled");
+        }
+        glyph - from
+    }
+
+    #[test]
+    fn a_full_atlas_makes_room_for_what_the_new_frame_needs() {
+        let mut atlas = Atlas::new(32);
+        let fitted = fill(&mut atlas, 0);
+        assert!(
+            fitted > 2,
+            "only {fitted} glyphs fitted; too few to evict from"
+        );
+
+        // A new frame, and nothing from the old one asked for again. Everything
+        // present is now stale, so an insertion that would have failed makes
+        // room instead.
+        atlas.begin_frame();
+        let rect = atlas
+            .insert(key(500), &solid(6, 6, 255))
+            .expect("a stale atlas should make room");
+        assert_eq!(rect.width, 6);
+        assert_eq!(atlas.compactions(), 1);
+        assert_eq!(atlas.len(), 1, "the stale glyphs were not discarded");
+    }
+
+    #[test]
+    fn compaction_keeps_the_glyphs_this_frame_asked_for() {
+        let mut atlas = Atlas::new(32);
+        let fitted = fill(&mut atlas, 0);
+
+        // A new frame that asks for two of the old glyphs before filling up.
+        // Those two are what this frame needs; the rest are not.
+        atlas.begin_frame();
+        let kept: Vec<u16> = vec![0, 1];
+        for glyph in &kept {
+            atlas
+                .insert(key(*glyph), &solid(6, 6, 255))
+                .expect("refresh");
+        }
+        atlas
+            .insert(key(500), &solid(6, 6, 255))
+            .expect("should make room");
+
+        assert_eq!(atlas.compactions(), 1);
+        for glyph in &kept {
+            assert!(
+                atlas.get(key(*glyph)).is_some(),
+                "glyph {glyph} was asked for this frame and discarded anyway"
+            );
+        }
+        assert!(
+            atlas.get(key(fitted - 1)).is_none(),
+            "a glyph nothing asked for survived"
+        );
+    }
+
+    #[test]
+    fn a_glyph_kept_through_compaction_keeps_its_coverage() {
+        // The coverage a caller supplied was borrowed and is long gone, so
+        // repacking has to read it back out of the atlas. Getting that wrong
+        // gives a glyph that is present, addressable, and blank.
+        let mut atlas = Atlas::new(32);
+        let distinct = Coverage {
+            width: 3,
+            height: 2,
+            texels: vec![11, 22, 33, 44, 55, 66],
+        };
+        atlas.insert(key(0), &distinct).expect("insert");
+        fill(&mut atlas, 1);
+
+        atlas.begin_frame();
+        atlas.insert(key(0), &distinct).expect("refresh");
+        atlas
+            .insert(key(500), &solid(6, 6, 255))
+            .expect("should make room");
+
+        let rect = atlas.get(key(0)).expect("survived");
+        let mut got = Vec::new();
+        for row in 0..rect.height {
+            let from = ((rect.y + row) * atlas.size() + rect.x) as usize;
+            got.extend_from_slice(&atlas.texels()[from..from + rect.width as usize]);
+        }
+        assert_eq!(got, distinct.texels, "coverage was lost in repacking");
+    }
+
+    #[test]
+    fn an_atlas_full_of_glyphs_this_frame_needs_reports_full() {
+        // Compaction can free only what nothing has asked for, so an atlas
+        // whose every glyph is in use this frame is genuinely out of room.
+        // Saying so is the honest answer; the remedy is a second page, and
+        // pretending otherwise would evict a glyph about to be drawn.
+        let mut atlas = Atlas::new(32);
+        let fitted = fill(&mut atlas, 0);
+        atlas.begin_frame();
+        for glyph in 0..fitted {
+            atlas
+                .insert(key(glyph), &solid(6, 6, 255))
+                .expect("refresh");
+        }
+        assert_eq!(
+            atlas.insert(key(500), &solid(6, 6, 255)),
+            Err(AtlasError::Full)
+        );
+        assert_eq!(
+            atlas.compactions(),
+            0,
+            "it repacked without freeing anything"
+        );
+    }
+
+    #[test]
+    fn a_glyph_too_large_is_not_worth_compacting_for() {
+        // Nothing an empty atlas cannot hold is made to fit by emptying it, and
+        // compacting to find that out throws away every glyph for nothing.
+        let mut atlas = Atlas::new(32);
+        fill(&mut atlas, 0);
+        let before = atlas.len();
+        atlas.begin_frame();
+        assert_eq!(
+            atlas.insert(key(500), &solid(64, 64, 255)),
+            Err(AtlasError::TooLarge)
+        );
+        assert_eq!(atlas.compactions(), 0);
+        assert_eq!(atlas.len(), before, "the atlas was emptied for nothing");
+    }
+
+    #[test]
+    fn an_atlas_that_is_never_told_about_frames_keeps_everything() {
+        // Without frame boundaries nothing is stale, so a full atlas is
+        // genuinely full. That is correct rather than a leak: a caller that
+        // never says a frame ended has never said any glyph stopped mattering.
+        let mut atlas = Atlas::new(32);
+        let fitted = fill(&mut atlas, 0);
+        assert_eq!(
+            atlas.insert(key(500), &solid(6, 6, 255)),
+            Err(AtlasError::Full)
+        );
+        assert_eq!(atlas.len(), fitted as usize);
+        assert_eq!(atlas.compactions(), 0);
     }
 
     #[test]

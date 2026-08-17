@@ -1624,3 +1624,102 @@ fn the_backends_agree_on_a_glyph_run() {
         "the glyph run drew nothing"
     );
 }
+
+#[test]
+fn a_glyph_run_is_correct_after_the_atlas_has_been_repacked() {
+    let Some(mut ctx) = context() else { return };
+
+    // Compaction moves every surviving glyph, so the coordinates a run was
+    // going to read are wrong afterwards. The atlas reports itself dirty and
+    // the run reads its rectangles at record time, and this is the end-to-end
+    // check that those two together are enough: a caller that re-uploads when
+    // told to gets the right picture, and one that does not would get a
+    // different glyph's texels rather than a blank.
+    let mut atlas = Atlas::new(32);
+    let solid = GlyphKey {
+        font: 1,
+        glyph: 1,
+        size: 16,
+    };
+    let marker = Coverage {
+        width: 6,
+        height: 6,
+        texels: vec![255; 36],
+    };
+    atlas.insert(solid, &marker).expect("solid");
+
+    // Fill the rest with glyphs nothing will ask for again.
+    let mut filler = 2u16;
+    while atlas
+        .insert(
+            GlyphKey {
+                font: 1,
+                glyph: filler,
+                size: 16,
+            },
+            &Coverage {
+                width: 6,
+                height: 6,
+                texels: vec![64; 36],
+            },
+        )
+        .is_ok()
+    {
+        filler += 1;
+        assert!(filler < 200, "the atlas never filled");
+    }
+
+    // A new frame that needs only the marker, then one more glyph — which is
+    // what forces the repack.
+    atlas.begin_frame();
+    atlas.insert(solid, &marker).expect("refresh");
+    atlas
+        .insert(
+            GlyphKey {
+                font: 1,
+                glyph: 999,
+                size: 16,
+            },
+            &Coverage {
+                width: 6,
+                height: 6,
+                texels: vec![128; 36],
+            },
+        )
+        .expect("should make room");
+    assert_eq!(atlas.compactions(), 1, "the atlas did not repack");
+    assert!(atlas.is_dirty(), "a repacked atlas owes an upload");
+
+    let image = upload_atlas(&mut ctx, &atlas);
+    let mut canvas = Canvas::new(SIZE);
+    canvas.clear(Color::linear(0.0, 0.0, 0.0, 1.0));
+    canvas
+        .draw_glyphs(
+            &[PositionedGlyph::new(
+                solid,
+                [40.0, 40.0],
+                atlas.get(solid).unwrap(),
+            )],
+            &atlas,
+            0,
+            &Paint::fill(Color::linear(0.0, 1.0, 0.0, 1.0)),
+        )
+        .expect("glyphs");
+
+    let mut surface = ctx
+        .create_surface(SIZE, PixelFormat::Rgba8Unorm)
+        .expect("surface");
+    ctx.draw_with_images(&mut surface, &canvas.finish(), &[&image])
+        .expect("draw");
+    let pixels = ctx.read(&mut surface).expect("read");
+    ctx.destroy_surface(surface);
+    ctx.destroy_image(image);
+
+    // Full coverage after repacking, not the quarter coverage the filler
+    // glyphs carried — which is what a stale rectangle would have sampled.
+    assert_eq!(
+        pixel(&pixels, 42, 42),
+        [0, 255, 0, 255],
+        "the repacked glyph sampled the wrong part of the atlas"
+    );
+}
