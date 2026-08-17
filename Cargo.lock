@@ -272,6 +272,13 @@ dependencies = [
 [[package]]
 name = "impeller-present"
 version = "0.1.0"
+dependencies = [
+ "impeller-hal",
+ "impeller-hal-vulkan",
+ "impeller-renderer",
+ "impeller-testkit",
+ "log",
+]
 
 [[package]]
 name = "impeller-present-drm"

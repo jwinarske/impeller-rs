@@ -5,3 +5,12 @@ edition.workspace = true
 rust-version.workspace = true
 publish.workspace = true
 license.workspace = true
+
+[dependencies]
+impeller-hal = { workspace = true }
+log = { workspace = true }
+
+[dev-dependencies]
+impeller-hal-vulkan = { workspace = true }
+impeller-testkit = { workspace = true }
+impeller-renderer = { workspace = true }

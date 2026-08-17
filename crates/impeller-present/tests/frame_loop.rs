@@ -1,0 +1,192 @@
+//! Driving a frame loop through the presentation trait.
+//!
+//! The point of separating the two axes is that the loop is identical whatever
+//! the target: acquire, render, present. This runs that loop over the offscreen
+//! target and checks the results match what rendering directly to a texture
+//! produces, which is the property every other target will be held to when it
+//! arrives.
+
+use impeller_hal::{BlendMode, Extent2D, Hal, HalContext, PassDescriptor, PixelFormat};
+use impeller_hal_vulkan::{DevicePreference, VulkanContext, VulkanHal};
+use impeller_present::{OffscreenTarget, PresentTarget};
+use impeller_testkit::{corpus, render_scene, Scene};
+
+const SIZE: Extent2D = Extent2D {
+    width: 128,
+    height: 128,
+};
+
+fn context() -> Option<VulkanContext> {
+    match VulkanContext::new(DevicePreference::Auto) {
+        Ok(ctx) => Some(ctx),
+        Err(e) => {
+            eprintln!("skipping: no usable Vulkan device ({e})");
+            None
+        }
+    }
+}
+
+/// Render one scene through a presentation target, as a frame loop would.
+fn present_scene<H: Hal, T: PresentTarget<H>>(
+    ctx: &mut H::Context,
+    target: &mut T,
+    scene: &Scene,
+) -> Vec<u8>
+where
+    H::Context: HalContext<Hal = H>,
+{
+    use impeller_hal::Batch;
+    use impeller_renderer::{Paint, Renderer, TOLERANCE};
+
+    let mut renderer = Renderer::new();
+    renderer.begin_frame(target.extent(), TOLERANCE);
+    let mut batch = Batch::new();
+    for item in &scene.items {
+        let path = item.shape.to_path();
+        let transform = item.transform.to_affine();
+        let paint = Paint {
+            color: item.color,
+            blend: item.blend,
+        };
+        match &item.stroke {
+            Some(spec) => renderer
+                .stroke_into(&mut batch, &path, &spec.to_style(), transform, paint)
+                .expect("stroke"),
+            None => renderer
+                .fill_into(&mut batch, &path, transform, paint)
+                .expect("fill"),
+        }
+    }
+
+    // The loop the architecture promises is the same everywhere.
+    let image = target.acquire(ctx).expect("acquire");
+    ctx.submit_batch(
+        image,
+        &batch,
+        PassDescriptor::clear(scene.background).with_samples(scene.samples),
+    )
+    .expect("submit");
+    target.present(ctx).expect("present");
+
+    let image = target.acquire(ctx).expect("re-acquire for readback");
+    ctx.read_texture(image).expect("readback")
+}
+
+#[test]
+fn a_frame_loop_over_a_target_matches_rendering_to_a_texture() {
+    let Some(mut ctx) = context() else { return };
+    let mut failures = Vec::new();
+
+    for scene in corpus() {
+        let mut target =
+            OffscreenTarget::<VulkanHal>::new(&mut ctx, scene.size, PixelFormat::Rgba8Unorm)
+                .expect("target");
+        let through_target = present_scene::<VulkanHal, _>(&mut ctx, &mut target, &scene);
+        target.destroy(&mut ctx);
+
+        let direct = render_scene::<VulkanHal>(&mut ctx, &scene).expect("direct");
+        if through_target != direct.pixels {
+            failures.push(scene.name);
+        }
+    }
+
+    // Going through a presentation target must change nothing about what is
+    // rendered. Any difference means the target is doing something to the image
+    // rather than only deciding where it goes.
+    assert!(
+        failures.is_empty(),
+        "presenting changed the result for: {failures:?}"
+    );
+}
+
+#[test]
+fn presenting_counts_frames() {
+    let Some(mut ctx) = context() else { return };
+    let mut target =
+        OffscreenTarget::<VulkanHal>::new(&mut ctx, SIZE, PixelFormat::Rgba8Unorm).expect("target");
+
+    assert_eq!(target.presented_frames(), 0);
+    for expected in 1..=5u64 {
+        let _ = target.acquire(&mut ctx).expect("acquire");
+        target.present(&mut ctx).expect("present");
+        assert_eq!(target.presented_frames(), expected);
+    }
+    target.destroy(&mut ctx);
+}
+
+#[test]
+fn a_target_keeps_its_contents_between_acquisitions() {
+    let Some(mut ctx) = context() else { return };
+    let mut target =
+        OffscreenTarget::<VulkanHal>::new(&mut ctx, SIZE, PixelFormat::Rgba8Unorm).expect("target");
+
+    // Draw once, then acquire again without drawing. An offscreen target has
+    // one image rather than a rotating set, so the second acquisition must show
+    // the first frame's work. A target that rotated buffers would not, and that
+    // difference is exactly what a frame loop has to be written against.
+    let mut batch = impeller_hal::Batch::new();
+    batch
+        .push(
+            &[[-1.0, -1.0], [1.0, -1.0], [1.0, 1.0], [-1.0, 1.0]],
+            &[0, 1, 2, 0, 2, 3],
+            [1.0, 0.0, 0.0, 1.0],
+            BlendMode::Src,
+        )
+        .expect("push");
+
+    let image = target.acquire(&mut ctx).expect("acquire");
+    ctx.submit_batch(image, &batch, PassDescriptor::clear([0.0, 0.0, 0.0, 1.0]))
+        .expect("submit");
+    target.present(&mut ctx).expect("present");
+
+    let pixels = target.read(&mut ctx).expect("read");
+    assert_eq!(&pixels[..4], &[255, 0, 0, 255]);
+    target.destroy(&mut ctx);
+}
+
+#[test]
+fn reconfiguring_changes_the_extent_and_keeps_the_target_usable() {
+    let Some(mut ctx) = context() else { return };
+    let mut target =
+        OffscreenTarget::<VulkanHal>::new(&mut ctx, SIZE, PixelFormat::Rgba8Unorm).expect("target");
+    assert_eq!(target.extent(), SIZE);
+
+    let bigger = Extent2D::new(192, 96);
+    target.reconfigure(&mut ctx, bigger).expect("reconfigure");
+    assert_eq!(target.extent(), bigger);
+
+    // Usable afterwards, and at the new size: a reconfigure that left a stale
+    // image would read back the wrong number of pixels.
+    let image = target.acquire(&mut ctx).expect("acquire");
+    assert_eq!(HalTextureExt::extent_of(image), bigger);
+    let pixels = target.read(&mut ctx).expect("read");
+    assert_eq!(pixels.len(), (bigger.area() * 4) as usize);
+
+    target.destroy(&mut ctx);
+}
+
+#[test]
+fn reconfiguring_to_the_same_extent_is_a_no_op() {
+    let Some(mut ctx) = context() else { return };
+    let mut target =
+        OffscreenTarget::<VulkanHal>::new(&mut ctx, SIZE, PixelFormat::Rgba8Unorm).expect("target");
+
+    // A resize event that reports the size it already is arrives routinely, and
+    // reallocating on each would churn memory for nothing.
+    for _ in 0..8 {
+        target.reconfigure(&mut ctx, SIZE).expect("reconfigure");
+    }
+    assert_eq!(target.extent(), SIZE);
+    target.destroy(&mut ctx);
+}
+
+/// Reach a texture's extent through the HAL trait rather than the backend type.
+trait HalTextureExt {
+    fn extent_of(&self) -> Extent2D;
+}
+
+impl<T: impeller_hal::HalTexture> HalTextureExt for T {
+    fn extent_of(&self) -> Extent2D {
+        self.extent()
+    }
+}

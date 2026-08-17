@@ -1,12 +1,18 @@
-//! Presentation trait and shared types.
+//! Presentation: how a finished image reaches a display, and what paces the
+//! frame loop.
 //!
-//! The presentation axis is orthogonal to the rendering HAL: the HAL answers
-//! how draw commands become pixels in a GPU image, and presentation answers how
-//! a finished image reaches the display and how the frame loop is paced.
-//! Presentation owns pacing -- WSI paces via swapchain acquire semantics, DRM
-//! via page-flip completion events.
+//! This is the axis orthogonal to the rendering HAL. The HAL answers how draw
+//! commands become pixels in a GPU image; a presentation target answers how that
+//! image is displayed and when the next frame may begin. Keeping them
+//! independent is what lets every target work with every backend that can
+//! produce compatible images.
 //!
-//! Also owns format and modifier negotiation. A negotiation failure is a hard
-//! error with both sides' sets dumped, and the chosen modifier is always
-//! logged: a silent linear fallback halves memory bandwidth on an embedded
-//! panel, so it is treated as a bug rather than a graceful degradation.
+//! Format negotiation lives here rather than in either axis because it runs
+//! *between* them: the target says what it can scan out, the context says what
+//! it can render and export, and the intersection decides what is allocated.
+
+pub mod negotiate;
+pub mod target;
+
+pub use negotiate::{negotiate, negotiate_non_linear, Negotiated, PREFERRED_FORMATS};
+pub use target::{OffscreenTarget, PresentTarget};

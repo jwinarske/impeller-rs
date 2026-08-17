@@ -285,7 +285,11 @@ pub trait PresentFrame {
 ```
 
 The offscreen target is a first-class citizen, not a test affordance: the
-entire golden and conformance apparatus runs on it.
+entire golden and conformance apparatus runs on it, which makes it the most
+exercised target and the one every other target's output is compared against.
+Presenting must change nothing about what was rendered — a target decides where
+an image goes, not what it contains — and that equivalence is asserted over the
+whole corpus.
 
 ### Explicit sync is the design center
 
