@@ -401,6 +401,227 @@ impl VulkanContext {
         }
     }
 
+    /// Submit a batch without waiting, returning a fence that signals when the
+    /// GPU is finished.
+    ///
+    /// The waiting form is right for tests and setup. A frame loop needs this
+    /// one: it hands the caller something to attach to a page flip, or to wait
+    /// on while the next frame is already being recorded. Everything the
+    /// submission still needs — the command buffer and the pass's transient
+    /// framebuffer objects — travels with the fence, because none of it can be
+    /// released until the work completes.
+    ///
+    /// The returned fence must be handed back to [`Self::retire_fence`].
+    pub fn submit_batch_deferred(
+        &mut self,
+        target: &mut VulkanTexture,
+        batch: &Batch,
+        pass: PassDescriptor,
+    ) -> Result<crate::fence::VulkanFence> {
+        if pass.is_multisampled() {
+            // The transient multisample buffer would have to outlive the
+            // submission too. Supporting it means putting it in the fence
+            // alongside the rest, which is worth doing when a caller needs it.
+            return Err(Error::Unsupported(
+                "deferred submission of a multisampled pass",
+            ));
+        }
+        let format = vk_format(target.format());
+        if batch.is_empty() {
+            return Err(Error::Unsupported("deferred submission of an empty batch"));
+        }
+
+        let pass_key = RenderPassKey {
+            format,
+            clears: pass.clear.is_some(),
+            samples: 1,
+        };
+        let render_pass = self.ensure_render_pass(pass_key)?;
+        for draw in batch.draws() {
+            self.ensure_pipeline(
+                PipelineKey {
+                    format,
+                    blend: draw.blend,
+                    samples: 1,
+                },
+                render_pass,
+            )?;
+        }
+
+        let device = self.raw_device().clone();
+        let vertex_buffer = self.upload(
+            cast_bytes(batch.vertices()),
+            vk::BufferUsageFlags::VERTEX_BUFFER,
+        )?;
+        let index_buffer = self.upload(
+            cast_bytes(batch.indices()),
+            vk::BufferUsageFlags::INDEX_BUFFER,
+        )?;
+
+        let result = self.record_deferred(
+            &device,
+            target,
+            format,
+            render_pass,
+            batch,
+            vertex_buffer.buffer,
+            index_buffer.buffer,
+            pass,
+        );
+
+        // The geometry buffers are host-visible and were fully written before
+        // submission, so releasing them here would free memory the GPU is still
+        // reading. They are retained until the fence retires.
+        match result {
+            Ok(fence) => {
+                self.retain_until_retired(vertex_buffer, index_buffer);
+                Ok(fence)
+            }
+            Err(e) => {
+                self.release(vertex_buffer);
+                self.release(index_buffer);
+                Err(e)
+            }
+        }
+    }
+
+    /// Release a deferred submission once its work has completed.
+    pub fn retire_fence(&mut self, mut fence: crate::fence::VulkanFence) {
+        fence.retire();
+        self.release_retained();
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn record_deferred(
+        &mut self,
+        device: &ash::Device,
+        target: &mut VulkanTexture,
+        format: vk::Format,
+        render_pass: vk::RenderPass,
+        batch: &Batch,
+        vertex_buffer: vk::Buffer,
+        index_buffer: vk::Buffer,
+        pass: PassDescriptor,
+    ) -> Result<crate::fence::VulkanFence> {
+        let layout = self.pipeline_cache().layout().expect("ensured above");
+        let extent = target.extent();
+
+        let view_info = vk::ImageViewCreateInfo::default()
+            .image(target.raw_image())
+            .view_type(vk::ImageViewType::TYPE_2D)
+            .format(format)
+            .subresource_range(
+                vk::ImageSubresourceRange::default()
+                    .aspect_mask(vk::ImageAspectFlags::COLOR)
+                    .level_count(1)
+                    .layer_count(1),
+            );
+        let view = unsafe { device.create_image_view(&view_info, None) }
+            .map_err(|e| backend_err("create_image_view", e))?;
+
+        let attachments = [view];
+        let fb_info = vk::FramebufferCreateInfo::default()
+            .render_pass(render_pass)
+            .attachments(&attachments)
+            .width(extent.width)
+            .height(extent.height)
+            .layers(1);
+        let framebuffer = match unsafe { device.create_framebuffer(&fb_info, None) } {
+            Ok(fb) => fb,
+            Err(e) => {
+                unsafe { device.destroy_image_view(view, None) };
+                return Err(backend_err("create_framebuffer", e));
+            }
+        };
+
+        // Pipelines are resolved before recording so the loop below needs
+        // nothing from the cache, which keeps the recording free of borrows on
+        // the context while it holds the command buffer.
+        let pipelines: Vec<vk::Pipeline> = batch
+            .draws()
+            .iter()
+            .map(|draw| {
+                self.pipeline_cache()
+                    .pipeline(PipelineKey {
+                        format,
+                        blend: draw.blend,
+                        samples: 1,
+                    })
+                    .expect("ensured above")
+            })
+            .collect();
+
+        let previous_layout = target.layout();
+        let cmd = self.begin_one_shot()?;
+
+        // SAFETY: every object below belongs to this device and the command
+        // buffer is in the recording state.
+        unsafe {
+            if pass.clear.is_none() {
+                transition(
+                    device,
+                    cmd,
+                    target.raw_image(),
+                    previous_layout,
+                    vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL,
+                );
+            }
+
+            let clear_values = [vk::ClearValue {
+                color: vk::ClearColorValue {
+                    float32: pass.clear.unwrap_or([0.0; 4]),
+                },
+            }];
+            let area = vk::Rect2D {
+                offset: vk::Offset2D { x: 0, y: 0 },
+                extent: vk::Extent2D {
+                    width: extent.width,
+                    height: extent.height,
+                },
+            };
+            let begin = vk::RenderPassBeginInfo::default()
+                .render_pass(render_pass)
+                .framebuffer(framebuffer)
+                .render_area(area)
+                .clear_values(&clear_values);
+            let viewport = vk::Viewport {
+                x: 0.0,
+                y: 0.0,
+                width: extent.width as f32,
+                height: extent.height as f32,
+                min_depth: 0.0,
+                max_depth: 1.0,
+            };
+
+            device.cmd_begin_render_pass(cmd, &begin, vk::SubpassContents::INLINE);
+            device.cmd_set_viewport(cmd, 0, &[viewport]);
+            device.cmd_set_scissor(cmd, 0, &[area]);
+            device.cmd_bind_vertex_buffers(cmd, 0, &[vertex_buffer], &[0]);
+            device.cmd_bind_index_buffer(cmd, index_buffer, 0, vk::IndexType::UINT32);
+
+            let mut bound: Option<vk::Pipeline> = None;
+            for (draw, pipeline) in batch.draws().iter().zip(&pipelines) {
+                if bound != Some(*pipeline) {
+                    device.cmd_bind_pipeline(cmd, vk::PipelineBindPoint::GRAPHICS, *pipeline);
+                    bound = Some(*pipeline);
+                }
+                device.cmd_push_constants(
+                    cmd,
+                    layout,
+                    vk::ShaderStageFlags::FRAGMENT,
+                    0,
+                    cast_bytes(&draw.color),
+                );
+                device.cmd_draw_indexed(cmd, draw.index_count, 1, draw.first_index, 0, 0);
+            }
+            device.cmd_end_render_pass(cmd);
+        }
+
+        let fence = self.submit_exportable(cmd, framebuffer, view)?;
+        target.set_layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL);
+        Ok(fence)
+    }
+
     fn ensure_render_pass(&mut self, key: RenderPassKey) -> Result<vk::RenderPass> {
         if let Some(pass) = self.pipeline_cache().render_pass(key) {
             return Ok(pass);
@@ -471,7 +692,7 @@ impl VulkanContext {
         Ok(StagedBuffer { buffer, allocation })
     }
 
-    fn release(&mut self, staged: StagedBuffer) {
+    pub(crate) fn release(&mut self, staged: StagedBuffer) {
         let _ = self.allocator_mut().free(staged.allocation);
         // SAFETY: every submission using this buffer was waited on before the
         // call that made it returned.
@@ -479,9 +700,9 @@ impl VulkanContext {
     }
 }
 
-struct StagedBuffer {
-    buffer: vk::Buffer,
-    allocation: Allocation,
+pub(crate) struct StagedBuffer {
+    pub(crate) buffer: vk::Buffer,
+    pub(crate) allocation: Allocation,
 }
 
 fn build_render_pass(device: &ash::Device, key: RenderPassKey) -> Result<vk::RenderPass> {

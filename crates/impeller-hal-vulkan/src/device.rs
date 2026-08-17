@@ -109,6 +109,8 @@ pub struct VulkanContext {
     // is why it is an Option -- Drop takes it and drops it explicitly first.
     allocator: Option<gpu_allocator::vulkan::Allocator>,
     pipelines: PipelineCache,
+    /// Geometry buffers a deferred submission is still reading.
+    retained: Vec<crate::render::StagedBuffer>,
     command_pool: vk::CommandPool,
     device: ash::Device,
     physical_device: vk::PhysicalDevice,
@@ -295,6 +297,7 @@ impl VulkanContext {
             validation_log,
             allocator: Some(allocator),
             pipelines: PipelineCache::default(),
+            retained: Vec::new(),
             command_pool,
             device,
             physical_device,
@@ -369,6 +372,90 @@ impl VulkanContext {
             .expect("allocator is taken only in Drop")
     }
 
+    /// Submit a recorded command buffer with an exportable fence, without
+    /// waiting.
+    pub(crate) fn submit_exportable(
+        &self,
+        cmd: vk::CommandBuffer,
+        framebuffer: vk::Framebuffer,
+        view: vk::ImageView,
+    ) -> Result<crate::fence::VulkanFence> {
+        unsafe { self.device.end_command_buffer(cmd) }
+            .map_err(|e| backend_err("end_command_buffer", e))?;
+
+        // The fence is plain: it is what decides when this submission's
+        // resources may be released, and exporting would reset it.
+        let info = vk::FenceCreateInfo::default();
+        let fence = unsafe { self.device.create_fence(&info, None) }
+            .map_err(|e| backend_err("create_fence", e))?;
+
+        // The semaphore is the exportable half. Signalled by the same
+        // submission, so its payload represents exactly the same completion,
+        // and resetting it on export costs nothing because nothing else waits
+        // on it.
+        let can_export = self.has_extension(ext::EXTERNAL_SEMAPHORE_FD);
+        let semaphore = if can_export {
+            let mut export_info = vk::ExportSemaphoreCreateInfo::default()
+                .handle_types(vk::ExternalSemaphoreHandleTypeFlags::SYNC_FD);
+            let info = vk::SemaphoreCreateInfo::default().push_next(&mut export_info);
+            match unsafe { self.device.create_semaphore(&info, None) } {
+                Ok(semaphore) => Some(semaphore),
+                Err(e) => {
+                    unsafe { self.device.destroy_fence(fence, None) };
+                    return Err(backend_err("create_semaphore", e));
+                }
+            }
+        } else {
+            None
+        };
+
+        let cmds = [cmd];
+        let signals: Vec<vk::Semaphore> = semaphore.into_iter().collect();
+        let submit = vk::SubmitInfo::default()
+            .command_buffers(&cmds)
+            .signal_semaphores(&signals);
+        if let Err(e) = unsafe { self.device.queue_submit(self.queue, &[submit], fence) } {
+            unsafe {
+                if let Some(semaphore) = semaphore {
+                    self.device.destroy_semaphore(semaphore, None);
+                }
+                self.device.destroy_fence(fence, None);
+            }
+            return Err(backend_err("queue_submit", e));
+        }
+
+        let loader = can_export
+            .then(|| ash::khr::external_semaphore_fd::Device::new(&self.instance, &self.device));
+        Ok(crate::fence::VulkanFence::new(
+            self.device.clone(),
+            fence,
+            self.command_pool,
+            cmd,
+            framebuffer,
+            view,
+            semaphore,
+            loader,
+        ))
+    }
+
+    /// Hold buffers a deferred submission is still reading.
+    pub(crate) fn retain_until_retired(
+        &mut self,
+        vertices: crate::render::StagedBuffer,
+        indices: crate::render::StagedBuffer,
+    ) {
+        self.retained.push(vertices);
+        self.retained.push(indices);
+    }
+
+    /// Release buffers held for a submission that has now completed.
+    pub(crate) fn release_retained(&mut self) {
+        let retained = std::mem::take(&mut self.retained);
+        for buffer in retained {
+            self.release(buffer);
+        }
+    }
+
     /// Allocate and begin a command buffer for a single submission.
     pub(crate) fn begin_one_shot(&self) -> Result<vk::CommandBuffer> {
         let info = vk::CommandBufferAllocateInfo::default()
@@ -433,6 +520,7 @@ impl Drop for VulkanContext {
     fn drop(&mut self) {
         // The allocator must free its memory while the device is still alive,
         // so it is dropped explicitly before anything else is destroyed.
+        self.release_retained();
         self.pipelines.destroy(&self.device);
         drop(self.allocator.take());
         // SAFETY: every submission this context made was waited on before the
@@ -589,7 +677,12 @@ fn detect_capabilities(
             modifiers,
         },
         sync: SyncSupport {
-            export_sync_file: enabled.contains(ext::EXTERNAL_FENCE_FD),
+            // Export comes from a semaphore, not a fence: exporting a SYNC_FD
+            // resets what it came from, and a reset fence can never be waited
+            // on for retirement. So this reports the extension actually used.
+            export_sync_file: enabled.contains(ext::EXTERNAL_SEMAPHORE_FD),
+            // Import is the other direction — taking an out-fence from a
+            // display commit and waiting on it — which is a fence operation.
             import_sync_file: enabled.contains(ext::EXTERNAL_FENCE_FD),
         },
         render_formats: if modifiers_known {

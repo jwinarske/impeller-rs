@@ -60,8 +60,14 @@ fn capability_flags_are_internally_consistent() {
 
     // The extension backing each flag must actually have been enabled, or the
     // flag is a promise the device cannot keep.
+    // Export is a semaphore operation and import is a fence one, so the two
+    // flags come from different extensions rather than one covering both.
     assert_eq!(
         caps.sync.export_sync_file,
+        ctx.has_extension("VK_KHR_external_semaphore_fd")
+    );
+    assert_eq!(
+        caps.sync.import_sync_file,
         ctx.has_extension("VK_KHR_external_fence_fd")
     );
     assert_eq!(

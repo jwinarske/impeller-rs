@@ -14,12 +14,14 @@
 
 pub mod device;
 pub mod external;
+pub mod fence;
 pub mod hal;
 pub mod render;
 pub mod resource;
 pub mod validation;
 
 pub use device::{ContextConfig, DevicePreference, VulkanContext};
+pub use fence::VulkanFence;
 pub use hal::VulkanHal;
 pub use resource::VulkanTexture;
 pub use validation::{ValidationMessage, ValidationSeverity};
