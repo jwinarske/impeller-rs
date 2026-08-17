@@ -435,21 +435,38 @@ unsafe fn resolve_and_unbind(
 fn apply_blend(gl: &glow::Context, blend: BlendMode) {
     // SAFETY: a context is current.
     unsafe {
-        match blend {
-            BlendMode::Src => gl.disable(glow::BLEND),
-            BlendMode::SrcOver => {
-                gl.enable(glow::BLEND);
-                // ONE rather than SRC_ALPHA because the shader emits
-                // premultiplied colour, exactly as on the Vulkan side.
-                gl.blend_func_separate(
-                    glow::ONE,
-                    glow::ONE_MINUS_SRC_ALPHA,
-                    glow::ONE,
-                    glow::ONE_MINUS_SRC_ALPHA,
-                );
-                gl.blend_equation(glow::FUNC_ADD);
-            }
+        if blend.is_plain_write() {
+            // Writing the source outright needs no blend unit, which is worth
+            // switching off rather than expressing as ONE and ZERO.
+            gl.disable(glow::BLEND);
+            return;
         }
+        // Factors come from the shared table rather than being restated here,
+        // so the two backends cannot disagree about what a mode means. It
+        // assumes premultiplied colour, which is what the shader emits.
+        let factors = blend.factors();
+        let src = gl_blend_factor(factors.src);
+        let dst = gl_blend_factor(factors.dst);
+        gl.enable(glow::BLEND);
+        // The same factors for alpha as for colour: with premultiplied colour
+        // the alpha channel is not a special case, and giving it different
+        // factors breaks compositing a layer onto something else.
+        gl.blend_func_separate(src, dst, src, dst);
+        gl.blend_equation(glow::FUNC_ADD);
+    }
+}
+
+/// Translate a portable blend factor.
+fn gl_blend_factor(factor: impeller_hal::BlendFactor) -> u32 {
+    use impeller_hal::BlendFactor;
+    match factor {
+        BlendFactor::Zero => glow::ZERO,
+        BlendFactor::One => glow::ONE,
+        BlendFactor::SrcAlpha => glow::SRC_ALPHA,
+        BlendFactor::OneMinusSrcAlpha => glow::ONE_MINUS_SRC_ALPHA,
+        BlendFactor::DstAlpha => glow::DST_ALPHA,
+        BlendFactor::OneMinusDstAlpha => glow::ONE_MINUS_DST_ALPHA,
+        BlendFactor::DstColor => glow::DST_COLOR,
     }
 }
 

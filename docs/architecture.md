@@ -141,6 +141,20 @@ from either backend, and adding a row flip would reintroduce the mirror rather
 than remove it. Both backends assert this against a scene that is not
 symmetric top-to-bottom, since a symmetric one proves nothing.
 
+**Blend factors live in one table, not one per backend.** The Porter-Duff set
+is expressible with fixed-function factors, so it works on every device with no
+extension and no capability gate — which is why it comes first. Each backend
+translates portable factors rather than restating the table, so the two cannot
+disagree about what a mode means. All of them assume premultiplied colour, and
+alpha uses the same factors as colour: with premultiplied colour the alpha
+channel is not a special case, and giving it different factors is what breaks
+compositing a layer onto something else.
+
+The separable and non-separable modes — multiply, screen, overlay, hue and the
+rest — need an advanced-blend extension and are therefore capability-gated when
+they arrive. A renderer that could not composite at all without one would be
+unusable on the hardware least likely to have it.
+
 **Multisampling is a pass property, not a target property.** A pass renders
 into a transient multisample buffer and resolves into the target, so the target
 stays single-sampled and directly readable. Each backend realizes that

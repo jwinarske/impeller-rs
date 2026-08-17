@@ -35,6 +35,7 @@
 //! "is this GLES?" instead of "can this export a fence?" gets both wrong.
 
 pub mod batch;
+pub mod blend;
 pub mod capabilities;
 pub mod error;
 pub mod format;
@@ -43,6 +44,7 @@ pub mod resource;
 pub mod sync;
 
 pub use batch::{Batch, BatchDraw};
+pub use blend::{BlendFactor, BlendFactors, BlendMode};
 pub use capabilities::{Capabilities, DmaBufSupport, SampleCounts, SyncSupport};
 pub use error::{Error, Result};
 pub use format::{Extent2D, FormatModifierSet, Fourcc, Modifier, PixelFormat};
@@ -228,30 +230,5 @@ impl PassDescriptor {
 
     pub fn is_multisampled(&self) -> bool {
         self.samples > 1
-    }
-}
-
-/// How a draw combines with what a target already holds.
-///
-/// Only the two that the renderer needs before it has a material system. The
-/// full set of roughly thirty W3C modes arrives with the entity layer, which
-/// is what decides per-entity which one applies.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
-pub enum BlendMode {
-    /// Source over destination, the default for drawing one thing on another.
-    #[default]
-    SrcOver,
-    /// Replace the destination outright, ignoring what was there.
-    ///
-    /// Not the same as `SrcOver` with an opaque source: this also overwrites
-    /// the destination alpha, which matters when rendering into a layer that
-    /// will itself be composited.
-    Src,
-}
-
-impl BlendMode {
-    /// Whether the destination contributes to the result at all.
-    pub const fn reads_destination(self) -> bool {
-        matches!(self, Self::SrcOver)
     }
 }

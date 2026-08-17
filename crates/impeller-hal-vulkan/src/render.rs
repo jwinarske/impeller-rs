@@ -851,22 +851,34 @@ fn build_pipeline(
     let multisample = vk::PipelineMultisampleStateCreateInfo::default()
         .rasterization_samples(sample_flags(key.samples));
 
-    // Source color arrives premultiplied from the shader, so source-over is
-    // ONE rather than SRC_ALPHA. Using SRC_ALPHA against a premultiplied
-    // source would apply alpha twice and darken every translucent edge.
-    let blend_attachments = [match key.blend {
-        BlendMode::SrcOver => vk::PipelineColorBlendAttachmentState::default()
-            .color_write_mask(vk::ColorComponentFlags::RGBA)
+    // Factors come from the shared table rather than being restated here, so
+    // the two backends cannot disagree about what a mode means. Colour arrives
+    // premultiplied from the shader, which is what that table assumes: source-
+    // over is ONE rather than SRC_ALPHA, since using SRC_ALPHA against an
+    // already-scaled source applies alpha twice and darkens every translucent
+    // edge.
+    let attachment = vk::PipelineColorBlendAttachmentState::default()
+        .color_write_mask(vk::ColorComponentFlags::RGBA);
+    let blend_attachments = [if key.blend.is_plain_write() {
+        // Writing the source outright needs no blend unit at all, which is
+        // worth switching off rather than expressing as ONE and ZERO.
+        attachment.blend_enable(false)
+    } else {
+        let factors = key.blend.factors();
+        let src = vk_blend_factor(factors.src);
+        let dst = vk_blend_factor(factors.dst);
+        attachment
             .blend_enable(true)
-            .src_color_blend_factor(vk::BlendFactor::ONE)
-            .dst_color_blend_factor(vk::BlendFactor::ONE_MINUS_SRC_ALPHA)
+            .src_color_blend_factor(src)
+            .dst_color_blend_factor(dst)
             .color_blend_op(vk::BlendOp::ADD)
-            .src_alpha_blend_factor(vk::BlendFactor::ONE)
-            .dst_alpha_blend_factor(vk::BlendFactor::ONE_MINUS_SRC_ALPHA)
-            .alpha_blend_op(vk::BlendOp::ADD),
-        BlendMode::Src => vk::PipelineColorBlendAttachmentState::default()
-            .color_write_mask(vk::ColorComponentFlags::RGBA)
-            .blend_enable(false),
+            // The same factors for alpha as for colour: with premultiplied
+            // colour the alpha channel is not a special case, and giving it
+            // different factors is what breaks compositing a layer onto
+            // something else.
+            .src_alpha_blend_factor(src)
+            .dst_alpha_blend_factor(dst)
+            .alpha_blend_op(vk::BlendOp::ADD)
     }];
     let blend = vk::PipelineColorBlendStateCreateInfo::default().attachments(&blend_attachments);
 
@@ -895,6 +907,20 @@ fn build_pipeline(
     match created {
         Ok(pipelines) => Ok(pipelines[0]),
         Err((_, e)) => Err(backend_err("create_graphics_pipelines", e)),
+    }
+}
+
+/// Translate a portable blend factor.
+fn vk_blend_factor(factor: impeller_hal::BlendFactor) -> vk::BlendFactor {
+    use impeller_hal::BlendFactor;
+    match factor {
+        BlendFactor::Zero => vk::BlendFactor::ZERO,
+        BlendFactor::One => vk::BlendFactor::ONE,
+        BlendFactor::SrcAlpha => vk::BlendFactor::SRC_ALPHA,
+        BlendFactor::OneMinusSrcAlpha => vk::BlendFactor::ONE_MINUS_SRC_ALPHA,
+        BlendFactor::DstAlpha => vk::BlendFactor::DST_ALPHA,
+        BlendFactor::OneMinusDstAlpha => vk::BlendFactor::ONE_MINUS_DST_ALPHA,
+        BlendFactor::DstColor => vk::BlendFactor::DST_COLOR,
     }
 }
 

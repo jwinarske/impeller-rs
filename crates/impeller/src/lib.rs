@@ -37,7 +37,7 @@ pub use impeller_core::{
     Affine2, BlendMode, Canvas, Color, Extent2D, FillRule, GradientStop, LineCap, LineJoin, Paint,
     Path, PathBuilder, PixelFormat, Recording, Rect, Shader, StrokeStyle, Style, Vec2,
 };
-pub use impeller_hal::{Capabilities, Error, Result};
+pub use impeller_hal::{BlendFactor, Capabilities, Error, Result};
 
 /// Direct scanout to a display, with no compositor.
 #[cfg(feature = "drm")]

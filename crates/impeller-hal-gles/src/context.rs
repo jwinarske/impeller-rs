@@ -8,6 +8,7 @@
 use glow::HasContext;
 use impeller_hal::{Capabilities, DmaBufSupport, Error, Result, SampleCounts, SyncSupport};
 use std::collections::HashSet;
+use std::sync::Mutex;
 
 /// EGL 1.5 rather than 1.4, because platform displays are what select the
 /// surfaceless, GBM, or window platform explicitly. The 1.4 entry point guesses
@@ -85,8 +86,7 @@ impl GlesContext {
             }
         };
 
-        egl.initialize(display)
-            .map_err(|e| backend_err("initialize", e))?;
+        acquire_display(&egl, display)?;
 
         let egl_extensions = egl
             .query_string(Some(display), khronos_egl::EXTENSIONS)
@@ -96,7 +96,7 @@ impl GlesContext {
         // A surfaceless context still needs a config; it simply never gets a
         // surface bound to it.
         if !egl_extensions.contains("EGL_KHR_surfaceless_context") {
-            let _ = egl.terminate(display);
+            release_display(&egl, display);
             return Err(Error::Unsupported("EGL_KHR_surfaceless_context"));
         }
 
@@ -121,11 +121,11 @@ impl GlesContext {
         let config = match egl.choose_first_config(display, &config_attrs) {
             Ok(Some(config)) => config,
             Ok(None) => {
-                let _ = egl.terminate(display);
+                release_display(&egl, display);
                 return Err(Error::Unsupported("no EGL config with an ES3 RGBA8 target"));
             }
             Err(e) => {
-                let _ = egl.terminate(display);
+                release_display(&egl, display);
                 return Err(backend_err("choose_first_config", e));
             }
         };
@@ -142,14 +142,14 @@ impl GlesContext {
         let context = match egl.create_context(display, config, None, &context_attrs) {
             Ok(c) => c,
             Err(e) => {
-                let _ = egl.terminate(display);
+                release_display(&egl, display);
                 return Err(backend_err("create_context", e));
             }
         };
 
         if let Err(e) = egl.make_current(display, None, None, Some(context)) {
             let _ = egl.destroy_context(display, context);
-            let _ = egl.terminate(display);
+            release_display(&egl, display);
             return Err(backend_err("make_current", e));
         }
 
@@ -226,7 +226,51 @@ impl Drop for GlesContext {
         // the display never actually releases its resources.
         let _ = self.egl.make_current(self.display, None, None, None);
         let _ = self.egl.destroy_context(self.display, self.context);
-        let _ = self.egl.terminate(self.display);
+
+        // Terminating is refcounted across contexts, because an EGL display is
+        // process-global: asking for the same platform twice returns the same
+        // handle, and terminating it invalidates every context on it, not just
+        // this one. Doing it unconditionally tore down contexts belonging to
+        // other live users, which showed up as a second context reporting that
+        // the display had no extensions at all.
+        release_display(&self.egl, self.display);
+    }
+}
+
+/// How many live contexts each process-global display has.
+///
+/// A count rather than a flag: the last user out is the one that may terminate,
+/// and a flag could not tell the difference between one user and several.
+static DISPLAY_USERS: Mutex<Vec<(usize, usize)>> = Mutex::new(Vec::new());
+
+/// Record a new user of a display, initializing it on first use.
+fn acquire_display(egl: &Egl, display: khronos_egl::Display) -> Result<()> {
+    let key = display.as_ptr() as usize;
+    let mut users = DISPLAY_USERS.lock().unwrap_or_else(|e| e.into_inner());
+    match users.iter_mut().find(|(handle, _)| *handle == key) {
+        Some((_, count)) => *count += 1,
+        None => {
+            // Initializing more than once is permitted and is what makes the
+            // count meaningful, but doing it under the lock keeps a second
+            // thread from terminating between the two.
+            egl.initialize(display)
+                .map_err(|e| backend_err("initialize", e))?;
+            users.push((key, 1));
+        }
+    }
+    Ok(())
+}
+
+/// Drop a user, terminating the display once the last one goes.
+fn release_display(egl: &Egl, display: khronos_egl::Display) {
+    let key = display.as_ptr() as usize;
+    let mut users = DISPLAY_USERS.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some(index) = users.iter().position(|(handle, _)| *handle == key) {
+        users[index].1 -= 1;
+        if users[index].1 == 0 {
+            users.swap_remove(index);
+            let _ = egl.terminate(display);
+        }
     }
 }
 
