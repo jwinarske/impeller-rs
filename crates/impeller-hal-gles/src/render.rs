@@ -41,9 +41,13 @@ pub(crate) struct SolidProgram {
     /// each member is set individually. The array of stops needs one location
     /// per element for the same reason.
     pub(crate) stops: [Option<glow::UniformLocation>; impeller_hal::MAX_STOPS],
-    pub(crate) offsets: Option<glow::UniformLocation>,
-    pub(crate) endpoints: Option<glow::UniformLocation>,
-    pub(crate) params: Option<glow::UniformLocation>,
+    /// Every non-array member, paired with where it starts in the packed
+    /// material.
+    ///
+    /// Pairing them means the offsets come from the shared layout rather than
+    /// being written out again as bare indices, which is how this fell out of
+    /// step when the material grew a matrix.
+    pub(crate) members: Vec<(Option<glow::UniformLocation>, usize)>,
     pub(crate) vao: glow::VertexArray,
     pub(crate) vertices: glow::Buffer,
     pub(crate) indices: glow::Buffer,
@@ -226,44 +230,22 @@ impl GlesContext {
                     current = Some(draw.blend);
                 }
                 let packed = draw.material.to_push_constants();
-                for (i, location) in program.stops.iter().enumerate() {
+                let set = |location: &Option<glow::UniformLocation>, at: usize| {
                     if let Some(location) = location {
-                        let base = i * 4;
                         gl.uniform_4_f32(
                             Some(location),
-                            packed[base],
-                            packed[base + 1],
-                            packed[base + 2],
-                            packed[base + 3],
+                            packed[at],
+                            packed[at + 1],
+                            packed[at + 2],
+                            packed[at + 3],
                         );
                     }
+                };
+                for (i, location) in program.stops.iter().enumerate() {
+                    set(location, impeller_hal::material::layout::STOPS + i * 4);
                 }
-                if let Some(location) = &program.offsets {
-                    gl.uniform_4_f32(
-                        Some(location),
-                        packed[16],
-                        packed[17],
-                        packed[18],
-                        packed[19],
-                    );
-                }
-                if let Some(location) = &program.endpoints {
-                    gl.uniform_4_f32(
-                        Some(location),
-                        packed[20],
-                        packed[21],
-                        packed[22],
-                        packed[23],
-                    );
-                }
-                if let Some(location) = &program.params {
-                    gl.uniform_4_f32(
-                        Some(location),
-                        packed[24],
-                        packed[25],
-                        packed[26],
-                        packed[27],
-                    );
+                for (location, at) in &program.members {
+                    set(location, *at);
                 }
                 gl.draw_elements(
                     glow::TRIANGLES,
@@ -532,9 +514,21 @@ fn build_program(gl: &glow::Context) -> Result<SolidProgram> {
             *slot =
                 gl.get_uniform_location(program, &format!("_push_constant_binding_fs.stops[{i}]"));
         }
-        let offsets = gl.get_uniform_location(program, "_push_constant_binding_fs.offsets");
-        let endpoints = gl.get_uniform_location(program, "_push_constant_binding_fs.endpoints");
-        let params = gl.get_uniform_location(program, "_push_constant_binding_fs.params");
+        // Name and offset together, so adding a member to the material means
+        // adding one line here rather than editing indices in two places.
+        use impeller_hal::material::layout;
+        let members: Vec<(Option<glow::UniformLocation>, usize)> = [
+            ("offsets", layout::OFFSETS),
+            ("geometry", layout::GEOMETRY),
+            ("to_local", layout::TO_LOCAL),
+            ("params", layout::PARAMS),
+        ]
+        .into_iter()
+        .map(|(name, at)| {
+            let qualified = format!("_push_constant_binding_fs.{name}");
+            (gl.get_uniform_location(program, &qualified), at)
+        })
+        .collect();
 
         let vao = gl
             .create_vertex_array()
@@ -549,9 +543,7 @@ fn build_program(gl: &glow::Context) -> Result<SolidProgram> {
         Ok(SolidProgram {
             program,
             stops,
-            offsets,
-            endpoints,
-            params,
+            members,
             vao,
             vertices,
             indices,

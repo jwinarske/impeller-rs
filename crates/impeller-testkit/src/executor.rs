@@ -6,7 +6,7 @@
 
 use crate::image::Image;
 use crate::scene::{Fill, Item, Scene};
-use glam::{Affine2, Vec2};
+use glam::{Affine2, Mat2, Vec2};
 use impeller_geometry::transform::viewport_projection;
 use impeller_hal::{
     Batch, Extent2D, Hal, HalContext, Material, PassDescriptor, PixelFormat, Result, Stop,
@@ -20,22 +20,73 @@ use impeller_renderer::{Paint, Renderer, TOLERANCE};
 /// does, which needs both the item transform and the target size, so this is
 /// the only place that has everything required.
 fn material_for(item: &Item, transform: Affine2, target: Extent2D) -> Material {
+    let to_clip = viewport_projection(target.width, target.height) * transform;
+    let convert = |stops: &[crate::scene::Stop]| -> Vec<Stop> {
+        stops
+            .iter()
+            .map(|stop| Stop::new(stop.color, stop.offset))
+            .collect()
+    };
+
     match &item.fill {
         Fill::Solid(color) => Material::solid(*color),
         Fill::LinearGradient { start, end, stops } => {
-            let to_clip = viewport_projection(target.width, target.height) * transform;
             let start = to_clip.transform_point2(Vec2::from(*start));
             let end = to_clip.transform_point2(Vec2::from(*end));
             Material::LinearGradient {
                 start: [start.x, start.y],
                 end: [end.x, end.y],
-                stops: stops
-                    .iter()
-                    .map(|stop| Stop::new(stop.color, stop.offset))
-                    .collect(),
+                stops: convert(stops),
+            }
+        }
+        Fill::RadialGradient {
+            center,
+            radius,
+            stops,
+        } => {
+            let center_clip = to_clip.transform_point2(Vec2::from(*center));
+            // The radius folds into the mapping, so the shader measures against
+            // unit distance and never sees a radius.
+            let scaled = to_clip.matrix2 * Mat2::from_diagonal(Vec2::splat(*radius));
+            Material::RadialGradient {
+                center: [center_clip.x, center_clip.y],
+                to_local: invert_or_identity(scaled),
+                stops: convert(stops),
+            }
+        }
+        Fill::SweepGradient {
+            center,
+            start_angle,
+            end_angle,
+            stops,
+        } => {
+            let center_clip = to_clip.transform_point2(Vec2::from(*center));
+            Material::SweepGradient {
+                center: [center_clip.x, center_clip.y],
+                to_local: invert_or_identity(to_clip.matrix2),
+                start_angle: *start_angle,
+                end_angle: *end_angle,
+                stops: convert(stops),
             }
         }
     }
+}
+
+/// Invert a mapping, falling back to the identity where it cannot be inverted.
+///
+/// A degenerate transform collapses the shape to nothing, so the gradient it
+/// would have carried is not observable; returning the identity keeps a
+/// non-finite matrix out of the shader, where it would spread NaN across the
+/// whole draw.
+fn invert_or_identity(matrix: Mat2) -> [f32; 4] {
+    let determinant = matrix.determinant();
+    if determinant.abs() > 1e-9 && determinant.is_finite() {
+        let columns = matrix.inverse().to_cols_array();
+        if columns.iter().all(|v| v.is_finite()) {
+            return columns;
+        }
+    }
+    Mat2::IDENTITY.to_cols_array()
 }
 
 /// Record a scene's items into a batch.

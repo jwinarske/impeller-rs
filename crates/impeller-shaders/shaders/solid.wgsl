@@ -1,4 +1,4 @@
-// Solid colour and linear gradients.
+// Solid colour and gradients.
 //
 // Positions arrive in normalized device coordinates, in the WGSL convention:
 // Y increases upward. Translation to a backend whose framebuffer runs the
@@ -17,18 +17,28 @@
 // draw, so a uniform buffer would need either a fresh allocation or a dynamic
 // offset each time.
 //
-// This occupies 112 bytes, within the 128 that every device is required to
-// offer. Staying inside the guaranteed minimum matters more here than the
-// stop count does — an embedded part that only provides the minimum is exactly
-// the hardware this renderer targets.
+// This occupies 128 bytes, which is exactly what every device is required to
+// offer and therefore the ceiling. Materials that need more — an image shader
+// with its own sampler and matrix — do not fit here and want a uniform buffer
+// instead; this is deliberately at the limit rather than over it.
 struct Paint {
     // Up to four stops. Unused entries are ignored rather than blended.
     stops: array<vec4<f32>, 4>,
     // Position of each stop along the gradient, in order.
     offsets: vec4<f32>,
-    // Gradient endpoints in clip space: start.xy then end.xy.
-    endpoints: vec4<f32>,
-    // x: number of stops in use. y: 0 for solid, 1 for a linear gradient.
+    // Linear: start.xy then end.xy. Radial and sweep: centre.xy, then two
+    // spare components a sweep uses for its angles.
+    geometry: vec4<f32>,
+    // Maps a clip-space offset from the centre into the gradient's own space,
+    // as a two by two matrix in column order.
+    //
+    // Clip space is anisotropic whenever the target is not square, and a
+    // transform may rotate or skew as well, so a circle in user space is an
+    // ellipse here. Measuring distance or angle directly in clip space would
+    // therefore distort every radial and sweep gradient by the aspect ratio.
+    // Mapping back first is what makes them correct under any transform.
+    to_local: vec4<f32>,
+    // x: number of stops in use. y: 0 solid, 1 linear, 2 radial, 3 sweep.
     params: vec4<f32>,
 };
 
@@ -67,19 +77,44 @@ fn sample_stops(t: f32, count: i32) -> vec4<f32> {
     return result;
 }
 
+/// Map a clip-space position into the gradient's own space.
+fn to_gradient_space(clip: vec2<f32>) -> vec2<f32> {
+    let delta = clip - paint.geometry.xy;
+    let column0 = vec2<f32>(paint.to_local.x, paint.to_local.y);
+    let column1 = vec2<f32>(paint.to_local.z, paint.to_local.w);
+    return column0 * delta.x + column1 * delta.y;
+}
+
 @fragment
 fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     var colour: vec4<f32> = paint.stops[0];
+    let kind = paint.params.y;
+    let count = i32(paint.params.x);
 
-    if (paint.params.y > 0.5) {
-        let start = paint.endpoints.xy;
-        let end = paint.endpoints.zw;
-        let axis = end - start;
+    if (kind > 0.5 && kind < 1.5) {
+        // Linear: project onto the axis between the endpoints. Clamped so the
+        // ends extend rather than repeat; tile modes arrive with the paint.
+        let start = paint.geometry.xy;
+        let axis = paint.geometry.zw - start;
         let length_squared = max(dot(axis, axis), 1e-6);
-        // Projection onto the gradient axis, clamped so the ends extend rather
-        // than repeat. Tile modes belong to the paint and arrive with them.
         let t = clamp(dot(in.clip - start, axis) / length_squared, 0.0, 1.0);
-        colour = sample_stops(t, i32(paint.params.x));
+        colour = sample_stops(t, count);
+    } else if (kind > 1.5 && kind < 2.5) {
+        // Radial: distance in gradient space, where the radius is one.
+        let t = clamp(length(to_gradient_space(in.clip)), 0.0, 1.0);
+        colour = sample_stops(t, count);
+    } else if (kind > 2.5) {
+        // Sweep: angle about the centre, measured in gradient space so an
+        // anisotropic target does not bunch the stops on two sides.
+        let local = to_gradient_space(in.clip);
+        let angle = atan2(local.y, local.x);
+        let start_angle = paint.geometry.z;
+        let sweep = max(paint.geometry.w - start_angle, 1e-6);
+        // Wrapped into a single turn so a sweep starting at any angle runs
+        // forward from there rather than clipping at the atan2 discontinuity.
+        var turns = (angle - start_angle) / sweep;
+        turns = turns - floor(turns);
+        colour = sample_stops(clamp(turns, 0.0, 1.0), count);
     }
 
     // Colours are linear here. Conversion to the target's transfer function is

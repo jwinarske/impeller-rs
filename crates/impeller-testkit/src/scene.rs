@@ -110,6 +110,19 @@ pub enum Fill {
         end: [f32; 2],
         stops: Vec<Stop>,
     },
+    /// A gradient outward from a centre, reaching its last stop at `radius`.
+    RadialGradient {
+        center: [f32; 2],
+        radius: f32,
+        stops: Vec<Stop>,
+    },
+    /// A gradient around a centre, between two angles in radians.
+    SweepGradient {
+        center: [f32; 2],
+        start_angle: f32,
+        end_angle: f32,
+        stops: Vec<Stop>,
+    },
 }
 
 /// One thing to draw.
@@ -136,11 +149,16 @@ impl Item {
 
     /// A shape filled with a gradient between two points in its own space.
     pub fn gradient(shape: Shape, start: [f32; 2], end: [f32; 2], stops: Vec<Stop>) -> Self {
+        Self::filled(shape, Fill::LinearGradient { start, end, stops })
+    }
+
+    /// A shape filled with any fill.
+    pub fn filled(shape: Shape, fill: Fill) -> Self {
         Self {
             shape,
             stroke: None,
             transform: Transform::default(),
-            fill: Fill::LinearGradient { start, end, stops },
+            fill,
             blend: BlendMode::Src,
         }
     }
@@ -212,9 +230,13 @@ impl Scene {
     /// Assigning this per scene by hand would drift as the corpus grows, and
     /// would let a genuine divergence be waved through by loosening one entry.
     pub fn tolerance(&self) -> crate::image::Tolerance {
+        // Any fill that is not a plain colour is evaluated per fragment, so
+        // this asks what the fill is not rather than listing the kinds that
+        // are. Enumerating them meant a new gradient kind silently inherited
+        // the exact rule and failed the moment it was added.
         let computed = self.samples > 1
             || self.items.iter().any(|item| {
-                item.blend == BlendMode::SrcOver || matches!(item.fill, Fill::LinearGradient { .. })
+                item.blend == BlendMode::SrcOver || !matches!(item.fill, Fill::Solid(_))
             });
         if computed {
             crate::image::Tolerance::ROUNDING
@@ -436,6 +458,39 @@ pub fn corpus() -> Vec<Scene> {
                 rotate: 0.6,
                 translate: [40.0, 16.0],
             })],
+        ),
+        Scene::new(
+            "gradient-radial",
+            vec![Item::filled(
+                Shape::Rect {
+                    min: [4.0, 4.0],
+                    max: [124.0, 124.0],
+                },
+                Fill::RadialGradient {
+                    center: [64.0, 64.0],
+                    radius: 56.0,
+                    stops: vec![Stop::new(WHITE, 0.0), Stop::new(BLUE, 1.0)],
+                },
+            )],
+        ),
+        Scene::new(
+            "gradient-sweep",
+            vec![Item::filled(
+                Shape::Circle {
+                    center: [64.0, 64.0],
+                    radius: 56.0,
+                },
+                Fill::SweepGradient {
+                    center: [64.0, 64.0],
+                    start_angle: 0.0,
+                    end_angle: std::f32::consts::TAU,
+                    stops: vec![
+                        Stop::new(RED, 0.0),
+                        Stop::new(GREEN, 0.5),
+                        Stop::new(BLUE, 1.0),
+                    ],
+                },
+            )],
         ),
         Scene::new(
             "curve-antialiased",

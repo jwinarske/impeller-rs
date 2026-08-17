@@ -378,3 +378,127 @@ fn a_gradient_with_more_than_two_stops_passes_through_each() {
         "the middle stop should dominate at the midpoint, got {middle:?}"
     );
 }
+
+#[test]
+fn a_radial_gradient_runs_outward_from_its_centre() {
+    let Some(mut ctx) = context() else { return };
+    let mut canvas = Canvas::new(SIZE);
+    canvas.clear(Color::BLACK);
+    canvas
+        .draw_rect(
+            Rect::from_size(128.0, 128.0),
+            &Paint::radial_gradient(
+                Vec2::new(64.0, 64.0),
+                60.0,
+                vec![
+                    GradientStop::new(Color::linear(1.0, 0.0, 0.0, 1.0), 0.0),
+                    GradientStop::new(Color::linear(0.0, 0.0, 1.0, 1.0), 1.0),
+                ],
+            )
+            .with_anti_alias(false),
+        )
+        .expect("radial");
+
+    let pixels = render(&mut ctx, canvas);
+    let centre = pixel(&pixels, 64, 64);
+    assert!(centre[0] > 240 && centre[2] < 16, "centre: {centre:?}");
+
+    // Equidistant points must match. A radial gradient measured in clip space
+    // without mapping back would be an ellipse, and these would differ.
+    let right = pixel(&pixels, 64 + 40, 64);
+    let below = pixel(&pixels, 64, 64 + 40);
+    for channel in 0..4 {
+        assert!(
+            (right[channel] as i32 - below[channel] as i32).abs() <= 2,
+            "the gradient is not circular: right {right:?}, below {below:?}"
+        );
+    }
+    // And it must actually vary with distance.
+    assert!(right[2] > centre[2] + 40, "no falloff toward the edge");
+}
+
+#[test]
+fn a_radial_gradient_stays_circular_on_a_non_square_target() {
+    let Some(mut ctx) = context() else { return };
+    // The case the mapping exists for: clip space scales each axis by that
+    // axis' size, so on a non-square target an unmapped radial gradient comes
+    // out visibly stretched.
+    let extent = Extent2D::new(192, 96);
+    let mut canvas = Canvas::new(extent);
+    canvas.clear(Color::BLACK);
+    canvas
+        .draw_rect(
+            Rect::from_size(192.0, 96.0),
+            &Paint::radial_gradient(
+                Vec2::new(96.0, 48.0),
+                40.0,
+                vec![
+                    GradientStop::new(Color::linear(1.0, 0.0, 0.0, 1.0), 0.0),
+                    GradientStop::new(Color::linear(0.0, 0.0, 1.0, 1.0), 1.0),
+                ],
+            )
+            .with_anti_alias(false),
+        )
+        .expect("radial");
+
+    let mut surface = ctx
+        .create_surface(extent, PixelFormat::Rgba8Unorm)
+        .expect("surface");
+    ctx.draw(&mut surface, &canvas.finish()).expect("draw");
+    let pixels = ctx.read(&mut surface).expect("read");
+    ctx.destroy_surface(surface);
+
+    let at = |x: u32, y: u32| {
+        let i = ((y * extent.width + x) * 4) as usize;
+        [pixels[i], pixels[i + 1], pixels[i + 2], pixels[i + 3]]
+    };
+    // Thirty pixels right and thirty pixels down from the centre are the same
+    // distance away, so they must be the same colour.
+    let right = at(96 + 30, 48);
+    let below = at(96, 48 + 30);
+    for channel in 0..4 {
+        assert!(
+            (right[channel] as i32 - below[channel] as i32).abs() <= 2,
+            "stretched by the aspect ratio: right {right:?}, below {below:?}"
+        );
+    }
+}
+
+#[test]
+fn a_sweep_gradient_runs_around_its_centre() {
+    let Some(mut ctx) = context() else { return };
+    let mut canvas = Canvas::new(SIZE);
+    canvas.clear(Color::BLACK);
+    canvas
+        .draw_rect(
+            Rect::from_size(128.0, 128.0),
+            &Paint::sweep_gradient(
+                Vec2::new(64.0, 64.0),
+                0.0,
+                std::f32::consts::TAU,
+                vec![
+                    GradientStop::new(Color::linear(1.0, 0.0, 0.0, 1.0), 0.0),
+                    GradientStop::new(Color::linear(0.0, 0.0, 1.0, 1.0), 1.0),
+                ],
+            )
+            .with_anti_alias(false),
+        )
+        .expect("sweep");
+
+    let pixels = render(&mut ctx, canvas);
+    // Angle rather than distance: two points at different radii along the same
+    // ray must match, while two at the same radius on different rays must not.
+    let near = pixel(&pixels, 64 + 12, 64);
+    let far = pixel(&pixels, 64 + 48, 64);
+    for channel in 0..4 {
+        assert!(
+            (near[channel] as i32 - far[channel] as i32).abs() <= 2,
+            "a sweep should not vary with distance: near {near:?}, far {far:?}"
+        );
+    }
+
+    // Clip Y runs up, so a point below the centre in the image is at a negative
+    // angle and lands late in the sweep.
+    let above = pixel(&pixels, 64, 64 - 40);
+    assert_ne!(near, above, "a sweep should vary with angle");
+}

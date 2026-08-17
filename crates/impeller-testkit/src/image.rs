@@ -103,9 +103,13 @@ impl Difference {
 
 impl std::fmt::Display for Difference {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        // "differing" rather than "outside tolerance": this counts every pixel
+        // that is not identical, and whether that is acceptable is a separate
+        // question the caller answers with a tolerance. Saying otherwise made
+        // passing comparisons read like failures.
         write!(
             f,
-            "max delta {}, {} of {} pixels outside tolerance ({:.4}%)",
+            "max delta {}, {} of {} pixels differing ({:.4}%)",
             self.max_delta,
             self.outliers,
             self.total,

@@ -8,7 +8,7 @@
 
 use crate::paint::{Paint, Shader, Style};
 use crate::Color;
-use glam::{Affine2, Vec2};
+use glam::{Affine2, Mat2, Vec2};
 use impeller_geometry::transform::viewport_projection;
 use impeller_geometry::{Path, PathBuilder};
 use impeller_hal::{Batch, Extent2D, Material, PassDescriptor, Result, Stop};
@@ -212,20 +212,53 @@ impl Canvas {
     /// the screen. Doing it here rather than in the fragment stage means the
     /// shader receives clip-space endpoints and needs no transform of its own.
     fn material_for(&self, shader: &Shader) -> Material {
+        let to_clip = viewport_projection(self.extent.width, self.extent.height) * self.transform;
+        let stops_of = |stops: &[crate::paint::GradientStop]| -> Vec<Stop> {
+            stops
+                .iter()
+                .map(|s| Stop::new(s.color.to_array(), s.offset))
+                .collect()
+        };
+
         match shader {
             Shader::Solid(color) => Material::solid(color.to_array()),
             Shader::LinearGradient { start, end, stops } => {
-                let to_clip =
-                    viewport_projection(self.extent.width, self.extent.height) * self.transform;
                 let start = to_clip.transform_point2(*start);
                 let end = to_clip.transform_point2(*end);
                 Material::LinearGradient {
                     start: [start.x, start.y],
                     end: [end.x, end.y],
-                    stops: stops
-                        .iter()
-                        .map(|s| Stop::new(s.color.to_array(), s.offset))
-                        .collect(),
+                    stops: stops_of(stops),
+                }
+            }
+            Shader::RadialGradient {
+                center,
+                radius,
+                stops,
+            } => {
+                let center_clip = to_clip.transform_point2(*center);
+                // Folding the radius into the mapping means the shader measures
+                // against unit distance and never sees a radius at all.
+                let scaled = to_clip.matrix2 * Mat2::from_diagonal(Vec2::splat(*radius));
+                Material::RadialGradient {
+                    center: [center_clip.x, center_clip.y],
+                    to_local: inverse_or_identity(scaled),
+                    stops: stops_of(stops),
+                }
+            }
+            Shader::SweepGradient {
+                center,
+                start_angle,
+                end_angle,
+                stops,
+            } => {
+                let center_clip = to_clip.transform_point2(*center);
+                Material::SweepGradient {
+                    center: [center_clip.x, center_clip.y],
+                    to_local: inverse_or_identity(to_clip.matrix2),
+                    start_angle: *start_angle,
+                    end_angle: *end_angle,
+                    stops: stops_of(stops),
                 }
             }
         }
@@ -268,6 +301,28 @@ impl Canvas {
             batch: self.batch,
             pass,
         }
+    }
+}
+
+/// Invert a mapping, falling back to the identity if it cannot be inverted.
+///
+/// A degenerate transform — a zero scale, or one axis collapsed — has no
+/// inverse. That is a caller mistake rather than a renderer one, and the shape
+/// it fills is collapsed to nothing anyway, so the gradient it would have
+/// carried is not observable. Returning the identity keeps a non-finite matrix
+/// out of the shader, where it would spread NaN across every pixel of the draw.
+fn inverse_or_identity(matrix: Mat2) -> [f32; 4] {
+    let determinant = matrix.determinant();
+    let inverse = if determinant.abs() > 1e-9 && determinant.is_finite() {
+        matrix.inverse()
+    } else {
+        Mat2::IDENTITY
+    };
+    let columns = inverse.to_cols_array();
+    if columns.iter().all(|v| v.is_finite()) {
+        columns
+    } else {
+        Mat2::IDENTITY.to_cols_array()
     }
 }
 

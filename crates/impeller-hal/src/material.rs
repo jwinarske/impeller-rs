@@ -2,17 +2,22 @@
 //!
 //! A material is the paint as a backend sees it: fully resolved, in clip space,
 //! and packed into the layout the shader expects. Resolving happens above,
-//! because gradient endpoints have to travel through the same transform the
-//! geometry did.
+//! because gradient geometry has to travel through the same transform the shape
+//! did.
 
 /// Floats in the packed representation.
 ///
-/// 112 bytes, inside the 128 every device is required to offer. Staying within
-/// the guaranteed minimum matters more than a larger stop count would: a part
-/// that provides only the minimum is exactly the embedded hardware this
-/// renderer targets, and a material that did not fit there would have to fall
-/// back to a uniform buffer on the devices least able to afford one.
-pub const MATERIAL_FLOATS: usize = 28;
+/// 128 bytes, which is exactly what every device is required to offer and
+/// therefore the ceiling rather than a comfortable fit. That limit is what
+/// decided the stop count and the geometry budget, not the other way round: a
+/// part providing only the minimum is exactly the embedded hardware this
+/// renderer targets.
+///
+/// A material needing more than this — an image shader, with its own sampler
+/// and matrix — does not belong in push constants and wants a uniform buffer.
+/// Being at the limit is a signal that the next material is the one that
+/// changes the mechanism.
+pub const MATERIAL_FLOATS: usize = 32;
 
 /// Enforced at compile time rather than by a test, so a material that outgrew
 /// the guaranteed push-constant size could not be built at all.
@@ -27,6 +32,33 @@ const _: () = assert!(
 /// stops baked into a ramp texture and sampled, which waits on the HAL growing
 /// texture sampling.
 pub const MAX_STOPS: usize = 4;
+
+/// Offsets into the packed layout, matching the shader's declaration.
+///
+/// Public because it is a contract between the shader and every backend, not an
+/// internal detail. A backend without push constants has to set each member
+/// separately, and naming the offsets here keeps it from repeating the layout
+/// as bare indices that quietly go stale when the layout grows.
+pub mod layout {
+    /// Four stop colours.
+    pub const STOPS: usize = 0;
+    /// Stop positions.
+    pub const OFFSETS: usize = 16;
+    /// Endpoints, or centre plus angles.
+    pub const GEOMETRY: usize = 20;
+    /// Clip-space to gradient-space matrix, in column order.
+    pub const TO_LOCAL: usize = 24;
+    /// Stop count and material kind.
+    pub const PARAMS: usize = 28;
+}
+
+/// Kind selector shared with the shader.
+pub mod kind {
+    pub const SOLID: f32 = 0.0;
+    pub const LINEAR: f32 = 1.0;
+    pub const RADIAL: f32 = 2.0;
+    pub const SWEEP: f32 = 3.0;
+}
 
 /// A colour stop.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -43,6 +75,16 @@ impl Stop {
     }
 }
 
+/// Maps a clip-space offset into a gradient's own space, in column order.
+///
+/// Clip space is anisotropic whenever the target is not square, and a transform
+/// may rotate or skew as well, so a circle in user space is an ellipse there.
+/// Radial and sweep gradients measure distance and angle, both of which that
+/// distortion changes, so they map back before measuring. A linear gradient
+/// projects onto an axis, which distortion does not affect, and so does not
+/// need this.
+pub type ToLocal = [f32; 4];
+
 /// How a shape is filled.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Material {
@@ -58,6 +100,23 @@ pub enum Material {
         end: [f32; 2],
         stops: Vec<Stop>,
     },
+    /// A gradient outward from a centre, **in clip space**, where `to_local`
+    /// carries the radius: it maps the clip-space offset so that the gradient's
+    /// edge lands at unit distance.
+    RadialGradient {
+        center: [f32; 2],
+        to_local: ToLocal,
+        stops: Vec<Stop>,
+    },
+    /// A gradient around a centre, **in clip space**, running from `start_angle`
+    /// to `end_angle` in radians.
+    SweepGradient {
+        center: [f32; 2],
+        to_local: ToLocal,
+        start_angle: f32,
+        end_angle: f32,
+        stops: Vec<Stop>,
+    },
 }
 
 impl Material {
@@ -65,13 +124,25 @@ impl Material {
         Self::Solid(color)
     }
 
-    /// The colour a fully opaque solid fill would use, for culling decisions.
+    /// Whether drawing with this would change anything.
     pub fn is_invisible(&self) -> bool {
         match self {
             Self::Solid(color) => color[3] <= 0.0,
-            Self::LinearGradient { stops, .. } => {
+            Self::LinearGradient { stops, .. }
+            | Self::RadialGradient { stops, .. }
+            | Self::SweepGradient { stops, .. } => {
                 stops.is_empty() || stops.iter().all(|s| s.color[3] <= 0.0)
             }
+        }
+    }
+
+    /// The stops, for any material that has them.
+    fn stops(&self) -> &[Stop] {
+        match self {
+            Self::Solid(_) => &[],
+            Self::LinearGradient { stops, .. }
+            | Self::RadialGradient { stops, .. }
+            | Self::SweepGradient { stops, .. } => stops,
         }
     }
 
@@ -82,28 +153,60 @@ impl Material {
     /// blending toward whatever happens to be in them.
     pub fn to_push_constants(&self) -> [f32; MATERIAL_FLOATS] {
         let mut out = [0.0f32; MATERIAL_FLOATS];
+
+        if let Self::Solid(color) = self {
+            out[layout::STOPS..layout::STOPS + 4].copy_from_slice(color);
+            out[layout::PARAMS] = 1.0;
+            out[layout::PARAMS + 1] = kind::SOLID;
+            return out;
+        }
+
+        let stops = self.stops();
+        let count = stops.len().min(MAX_STOPS);
+        for (i, stop) in stops.iter().take(count).enumerate() {
+            out[layout::STOPS + i * 4..layout::STOPS + i * 4 + 4].copy_from_slice(&stop.color);
+            out[layout::OFFSETS + i] = stop.offset;
+        }
+        out[layout::PARAMS] = count.max(1) as f32;
+
+        // A gradient with fewer than two stops has nothing to interpolate
+        // between, so it renders as its first colour rather than sending the
+        // shader down a path that would read an entry nothing wrote.
+        if count < 2 {
+            out[layout::PARAMS + 1] = kind::SOLID;
+            return out;
+        }
+
         match self {
-            Self::Solid(color) => {
-                out[0..4].copy_from_slice(color);
-                // One stop, kind zero: the shader takes the first colour and
-                // never evaluates the gradient path.
-                out[24] = 1.0;
-                out[25] = 0.0;
+            Self::Solid(_) => unreachable!("handled above"),
+            Self::LinearGradient { start, end, .. } => {
+                out[layout::GEOMETRY] = start[0];
+                out[layout::GEOMETRY + 1] = start[1];
+                out[layout::GEOMETRY + 2] = end[0];
+                out[layout::GEOMETRY + 3] = end[1];
+                out[layout::PARAMS + 1] = kind::LINEAR;
             }
-            Self::LinearGradient { start, end, stops } => {
-                let count = stops.len().min(MAX_STOPS);
-                for (i, stop) in stops.iter().take(count).enumerate() {
-                    out[i * 4..i * 4 + 4].copy_from_slice(&stop.color);
-                    out[16 + i] = stop.offset;
-                }
-                // A gradient with one stop is a solid fill, and one with none
-                // would leave the shader reading uninitialized entries.
-                out[20] = start[0];
-                out[21] = start[1];
-                out[22] = end[0];
-                out[23] = end[1];
-                out[24] = count.max(1) as f32;
-                out[25] = if count >= 2 { 1.0 } else { 0.0 };
+            Self::RadialGradient {
+                center, to_local, ..
+            } => {
+                out[layout::GEOMETRY] = center[0];
+                out[layout::GEOMETRY + 1] = center[1];
+                out[layout::TO_LOCAL..layout::TO_LOCAL + 4].copy_from_slice(to_local);
+                out[layout::PARAMS + 1] = kind::RADIAL;
+            }
+            Self::SweepGradient {
+                center,
+                to_local,
+                start_angle,
+                end_angle,
+                ..
+            } => {
+                out[layout::GEOMETRY] = center[0];
+                out[layout::GEOMETRY + 1] = center[1];
+                out[layout::GEOMETRY + 2] = *start_angle;
+                out[layout::GEOMETRY + 3] = *end_angle;
+                out[layout::TO_LOCAL..layout::TO_LOCAL + 4].copy_from_slice(to_local);
+                out[layout::PARAMS + 1] = kind::SWEEP;
             }
         }
         out
@@ -111,13 +214,13 @@ impl Material {
 
     /// Which shader variant this needs, for keying a pipeline.
     ///
-    /// Both variants live in one program today, selected by a uniform, so this
+    /// Every variant lives in one program today, selected by a uniform, so this
     /// exists for the moment a material needs its own pipeline rather than
     /// pretending that moment has arrived.
     pub fn variant(&self) -> MaterialVariant {
         match self {
             Self::Solid(_) => MaterialVariant::Solid,
-            Self::LinearGradient { .. } => MaterialVariant::Gradient,
+            _ => MaterialVariant::Gradient,
         }
     }
 }
@@ -132,47 +235,112 @@ pub enum MaterialVariant {
 mod tests {
     use super::*;
 
+    fn two_stops() -> Vec<Stop> {
+        vec![
+            Stop::new([1.0, 0.0, 0.0, 1.0], 0.0),
+            Stop::new([0.0, 0.0, 1.0, 1.0], 1.0),
+        ]
+    }
+
     #[test]
     fn a_solid_colour_lands_in_the_first_stop_and_selects_the_solid_path() {
         let packed = Material::solid([0.25, 0.5, 0.75, 1.0]).to_push_constants();
         assert_eq!(&packed[0..4], &[0.25, 0.5, 0.75, 1.0]);
-        assert_eq!(packed[24], 1.0, "stop count");
-        assert_eq!(packed[25], 0.0, "kind should be solid");
+        assert_eq!(packed[layout::PARAMS], 1.0, "stop count");
+        assert_eq!(packed[layout::PARAMS + 1], kind::SOLID);
     }
 
     #[test]
-    fn a_gradient_packs_its_stops_endpoints_and_count() {
-        let material = Material::LinearGradient {
+    fn a_linear_gradient_packs_its_stops_endpoints_and_count() {
+        let packed = Material::LinearGradient {
             start: [-1.0, 0.0],
             end: [1.0, 0.0],
-            stops: vec![
-                Stop::new([1.0, 0.0, 0.0, 1.0], 0.0),
-                Stop::new([0.0, 0.0, 1.0, 1.0], 1.0),
-            ],
-        };
-        let packed = material.to_push_constants();
+            stops: two_stops(),
+        }
+        .to_push_constants();
 
         assert_eq!(&packed[0..4], &[1.0, 0.0, 0.0, 1.0], "first stop");
         assert_eq!(&packed[4..8], &[0.0, 0.0, 1.0, 1.0], "second stop");
-        assert_eq!(packed[16], 0.0, "first offset");
-        assert_eq!(packed[17], 1.0, "second offset");
-        assert_eq!(&packed[20..24], &[-1.0, 0.0, 1.0, 0.0], "endpoints");
-        assert_eq!(packed[24], 2.0, "stop count");
-        assert_eq!(packed[25], 1.0, "kind should be gradient");
+        assert_eq!(packed[layout::OFFSETS], 0.0);
+        assert_eq!(packed[layout::OFFSETS + 1], 1.0);
+        assert_eq!(
+            &packed[layout::GEOMETRY..layout::GEOMETRY + 4],
+            &[-1.0, 0.0, 1.0, 0.0]
+        );
+        assert_eq!(packed[layout::PARAMS + 1], kind::LINEAR);
     }
 
     #[test]
-    fn a_gradient_with_one_stop_is_treated_as_solid() {
-        // Interpolating needs two points. Selecting the gradient path with one
+    fn a_radial_gradient_packs_its_centre_and_mapping() {
+        let packed = Material::RadialGradient {
+            center: [0.25, -0.5],
+            to_local: [2.0, 0.0, 0.0, 4.0],
+            stops: two_stops(),
+        }
+        .to_push_constants();
+
+        assert_eq!(
+            &packed[layout::GEOMETRY..layout::GEOMETRY + 2],
+            &[0.25, -0.5]
+        );
+        // The mapping is what makes a circle circular on a non-square target,
+        // so it has to survive packing intact.
+        assert_eq!(
+            &packed[layout::TO_LOCAL..layout::TO_LOCAL + 4],
+            &[2.0, 0.0, 0.0, 4.0]
+        );
+        assert_eq!(packed[layout::PARAMS + 1], kind::RADIAL);
+    }
+
+    #[test]
+    fn a_sweep_gradient_packs_its_angles_alongside_its_centre() {
+        let packed = Material::SweepGradient {
+            center: [0.0, 0.0],
+            to_local: [1.0, 0.0, 0.0, 1.0],
+            start_angle: 0.5,
+            end_angle: 2.5,
+            stops: two_stops(),
+        }
+        .to_push_constants();
+
+        // Angles share the geometry slot with the centre, which is why a linear
+        // gradient's endpoints and a sweep's angles cannot both be present.
+        assert_eq!(
+            &packed[layout::GEOMETRY..layout::GEOMETRY + 4],
+            &[0.0, 0.0, 0.5, 2.5]
+        );
+        assert_eq!(packed[layout::PARAMS + 1], kind::SWEEP);
+    }
+
+    #[test]
+    fn every_gradient_kind_falls_back_to_solid_with_one_stop() {
+        // Interpolating needs two points. Selecting a gradient path with one
         // would have the shader read an entry nothing wrote.
-        let material = Material::LinearGradient {
-            start: [0.0, 0.0],
-            end: [1.0, 0.0],
-            stops: vec![Stop::new([1.0, 1.0, 1.0, 1.0], 0.0)],
-        };
-        let packed = material.to_push_constants();
-        assert_eq!(packed[25], 0.0, "kind should fall back to solid");
-        assert_eq!(&packed[0..4], &[1.0, 1.0, 1.0, 1.0]);
+        let one = vec![Stop::new([1.0, 1.0, 1.0, 1.0], 0.0)];
+        let materials = [
+            Material::LinearGradient {
+                start: [0.0, 0.0],
+                end: [1.0, 0.0],
+                stops: one.clone(),
+            },
+            Material::RadialGradient {
+                center: [0.0, 0.0],
+                to_local: [1.0, 0.0, 0.0, 1.0],
+                stops: one.clone(),
+            },
+            Material::SweepGradient {
+                center: [0.0, 0.0],
+                to_local: [1.0, 0.0, 0.0, 1.0],
+                start_angle: 0.0,
+                end_angle: 1.0,
+                stops: one,
+            },
+        ];
+        for material in materials {
+            let packed = material.to_push_constants();
+            assert_eq!(packed[layout::PARAMS + 1], kind::SOLID, "{material:?}");
+            assert_eq!(&packed[0..4], &[1.0, 1.0, 1.0, 1.0]);
+        }
     }
 
     #[test]
@@ -180,39 +348,67 @@ mod tests {
         let stops: Vec<Stop> = (0..8)
             .map(|i| Stop::new([i as f32 / 8.0, 0.0, 0.0, 1.0], i as f32 / 7.0))
             .collect();
-        let material = Material::LinearGradient {
+        let packed = Material::LinearGradient {
             start: [0.0, 0.0],
             end: [1.0, 0.0],
             stops,
-        };
-        let packed = material.to_push_constants();
+        }
+        .to_push_constants();
         // The count is what stops the shader reading past what was written.
-        assert_eq!(packed[24], MAX_STOPS as f32);
+        assert_eq!(packed[layout::PARAMS], MAX_STOPS as f32);
     }
 
     #[test]
-    fn visibility_accounts_for_every_stop() {
+    fn visibility_accounts_for_every_stop_of_every_kind() {
         assert!(Material::solid([1.0, 1.0, 1.0, 0.0]).is_invisible());
         assert!(!Material::solid([0.0, 0.0, 0.0, 1.0]).is_invisible());
 
-        let transparent = Material::LinearGradient {
-            start: [0.0, 0.0],
-            end: [1.0, 0.0],
-            stops: vec![
-                Stop::new([1.0, 0.0, 0.0, 0.0], 0.0),
-                Stop::new([0.0, 0.0, 1.0, 0.0], 1.0),
-            ],
-        };
-        assert!(transparent.is_invisible());
+        let clear = vec![
+            Stop::new([1.0, 0.0, 0.0, 0.0], 0.0),
+            Stop::new([0.0, 0.0, 1.0, 0.0], 1.0),
+        ];
+        assert!(Material::RadialGradient {
+            center: [0.0, 0.0],
+            to_local: [1.0, 0.0, 0.0, 1.0],
+            stops: clear,
+        }
+        .is_invisible());
 
-        let partly = Material::LinearGradient {
-            start: [0.0, 0.0],
-            end: [1.0, 0.0],
-            stops: vec![
-                Stop::new([1.0, 0.0, 0.0, 0.0], 0.0),
-                Stop::new([0.0, 0.0, 1.0, 1.0], 1.0),
-            ],
-        };
-        assert!(!partly.is_invisible(), "one visible stop is enough");
+        let partly = vec![
+            Stop::new([1.0, 0.0, 0.0, 0.0], 0.0),
+            Stop::new([0.0, 0.0, 1.0, 1.0], 1.0),
+        ];
+        assert!(
+            !Material::SweepGradient {
+                center: [0.0, 0.0],
+                to_local: [1.0, 0.0, 0.0, 1.0],
+                start_angle: 0.0,
+                end_angle: 1.0,
+                stops: partly,
+            }
+            .is_invisible(),
+            "one visible stop is enough"
+        );
+    }
+
+    #[test]
+    fn every_gradient_kind_reports_the_same_variant() {
+        // They share one program, selected by a uniform, so keying a pipeline
+        // on the kind would create three identical pipelines.
+        assert_eq!(Material::solid([0.0; 4]).variant(), MaterialVariant::Solid);
+        for material in [
+            Material::LinearGradient {
+                start: [0.0; 2],
+                end: [1.0, 0.0],
+                stops: two_stops(),
+            },
+            Material::RadialGradient {
+                center: [0.0; 2],
+                to_local: [1.0, 0.0, 0.0, 1.0],
+                stops: two_stops(),
+            },
+        ] {
+            assert_eq!(material.variant(), MaterialVariant::Gradient);
+        }
     }
 }
