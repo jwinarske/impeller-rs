@@ -66,11 +66,22 @@ jobs:
 
       - name: Select the software implementations
         run: |
-          icd=/usr/share/vulkan/icd.d/lvp_icd.x86_64.json
-          # Pinned rather than left to the loader's search, so this run cannot
-          # quietly pick up something else, and so a packaging change is a
-          # failure here instead of a suite that skips its way to green.
-          test -f "$icd" || { echo "lavapipe ICD missing at $icd"; exit 1; }
+          # Found rather than hardcoded. The first version of this step named
+          # the path lavapipe has on Fedora, which is not the path it has here,
+          # and a distribution's ICD filename is exactly the kind of thing to
+          # discover instead of assume. The directory is listed either way, so
+          # a future mismatch is diagnosable from the log rather than from a
+          # second push.
+          ls -la /usr/share/vulkan/icd.d/ || true
+          icd=$(ls /usr/share/vulkan/icd.d/*lvp*.json 2>/dev/null | head -1)
+          if [ -z "$icd" ]; then
+            echo "no lavapipe ICD found; the listing above is what was installed"
+            exit 1
+          fi
+          # Pinned once found, so the run cannot quietly pick up something else
+          # and a packaging change is a failure here rather than a suite that
+          # skips its way to green.
+          echo "using $icd"
           echo "VK_DRIVER_FILES=$icd" >> "$GITHUB_ENV"
           echo "LIBGL_ALWAYS_SOFTWARE=1" >> "$GITHUB_ENV"
 
