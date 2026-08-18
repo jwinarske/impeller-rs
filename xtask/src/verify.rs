@@ -19,6 +19,17 @@
 
 use std::process::Command;
 
+/// A failed test and the panic it produced, if one was found.
+pub struct Failure {
+    pub name: String,
+    /// The `thread ... panicked at` location, and the message under it.
+    ///
+    /// Empty when the failure was not a panic -- a test binary that aborted,
+    /// or a harness-level error -- which is itself worth seeing rather than
+    /// papering over with a guess.
+    pub detail: Vec<String>,
+}
+
 /// One kind of skip, and how many tests reported it.
 pub struct Skip {
     pub reason: String,
@@ -28,13 +39,14 @@ pub struct Skip {
 pub struct Outcome {
     pub passed: usize,
     pub failed: usize,
-    /// The names of the tests that failed, in the order the harness listed
-    /// them.
+    /// The tests that failed, each with whatever it said on the way out.
     ///
-    /// A count on its own says something is wrong and not what, which on a
-    /// machine that is not this one -- a CI runner, somebody else's hardware --
-    /// is the difference between a fix and another push to find out.
-    pub failures: Vec<String>,
+    /// A count on its own says something is wrong and not what, and a name on
+    /// its own says which test and not why. On a machine that is not this one
+    /// -- a CI runner, somebody else's hardware -- the difference between those
+    /// and the panic message is the difference between a fix and another push
+    /// to find out. Both were learned that way.
+    pub failures: Vec<Failure>,
     pub skips: Vec<Skip>,
     /// True where the suite itself came back non-zero.
     pub broke: bool,
@@ -90,20 +102,59 @@ pub fn run(extra: &[String]) -> Outcome {
         String::from_utf8_lossy(&output.stderr)
     );
 
+    parse(&text, !output.status.success())
+}
+
+/// Turn the harness's output into a census.
+///
+/// Split from the run so it can be tested on text rather than on a device: the
+/// interesting cases here are shapes of output -- a panic with a multi-line
+/// message, the same failure named once per target under `--no-fail-fast` --
+/// and reproducing those by breaking a real test is neither quick nor
+/// something that stays around afterwards.
+fn parse(text: &str, broke: bool) -> Outcome {
     let mut passed = 0;
     let mut failed = 0;
-    let mut failures: Vec<String> = Vec::new();
+    let mut failures: Vec<Failure> = Vec::new();
     let mut reasons: Vec<(String, usize)> = Vec::new();
     // The harness prints each failure twice: once as it happens and again in a
     // trailing list. The first form is taken and the second ignored, because
     // with `--no-fail-fast` the trailing lists arrive per target and a name
     // would otherwise be counted once per binary that mentions it.
-    for line in text.lines() {
+    //
+    // The panic is matched separately, by the thread name the harness gives
+    // each test. Under `--nocapture` it is written straight to stderr as it
+    // happens rather than collected into a per-test block, so the two are
+    // interleaved with everything else and are paired up by name here.
+    let lines: Vec<&str> = text.lines().collect();
+    for (i, line) in lines.iter().enumerate() {
         if let Some(name) = line.trim().strip_prefix("test ") {
             if let Some(name) = name.strip_suffix(" ... FAILED") {
                 let name = name.to_string();
-                if !failures.contains(&name) {
-                    failures.push(name);
+                if !failures.iter().any(|f| f.name == name) {
+                    failures.push(Failure {
+                        name,
+                        detail: Vec::new(),
+                    });
+                }
+            }
+        }
+        if let Some(rest) = line.trim().strip_prefix("thread '") {
+            if let Some((thread, location)) = rest.split_once("' panicked at ") {
+                if let Some(failure) = failures.iter_mut().find(|f| f.name == thread) {
+                    if failure.detail.is_empty() {
+                        failure.detail.push(format!("at {location}"));
+                        // The message sits under the location, one line or
+                        // several, and ends where the harness's note about
+                        // RUST_BACKTRACE begins.
+                        for next in lines.iter().skip(i + 1) {
+                            let next = next.trim();
+                            if next.is_empty() || next.starts_with("note: ") {
+                                break;
+                            }
+                            failure.detail.push(next.to_string());
+                        }
+                    }
                 }
             }
         }
@@ -136,7 +187,7 @@ pub fn run(extra: &[String]) -> Outcome {
             .into_iter()
             .map(|(reason, count)| Skip { reason, count })
             .collect(),
-        broke: !output.status.success(),
+        broke,
     }
 }
 
@@ -146,8 +197,11 @@ pub fn text(outcome: &Outcome) -> String {
         "{} passed, {} failed\n",
         outcome.passed, outcome.failed
     ));
-    for name in &outcome.failures {
-        out.push_str(&format!("    FAILED  {name}\n"));
+    for failure in &outcome.failures {
+        out.push_str(&format!("    FAILED  {}\n", failure.name));
+        for line in &failure.detail {
+            out.push_str(&format!("              {line}\n"));
+        }
     }
     let skipped: usize = outcome.skips.iter().map(|s| s.count).sum();
     if outcome.skips.is_empty() {
@@ -182,5 +236,58 @@ mod tests {
             normalize("  skipping: both backends are needed"),
             "skipping: both backends are needed"
         );
+    }
+
+    /// The shape `cargo test --no-fail-fast -- --nocapture` actually produces.
+    const OUTPUT: &str = "\
+running 3 tests
+skipping: no card node on this machine
+test a_passing_one ... ok
+test the_broken_one ... FAILED
+thread 'the_broken_one' panicked at crates/x/tests/y.rs:12:5:
+all 2 acquisitions returned the same image,
+so nothing is double buffered
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+failures:
+    the_broken_one
+
+test result: FAILED. 1 passed; 1 failed; 0 ignored; 0 measured; 1 filtered out;
+";
+
+    #[test]
+    fn a_failure_carries_the_panic_that_produced_it() {
+        let outcome = parse(OUTPUT, true);
+        assert_eq!(outcome.passed, 1);
+        assert_eq!(outcome.failed, 1);
+        assert_eq!(outcome.failures.len(), 1, "one failure, named once");
+        let failure = &outcome.failures[0];
+        assert_eq!(failure.name, "the_broken_one");
+        assert_eq!(
+            failure.detail,
+            vec![
+                "at crates/x/tests/y.rs:12:5:".to_string(),
+                "all 2 acquisitions returned the same image,".to_string(),
+                "so nothing is double buffered".to_string(),
+            ],
+            "the location and the whole message, stopping before the note"
+        );
+    }
+
+    #[test]
+    fn the_same_failure_named_by_several_targets_is_counted_once() {
+        // `--no-fail-fast` prints a trailing `failures:` list per test binary,
+        // so a name can appear repeatedly for one failure.
+        let doubled = format!("{OUTPUT}\nfailures:\n    the_broken_one\n");
+        let outcome = parse(&doubled, true);
+        assert_eq!(outcome.failures.len(), 1);
+    }
+
+    #[test]
+    fn a_skip_is_counted_by_its_reason_without_the_parenthetical() {
+        let text = "skipping: no device (llvmpipe)\nskipping: no device (radeonsi)\n";
+        let outcome = parse(text, false);
+        assert_eq!(outcome.skips.len(), 1, "one reason, two machines");
+        assert_eq!(outcome.skips[0].count, 2);
     }
 }
