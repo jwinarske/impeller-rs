@@ -1358,6 +1358,13 @@ question from everything else here, and only a person can read the answer. It
 suits gross wrongness rather than fine judgement: the first two things that
 looked wrong on it were not, and measurement said so both times.
 
+A scene the preferred device cannot render is drawn by whichever device can,
+and reported as such. Otherwise the holes fall in exactly the places least
+looked at — the advanced blend modes need an extension this hardware lacks, so
+the six scenes nobody could see would be the six that most reward seeing. A
+tile drawn by a fallback is not evidence about the preferred device, which is
+why the command says which ones were.
+
 **A skipped test passes, and `cargo test` hides which.** A test that finds it
 cannot run — no device, no second backend, a capability the hardware lacks —
 prints why and returns, because the alternative is a suite that cannot be run

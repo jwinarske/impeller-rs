@@ -51,21 +51,44 @@ pub struct Sheet {
     /// is the one that looks wrong.
     pub names: Vec<&'static str>,
     pub columns: u32,
+    /// Scenes the preferred device could not render, drawn by a fallback.
+    ///
+    /// Reported because the sheet does not say so: whether two devices agree is
+    /// a separate question the conformance run answers, and a tile drawn by the
+    /// software rasterizer should not be read as evidence about the hardware.
+    pub borrowed: Vec<&'static str>,
 }
 
 /// Render the corpus and lay it out in a grid.
 pub fn render(columns: u32) -> Result<Sheet, String> {
-    let mut ctx =
-        VulkanContext::new(DevicePreference::Auto).map_err(|e| format!("no Vulkan device: {e}"))?;
+    // Every device this machine offers, preferred first. A scene the preferred
+    // one cannot render is drawn by whichever can, because the alternative is a
+    // sheet with holes in exactly the places least looked at: the advanced
+    // blend modes need an extension this hardware lacks and the software
+    // rasterizer has, so without this they are the six scenes nobody ever sees.
+    let mut devices: Vec<VulkanContext> = [DevicePreference::Auto, DevicePreference::Software]
+        .into_iter()
+        .filter_map(|preference| VulkanContext::new(preference).ok())
+        .collect();
+    if devices.is_empty() {
+        return Err("no Vulkan device".to_string());
+    }
 
     let scenes = corpus();
     let mut tiles: Vec<(&'static str, Option<Image>)> = Vec::with_capacity(scenes.len());
+    let mut borrowed = Vec::new();
     for scene in &scenes {
-        if !scene.supported_by(ctx.capabilities()) {
+        let chosen = devices
+            .iter()
+            .position(|ctx| scene.supported_by(ctx.capabilities()));
+        let Some(index) = chosen else {
             tiles.push((scene.name, None));
             continue;
+        };
+        if index > 0 {
+            borrowed.push(scene.name);
         }
-        match render_scene::<VulkanHal>(&mut ctx, scene) {
+        match render_scene::<VulkanHal>(&mut devices[index], scene) {
             Ok(image) => tiles.push((scene.name, Some(image))),
             Err(e) => {
                 eprintln!("{}: {e}", scene.name);
@@ -127,6 +150,7 @@ pub fn render(columns: u32) -> Result<Sheet, String> {
         skipped,
         names: tiles.iter().map(|(name, _)| *name).collect(),
         columns,
+        borrowed,
     })
 }
 

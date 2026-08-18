@@ -101,6 +101,13 @@ fn main() {
                         sheet.drawn, sheet.width, sheet.height
                     );
                     print!("{}", gallery::map(&sheet));
+                    if !sheet.borrowed.is_empty() {
+                        println!(
+                            "{} drawn by a fallback device, not this one: {}",
+                            sheet.borrowed.len(),
+                            sheet.borrowed.join(", ")
+                        );
+                    }
                     if !sheet.skipped.is_empty() {
                         println!(
                             "{} not rendered by this device: {}",
