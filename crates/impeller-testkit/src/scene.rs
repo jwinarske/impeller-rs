@@ -444,8 +444,13 @@ impl Scene {
         // A layer is composited back with a blend and an alpha, which is the
         // same per-fragment arithmetic a translucent draw does, so a scene that
         // groups anything is computed whatever its items are.
-        let computed = self.samples > 1
-            || self.items.iter().any(Node::has_layer)
+        // Multisampling first, because it permits something the others do not:
+        // a whole sample's worth of difference at an edge, on a few pixels. The
+        // rest permit a unit everywhere and nothing more.
+        if self.samples > 1 {
+            return crate::image::Tolerance::MULTISAMPLED;
+        }
+        let computed = self.items.iter().any(Node::has_layer)
             || self.items().any(|item| {
                 item.blend == BlendMode::SrcOver || !matches!(item.fill, Fill::Solid(_))
             });
@@ -1068,6 +1073,53 @@ pub fn corpus() -> Vec<Scene> {
             })
             .collect(),
         ),
+        // Rounded rectangles, which an interface is mostly made of and which
+        // nothing else here draws. Two radii and a stroke: a modest one where
+        // the straight edges still dominate, one large enough to be clamped to
+        // half the shorter side and come out a stadium, and a stroked outline
+        // where the corner arcs meet the straight runs and a tangent that was
+        // slightly wrong shows as a kink.
+        Scene::new(
+            "rounded-rect",
+            vec![
+                Item::fill(
+                    Shape::RoundedRect {
+                        min: [12.0, 16.0],
+                        max: [116.0, 60.0],
+                        radius: 12.0,
+                    },
+                    RED,
+                ),
+                Item::fill(
+                    Shape::RoundedRect {
+                        min: [12.0, 72.0],
+                        max: [116.0, 116.0],
+                        // Far past half the height, so the clamp is what
+                        // decides the shape.
+                        radius: 400.0,
+                    },
+                    BLUE,
+                ),
+            ],
+        ),
+        Scene::new(
+            "rounded-rect-stroked",
+            vec![Item::stroke(
+                Shape::RoundedRect {
+                    min: [20.0, 20.0],
+                    max: [108.0, 108.0],
+                    radius: 28.0,
+                },
+                StrokeSpec {
+                    width: 9.0,
+                    cap: LineCap::Butt,
+                    join: LineJoin::Round,
+                    miter_limit: 4.0,
+                },
+                GREEN,
+            )],
+        )
+        .with_samples(4),
         // Layers. Everything below here needs the scene to be a tree, and none
         // of it could be said at all while a scene was a flat list of items --
         // which is why layer compositing went uncompared across backends for as

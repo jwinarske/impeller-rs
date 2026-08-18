@@ -68,6 +68,27 @@ impl Tolerance {
         outlier_fraction: 0.0,
     };
 
+    /// Rounding, plus a few pixels allowed to differ by more.
+    ///
+    /// For multisampling, where the extra latitude is a specific and bounded
+    /// thing rather than general slack. Neither graphics specification says
+    /// which samples an edge covers when it passes near a sample point, so two
+    /// rasterizers may include a different one -- and the resolve then differs
+    /// by one sample's share of the total, which at four samples is a quarter
+    /// of full scale. That is far too much for the per-channel budget and is
+    /// not a defect, so it is bounded by *how many* pixels rather than by how
+    /// much.
+    ///
+    /// A thousandth of the image: sixteen pixels at the corpus's size, against
+    /// the two to four that curved edges actually produce. Anything systematic
+    /// -- a shape in the wrong place, a color computed differently, a missing
+    /// draw -- moves far more of the image than that, so this stays able to
+    /// tell a rasterization tie from a divergence.
+    pub const MULTISAMPLED: Self = Self {
+        per_channel: 1,
+        outlier_fraction: 0.001,
+    };
+
     pub const fn new(per_channel: u8, outlier_fraction: f32) -> Self {
         Self {
             per_channel,
@@ -208,6 +229,49 @@ mod tests {
         assert!(d.is_identical());
         assert_eq!(d.outliers, 0);
         assert!(accepts(&d, Tolerance::EXACT));
+    }
+
+    /// An image differing from a flat one at `count` pixels, by a whole
+    /// sample's worth at four samples.
+    fn with_outliers(width: u32, height: u32, count: usize) -> Image {
+        let mut image = solid(width, height, [10, 20, 30, 255]);
+        for i in 0..count {
+            image.pixels[i * 4] = 10u8.wrapping_add(64);
+        }
+        image
+    }
+
+    #[test]
+    fn the_multisample_budget_admits_a_tie_and_refuses_a_divergence() {
+        // The budget exists for one thing: two rasterizers including different
+        // samples where an edge passes near a sample point, which moves a few
+        // pixels by a quarter of full scale at four samples. It has to admit
+        // that and still refuse anything systematic, or it is general slack
+        // rather than a specific allowance.
+        let flat = solid(128, 128, [10, 20, 30, 255]);
+        let total = 128 * 128;
+
+        // What curved edges actually produce here: single figures.
+        let tie = with_outliers(128, 128, 4);
+        let difference = compare(&flat, &tie).unwrap();
+        assert_eq!(difference.max_delta, 64, "a sample's worth at four samples");
+        assert!(
+            accepts(&difference, Tolerance::MULTISAMPLED),
+            "a handful of edge pixels should be admitted"
+        );
+        assert!(
+            !accepts(&difference, Tolerance::ROUNDING),
+            "and should not be, without the multisample budget"
+        );
+
+        // One percent of the image, which is far more edge than a corpus scene
+        // has and is what a real divergence looks like.
+        let divergent = with_outliers(128, 128, total / 100);
+        let difference = compare(&flat, &divergent).unwrap();
+        assert!(
+            !accepts(&difference, Tolerance::MULTISAMPLED),
+            "a divergence over one percent of the image was admitted"
+        );
     }
 
     #[test]

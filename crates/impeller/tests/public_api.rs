@@ -471,6 +471,153 @@ fn a_surface_from_one_context_is_refused_by_another() {
 }
 
 #[test]
+fn a_rounded_rectangle_cuts_its_corners_and_keeps_its_edges() {
+    let Some(mut ctx) = context() else { return };
+    // The shape an interface is mostly made of, and the one thing about it a
+    // test can state simply: the corners come off and nothing else does.
+    let region = Rect::new(16.0, 32.0, 112.0, 96.0);
+    let render = |ctx: &mut Context, radius: f32| {
+        let mut canvas = Canvas::new(SIZE);
+        canvas.clear(Color::BLACK);
+        canvas
+            .draw_rrect(
+                region,
+                radius,
+                &Paint::fill(Color::WHITE).with_anti_alias(false),
+            )
+            .expect("rrect");
+        render(ctx, canvas)
+    };
+
+    let square = render(&mut ctx, 0.0);
+    let rounded = render(&mut ctx, 16.0);
+    let lit = |pixels: &[u8], x: u32, y: u32| pixels[((y * SIZE.width + x) * 4) as usize] > 128;
+
+    // Just inside each corner of the bounding box: filled when square, gone
+    // when rounded. All four, since a corner built from the wrong tangent
+    // tends to be wrong in one place rather than in all of them.
+    for (x, y) in [(17, 33), (110, 33), (17, 94), (110, 94)] {
+        assert!(
+            lit(&square, x, y),
+            "square corner ({x},{y}) should be filled"
+        );
+        assert!(
+            !lit(&rounded, x, y),
+            "rounded corner ({x},{y}) should be cut away"
+        );
+    }
+    // The middle of each edge is untouched: rounding takes the corners only.
+    for (x, y) in [(64, 33), (64, 94), (17, 64), (110, 64)] {
+        assert!(
+            lit(&rounded, x, y),
+            "edge ({x},{y}) should survive rounding"
+        );
+    }
+    assert!(lit(&rounded, 64, 64), "the middle should be filled");
+}
+
+#[test]
+fn a_radius_larger_than_the_rectangle_is_clamped() {
+    let Some(mut ctx) = context() else { return };
+    // Past half the shorter side the corner arcs would overlap and the outline
+    // would cross itself, which fills as something nobody asked for. Clamped,
+    // the shape becomes a stadium and then stops changing -- so an enormous
+    // radius and a merely sufficient one give the same picture.
+    let region = Rect::new(16.0, 32.0, 112.0, 96.0);
+    let render = |ctx: &mut Context, radius: f32| {
+        let mut canvas = Canvas::new(SIZE);
+        canvas.clear(Color::BLACK);
+        canvas
+            .draw_rrect(
+                region,
+                radius,
+                &Paint::fill(Color::WHITE).with_anti_alias(false),
+            )
+            .expect("rrect");
+        render(ctx, canvas)
+    };
+
+    // Half the height is 32, so both of these clamp to the same shape.
+    let exact = render(&mut ctx, 32.0);
+    let enormous = render(&mut ctx, 10_000.0);
+    assert_eq!(exact, enormous, "a huge radius should clamp to the stadium");
+    // Infinity among them: a caller who writes it means the roundest shape
+    // available, so answering with a square would be the opposite of the ask.
+    assert_eq!(
+        exact,
+        render(&mut ctx, f32::INFINITY),
+        "an infinite radius should clamp like any other large one"
+    );
+
+    // And it is a stadium rather than an outline that crossed itself: the
+    // middle is filled, the corners are gone, and the mid-height ends are the
+    // extreme points of the curve.
+    let lit = |pixels: &[u8], x: u32, y: u32| pixels[((y * SIZE.width + x) * 4) as usize] > 128;
+    assert!(lit(&exact, 64, 64), "the middle should be filled");
+    assert!(!lit(&exact, 17, 33), "the corner should be gone");
+    assert!(lit(&exact, 17, 64), "the left end should reach its extreme");
+}
+
+#[test]
+fn a_radius_of_zero_is_the_plain_rectangle() {
+    // So a caller can pass a radius that happens to be zero -- an interface
+    // animating one, or reading it from a style -- without special-casing it.
+    let region = Rect::new(16.0, 32.0, 112.0, 96.0);
+    let mut canvas = Canvas::new(SIZE);
+    canvas.clear(Color::BLACK);
+    canvas
+        .draw_rrect(region, 0.0, &Paint::fill(Color::WHITE))
+        .expect("rrect");
+    let rounded = canvas.finish();
+
+    let mut canvas = Canvas::new(SIZE);
+    canvas.clear(Color::BLACK);
+    canvas
+        .draw_rect(region, &Paint::fill(Color::WHITE))
+        .expect("rect");
+    let square = canvas.finish();
+
+    assert_eq!(
+        rounded.draw_count(),
+        square.draw_count(),
+        "a zero radius should record the same drawing as a plain rectangle"
+    );
+    // Negative too, which is what a caller subtracting a border can produce --
+    // and a radius that is not a number at all, which is what arithmetic on one
+    // produces when it goes wrong. Both give the plain rectangle rather than a
+    // shape derived from a value nobody meant.
+    for radius in [-4.0, f32::NAN] {
+        let mut canvas = Canvas::new(SIZE);
+        canvas.clear(Color::BLACK);
+        canvas
+            .draw_rrect(region, radius, &Paint::fill(Color::WHITE))
+            .expect("rrect");
+        let recorded = canvas.finish();
+        assert_eq!(
+            recorded.draw_count(),
+            square.draw_count(),
+            "a radius of {radius} should record the same drawing as a plain rectangle"
+        );
+    }
+}
+
+#[test]
+fn an_empty_rounded_rectangle_draws_nothing() {
+    let mut canvas = Canvas::new(SIZE);
+    canvas
+        .draw_rrect(
+            Rect::new(50.0, 50.0, 50.0, 20.0),
+            8.0,
+            &Paint::fill(Color::WHITE),
+        )
+        .expect("rrect");
+    assert!(
+        canvas.finish().is_empty(),
+        "a rectangle with no area should record no drawing"
+    );
+}
+
+#[test]
 fn a_linear_gradient_runs_between_its_stops() {
     let Some(mut ctx) = context() else { return };
     let mut canvas = Canvas::new(SIZE);

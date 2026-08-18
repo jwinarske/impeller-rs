@@ -43,6 +43,14 @@ pub enum Shape {
         center: [f32; 2],
         radius: f32,
     },
+    /// A rectangle with rounded corners, which is most of an interface.
+    RoundedRect {
+        min: [f32; 2],
+        max: [f32; 2],
+        /// Clamped to half the shorter side, so a large one gives a stadium
+        /// rather than an outline that crosses itself.
+        radius: f32,
+    },
     /// An open cubic, for curve and stroke coverage.
     Cubic {
         start: [f32; 2],
@@ -74,6 +82,38 @@ impl Shape {
                 b = b.with_fill_rule(*rule);
                 trace(&mut b, points);
                 b.close();
+            }
+            Self::RoundedRect { min, max, radius } => {
+                let (l, t) = (min[0], min[1]);
+                let (r, bo) = (max[0], max[1]);
+                let radius = radius.min((r - l) / 2.0).min((bo - t) / 2.0).max(0.0);
+                let k = KAPPA * radius;
+                b.move_to(Vec2::new(l + radius, t))
+                    .line_to(Vec2::new(r - radius, t))
+                    .cubic_to(
+                        Vec2::new(r - radius + k, t),
+                        Vec2::new(r, t + radius - k),
+                        Vec2::new(r, t + radius),
+                    )
+                    .line_to(Vec2::new(r, bo - radius))
+                    .cubic_to(
+                        Vec2::new(r, bo - radius + k),
+                        Vec2::new(r - radius + k, bo),
+                        Vec2::new(r - radius, bo),
+                    )
+                    .line_to(Vec2::new(l + radius, bo))
+                    .cubic_to(
+                        Vec2::new(l + radius - k, bo),
+                        Vec2::new(l, bo - radius + k),
+                        Vec2::new(l, bo - radius),
+                    )
+                    .line_to(Vec2::new(l, t + radius))
+                    .cubic_to(
+                        Vec2::new(l, t + radius - k),
+                        Vec2::new(l + radius - k, t),
+                        Vec2::new(l + radius, t),
+                    )
+                    .close();
             }
             Self::Circle { center, radius } => {
                 let (cx, cy) = (center[0], center[1]);

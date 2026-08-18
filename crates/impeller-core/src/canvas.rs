@@ -64,6 +64,68 @@ impl Rect {
             .close();
         b.build()
     }
+
+    /// This rectangle with its corners rounded to `radius`.
+    ///
+    /// The radius is clamped to half the shorter side. Larger is not an error
+    /// worth refusing -- a caller asking for a fully rounded end usually says
+    /// so by passing something enormous -- and left unclamped the corner arcs
+    /// would overlap and the outline would cross itself, which fills as
+    /// something nobody asked for. Clamped, the shape degenerates to a stadium
+    /// and then a circle, which is what asking for a huge radius means.
+    ///
+    /// A radius at or below zero gives the plain rectangle, so a caller can
+    /// pass a radius that happens to be zero without special-casing it.
+    pub fn to_rounded_path(self, radius: f32) -> Path {
+        if self.is_empty() {
+            return Path::default();
+        }
+        // NaN is checked before clamping rather than after, because `f32::min`
+        // ignores a NaN operand: clamping first turns it into half the shorter
+        // side, so arithmetic that went wrong would come back as a large
+        // rounded rectangle instead of as the plain one asked for.
+        //
+        // An infinite radius is not rejected with it. It clamps like any other
+        // large number, because a caller who writes one means the roundest
+        // shape available rather than none at all, and answering with a square
+        // would be the opposite of what was asked.
+        if radius.is_nan() || radius <= 0.0 {
+            return self.to_path();
+        }
+        let radius = radius.min(self.width() / 2.0).min(self.height() / 2.0);
+        // The same constant that makes four cubics a circle, which is what the
+        // four corners are: a quarter turn each, at the same radius.
+        let k = KAPPA * radius;
+        let (l, t, r, b) = (self.left, self.top, self.right, self.bottom);
+        let mut path = PathBuilder::new();
+        path.move_to(Vec2::new(l + radius, t))
+            .line_to(Vec2::new(r - radius, t))
+            .cubic_to(
+                Vec2::new(r - radius + k, t),
+                Vec2::new(r, t + radius - k),
+                Vec2::new(r, t + radius),
+            )
+            .line_to(Vec2::new(r, b - radius))
+            .cubic_to(
+                Vec2::new(r, b - radius + k),
+                Vec2::new(r - radius + k, b),
+                Vec2::new(r - radius, b),
+            )
+            .line_to(Vec2::new(l + radius, b))
+            .cubic_to(
+                Vec2::new(l + radius - k, b),
+                Vec2::new(l, b - radius + k),
+                Vec2::new(l, b - radius),
+            )
+            .line_to(Vec2::new(l, t + radius))
+            .cubic_to(
+                Vec2::new(l, t + radius - k),
+                Vec2::new(l + radius - k, t),
+                Vec2::new(l + radius, t),
+            )
+            .close();
+        path.build()
+    }
 }
 
 /// Where a pass's texture slot gets its content.
@@ -757,6 +819,25 @@ impl Canvas {
     }
 
     /// Draw a circle, approximated by four cubics.
+    /// Fill or stroke a rectangle with rounded corners.
+    ///
+    /// The shape an interface is mostly made of, and the reason it is here
+    /// rather than left to the caller: building it from arcs by hand is a dozen
+    /// lines that have to get the corner tangents right, and getting them
+    /// slightly wrong shows as a corner that is subtly not round.
+    ///
+    /// Tessellated like any other path. The analytic coverage that would let a
+    /// rounded rectangle skip tessellation entirely is not implemented, and is
+    /// where the interesting speed is for a real interface -- this is the shape
+    /// that would benefit most from it.
+    pub fn draw_rrect(&mut self, rect: Rect, radius: f32, paint: &Paint) -> Result<&mut Self> {
+        if rect.is_empty() {
+            return Ok(self);
+        }
+        let path = rect.to_rounded_path(radius);
+        self.draw_path(&path, paint)
+    }
+
     pub fn draw_circle(&mut self, center: Vec2, radius: f32, paint: &Paint) -> Result<&mut Self> {
         if radius <= 0.0 {
             return Ok(self);

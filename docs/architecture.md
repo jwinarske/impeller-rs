@@ -976,8 +976,10 @@ permutations on GLES.
   flattening with transform-aware scale. Analytic coverage for rect, rrect,
   circle and ellipse — computed in the fragment shader instead of tessellating,
   which is where most of a real interface's draw calls land — is **not
-  implemented**: there is no rounded rect or ellipse in the tree, and a circle
-  is four cubics flattened like any other curve.
+  implemented**: a rounded rectangle and a circle are each four cubics
+  flattened like any other curve, and there is no ellipse at all. A rounded
+  rectangle does at least reach the fan fill, since its flattened outline is
+  convex, so it skips the sweep and the stencil even though it is tessellated.
 
   Convexity is a correctness question, not only a speed one. A fan fill
   triangulates from one vertex and has no notion of a fill rule, so a polygon
@@ -1173,6 +1175,17 @@ the specification requires to be bit-identical, since shader arithmetic is
 permitted some error and compilers may fuse operations differently. Deriving it
 means a new scene inherits the right rule instead of acquiring a hand-set
 number, and a genuine divergence cannot be waved through by loosening one entry.
+
+Multisampling gets a budget of a different shape, still derived. Neither
+specification says which samples an edge covers when it passes near a sample
+point, so two rasterizers may include a different one — and the resolve then
+differs by a whole sample's share, a quarter of full scale at four samples,
+which no per-channel allowance for rounding could admit. It is bounded by *how
+many* pixels instead: a thousandth of the image, against the two to four a
+curved edge actually produces. Anything systematic moves far more than that, so
+the budget still tells a rasterization tie from a divergence — which is checked
+directly, rather than assumed, by requiring it to refuse a difference over one
+percent of an image.
 
 Where per-driver tables become necessary, tightening one is a normal change and
 **loosening one requires a linked driver-bug issue**.
