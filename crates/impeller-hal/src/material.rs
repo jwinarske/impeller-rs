@@ -62,6 +62,7 @@ pub mod kind {
     pub const GLYPH: f32 = 5.0;
     pub const BLUR: f32 = 6.0;
     pub const ROUNDED_RECT: f32 = 7.0;
+    pub const ELLIPSE: f32 = 8.0;
 }
 
 /// Tile mode selector shared with the shader.
@@ -188,6 +189,22 @@ pub enum Material {
         /// Corner radius, in the shape's own space.
         radius: f32,
     },
+    /// An ellipse evaluated per fragment.
+    ///
+    /// Its own variant rather than a rounded rectangle with a large radius,
+    /// which gives a stadium: past half the shorter side a rounded rectangle
+    /// stops changing, where an ellipse keeps curving along both axes.
+    ///
+    /// The same geometry a rounded rectangle carries, less the radius, which
+    /// the two axes already state.
+    Ellipse {
+        color: [f32; 4],
+        /// Where the fragment stage locates the shape, in clip space.
+        center: [f32; 2],
+        /// The two semi-axes, in the shape's own space.
+        half_size: [f32; 2],
+        to_local: ToLocal,
+    },
     /// One axis of a separable Gaussian blur of a sampled texture.
     ///
     /// Separable because a two-dimensional Gaussian is the product of two
@@ -267,6 +284,9 @@ impl Material {
             Self::Blur { .. } => false,
             Self::RoundedRect {
                 color, half_size, ..
+            }
+            | Self::Ellipse {
+                color, half_size, ..
             } => color[3] <= 0.0 || half_size[0] <= 0.0 || half_size[1] <= 0.0,
             Self::Glyph { color, .. } => color[3] <= 0.0,
         }
@@ -287,7 +307,8 @@ impl Material {
             | Self::LinearGradient { .. }
             | Self::RadialGradient { .. }
             | Self::SweepGradient { .. }
-            | Self::RoundedRect { .. } => None,
+            | Self::RoundedRect { .. }
+            | Self::Ellipse { .. } => None,
         }
     }
 
@@ -298,7 +319,8 @@ impl Material {
             | Self::Image { .. }
             | Self::Glyph { .. }
             | Self::Blur { .. }
-            | Self::RoundedRect { .. } => &[],
+            | Self::RoundedRect { .. }
+            | Self::Ellipse { .. } => &[],
             Self::LinearGradient { stops, .. }
             | Self::RadialGradient { stops, .. }
             | Self::SweepGradient { stops, .. } => stops,
@@ -331,6 +353,24 @@ impl Material {
 
         // An image carries no stops and no count, and must be packed before
         // the gradient path below decides it has too few to interpolate.
+        if let Self::Ellipse {
+            color,
+            center,
+            half_size,
+            to_local,
+        } = self
+        {
+            out[layout::STOPS..layout::STOPS + 4].copy_from_slice(color);
+            out[layout::GEOMETRY] = center[0];
+            out[layout::GEOMETRY + 1] = center[1];
+            out[layout::GEOMETRY + 2] = half_size[0];
+            out[layout::GEOMETRY + 3] = half_size[1];
+            out[layout::TO_LOCAL..layout::TO_LOCAL + 4].copy_from_slice(to_local);
+            out[layout::PARAMS] = 1.0;
+            out[layout::PARAMS + 1] = kind::ELLIPSE;
+            return out;
+        }
+
         if let Self::RoundedRect {
             color,
             center,
@@ -413,7 +453,8 @@ impl Material {
             | Self::Image { .. }
             | Self::Glyph { .. }
             | Self::Blur { .. }
-            | Self::RoundedRect { .. } => {
+            | Self::RoundedRect { .. }
+            | Self::Ellipse { .. } => {
                 unreachable!("handled above")
             }
             Self::LinearGradient {

@@ -111,6 +111,9 @@ fn record_node(canvas: &mut Canvas, node: &Node, anti_alias: bool) -> Result<()>
                 Shape::Circle { center, radius } => {
                     canvas.draw_circle(Vec2::from(*center), *radius, &paint)?;
                 }
+                Shape::Oval { min, max } => {
+                    canvas.draw_oval(Rect::new(min[0], min[1], max[0], max[1]), &paint)?;
+                }
                 Shape::RoundedRect { min, max, radius } => {
                     canvas.draw_rrect(
                         Rect::new(min[0], min[1], max[0], max[1]),

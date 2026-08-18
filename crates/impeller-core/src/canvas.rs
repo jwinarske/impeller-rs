@@ -997,6 +997,55 @@ impl Canvas {
         self.draw_path(&path, paint)
     }
 
+    /// Fill or stroke an ellipse inscribed in `bounds`.
+    ///
+    /// A circle where the bounds are square, and the shape a rounded rectangle
+    /// cannot become: past half its shorter side a rounded rectangle stops
+    /// changing, giving a stadium, where an ellipse keeps curving on both axes.
+    ///
+    /// An antialiased solid fill is evaluated per fragment like the other
+    /// shapes here. Everything else is tessellated from four cubics, which
+    /// approximate an ellipse exactly as well as they approximate a circle --
+    /// which is to say closely, and not exactly.
+    pub fn draw_oval(&mut self, bounds: Rect, paint: &Paint) -> Result<&mut Self> {
+        if bounds.is_empty() {
+            return Ok(self);
+        }
+        if let Some(material) = self.analytic_ellipse(bounds, paint) {
+            return self.draw_analytic(bounds, material, paint);
+        }
+        let path = oval_path(bounds);
+        self.draw_path(&path, paint)
+    }
+
+    /// A paint for the fragment-evaluated ellipse, where one applies.
+    ///
+    /// The same conditions the rounded rectangle answers to, and for the same
+    /// reasons.
+    fn analytic_ellipse(&self, bounds: Rect, paint: &Paint) -> Option<Material> {
+        if !paint.is_visible() || self.clip.is_some_and(Scissor::is_empty) {
+            return None;
+        }
+        if !paint.anti_alias || !matches!(paint.style, Style::Fill) {
+            return None;
+        }
+        let Shader::Solid(color) = &paint.shader else {
+            return None;
+        };
+        let to_clip = self.target.projection() * self.transform;
+        let center = Vec2::new(
+            (bounds.left + bounds.right) / 2.0,
+            (bounds.top + bounds.bottom) / 2.0,
+        );
+        let center_clip = to_clip.transform_point2(center);
+        Some(Material::Ellipse {
+            color: color.to_array(),
+            center: [center_clip.x, center_clip.y],
+            half_size: [bounds.width() / 2.0, bounds.height() / 2.0],
+            to_local: invert_or_identity(to_clip.matrix2),
+        })
+    }
+
     /// Draw a run of positioned glyphs from one atlas, as a single draw.
     ///
     /// `atlas_slot` indexes the image table supplied at draw time, and each
@@ -1298,6 +1347,44 @@ impl Canvas {
 
 /// The constant that makes four cubics approximate a circle.
 const KAPPA: f32 = 0.552_284_8;
+
+/// An ellipse inscribed in a rectangle, as four cubics.
+///
+/// The same construction a circle uses, with a different radius on each axis:
+/// the constant that makes a cubic approximate a quarter turn does not care
+/// which, since it scales with the axis it belongs to.
+fn oval_path(bounds: Rect) -> Path {
+    let (cx, cy) = (
+        (bounds.left + bounds.right) / 2.0,
+        (bounds.top + bounds.bottom) / 2.0,
+    );
+    let (rx, ry) = (bounds.width() / 2.0, bounds.height() / 2.0);
+    let (kx, ky) = (KAPPA * rx, KAPPA * ry);
+    let mut b = PathBuilder::new();
+    b.move_to(Vec2::new(cx + rx, cy))
+        .cubic_to(
+            Vec2::new(cx + rx, cy + ky),
+            Vec2::new(cx + kx, cy + ry),
+            Vec2::new(cx, cy + ry),
+        )
+        .cubic_to(
+            Vec2::new(cx - kx, cy + ry),
+            Vec2::new(cx - rx, cy + ky),
+            Vec2::new(cx - rx, cy),
+        )
+        .cubic_to(
+            Vec2::new(cx - rx, cy - ky),
+            Vec2::new(cx - kx, cy - ry),
+            Vec2::new(cx, cy - ry),
+        )
+        .cubic_to(
+            Vec2::new(cx + kx, cy - ry),
+            Vec2::new(cx + rx, cy - ky),
+            Vec2::new(cx + rx, cy),
+        )
+        .close();
+    b.build()
+}
 
 fn circle_path(center: Vec2, radius: f32) -> Path {
     let (cx, cy) = (center.x, center.y);

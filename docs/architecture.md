@@ -1028,11 +1028,21 @@ permutations on GLES.
   it should be measured on a board before the field is assumed to be the faster
   path everywhere.
 
-  Ellipses are **not implemented** this way; there is no closed form for the
-  distance to one, and the approximations trade accuracy for iteration in a way
-  the shapes above do not. A tessellated rounded rectangle does at least reach
-  the fan fill, since its flattened outline is convex, so it skips the sweep and
-  the stencil.
+  An ellipse takes one too, by a different route. There is no closed form for
+  the distance to an ellipse — but coverage never needed a distance. What it
+  needs is how far away the curve is in pixels, and that is the implicit
+  function divided by how fast it changes across a pixel: zero on the curve,
+  and correct to first order either side of it, which is the only place
+  coverage is between nothing and all of it. No iteration and no intermediate
+  distance.
+
+  Forming the distance first and then normalising it does work, and was tried:
+  it approximates twice, and two devices need not make the same error at each
+  step. That version diverged across devices by six units where this one
+  diverges by two, on top of being longer and costing an extra square root.
+
+  A tessellated rounded rectangle does at least reach the fan fill, since its
+  flattened outline is convex, so it skips the sweep and the stencil.
 
   Convexity is a correctness question, not only a speed one. A fan fill
   triangulates from one vertex and has no notion of a fill rule, so a polygon

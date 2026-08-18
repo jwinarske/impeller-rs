@@ -224,6 +224,7 @@ impl Item {
         let shaped = match self.shape {
             crate::shape::Shape::RoundedRect { radius, .. } => radius > 0.0,
             crate::shape::Shape::Circle { radius, .. } => radius > 0.0,
+            crate::shape::Shape::Oval { min, max } => max[0] > min[0] && max[1] > min[1],
             _ => false,
         };
         shaped && self.stroke.is_none() && matches!(self.fill, Fill::Solid(_))
@@ -1112,6 +1113,31 @@ pub fn corpus() -> Vec<Scene> {
             })
             .collect(),
         ),
+        // An ellipse, which nothing else here can express: a rounded rectangle
+        // given a large radius becomes a stadium, and a circle is one only
+        // where the bounds are square. Multisampled, so the executor asks for
+        // antialiasing and the public call evaluates it per fragment.
+        Scene::new(
+            "oval",
+            vec![
+                Item::fill(
+                    Shape::Oval {
+                        min: [8.0, 36.0],
+                        max: [120.0, 76.0],
+                    },
+                    RED,
+                ),
+                Item::fill(
+                    Shape::Oval {
+                        min: [44.0, 4.0],
+                        max: [84.0, 124.0],
+                    },
+                    [0.2, 0.6, 1.0, 0.55],
+                )
+                .with_blend(BlendMode::SrcOver),
+            ],
+        )
+        .with_samples(4),
         // Rounded rectangles, which an interface is mostly made of and which
         // nothing else here draws. Two radii and a stroke: a modest one where
         // the straight edges still dominate, one large enough to be clamped to

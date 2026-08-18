@@ -43,6 +43,15 @@ pub enum Shape {
         center: [f32; 2],
         radius: f32,
     },
+    /// An ellipse inscribed in a rectangle.
+    ///
+    /// Not expressible as any of the others: a rounded rectangle asked for a
+    /// large radius becomes a stadium rather than an ellipse, and a circle
+    /// scaled by a transform is one only if the whole item is scaled with it.
+    Oval {
+        min: [f32; 2],
+        max: [f32; 2],
+    },
     /// A rectangle with rounded corners, which is most of an interface.
     RoundedRect {
         min: [f32; 2],
@@ -82,6 +91,33 @@ impl Shape {
                 b = b.with_fill_rule(*rule);
                 trace(&mut b, points);
                 b.close();
+            }
+            Self::Oval { min, max } => {
+                let (cx, cy) = ((min[0] + max[0]) / 2.0, (min[1] + max[1]) / 2.0);
+                let (rx, ry) = ((max[0] - min[0]) / 2.0, (max[1] - min[1]) / 2.0);
+                let (kx, ky) = (KAPPA * rx, KAPPA * ry);
+                b.move_to(Vec2::new(cx + rx, cy))
+                    .cubic_to(
+                        Vec2::new(cx + rx, cy + ky),
+                        Vec2::new(cx + kx, cy + ry),
+                        Vec2::new(cx, cy + ry),
+                    )
+                    .cubic_to(
+                        Vec2::new(cx - kx, cy + ry),
+                        Vec2::new(cx - rx, cy + ky),
+                        Vec2::new(cx - rx, cy),
+                    )
+                    .cubic_to(
+                        Vec2::new(cx - rx, cy - ky),
+                        Vec2::new(cx - kx, cy - ry),
+                        Vec2::new(cx, cy - ry),
+                    )
+                    .cubic_to(
+                        Vec2::new(cx + kx, cy - ry),
+                        Vec2::new(cx + rx, cy - ky),
+                        Vec2::new(cx + rx, cy),
+                    )
+                    .close();
             }
             Self::RoundedRect { min, max, radius } => {
                 let (l, t) = (min[0], min[1]);

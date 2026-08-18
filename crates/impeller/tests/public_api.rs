@@ -813,6 +813,98 @@ fn a_clip_confines_an_analytic_shape_exactly() {
 }
 
 #[test]
+fn an_oval_is_an_ellipse_rather_than_a_stadium() {
+    let Some(mut ctx) = context() else { return };
+    // The shape a rounded rectangle cannot become. Past half its shorter side a
+    // rounded rectangle stops changing and is a stadium: straight along the
+    // middle, semicircular at the ends. An ellipse curves the whole way, and
+    // the distinguishing measurement is halfway along the major axis, where it
+    // has narrowed and a stadium has not.
+    let extent = Extent2D::new(200, 140);
+    // 160 by 72, so the semi-axes are 80 and 36 about (100, 70).
+    let bounds = Rect::new(20.0, 34.0, 180.0, 106.0);
+    let mut oval = |anti_alias: bool| {
+        let mut canvas = Canvas::new(extent);
+        canvas.clear(Color::BLACK);
+        canvas
+            .draw_oval(
+                bounds,
+                &Paint::fill(Color::WHITE).with_anti_alias(anti_alias),
+            )
+            .expect("oval");
+        let recording = canvas.finish();
+        let vertices: usize = recording
+            .passes
+            .iter()
+            .map(|pass| pass.batch.vertices().len())
+            .sum();
+        let mut surface = ctx
+            .create_surface(extent, PixelFormat::Rgba8Unorm)
+            .expect("surface");
+        ctx.draw(&mut surface, &recording).expect("draw");
+        let pixels = ctx.read(&mut surface).expect("read");
+        ctx.destroy_surface(surface);
+        (pixels, vertices)
+    };
+
+    let (analytic, analytic_vertices) = oval(true);
+    let (tessellated, tessellated_vertices) = oval(false);
+    let at = |pixels: &[u8], x: u32, y: u32| pixels[((y * extent.width + x) * 4) as usize];
+
+    assert_eq!(analytic_vertices, 4, "an antialiased oval should be a quad");
+    assert!(
+        tessellated_vertices > 16,
+        "the tessellated oval should cost many more vertices, got {tessellated_vertices}"
+    );
+
+    for (name, pixels) in [("analytic", &analytic), ("tessellated", &tessellated)] {
+        // Halfway along the major axis the curve has narrowed to 31 of its 36,
+        // so a point 33 out is outside it and one 28 out is inside. A stadium
+        // would have both inside, and so would a rounded rectangle asked for a
+        // radius larger than it can take.
+        assert_eq!(
+            at(pixels, 140, 103),
+            0,
+            "{name}: this shape is a stadium, not an ellipse"
+        );
+        assert_eq!(at(pixels, 140, 98), 255, "{name}: inside the curve");
+        // And the extremes of both axes are reached.
+        assert_eq!(at(pixels, 100, 70), 255, "{name}: centre");
+        assert_eq!(at(pixels, 22, 70), 255, "{name}: the end of the major axis");
+        assert_eq!(
+            at(pixels, 100, 36),
+            255,
+            "{name}: the end of the minor axis"
+        );
+        assert_eq!(at(pixels, 25, 38), 0, "{name}: the corner is outside");
+    }
+
+    // Against the area of an actual ellipse, which neither is measured against
+    // anywhere else. The distance field is nearer, as it was for the circle and
+    // for the same reason: four cubics approximate a curve, and this is one.
+    let exact = std::f64::consts::PI * 80.0 * 36.0 * 255.0;
+    let area = |pixels: &[u8]| {
+        pixels
+            .chunks_exact(4)
+            .map(|texel| texel[0] as u64)
+            .sum::<u64>() as f64
+    };
+    let analytic_error = (area(&analytic) - exact).abs() / exact;
+    let tessellated_error = (area(&tessellated) - exact).abs() / exact;
+    assert!(
+        analytic_error < 0.001,
+        "the analytic oval is {:.3}% off the exact area",
+        analytic_error * 100.0
+    );
+    assert!(
+        analytic_error < tessellated_error,
+        "the analytic oval should be nearer the exact area: {:.3}% against {:.3}%",
+        analytic_error * 100.0,
+        tessellated_error * 100.0
+    );
+}
+
+#[test]
 fn an_antialiased_circle_uses_the_same_distance_field() {
     let Some(mut ctx) = context() else { return };
     // A circle is a rounded rectangle: a square whose corner radius is half its
