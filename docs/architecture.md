@@ -973,13 +973,25 @@ permutations on GLES.
 
 - **Geometry** (`impeller-geometry`): lyon for general fills and strokes;
   convexity detection for a fan-fill fast path; Wang's-formula adaptive Bezier
-  flattening with transform-aware scale. Analytic coverage for rect, rrect,
-  circle and ellipse — computed in the fragment shader instead of tessellating,
-  which is where most of a real interface's draw calls land — is **not
-  implemented**: a rounded rectangle and a circle are each four cubics
-  flattened like any other curve, and there is no ellipse at all. A rounded
-  rectangle does at least reach the fan fill, since its flattened outline is
-  convex, so it skips the sweep and the stencil even though it is tessellated.
+  flattening with transform-aware scale.
+
+  A rounded rectangle asked for as an antialiased solid fill is drawn from a
+  distance field rather than triangles: two triangles' worth of geometry
+  whatever the radius, against an outline flattened to a tolerance, and an edge
+  that antialiases from the distance it already computes rather than from four
+  samples. Its geometry is in the shape's own space, with the same
+  clip-to-local mapping the gradients carry, because a distance measured in
+  clip space would round the corners by different amounts on each axis of a
+  target that is not square. Anything else tessellates — a stroke is a
+  different shape, a gradient or an image would need its own mapping and this
+  one at once, and an aliased fill is asking for the hard edge tessellation
+  gives.
+
+  The same treatment for plain rects, circles and ellipses is **not
+  implemented**. A circle is still four cubics flattened like any other curve
+  and there is no ellipse at all. A tessellated rounded rectangle does at least
+  reach the fan fill, since its flattened outline is convex, so it skips the
+  sweep and the stencil.
 
   Convexity is a correctness question, not only a speed one. A fan fill
   triangulates from one vertex and has no notion of a fill rule, so a polygon
