@@ -81,6 +81,17 @@ ctx.draw(&mut surface, &canvas.finish())?;
 let pixels = ctx.read(&mut surface)?;
 ```
 
+## Running it
+
+```sh
+cargo run -p impeller --example frame -- frame.ppm
+```
+
+Draws one frame through the public API — a gradient, a group composited through
+a layer, an image sampled through a path clip, a blend mode, and a run of
+glyphs — and writes a binary PPM, which needs no encoder. Image encoding is out
+of scope, so converting to something friendlier is `magick frame.ppm frame.png`.
+
 ## Building
 
 Requires a Rust toolchain; no other build dependencies. MSRV is 1.82.
