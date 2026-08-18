@@ -143,6 +143,12 @@ pub struct Atlas {
     frame: u64,
     dirty: bool,
     compactions: u64,
+    /// The largest this may grow to.
+    ///
+    /// A caller's to choose, because the ceiling that matters is the device's
+    /// maximum texture size and the atlas has no way to ask.
+    limit: u32,
+    growths: u64,
 }
 
 /// Where a glyph is, and when it was last asked for.
@@ -169,6 +175,18 @@ const PADDING: u32 = 1;
 impl Atlas {
     /// An empty atlas of `size` by `size` texels.
     pub fn new(size: u32) -> Self {
+        // Four thousand and ninety-six is the smallest maximum texture size
+        // this project's supported devices are required to offer, so it is the
+        // largest an atlas can grow to without asking. A caller that knows the
+        // device says so.
+        Self::with_limit(size, 4096)
+    }
+
+    /// An atlas that may grow up to `limit` texels on a side.
+    ///
+    /// A limit below the starting size means it never grows, which is a
+    /// reasonable thing to ask for and not an error.
+    pub fn with_limit(size: u32, limit: u32) -> Self {
         Self {
             size,
             texels: vec![0; (size as usize) * (size as usize)],
@@ -177,6 +195,8 @@ impl Atlas {
             frame: 0,
             dirty: false,
             compactions: 0,
+            limit,
+            growths: 0,
         }
     }
 
@@ -234,6 +254,20 @@ impl Atlas {
         self.compactions
     }
 
+    /// How many times the atlas has doubled.
+    ///
+    /// Every growth reallocates and repacks everything, so a count that keeps
+    /// climbing says the atlas started far too small. It settles once the
+    /// working set fits.
+    pub fn growths(&self) -> u64 {
+        self.growths
+    }
+
+    /// The largest this may grow to.
+    pub fn limit(&self) -> u32 {
+        self.limit
+    }
+
     /// Add a glyph, or return where it already is.
     ///
     /// Idempotent, so a caller can insert every glyph of every run each frame
@@ -275,8 +309,11 @@ impl Atlas {
             // Only fullness is worth retrying. A glyph larger than the atlas
             // does not fit an empty one either, and compacting to discover that
             // would throw away everything for nothing.
+            // Compaction first, then growth. Discarding what nothing has
+            // asked for is far cheaper than doubling, and an atlas that grew
+            // before compacting would keep the memory it had stopped needing.
             Err(AtlasError::Full) => {
-                if !self.compact() {
+                if !self.compact() && !self.grow() {
                     return Err(AtlasError::Full);
                 }
                 self.allocate(coverage.width, coverage.height)?
@@ -336,6 +373,46 @@ impl Atlas {
             // If it somehow does, dropping the glyph is better than refusing
             // the insertion that triggered the compaction: the caller will
             // offer it again next frame.
+            let _ = self.insert(key, &coverage);
+        }
+        true
+    }
+
+    /// Double the atlas and repack everything into it.
+    ///
+    /// Returns whether it grew. False means it is already at its limit, which
+    /// is the point at which being full is genuinely full.
+    ///
+    /// Everything is kept, not only what this frame asked for: growing is what
+    /// happens when nothing was stale, so there is nothing to discard, and a
+    /// glyph dropped here would be re-rasterized by the caller for no reason.
+    fn grow(&mut self) -> bool {
+        if self.size >= self.limit {
+            return false;
+        }
+        let grown = (self.size.saturating_mul(2)).min(self.limit);
+        if grown <= self.size {
+            return false;
+        }
+
+        // Read back before the texels are replaced: the atlas is the only place
+        // a glyph's coverage still exists, the bitmaps a caller supplied having
+        // been borrowed.
+        let kept: Vec<(GlyphKey, Coverage)> = self
+            .placed
+            .iter()
+            .map(|(key, placed)| (*key, self.extract(placed.rect)))
+            .collect();
+
+        self.size = grown;
+        self.texels = vec![0; (grown as usize) * (grown as usize)];
+        self.shelves.clear();
+        self.placed.clear();
+        self.growths += 1;
+        self.dirty = true;
+
+        for (key, coverage) in kept {
+            // Everything fitted the smaller atlas, so it fits this one.
             let _ = self.insert(key, &coverage);
         }
         true
@@ -543,7 +620,7 @@ mod tests {
 
     #[test]
     fn a_full_atlas_says_so_rather_than_overwriting() {
-        let mut atlas = Atlas::new(16);
+        let mut atlas = fixed(16);
         let mut inserted = 0;
         for glyph in 0..64u16 {
             match atlas.insert(key(glyph), &solid(6, 6, 255)) {
@@ -603,6 +680,28 @@ mod tests {
         );
     }
 
+    /// An atlas that cannot grow, for the behaviours that only appear at the
+    /// limit: compaction, and being genuinely full.
+    fn fixed(size: u32) -> Atlas {
+        Atlas::with_limit(size, size)
+    }
+
+    /// Insert glyphs until the atlas grows, returning how many went in.
+    ///
+    /// The counterpart of `fill` for an atlas that can grow, where "until it
+    /// refuses" never arrives until the limit.
+    fn fill_until_growth(atlas: &mut Atlas, from: u16) -> u16 {
+        let mut glyph = from;
+        while atlas.growths() == 0 {
+            atlas
+                .insert(key(glyph), &solid(6, 6, 255))
+                .unwrap_or_else(|e| panic!("insert {glyph}: {e}"));
+            glyph += 1;
+            assert!(glyph < from + 200, "the atlas never grew");
+        }
+        glyph - from
+    }
+
     /// Fill an atlas until it refuses, returning how many glyphs fitted.
     fn fill(atlas: &mut Atlas, from: u16) -> u16 {
         let mut glyph = from;
@@ -615,7 +714,7 @@ mod tests {
 
     #[test]
     fn a_full_atlas_makes_room_for_what_the_new_frame_needs() {
-        let mut atlas = Atlas::new(32);
+        let mut atlas = fixed(32);
         let fitted = fill(&mut atlas, 0);
         assert!(
             fitted > 2,
@@ -636,7 +735,7 @@ mod tests {
 
     #[test]
     fn compaction_keeps_the_glyphs_this_frame_asked_for() {
-        let mut atlas = Atlas::new(32);
+        let mut atlas = fixed(32);
         let fitted = fill(&mut atlas, 0);
 
         // A new frame that asks for two of the old glyphs before filling up.
@@ -670,7 +769,7 @@ mod tests {
         // The coverage a caller supplied was borrowed and is long gone, so
         // repacking has to read it back out of the atlas. Getting that wrong
         // gives a glyph that is present, addressable, and blank.
-        let mut atlas = Atlas::new(32);
+        let mut atlas = fixed(32);
         let distinct = Coverage {
             width: 3,
             height: 2,
@@ -700,7 +799,7 @@ mod tests {
         // whose every glyph is in use this frame is genuinely out of room.
         // Saying so is the honest answer; the remedy is a second page, and
         // pretending otherwise would evict a glyph about to be drawn.
-        let mut atlas = Atlas::new(32);
+        let mut atlas = fixed(32);
         let fitted = fill(&mut atlas, 0);
         atlas.begin_frame();
         for glyph in 0..fitted {
@@ -723,7 +822,7 @@ mod tests {
     fn a_glyph_too_large_is_not_worth_compacting_for() {
         // Nothing an empty atlas cannot hold is made to fit by emptying it, and
         // compacting to find that out throws away every glyph for nothing.
-        let mut atlas = Atlas::new(32);
+        let mut atlas = fixed(32);
         fill(&mut atlas, 0);
         let before = atlas.len();
         atlas.begin_frame();
@@ -740,7 +839,7 @@ mod tests {
         // Without frame boundaries nothing is stale, so a full atlas is
         // genuinely full. That is correct rather than a leak: a caller that
         // never says a frame ended has never said any glyph stopped mattering.
-        let mut atlas = Atlas::new(32);
+        let mut atlas = fixed(32);
         let fitted = fill(&mut atlas, 0);
         assert_eq!(
             atlas.insert(key(500), &solid(6, 6, 255)),
@@ -748,6 +847,88 @@ mod tests {
         );
         assert_eq!(atlas.len(), fitted as usize);
         assert_eq!(atlas.compactions(), 0);
+    }
+
+    #[test]
+    fn an_atlas_with_nothing_stale_grows_rather_than_refusing() {
+        // Everything present was asked for this frame, so compaction has
+        // nothing to free. Growing is what keeps a run of any length one draw;
+        // a second page would make it two, which is the property the vertex
+        // format exists to provide.
+        // No frame boundary, so nothing is ever stale and compaction can free
+        // nothing. Growing is the only way forward, which is the ordering this
+        // pins as well as the growth.
+        let mut atlas = Atlas::with_limit(32, 128);
+        let inserted = fill_until_growth(&mut atlas, 0);
+        assert!(inserted > 2, "only {inserted} glyphs went in");
+
+        assert_eq!(atlas.size(), 64, "it did not double");
+        assert_eq!(atlas.growths(), 1);
+        assert_eq!(atlas.compactions(), 0, "it discarded something it needed");
+        assert_eq!(atlas.len(), inserted as usize, "a glyph was lost");
+    }
+
+    #[test]
+    fn growth_keeps_every_glyph_and_its_coverage() {
+        // Growing happens because nothing was stale, so nothing may be dropped
+        // — and the coverage has to be read back out of the atlas, the bitmaps
+        // a caller supplied having been borrowed and long gone.
+        let mut atlas = Atlas::with_limit(32, 128);
+        let distinct = Coverage {
+            width: 3,
+            height: 2,
+            texels: vec![11, 22, 33, 44, 55, 66],
+        };
+        atlas.insert(key(0), &distinct).expect("insert");
+        fill_until_growth(&mut atlas, 1);
+        assert_eq!(atlas.growths(), 1);
+
+        let rect = atlas.get(key(0)).expect("survived");
+        let mut got = Vec::new();
+        for row in 0..rect.height {
+            let from = ((rect.y + row) * atlas.size() + rect.x) as usize;
+            got.extend_from_slice(&atlas.texels()[from..from + rect.width as usize]);
+        }
+        assert_eq!(got, distinct.texels, "coverage was lost in growing");
+    }
+
+    #[test]
+    fn growth_stops_at_the_limit_and_says_so() {
+        // The limit is the device's maximum texture size, which the atlas has
+        // no way to ask about. Past it there is nowhere to go, and reporting
+        // full is the honest answer rather than allocating what cannot be
+        // uploaded.
+        let mut atlas = Atlas::with_limit(16, 32);
+        let mut glyph = 0u16;
+        loop {
+            match atlas.insert(key(glyph), &solid(6, 6, 255)) {
+                Ok(_) => glyph += 1,
+                Err(e) => {
+                    assert_eq!(e, AtlasError::Full);
+                    break;
+                }
+            }
+            assert!(glyph < 200, "it never filled");
+        }
+        assert_eq!(atlas.size(), 32, "it did not grow to its limit");
+        assert!(atlas.growths() >= 1);
+        // And it stays usable at the limit: a glyph already present is still
+        // found, rather than the atlas being poisoned by having filled.
+        assert!(atlas.get(key(0)).is_some());
+    }
+
+    #[test]
+    fn a_limit_no_larger_than_the_atlas_means_it_never_grows() {
+        // A caller who knows the size they want says so this way, and it is a
+        // reasonable thing to ask for rather than a contradiction to reject.
+        let mut atlas = Atlas::with_limit(16, 16);
+        fill(&mut atlas, 0);
+        assert_eq!(
+            atlas.insert(key(500), &solid(6, 6, 255)),
+            Err(AtlasError::Full)
+        );
+        assert_eq!(atlas.size(), 16);
+        assert_eq!(atlas.growths(), 0);
     }
 
     #[test]

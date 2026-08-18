@@ -499,9 +499,21 @@ an insertion would otherwise fail, and it cannot run twice in a frame without
 the second failing outright, since everything left after the first is something
 that frame needs.
 
-An atlas whose every glyph is in use reports itself full rather than evicting
-one about to be drawn. Text that genuinely needs more than an atlas holds is a
-case for a second page, not for a cleverer packer.
+An atlas with nothing stale to discard grows instead, doubling until it reaches
+the limit it was given — the device's maximum texture size, which the atlas has
+no way to ask about and so is told. Compaction is tried first, because
+discarding what nothing has asked for is far cheaper than doubling, and an
+atlas that grew before compacting would keep memory it had stopped needing.
+
+Growing rather than paging is a decision the vertex format makes for us.
+Texture coordinates travel on the vertices precisely so a run of any length is
+one draw; a run spanning two pages samples two textures and is two draws, which
+spends the property the whole arrangement exists to provide. That is a
+correction to what this document said before, which named a second page as the
+answer.
+
+At its limit, with every glyph in use, it reports itself full. Evicting one
+about to be drawn would trade a clear error for a wrong picture.
 
 A glyph counts as used when it is *inserted*, not when it is looked up. That is
 the usage the atlas is built around — a caller offers every glyph of every run

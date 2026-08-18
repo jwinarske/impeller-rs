@@ -1631,7 +1631,9 @@ fn a_glyph_run_is_correct_after_the_atlas_has_been_repacked() {
     // check that those two together are enough: a caller that re-uploads when
     // told to gets the right picture, and one that does not would get a
     // different glyph's texels rather than a blank.
-    let mut atlas = Atlas::new(32);
+    // Fixed at its starting size, because this is about compaction: an atlas
+    // free to grow answers a full one by doubling and never repacks.
+    let mut atlas = Atlas::with_limit(32, 32);
     let solid = GlyphKey {
         font: 1,
         glyph: 1,
