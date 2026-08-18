@@ -25,6 +25,14 @@ struct Slot<H: Hal> {
     /// The submission that last rendered into this buffer, if it has not been
     /// retired yet.
     fence: Option<H::Fence>,
+    /// Layer targets that submission composited into this buffer.
+    ///
+    /// They cannot travel with the fence, which is handed to a display commit
+    /// and so has to stay sendable while a texture tracks its own image layout.
+    /// Released when the slot comes free, which is after either the fence has
+    /// signalled or the kernel has flipped a commit it gated on that fence --
+    /// so in both paths the submission that sampled them has finished.
+    layers: Vec<H::Texture>,
 }
 
 /// A presentation target that scans out directly to a display.
@@ -133,6 +141,7 @@ where
                 fb,
                 on_screen: false,
                 fence: None,
+                layers: Vec::new(),
             });
         }
         Ok(())
@@ -203,6 +212,9 @@ where
             }
             if let Some(fence) = self.slots[i].fence.take() {
                 ctx.retire_fence(fence);
+            }
+            for layer in std::mem::take(&mut self.slots[i].layers) {
+                ctx.destroy_texture(layer);
             }
             return Some(i);
         }
@@ -388,6 +400,9 @@ where
                 let _ = fence.wait(FRAME_WAIT_TIMEOUT);
                 ctx.retire_fence(fence);
             }
+            for layer in std::mem::take(&mut slot.layers) {
+                ctx.destroy_texture(layer);
+            }
             self.output.release_framebuffer(slot.fb);
             ctx.destroy_texture(slot.texture);
         }
@@ -404,6 +419,36 @@ where
             return Err(Error::Unsupported("no frame is currently acquired"));
         };
         self.slots[index].fence = Some(fence);
+        Ok(())
+    }
+
+    /// Render a recording into the acquired buffer and record its fence.
+    ///
+    /// The scanout equivalent of submitting a batch and calling
+    /// [`Self::set_frame_fence`], and the only way a frame with layers reaches
+    /// a display: a recording with layers is several passes, and the one that
+    /// composites them is the one that has to land in the scanned-out buffer.
+    ///
+    /// The layer targets stay with the slot rather than being returned, because
+    /// the fence they are tied to is handed on to the commit and the caller
+    /// would have nothing left to time their release against.
+    pub fn submit_recording(
+        &mut self,
+        ctx: &mut H::Context,
+        recording: &impeller_core::Recording,
+        images: &[&H::Texture],
+    ) -> Result<()> {
+        let Some(index) = self.acquired else {
+            return Err(Error::Unsupported("no frame is currently acquired"));
+        };
+        let (fence, layers) = impeller_core::execute_deferred::<H>(
+            ctx,
+            &mut self.slots[index].texture,
+            recording,
+            images,
+        )?;
+        self.slots[index].fence = Some(fence);
+        self.slots[index].layers = layers;
         Ok(())
     }
 }

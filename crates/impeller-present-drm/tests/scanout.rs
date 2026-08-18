@@ -440,3 +440,80 @@ fn negotiation_against_a_real_plane_agrees_on_a_layout() {
     }
     assert_validation_clean(&ctx);
 }
+
+#[test]
+fn a_frame_with_layers_reaches_the_scanout_buffer() {
+    let Some(mut ctx) = context() else { return };
+    if !exportable(&ctx) {
+        return;
+    }
+    // A recording with layers is several passes, and the one that composites
+    // them is the one that has to land in the buffer the display scans out.
+    // Submitting a batch cannot express that, so before `submit_recording` a
+    // frame with layers could not be scanned out at all -- the same gap the
+    // swapchain had, in the path that has no window to fall back on.
+    //
+    // What is checked is that the loop still holds together around it: the
+    // commit carries the render-done signal, buffers are cycled rather than
+    // reused while in flight, and nothing is leaked. That the composite lands
+    // in the right pixels is the swapchain's comparison against an offscreen
+    // render; here the buffer is scanned out rather than read back.
+    use impeller_core::{Canvas, Color, Layer, Paint, Rect, Vec2};
+
+    let (output, log) = FakeOutput::new(display_formats(&ctx));
+    let mut target =
+        DrmScanoutTarget::<VulkanHal, _>::new(&mut ctx, output, 3).expect("scanout target");
+    let extent = target.extent();
+
+    let mut canvas = Canvas::new(extent);
+    canvas.clear(Color::linear(0.05, 0.05, 0.1, 1.0));
+    canvas.save_layer_bounds(
+        Layer::opacity(0.6),
+        Rect::new(
+            4.0,
+            4.0,
+            extent.width as f32 / 2.0,
+            extent.height as f32 / 2.0,
+        ),
+    );
+    canvas
+        .draw_circle(
+            Vec2::new(extent.width as f32 / 4.0, extent.height as f32 / 4.0),
+            (extent.width.min(extent.height) as f32) / 8.0,
+            &Paint::fill(Color::linear(0.9, 0.3, 0.2, 1.0)).with_anti_alias(false),
+        )
+        .expect("circle");
+    canvas.restore();
+    let recording = canvas.finish();
+    assert!(
+        recording.passes.len() > 1,
+        "the scene has no layer, so this proves nothing"
+    );
+
+    // More frames than the ring is deep, so slots are recycled and the layer
+    // targets a recycled slot was holding are released rather than accumulated.
+    for _ in 0..5 {
+        let _ = target.acquire(&mut ctx).expect("acquire");
+        target
+            .submit_recording(&mut ctx, &recording, &[])
+            .expect("submit recording");
+        target.present(&mut ctx).expect("present");
+    }
+
+    {
+        let recorded = log.lock().unwrap();
+        assert_eq!(recorded.commits.len(), 5, "one commit per frame");
+        // The commits after the modeset carry the fence, which is the whole
+        // point of the deferred path: the kernel waits for the render rather
+        // than the CPU doing it.
+        assert!(
+            recorded.commits[1..].iter().all(|c| c.had_fence),
+            "a commit after the modeset went without the render-done signal: {:?}",
+            recorded.commits
+        );
+    }
+
+    target.destroy(&mut ctx);
+    assert_eq!(log.lock().unwrap().released.len(), 3, "framebuffers leaked");
+    assert_validation_clean(&ctx);
+}

@@ -8,6 +8,7 @@ license.workspace = true
 
 [dependencies]
 drm = { version = "0.15.0", default-features = false }
+impeller-core = { workspace = true }
 impeller-hal = { workspace = true }
 impeller-present = { workspace = true }
 log = { workspace = true }

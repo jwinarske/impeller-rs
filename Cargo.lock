@@ -355,6 +355,7 @@ name = "impeller-present-drm"
 version = "0.1.0"
 dependencies = [
  "drm",
+ "impeller-core",
  "impeller-hal",
  "impeller-hal-vulkan",
  "impeller-present",

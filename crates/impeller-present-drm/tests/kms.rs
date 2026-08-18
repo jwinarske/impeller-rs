@@ -11,7 +11,7 @@
 //! not, these skip and say so rather than passing quietly.
 
 use impeller_hal::{Batch, BlendMode, HalContext, Material, PassDescriptor, PixelFormat};
-use impeller_hal_vulkan::{DevicePreference, VulkanContext};
+use impeller_hal_vulkan::{ContextConfig, DevicePreference, VulkanContext};
 use impeller_present::negotiate::negotiate;
 use impeller_present_drm::output::{CommitRequest, DmaBufPlanes, OutputEvent, ScanoutOutput};
 use impeller_present_drm::KmsOutput;
@@ -20,7 +20,24 @@ const FULL: [[f32; 2]; 4] = [[-1.0, -1.0], [1.0, -1.0], [1.0, 1.0], [-1.0, 1.0]]
 const QUAD: [u32; 6] = [0, 1, 2, 0, 2, 3];
 
 /// A card this process can drive, or nothing.
-fn output() -> Option<KmsOutput> {
+/// Serializes the tests here that drive a card.
+///
+/// Modesetting master is exclusive per device, and the harness runs one file's
+/// tests on several threads at once. Without this the first test to reach the
+/// card takes the lock and the rest are refused it, report themselves skipped,
+/// and pass -- so the file went green while the only tests that touch real
+/// hardware had not run. That is worse than a failure, because a run under
+/// `--test-threads=1` looks the same and nothing says which happened.
+///
+/// A mutex rather than a crate for it: these tests share one process, so the
+/// contention is between threads and this is exactly the tool. A poisoned lock
+/// is taken anyway, since a panicking test says nothing about whether the card
+/// is usable.
+static CARD: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+/// A card this process can drive, held for as long as the guard lives.
+fn output() -> Option<(KmsOutput, std::sync::MutexGuard<'static, ()>)> {
+    let guard = CARD.lock().unwrap_or_else(|e| e.into_inner());
     let mut refused = Vec::new();
     for entry in std::fs::read_dir("/dev/dri").ok()?.flatten() {
         let name = entry.file_name().into_string().ok()?;
@@ -29,7 +46,7 @@ fn output() -> Option<KmsOutput> {
         }
         let path = entry.path().to_string_lossy().into_owned();
         match KmsOutput::open(&path) {
-            Ok(output) => return Some(output),
+            Ok(output) => return Some((output, guard)),
             Err(e) => refused.push(format!("{path}: {e}")),
         }
     }
@@ -52,7 +69,7 @@ fn context() -> Option<VulkanContext> {
 
 #[test]
 fn a_rendered_frame_reaches_a_real_display_controller() {
-    let (Some(mut output), Some(mut ctx)) = (output(), context()) else {
+    let (Some((mut output, _card)), Some(mut ctx)) = (output(), context()) else {
         return;
     };
     let mode = output.mode();
@@ -137,7 +154,7 @@ fn a_rendered_frame_reaches_a_real_display_controller() {
 
 #[test]
 fn several_frames_flip_in_turn() {
-    let (Some(mut output), Some(mut ctx)) = (output(), context()) else {
+    let (Some((mut output, _card)), Some(mut ctx)) = (output(), context()) else {
         return;
     };
     let mode = output.mode();
@@ -210,7 +227,9 @@ fn several_frames_flip_in_turn() {
 
 #[test]
 fn committing_a_framebuffer_this_output_did_not_import_is_refused() {
-    let Some(mut output) = output() else { return };
+    let Some((mut output, _card)) = output() else {
+        return;
+    };
     // A handle from somewhere else names a framebuffer the kernel would reject
     // or, worse, one belonging to another import. Refusing before the commit
     // keeps that from being an atomic failure nobody can read.
@@ -232,7 +251,7 @@ fn the_scanout_target_drives_a_real_display_controller() {
     use impeller_present::PresentTarget;
     use impeller_present_drm::DrmScanoutTarget;
 
-    let (Some(output), Some(mut ctx)) = (output(), context()) else {
+    let (Some((output, _card)), Some(mut ctx)) = (output(), context()) else {
         return;
     };
     let mode = output.mode();
@@ -287,4 +306,117 @@ fn the_scanout_target_drives_a_real_display_controller() {
     );
     eprintln!("ring depth {}", target.ring_depth());
     target.destroy(&mut ctx);
+}
+
+/// A context with the validation layers on, where they are available.
+fn validating_context() -> Option<VulkanContext> {
+    match VulkanContext::with_config(ContextConfig {
+        device: DevicePreference::Auto,
+        validation: true,
+    }) {
+        Ok(ctx) => Some(ctx),
+        Err(e) => {
+            eprintln!("skipping: no Vulkan device ({e})");
+            None
+        }
+    }
+}
+
+#[test]
+fn a_frame_with_layers_reaches_a_real_display_controller() {
+    // The same whole-stack check as above, for a frame that composites a layer.
+    // That path is different in kind rather than in degree: the recording is
+    // several passes, the layer ones render into targets of their own, and the
+    // pass the controller scans out is the one that samples them. Nothing in
+    // the flat case exercises a deferred submission that samples anything, and
+    // this is the only place where getting it wrong means a display shows it.
+    use impeller_core::{Canvas, Color, Layer, Paint, Rect, Vec2};
+    use impeller_hal_vulkan::VulkanHal;
+    use impeller_present::PresentTarget;
+    use impeller_present_drm::DrmScanoutTarget;
+
+    // Validation on, unlike the flat loop next to it. This is the only test
+    // where a deferred submission samples anything, so it is the only one where
+    // a descriptor pool freed while the GPU still reads it, or a layer target
+    // released before the commit it feeds has flipped, is possible at all --
+    // and none of that shows in a picture nobody reads back.
+    let Some((output, _card)) = output() else {
+        return;
+    };
+    let Some(mut ctx) = validating_context() else {
+        return;
+    };
+    let mut target = match DrmScanoutTarget::<VulkanHal, _>::new(&mut ctx, output, 3) {
+        Ok(target) => target,
+        Err(e) => panic!("building the scanout target: {e}"),
+    };
+    let extent = target.extent();
+
+    let scene = |t: f32| {
+        let mut canvas = Canvas::new(extent);
+        canvas.clear(Color::linear(0.03, 0.03, 0.08, 1.0));
+        let side = extent.width.min(extent.height) as f32;
+        let region = Rect::new(
+            extent.width as f32 * 0.25,
+            extent.height as f32 * 0.25,
+            extent.width as f32 * 0.75,
+            extent.height as f32 * 0.75,
+        );
+        // Bounded, so the layer target is smaller than the scanout buffer and
+        // sits at an offset inside it -- the case where a mapping that ignored
+        // the target's origin would put the composite in the wrong place.
+        canvas.save_layer_bounds(Layer::opacity(0.6), region);
+        for (dx, color) in [(-0.06, [0.9, 0.3, 0.2]), (0.06, [0.2, 0.7, 0.9])] {
+            canvas
+                .draw_circle(
+                    Vec2::new(extent.width as f32 * (0.5 + dx), extent.height as f32 * 0.5),
+                    side * (0.12 + 0.02 * t),
+                    &Paint::fill(Color::linear(color[0], color[1], color[2], 1.0))
+                        .with_anti_alias(false),
+                )
+                .expect("circle");
+        }
+        canvas.restore();
+        canvas.finish()
+    };
+    assert!(
+        scene(0.0).passes.len() > 1,
+        "the scene has no layer, so this proves nothing"
+    );
+
+    for frame in 0..8u32 {
+        let recording = scene(frame as f32 / 8.0);
+        let _ = target.acquire(&mut ctx).expect("acquire");
+        target
+            .submit_recording(&mut ctx, &recording, &[])
+            .unwrap_or_else(|e| panic!("frame {frame}: submitting a recording: {e}"));
+        target
+            .present(&mut ctx)
+            .unwrap_or_else(|e| panic!("frame {frame}: {e}"));
+    }
+
+    // The same property the flat loop has, and the one the layers could have
+    // broken: every commit but the modesetting first hands its fence to the
+    // kernel rather than stalling the CPU. A layer pass that had to be waited
+    // on separately, or a fence that could not be exported because the
+    // submission sampled something, would show up here as eight.
+    assert_eq!(
+        target.cpu_waits(),
+        1,
+        "expected a stall only on the modesetting frame"
+    );
+    target.destroy(&mut ctx);
+
+    // After teardown, so that a layer target still alive when the device goes
+    // down is reported as the leak it is rather than passing unnoticed.
+    if ctx.validation_active() {
+        let errors: Vec<_> = ctx
+            .validation_messages()
+            .into_iter()
+            .filter(|m| m.severity == impeller_hal_vulkan::ValidationSeverity::Error)
+            .collect();
+        assert!(errors.is_empty(), "validation errors: {errors:?}");
+    } else {
+        eprintln!("note: validation layers unavailable, so lifetimes went unchecked");
+    }
 }

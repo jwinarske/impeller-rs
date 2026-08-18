@@ -480,6 +480,13 @@ without a semaphore each. Only the root goes through the synchronized path,
 which is the right split, because the acquire and present semaphores are about
 the pass that touches the image being displayed and that is exactly the root.
 
+Both presentation paths take a recording: the swapchain composites into the
+image it acquired, and the scanout ring into the buffer the display will read.
+The layer targets stay with the frame slot in each, released when it comes free
+— after the fence has signalled, or after the kernel has flipped a commit it
+gated on that fence, so in both cases the submission that sampled them has
+finished.
+
 The root samples the layer targets, so a deferred submission had to be able to
 sample at all — it could not, and the descriptor sets it needs now travel with
 the fence alongside the framebuffer, for the same reason. The targets
