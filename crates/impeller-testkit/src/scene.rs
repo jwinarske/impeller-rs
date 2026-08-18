@@ -1074,6 +1074,10 @@ pub fn corpus() -> Vec<Scene> {
             vec![tiled_gradient_item(TileMode::Repeat)],
         ),
         Scene::new(
+            "gradient-tiled-mirror",
+            vec![tiled_gradient_item(TileMode::Mirror)],
+        ),
+        Scene::new(
             "gradient-tiled-decal",
             vec![
                 Item::filled(

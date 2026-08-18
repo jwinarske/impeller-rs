@@ -24,9 +24,12 @@ vec2 tile_gradient(float t_1, float tile) {
     if (((tile > 0.5) && (tile < 1.5))) {
         return vec2((t_1 - floor(t_1)), 1.0);
     }
-    if ((tile > 1.5)) {
+    if (((tile > 1.5) && (tile < 2.5))) {
         float inside = (((t_1 >= 0.0) && (t_1 <= 1.0)) ? 1.0 : 0.0);
         return vec2(clamp(t_1, 0.0, 1.0), inside);
+    }
+    if ((tile > 2.5)) {
+        return vec2((1.0 - abs((1.0 - (t_1 - (2.0 * floor((t_1 * 0.5))))))), 1.0);
     }
     return vec2(clamp(t_1, 0.0, 1.0), 1.0);
 }

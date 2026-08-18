@@ -1888,6 +1888,55 @@ fn a_gradient_tiles_beyond_its_own_extent() {
 }
 
 #[test]
+fn mirroring_repeats_without_the_seam_that_repeating_leaves() {
+    let Some(mut ctx) = context() else { return };
+    // The point of mirroring is not that it differs from repeating somewhere --
+    // that would be true of getting the fold wrong as well. It is that the
+    // copies join. The ramp ends at x=32, so that is where the second copy
+    // begins and where a seam would be: repeating jumps from the last color
+    // back to the first, and mirroring turns around and runs back.
+    let repeated = tiled_ramp(&mut ctx, TileMode::Repeat);
+    let mirrored = tiled_ramp(&mut ctx, TileMode::Mirror);
+
+    let jump = |image: &[u8]| {
+        let before = pixel(image, 30, 64);
+        let after = pixel(image, 34, 64);
+        (0..3)
+            .map(|c| (before[c] as i32 - after[c] as i32).abs())
+            .max()
+            .unwrap_or(0)
+    };
+
+    let seam = jump(&repeated);
+    assert!(
+        seam > 200,
+        "repeating should jump at the period boundary, but moved only {seam}"
+    );
+    let joined = jump(&mirrored);
+    assert!(
+        joined < 40,
+        "mirroring should join at the period boundary, but jumped {joined}"
+    );
+
+    // And it is a reflection rather than a hold: a quarter past the boundary
+    // must match a quarter before it, which clamping would also fail.
+    //
+    // The two columns are 24 and 39 rather than 24 and 40, because a fragment
+    // samples at its center: 24.5 reflects about the boundary at 32 onto 39.5,
+    // and 40.5 is a whole pixel further out. Reading them as 24 and 40 leaves a
+    // difference of eight in the blue channel, which is the ramp's slope over
+    // one pixel and not a fault in the fold.
+    let before = pixel(&mirrored, 24, 64);
+    let after = pixel(&mirrored, 39, 64);
+    for channel in 0..3 {
+        assert!(
+            (before[channel] as i32 - after[channel] as i32).abs() <= 6,
+            "the second copy should mirror the first: {before:?} against {after:?}"
+        );
+    }
+}
+
+#[test]
 fn a_partial_sweep_holds_its_end_color_around_the_rest_of_the_turn() {
     let Some(mut ctx) = context() else { return };
     // The only case where a sweep has an outside at all. A full turn covers

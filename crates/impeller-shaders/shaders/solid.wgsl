@@ -111,11 +111,19 @@ fn tile_gradient(t: f32, tile: f32) -> vec2<f32> {
         // -0.25 lands at 0.75 and the ramp runs on backwards without a seam.
         return vec2<f32>(t - floor(t), 1.0);
     }
-    if (tile > 1.5) {
+    if (tile > 1.5 && tile < 2.5) {
         // Decal. Tested against the parameter as given, since the clamped one
         // is inside by construction.
         let inside = select(0.0, 1.0, t >= 0.0 && t <= 1.0);
         return vec2<f32>(clamp(t, 0.0, 1.0), inside);
+    }
+    if (tile > 2.5) {
+        // Mirror: a period of two, folded in half. The parameter is reduced
+        // modulo two and then reflected about one, so 1.25 comes back as 0.75
+        // and the ramp runs backwards through the second half of every period.
+        // The two ends of a copy meet the two ends of its neighbors, which is
+        // the seam that repeating leaves behind.
+        return vec2<f32>(1.0 - abs(1.0 - (t - 2.0 * floor(t * 0.5))), 1.0);
     }
     return vec2<f32>(clamp(t, 0.0, 1.0), 1.0);
 }
@@ -152,12 +160,16 @@ fn sample_image(clip: vec2<f32>) -> vec4<f32> {
         // that one sampler serves every draw; the modes are a property of the
         // paint, and baking them into samplers would mean one per combination.
         coord = fract(uv);
+    } else if (tile > 2.5) {
+        // Mirror, per axis: the same fold a gradient uses, applied to each
+        // component so a tiled image meets its neighbors on both edges.
+        coord = vec2<f32>(1.0) - abs(vec2<f32>(1.0) - (uv - 2.0 * floor(uv * 0.5)));
     } else {
         coord = clamp(uv, vec2<f32>(0.0), vec2<f32>(1.0));
     }
 
     var texel = textureSampleLevel(image_texture, image_sampler, coord, 0.0);
-    if (tile > 1.5) {
+    if (tile > 1.5 && tile < 2.5) {
         // Decal: nothing outside the image's own bounds. Tested against the
         // unclamped coordinate, since the clamped one is inside by
         // construction.

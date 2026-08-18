@@ -64,9 +64,12 @@ vec2 tile_gradient(float t_1, float tile) {
     if (((tile > 0.5) && (tile < 1.5))) {
         return vec2((t_1 - floor(t_1)), 1.0);
     }
-    if ((tile > 1.5)) {
+    if (((tile > 1.5) && (tile < 2.5))) {
         float inside = (((t_1 >= 0.0) && (t_1 <= 1.0)) ? 1.0 : 0.0);
         return vec2(clamp(t_1, 0.0, 1.0), inside);
+    }
+    if ((tile > 2.5)) {
+        return vec2((1.0 - abs((1.0 - (t_1 - (2.0 * floor((t_1 * 0.5))))))), 1.0);
     }
     return vec2(clamp(t_1, 0.0, 1.0), 1.0);
 }
@@ -92,20 +95,24 @@ vec4 sample_image(vec2 clip_1) {
     if (((tile_1 > 0.5) && (tile_1 < 1.5))) {
         coord = fract(_e1);
     } else {
-        coord = clamp(_e1, vec2(0.0), vec2(1.0));
+        if ((tile_1 > 2.5)) {
+            coord = (vec2(1.0) - abs((vec2(1.0) - (_e1 - (2.0 * floor((_e1 * 0.5)))))));
+        } else {
+            coord = clamp(_e1, vec2(0.0), vec2(1.0));
+        }
     }
-    vec2 _e20 = coord;
-    vec4 _e22 = textureLod(_group_0_binding_0_fs, vec2(_e20), 0.0);
-    texel = _e22;
-    if ((tile_1 > 1.5)) {
+    vec2 _e35 = coord;
+    vec4 _e37 = textureLod(_group_0_binding_0_fs, vec2(_e35), 0.0);
+    texel = _e37;
+    if (((tile_1 > 1.5) && (tile_1 < 2.5))) {
         bool outside = (any(lessThan(_e1, vec2(0.0))) || any(greaterThan(_e1, vec2(1.0))));
         if (outside) {
             texel = vec4(0.0);
         }
     }
-    vec4 _e37 = texel;
-    float _e41 = _push_constant_binding_fs.geometry.z;
-    return (_e37 * _e41);
+    vec4 _e55 = texel;
+    float _e59 = _push_constant_binding_fs.geometry.z;
+    return (_e55 * _e59);
 }
 
 float coverage_of(float distance_, float per_pixel, float width) {

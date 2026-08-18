@@ -292,6 +292,29 @@ fn the_tile_modes_differ_outside_the_image() {
         [255, 255, 0, 255],
         "clamp did not hold the corner texel"
     );
+
+    // Mirroring reflects each alternate copy instead of restarting it. The
+    // image covers sixteen target pixels, so the fold is about sixteen, and a
+    // fragment samples at its center: 17.5 reflects onto 14.5. That column is
+    // inside the image, where every mode agrees, so it is read from `clamp`.
+    let mirror = render::<VulkanHal>(&mut ctx, quarter(TileMode::Mirror));
+    assert_eq!(
+        pixel(&mirror, 2, 2),
+        pixel(&clamp, 2, 2),
+        "mirror changed the image's own interior"
+    );
+    assert_eq!(
+        pixel(&mirror, 17, 2),
+        pixel(&clamp, 14, 2),
+        "mirror did not reflect the copy across the edge"
+    );
+    // And it is a reflection rather than a repeat: the same column under
+    // repeating restarts at the image's left edge instead.
+    assert_ne!(
+        pixel(&mirror, 17, 2),
+        pixel(&repeat, 17, 2),
+        "mirror and repeat agree where they must differ"
+    );
 }
 
 #[test]

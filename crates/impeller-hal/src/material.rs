@@ -61,6 +61,7 @@ fn tile_code(tile: TileMode) -> f32 {
         TileMode::Clamp => tile::CLAMP,
         TileMode::Repeat => tile::REPEAT,
         TileMode::Decal => tile::DECAL,
+        TileMode::Mirror => tile::MIRROR,
     }
 }
 
@@ -82,6 +83,7 @@ pub mod tile {
     pub const CLAMP: f32 = 0.0;
     pub const REPEAT: f32 = 1.0;
     pub const DECAL: f32 = 2.0;
+    pub const MIRROR: f32 = 3.0;
 }
 
 /// A color stop.
@@ -299,6 +301,14 @@ pub enum TileMode {
     /// than the image it is filled with. Clamping smears the border across the
     /// remainder, which reads as a rendering fault rather than as a choice.
     Decal,
+    /// Repeat, reversing every other copy.
+    ///
+    /// What repeating is for when the two ends do not match. A ramp tiled by
+    /// [`TileMode::Repeat`] jumps from its last color back to its first at
+    /// every period, and that discontinuity is a visible seam; reflecting each
+    /// alternate copy joins end to end and leaves none. The period is twice as
+    /// long, since a copy and its reflection make one.
+    Mirror,
 }
 
 impl Material {
