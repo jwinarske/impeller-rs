@@ -512,3 +512,53 @@ fn a_scene_on_an_opaque_background_stays_opaque() {
         "no scene has an opaque background, so nothing here was checked"
     );
 }
+
+#[test]
+fn colour_never_exceeds_the_alpha_it_is_multiplied_by() {
+    // Everything here stores premultiplied colour: a render target holds it,
+    // an uploaded image is required to, and the blend equations assume it. The
+    // property that follows is that no channel can exceed the alpha it was
+    // multiplied by, and a shader that emitted straight colour instead would
+    // break it -- at partial alpha, and only there. At full alpha the two
+    // conventions agree exactly, which is why a mistake of this kind is
+    // invisible until something translucent is drawn into something else.
+    //
+    // Which is also why this needs a scene that clears to nothing. Every other
+    // scene here is opaque throughout, and over those the check is arithmetic
+    // that cannot fail: a channel is never more than 255 and neither is alpha.
+    // The count below is the guard against that, and against a future where
+    // the only transparent scene quietly stops being one.
+    let mut devices = available_devices();
+    if devices.is_empty() {
+        eprintln!("skipping: no device");
+        return;
+    }
+
+    let mut partial = 0usize;
+    for scene in corpus() {
+        let Some(index) = first_device_for(&devices, &scene) else {
+            continue;
+        };
+        let image = render_scene::<VulkanHal>(&mut devices[index], &scene).expect("render");
+        for (at, texel) in image.pixels.chunks_exact(4).enumerate() {
+            let alpha = texel[3];
+            if alpha > 0 && alpha < 255 {
+                partial += 1;
+            }
+            for (channel, name) in ["red", "green", "blue"].iter().enumerate() {
+                assert!(
+                    texel[channel] <= alpha,
+                    "{}: at texel {at} the {name} channel is {} against an alpha of {alpha}, \
+                     which is not premultiplied colour",
+                    scene.name,
+                    texel[channel],
+                );
+            }
+        }
+    }
+    assert!(
+        partial > 1000,
+        "only {partial} texel(s) in the whole corpus have partial alpha, so this \
+         says almost nothing -- it needs a scene that clears to transparent"
+    );
+}

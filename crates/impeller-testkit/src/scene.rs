@@ -1122,6 +1122,46 @@ pub fn corpus() -> Vec<Scene> {
             })
             .collect(),
         ),
+        // A scene that clears to nothing rather than to black, which is what a
+        // caller rendering a sprite or an overlay asks for -- and which no
+        // other scene here does, so the whole corpus was opaque and every
+        // statement about alpha was trivially true of it.
+        //
+        // Deliberately full of partial alpha, since that is the only place a
+        // colour that was never premultiplied shows: at full alpha the two
+        // conventions agree exactly. And deliberately mixed, because the two
+        // routes premultiply in different lines -- a polygon goes through the
+        // one shared by solids and gradients, and the other two are evaluated
+        // per fragment and each end in their own.
+        Scene::new(
+            "transparent-background",
+            vec![
+                Item::fill(
+                    Shape::Polygon(vec![[6.0, 118.0], [64.0, 8.0], [122.0, 118.0]]),
+                    [0.3, 0.9, 0.4, 0.5],
+                )
+                .with_blend(BlendMode::SrcOver),
+                Item::fill(
+                    Shape::Circle {
+                        center: [48.0, 64.0],
+                        radius: 30.0,
+                    },
+                    [1.0, 0.25, 0.15, 0.6],
+                )
+                .with_blend(BlendMode::SrcOver),
+                Item::fill(
+                    Shape::RoundedRect {
+                        min: [60.0, 44.0],
+                        max: [116.0, 88.0],
+                        radius: 14.0,
+                    },
+                    [0.2, 0.5, 1.0, 0.45],
+                )
+                .with_blend(BlendMode::SrcOver),
+            ],
+        )
+        .with_background([0.0, 0.0, 0.0, 0.0])
+        .with_samples(4),
         // An ellipse, which nothing else here can express: a rounded rectangle
         // given a large radius becomes a stadium, and a circle is one only
         // where the bounds are square. Multisampled, so the executor asks for

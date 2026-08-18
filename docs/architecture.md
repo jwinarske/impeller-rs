@@ -1382,6 +1382,14 @@ correct pixels, and fails six of them once the layer is read. The class of bug
 it catches was invisible to the part of the suite that renders the most, and
 costs about eight percent of that suite's run time to see.
 
+Colour is premultiplied everywhere — a render target holds it that way, an
+uploaded image is required to, and the blend equations assume it — so no channel
+can exceed the alpha it was multiplied by. That is asserted over the corpus, and
+it needs a scene that clears to transparent in order to mean anything: at full
+alpha the two conventions agree exactly, so over an opaque corpus the check is
+arithmetic that cannot fail. It carries a count of partly transparent texels for
+that reason, which fails if the corpus ever becomes opaque again.
+
 Some of what a comparison cannot see is still arithmetic, and arithmetic can be
 asserted. A scene that clears to an opaque background has no way to become
 transparent unless a draw took the alpha away, and none of them mean to — so
