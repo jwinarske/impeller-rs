@@ -203,6 +203,118 @@ fn an_empty_frame_still_clears() {
     assert_eq!(pixel(&pixels, 0, 0), [255, 255, 255, 255]);
 }
 
+/// Every backend this build can reach, so a property that must hold on each is
+/// stated once rather than per backend.
+fn every_backend() -> Vec<Context> {
+    [BackendPreference::Vulkan, BackendPreference::Gles]
+        .into_iter()
+        .filter_map(|preference| Context::new(preference).ok())
+        .collect()
+}
+
+/// Fill a surface of the given format with one color and read a texel back.
+fn flat_fill(ctx: &mut Context, format: PixelFormat, color: Color) -> [u8; 4] {
+    let extent = Extent2D::new(16, 16);
+    let mut canvas = Canvas::new(extent);
+    canvas.clear(color);
+    let mut surface = ctx.create_surface(extent, format).expect("surface");
+    ctx.draw(&mut surface, &canvas.finish()).expect("draw");
+    let pixels = ctx.read(&mut surface).expect("read");
+    ctx.destroy_surface(surface);
+    [pixels[0], pixels[1], pixels[2], pixels[3]]
+}
+
+#[test]
+fn an_srgb_surface_returns_the_color_that_was_authored() {
+    // The round trip is the reason both halves exist. A caller states a color
+    // the way a designer picked it, in sRGB; the renderer converts to linear so
+    // that blending and interpolation are done on light rather than on encoded
+    // bytes; and an sRGB target encodes once on the way out. If all three agree
+    // the byte that comes back is the byte that went in.
+    //
+    // Nothing exercised this. Every other test here uses a linear target,
+    // because exact expected values are easier to state that way, so the format
+    // that does the conversion had never been rendered into at all -- on either
+    // backend, though both map it.
+    let mut contexts = every_backend();
+    assert!(!contexts.is_empty(), "no backend, so nothing here ran");
+
+    for ctx in &mut contexts {
+        let backend = ctx.backend();
+        for authored in [0.2f32, 0.6, 0.85] {
+            let got = flat_fill(
+                ctx,
+                PixelFormat::Rgba8UnormSrgb,
+                Color::srgb(authored, authored, authored, 1.0),
+            );
+            let want = (authored * 255.0).round() as u8;
+            // Exact, not close. A backend that skipped the conversion would
+            // come back with the linear value, which for 0.6 is 81 rather than
+            // 153 -- a difference far outside any rounding this could excuse.
+            assert!(
+                got[..3].iter().all(|c| c.abs_diff(want) <= 1),
+                "{backend}: authored sRGB {authored} came back as {got:?}, wanted {want}"
+            );
+        }
+    }
+}
+
+#[test]
+fn an_srgb_surface_differs_from_a_linear_one_by_the_transfer_function() {
+    // The stronger statement, and the one that says where the conversion
+    // happens. The same drawing into the two formats must differ by exactly
+    // the transfer -- which means the pipeline carried linear light the whole
+    // way and only the final write encoded. A renderer that converted earlier,
+    // or twice, would still round-trip and would fail this.
+    let mut contexts = every_backend();
+    assert!(!contexts.is_empty(), "no backend, so nothing here ran");
+
+    for ctx in &mut contexts {
+        let backend = ctx.backend();
+        for value in [0.1f32, 0.35, 0.5, 0.9] {
+            let color = Color::linear(value, value, value, 1.0);
+            let linear = flat_fill(ctx, PixelFormat::Rgba8Unorm, color);
+            let encoded = flat_fill(ctx, PixelFormat::Rgba8UnormSrgb, color);
+
+            // The reference is the conversion the public API already offers,
+            // so this compares the device against the library rather than
+            // against a constant nobody can check.
+            let want = (color.to_srgb()[0] * 255.0).round() as u8;
+            assert!(
+                linear[0].abs_diff((value * 255.0).round() as u8) <= 1,
+                "{backend}: a linear target should hold the linear value, got {linear:?}"
+            );
+            assert!(
+                encoded[0].abs_diff(want) <= 1,
+                "{backend}: linear {value} encoded to {encoded:?}, wanted {want}"
+            );
+        }
+    }
+}
+
+#[test]
+fn the_backends_agree_on_an_srgb_surface() {
+    // Two implementations converting differently is the failure this is for:
+    // one applying the transfer in the shader and one leaving it to the
+    // format would each look plausible alone and disagree by the transfer.
+    let mut contexts = every_backend();
+    if contexts.len() < 2 {
+        eprintln!("skipping: both backends are needed");
+        return;
+    }
+    let color = Color::srgb(0.42, 0.17, 0.73, 1.0);
+    let first = flat_fill(&mut contexts[0], PixelFormat::Rgba8UnormSrgb, color);
+    for ctx in &mut contexts[1..] {
+        let got = flat_fill(ctx, PixelFormat::Rgba8UnormSrgb, color);
+        assert_eq!(got, first, "the backends disagree on an sRGB surface");
+    }
+    // Not gray, so a channel swapped on the way through would show.
+    assert!(
+        first[0] != first[1] || first[1] != first[2],
+        "the test color came back gray, so a channel swap would be invisible"
+    );
+}
+
 #[test]
 fn a_surface_from_one_context_is_refused_by_another() {
     // Two contexts of different kinds, asked for by name. Asking twice for

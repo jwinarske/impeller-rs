@@ -1014,7 +1014,20 @@ permutations on GLES.
   paging — a page boundary would split a glyph run into more than one draw,
   which is why growth was chosen over pages.
 - **Color**: linear f32 internally, with sRGB conversion at the API boundary
-  and at target write.
+  and at target write. Linear internally because blending and interpolation are
+  operations on light: averaging two encoded bytes is not averaging the two
+  colors, and a gradient built that way is visibly wrong in its middle. The
+  conversion on the way out is the target format's, not a shader's — an sRGB
+  format encodes on write, so nothing in the pipeline knows the difference and
+  a caller picks it when creating the surface.
+
+  The property that ties the two together is a round trip: a color authored
+  through `Color::srgb` and drawn into an sRGB surface comes back as the byte
+  that was authored. That holds exactly on both backends, and a test also
+  requires the same drawing into a linear and an sRGB surface to differ by
+  exactly the transfer — which is what says the pipeline carried light the
+  whole way and only the final write encoded, rather than converting early or
+  twice.
 - **Materials**: a paint resolved for a backend — colour or gradient, already
   in clip space — packed into 112 bytes, inside the 128 of push constants every
   device is required to offer. Staying within the guaranteed minimum is
