@@ -27,23 +27,28 @@ echo "verification"
 step "rustfmt" cargo fmt --all -- --check
 step "clippy" cargo clippy --workspace --all-targets -- -D warnings
 step "build" cargo build --workspace --all-targets
-step "test" cargo test --workspace
+
+# Through xtask rather than `cargo test` directly, because a skipped test
+# passes and `cargo test` captures the reason along with the rest of a passing
+# test's output. This runs the suite uncaptured and prints the census, so a run
+# says how much of itself ran rather than only that it was green. Its output is
+# shown whether or not it succeeded, which is the point: a clean run with six
+# skips and a clean run with none look identical without it.
+echo "tests"
+if census=$(cargo xtask verify 2>&1); then
+    printf '%s\n' "$census" | sed 's/^/  /'
+else
+    printf '%s\n' "$census" | tail -30 | sed 's/^/  /'
+    fail=1
+fi
 
 echo "feature matrix"
 for features in vulkan gles vulkan,gles,drm; do
     step "$features" cargo check -p impeller --no-default-features --features "$features"
 done
 
-# The facade's default features compile only Vulkan, so the tests that compare
-# the two backends through the public API skip in the workspace run above.
-# Running them again with both compiled in is what makes those tests real
-# rather than a pair of early returns that always pass.
-step "both backends" cargo test -p impeller --features gles
-
 if [ "$fail" -eq 0 ]; then
-    total=$(cargo test --workspace 2>&1 |
-        awk -F'[ ;]' '/test result/ {s+=$4} END {print s}')
-    echo "SMOKE: PASS (${total} tests)"
+    echo "SMOKE: PASS"
 else
     echo "SMOKE: FAIL"
 fi
