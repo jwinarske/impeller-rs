@@ -116,6 +116,14 @@ fn parse(text: &str, broke: bool) -> Outcome {
     let mut passed = 0;
     let mut failed = 0;
     let mut failures: Vec<Failure> = Vec::new();
+    // Collected separately and joined afterwards, because the two are not in
+    // the order they read in. Under `--nocapture` a panic is written when it
+    // happens and the harness prints `... FAILED` when the test finishes, so
+    // the message arrives first -- and with tests running in parallel, other
+    // tests' output arrives in between. Matching them as they were scanned
+    // found nothing at all, and did so only on the machine that had a failure
+    // to report.
+    let mut panics: Vec<(String, Vec<String>)> = Vec::new();
     let mut reasons: Vec<(String, usize)> = Vec::new();
     // The harness prints each failure twice: once as it happens and again in a
     // trailing list. The first form is taken and the second ignored, because
@@ -141,20 +149,19 @@ fn parse(text: &str, broke: bool) -> Outcome {
         }
         if let Some(rest) = line.trim().strip_prefix("thread '") {
             if let Some((thread, location)) = rest.split_once("' panicked at ") {
-                if let Some(failure) = failures.iter_mut().find(|f| f.name == thread) {
-                    if failure.detail.is_empty() {
-                        failure.detail.push(format!("at {location}"));
-                        // The message sits under the location, one line or
-                        // several, and ends where the harness's note about
-                        // RUST_BACKTRACE begins.
-                        for next in lines.iter().skip(i + 1) {
-                            let next = next.trim();
-                            if next.is_empty() || next.starts_with("note: ") {
-                                break;
-                            }
-                            failure.detail.push(next.to_string());
+                if !panics.iter().any(|(name, _)| name == thread) {
+                    let mut detail = vec![format!("at {location}")];
+                    // The message sits under the location, one line or
+                    // several, and ends where the harness's note about
+                    // RUST_BACKTRACE begins.
+                    for next in lines.iter().skip(i + 1) {
+                        let next = next.trim();
+                        if next.is_empty() || next.starts_with("note: ") {
+                            break;
                         }
+                        detail.push(next.to_string());
                     }
+                    panics.push((thread.to_string(), detail));
                 }
             }
         }
@@ -175,6 +182,11 @@ fn parse(text: &str, broke: bool) -> Outcome {
                 Some((_, count)) => *count += 1,
                 None => reasons.push((reason, 1)),
             }
+        }
+    }
+    for failure in &mut failures {
+        if let Some((_, detail)) = panics.iter().find(|(name, _)| *name == failure.name) {
+            failure.detail = detail.clone();
         }
     }
     reasons.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
@@ -239,15 +251,20 @@ mod tests {
     }
 
     /// The shape `cargo test --no-fail-fast -- --nocapture` actually produces.
+    ///
+    /// The panic precedes the `... FAILED` line, which is the whole reason
+    /// this fixture exists: the first version of it had them the other way
+    /// around, matching how they read rather than how they are written, and
+    /// the parser it was testing had the same mistake.
     const OUTPUT: &str = "\
 running 3 tests
 skipping: no card node on this machine
-test a_passing_one ... ok
-test the_broken_one ... FAILED
 thread 'the_broken_one' panicked at crates/x/tests/y.rs:12:5:
 all 2 acquisitions returned the same image,
 so nothing is double buffered
 note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+test a_passing_one ... ok
+test the_broken_one ... FAILED
 
 failures:
     the_broken_one
