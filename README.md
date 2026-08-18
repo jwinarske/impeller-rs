@@ -16,9 +16,12 @@ through KMS with no compositor present.
 > opacity and layer-wide blend modes work and nest. A glyph atlas packs
 > caller-supplied single-channel coverage, evicts what a frame stops using,
 > grows when it has nothing to evict, and draws a run of any length as one
-> draw; bring your own rasterizer. Vulkan windowed presentation works through a swapchain
-> built on a surface the caller supplies; the GLES window path is not
-> implemented yet.
+> draw; bring your own rasterizer. Windowed presentation works on both backends
+> and takes the same shape on each: the caller creates the surface — a
+> `VkSurfaceKHR` or an `EGLSurface` — because owning that relationship would
+> mean owning a windowing library. What no test here can see is what a window
+> system actually puts on screen, so both paths are exercised against a surface
+> with no window behind it and pin the property that decides it instead.
 
 ## Why
 
@@ -109,12 +112,19 @@ cargo build --features vulkan,gles,drm   # one binary that picks at runtime
 cargo test
 ```
 
+A test that finds no device prints why and returns, and `cargo test` captures
+the output of a passing test — so a run with nothing to run on looks exactly
+like a run that covered everything. `cargo xtask verify` runs the same suite
+and prints what did *not* run, which is the number worth reading.
+
 `drm` is presentation-only and composes with either rendering backend. Feature
 flags live on the `impeller` facade crate, since a virtual workspace root
 cannot declare them.
 
-Development tasks — device runs against real boards, golden-image management,
-CI reproduction — run through `cargo xtask`. No commands are implemented yet.
+Development tasks run through `cargo xtask`. `report` says what this machine's
+devices can do, `drm` whether it can drive a display directly, `verify` runs
+the suite and reports what did *not* run, and `gallery` renders every corpus
+scene onto one sheet to look at. `cargo xtask help` lists them.
 
 ## Layout
 
