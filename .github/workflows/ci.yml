@@ -1,0 +1,109 @@
+# Verification on a runner with no GPU.
+#
+# The obvious objection to CI here is that this is a renderer and a hosted
+# runner has no graphics hardware, so a green run would mean nothing. That was
+# worth checking rather than assuming, and it is false: Mesa ships conformant
+# CPU implementations of both APIs this project targets -- lavapipe for Vulkan
+# and llvmpipe for GLES -- and the whole suite runs on them. It is not a
+# reduced mode. lavapipe offers advanced blending, which the discrete part this
+# was developed against does not, so the runner covers scenes that the
+# workstation reports as unavailable.
+#
+# What it cannot cover is real hardware behavior and KMS: there is no display
+# controller to become master of, so the scanout tests skip. Those need a
+# machine with a GPU and a free connector, which is a separate runner rather
+# than something to fake here.
+
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+# A superseded push has nothing to say, and the full run is not cheap.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  verify:
+    name: verify (software rendering)
+    runs-on: ubuntu-latest
+    env:
+      # Scoped to this job rather than the workflow: the other one builds
+      # cargo-deny from source, and denying warnings there would fail this
+      # repository's CI over a warning in somebody else's crate.
+      RUSTFLAGS: -D warnings
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Mesa
+        run: |
+          sudo apt-get update
+          # libvulkan1 is the loader ash opens; mesa-vulkan-drivers carries the
+          # lavapipe ICD it then finds. libegl1 is what khronos-egl dlopens,
+          # and the DRI package is where llvmpipe itself lives -- without it
+          # EGL initializes and reports no usable config.
+          sudo apt-get install -y --no-install-recommends \
+            libvulkan1 mesa-vulkan-drivers vulkan-tools \
+            libegl1 libgles2 libgbm1 libdrm2 libgl1-mesa-dri
+
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+            target
+          key: cargo-${{ runner.os }}-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: cargo-${{ runner.os }}-
+
+      - name: Select the software implementations
+        run: |
+          icd=/usr/share/vulkan/icd.d/lvp_icd.x86_64.json
+          # Pinned rather than left to the loader's search, so this run cannot
+          # quietly pick up something else, and so a packaging change is a
+          # failure here instead of a suite that skips its way to green.
+          test -f "$icd" || { echo "lavapipe ICD missing at $icd"; exit 1; }
+          echo "VK_DRIVER_FILES=$icd" >> "$GITHUB_ENV"
+          echo "LIBGL_ALWAYS_SOFTWARE=1" >> "$GITHUB_ENV"
+
+      - name: Report devices
+        run: |
+          # Every device test in this suite skips when it cannot find a device,
+          # and a skip passes. Without this step a runner that installed no
+          # working driver would go green having rendered nothing at all, which
+          # is the one CI result worse than a red one. So the devices are
+          # printed, and their absence is a failure.
+          cargo xtask report | tee devices.txt
+          grep -q '^vulkan:' devices.txt || { echo "no Vulkan device"; exit 1; }
+          grep -q '^gles'    devices.txt || { echo "no GLES device"; exit 1; }
+
+      - name: Smoke
+        run: ./ci/smoke.sh
+
+  supply-chain:
+    name: supply chain
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Cache cargo-deny
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/bin/cargo-deny
+          key: cargo-deny-${{ runner.os }}
+      - name: Install cargo-deny
+        run: command -v cargo-deny || cargo install cargo-deny --locked
+      # Separate from the build because the bans are a design constraint rather
+      # than a lint: this workspace must compile from pure Rust source, with no
+      # C toolchain, cmake or pkg-config, because that property is what keeps
+      # cross-compiling to aarch64 and riscv64 boards trivial. Nothing in a
+      # normal build notices when a dependency bump breaks it.
+      - name: Check bans, licenses, advisories and sources
+        run: cargo deny check

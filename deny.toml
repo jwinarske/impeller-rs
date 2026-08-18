@@ -10,20 +10,25 @@
 # link-time libEGL via pkg-config. The workspace pins it to "dynamic"
 # (dlopen); this ban is meant to be the automated enforcement of that pin.
 #
-# Nothing runs this file. It is not invoked by `ci/smoke.sh`, there is no CI,
-# and the cargo-deny installed on the machine this was last checked from
-# predates edition 2024 and cannot parse the workspace at all. So the rule it
-# describes lived here as a comment.
+# The architectural half of this — that no crate in the graph builds native
+# code — is enforced by a test in `xtask/tests/dependencies.rs`, which needs
+# nothing installed and runs with everything else. The rest of what cargo-deny
+# checks, licenses and advisories and duplicate versions, is enforced by the
+# supply-chain job in `.github/workflows/ci.yml`, which installs a current
+# cargo-deny rather than relying on whatever a developer has.
 #
-# The architectural half of it — that no crate in the graph builds native code
-# — is now enforced by a test in `xtask/tests/dependencies.rs`, which needs
-# nothing installed and runs with everything else. What is still only described
-# here is the rest of what cargo-deny would do: licenses, advisories, and
-# duplicate versions.
+# That job is recent. This file spent longer than that describing rules nothing
+# ran, and the first run of it failed: a license nothing had noticed and a
+# wildcard rule that had never met a workspace. Both are settled below.
 
 [bans]
 multiple-versions = "warn"
 wildcards = "deny"
+# Every crate in this workspace depends on its siblings by path and none of
+# them is published, so none carries a version requirement to check. Without
+# this the wildcard rule rejects the workspace's own structure and says nothing
+# about the registry dependencies it is meant to police.
+allow-wildcard-paths = true
 
 [[bans.deny]]
 name = "pkg-config"
@@ -43,14 +48,22 @@ yanked = "deny"
 
 [licenses]
 version = 2
+# Exactly the licenses the current graph relies on, and no others. Listing a
+# license nothing uses is a policy decision made in advance and then forgotten;
+# keeping the list to what is actually here means a dependency arriving under
+# something new is a failure somebody reads, which is the point. MPL-2.0 and
+# BSD-2-Clause were listed and unused, and are gone for that reason -- adding
+# either back is a small edit and a deliberate one.
 allow = [
     "Apache-2.0",
     "Apache-2.0 WITH LLVM-exception",
-    "BSD-2-Clause",
     "BSD-3-Clause",
+    # A public domain dedication rather than a license, and more permissive
+    # than everything else here. It arrives through hexf-parse, which naga uses
+    # to parse hexadecimal floats in shader source.
+    "CC0-1.0",
     "ISC",
     "MIT",
-    "MPL-2.0",
     "Unicode-3.0",
     "Zlib",
 ]

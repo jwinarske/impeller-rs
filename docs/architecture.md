@@ -983,8 +983,9 @@ because disabling the adjustment mirrors every shader on Vulkan while leaving
 other backends untouched.
 
 naga output is snapshotted in the repository, so a naga upgrade that changes
-codegen is a reviewed event rather than a silent behavior change. Not diffed in
-CI, since there is no CI — the snapshot is a test, which is what makes it run.
+codegen is a reviewed event rather than a silent behavior change. The snapshot
+is a test rather than a CI-only diff, which is what makes it run everywhere the
+suite does.
 The GLSL is stored whole because it is text somebody can read a diff of; the
 SPIR-V is stored as a word count and a hash, which notices a change and is
 honest about not being reviewable.
@@ -1351,9 +1352,25 @@ percent of an image.
 Where per-driver tables become necessary, tightening one is a normal change and
 **loosening one requires a linked driver-bug issue**.
 
-The levels below are the plan. The right-hand column says where each runs, and
-**"CI" describes none of them: there is no CI**. What exists is `ci/smoke.sh`,
-run by hand, which does the whole of L0, L1 and L3 and part of L4.
+The levels below are the plan. The right-hand column says where each runs.
+`ci/smoke.sh` does the whole of L0, L1 and L3 and part of L4, and runs both by
+hand and on every push through `.github/workflows/ci.yml`.
+
+That workflow runs on a machine with no GPU, which is worth explaining, since
+the obvious reading is that it therefore verifies nothing. Mesa ships
+conformant CPU implementations of both APIs targeted here — lavapipe for
+Vulkan, llvmpipe for GLES — and the suite runs on them whole, not in a reduced
+mode. lavapipe offers advanced blending, which the discrete part this was
+developed against does not, so the hosted runner covers scenes the workstation
+reports as unavailable. Pointing the suite at it the first time found two
+failures, and neither was the software device's fault: the GLES sample-count
+mask was synthesized from `MAX_SAMPLES` rather than queried, and a test
+required a tiled buffer layout from a rasterizer that has no tiling.
+
+What a hosted runner cannot do is KMS, since there is no display controller to
+become master of, and it cannot speak to real hardware. Those are the levels
+that still need a machine with a GPU and a free connector, and running them
+there is still manual.
 
 **Every context in the suite reports what the driver said about it.** On
 Vulkan that is the validation layer; on GLES it is `GL_KHR_debug`, which every
