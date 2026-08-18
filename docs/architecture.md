@@ -649,7 +649,16 @@ not carry it, which is what makes them linear. Presented through a linear
 format, mid grey reached the display as 128 where 188 is what it should be —
 every window a little over a third too dark, and nowhere announcing itself. The
 same mistake had been made in the bundled example, found by looking at its
-output; this one had a unit test holding it in place. Present mode falls back rather than
+output; this one had a unit test holding it in place.
+
+Scanout had it too, and the same fix applies for the same reason. A format code
+describes how bytes sit in memory and says nothing about what they mean, and a
+controller scanning out eight-bit colour reads them as encoded — so those codes
+map to sRGB image views while the code negotiated with the display is unchanged.
+Real hardware accepts the exported buffer either way, which is what says the two
+are independent. The ten-bit code is left linear: it has no sRGB variant, and
+deep colour generally carries its transfer function out of band, so assuming one
+would be the same mistake pointing the other way. Present mode falls back rather than
 failing: FIFO is required of every implementation and mailbox is a latency
 preference, not a correctness requirement.
 
