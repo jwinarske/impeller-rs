@@ -1192,6 +1192,25 @@ requested synchronously so one arrives inside the call that caused it. Both are
 read by a guard that asserts when the context drops, and both classify severity
 the same way, so "no errors" means one thing across the two.
 
+On Vulkan the layer is asked for **synchronization validation** as well, which
+it does not enable by default. Core validation checks that each call is well
+formed; this checks that one access is ordered against the next. That is the
+distinction that matters to a renderer synchronizing explicitly, because a
+missing barrier renders correctly on the device it was written on and wrongly
+on the next one — there is no wrong picture to notice.
+
+Turning it on reported one immediately. Every render pass here was created with
+no subpass dependencies at all, so an attachment's layout transition — which
+happens as part of beginning the pass — was ordered against nothing outside it.
+Waiting on the acquire semaphore does not cover it: a wait whose destination
+stage is color-attachment output orders the draws, while the transition is free
+to run before the wait completes. The layer reported it as a write-after-read
+against `vkAcquireNextImageKHR`: the pass could transition a swapchain image
+while the presentation engine was still reading it. Both directions are now
+declared, over every stage that touches an attachment rather than only the
+color one, since a stencil attachment is transitioned and then cleared by its
+load operation and those are two writes needing the same ordering.
+
 **The Vulkan half of that runs with the validation layer on, and
 asserts what it reported.** Capturing the messenger is what makes that
 assertable; a guard that checks the log when a context drops is what makes it

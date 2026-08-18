@@ -944,9 +944,58 @@ fn build_render_pass(device: &ash::Device, key: RenderPassKey) -> Result<vk::Ren
         subpass = subpass.depth_stencil_attachment(&stencil_ref);
     }
     let subpasses = [subpass];
+    // The attachment's layout transition happens as part of beginning the pass,
+    // and nothing orders it against work outside the pass unless this says so.
+    // Waiting on a semaphore does not: a wait with a destination stage of
+    // color-attachment output orders the *draws* after it, while the transition
+    // is free to run before the wait completes.
+    //
+    // That is not theoretical. A swapchain image is acquired, the acquire
+    // signals a semaphore, the render waits on it -- and the render pass could
+    // still transition the image while the presentation engine was reading it.
+    // Synchronization validation reports it as a write-after-read hazard
+    // against `vkAcquireNextImageKHR`, and no picture on this driver ever
+    // showed it.
+    //
+    // Both directions, because a pass both begins and ends with a transition:
+    // the first waits for prior color output before transitioning in, the
+    // second makes this pass's writes visible before whatever reads the target
+    // next, which is presentation or a later pass sampling it.
+    // Every stage that touches an attachment here, not only the color one. A
+    // stencil attachment is transitioned and then cleared by its load
+    // operation, and those are two writes that need ordering exactly as much
+    // as the color ones do -- reported as a write-after-write against the
+    // pass's own layout transition when they are left out.
+    let attachment_stages = vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT
+        | vk::PipelineStageFlags::EARLY_FRAGMENT_TESTS
+        | vk::PipelineStageFlags::LATE_FRAGMENT_TESTS;
+    let attachment_writes = vk::AccessFlags::COLOR_ATTACHMENT_WRITE
+        | vk::AccessFlags::COLOR_ATTACHMENT_READ
+        | vk::AccessFlags::DEPTH_STENCIL_ATTACHMENT_WRITE
+        | vk::AccessFlags::DEPTH_STENCIL_ATTACHMENT_READ;
+    let dependencies = [
+        vk::SubpassDependency::default()
+            .src_subpass(vk::SUBPASS_EXTERNAL)
+            .dst_subpass(0)
+            .src_stage_mask(attachment_stages)
+            .dst_stage_mask(attachment_stages)
+            .src_access_mask(vk::AccessFlags::empty())
+            .dst_access_mask(attachment_writes),
+        vk::SubpassDependency::default()
+            .src_subpass(0)
+            .dst_subpass(vk::SUBPASS_EXTERNAL)
+            .src_stage_mask(attachment_stages)
+            .dst_stage_mask(vk::PipelineStageFlags::FRAGMENT_SHADER)
+            .src_access_mask(
+                vk::AccessFlags::COLOR_ATTACHMENT_WRITE
+                    | vk::AccessFlags::DEPTH_STENCIL_ATTACHMENT_WRITE,
+            )
+            .dst_access_mask(vk::AccessFlags::SHADER_READ),
+    ];
     let info = vk::RenderPassCreateInfo::default()
         .attachments(&attachments)
-        .subpasses(&subpasses);
+        .subpasses(&subpasses)
+        .dependencies(&dependencies);
 
     unsafe { device.create_render_pass(&info, None) }
         .map_err(|e| backend_err("create_render_pass", e))

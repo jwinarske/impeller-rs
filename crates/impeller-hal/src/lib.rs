@@ -222,6 +222,13 @@ pub trait HalContext {
     /// A frame loop needs this rather than the waiting form: the returned
     /// fence is what gets handed to a display commit, and what decides when a
     /// frame slot may be reused.
+    ///
+    /// Ordering between two of these is the caller's, and nothing here checks
+    /// it. Submitting twice into one target without waiting for the first is a
+    /// write-after-write hazard: both calls are well formed, both succeed, and
+    /// what lands is whichever the device finished last. A frame loop avoids it
+    /// by construction, since a ring hands out a different slot each frame and
+    /// will not reuse one until its fence has retired.
     fn submit_batch_deferred(
         &mut self,
         target: &mut <Self::Hal as Hal>::Texture,

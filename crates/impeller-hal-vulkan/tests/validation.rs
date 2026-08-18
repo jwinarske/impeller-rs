@@ -100,3 +100,43 @@ fn repeated_context_cycles_stay_clean() {
         assert_clean(&ctx, &format!("cycle {i}"));
     }
 }
+
+#[test]
+fn synchronization_validation_is_switched_on() {
+    // Core validation checks that each call is well formed. It does not check
+    // that one access is ordered against the next -- a missing barrier, a read
+    // of an image the GPU has not finished writing -- which is a separate
+    // feature the layer does not enable by default. It is the one that matters
+    // most here, because this renderer synchronizes explicitly rather than
+    // through a driver that hides it, and because a missing barrier renders
+    // correctly on the device it was written on and wrongly elsewhere.
+    //
+    // So every clean validation log in this suite means one of two quite
+    // different things depending on this, and nothing else would notice if it
+    // stopped being requested.
+    //
+    // What this asserts is that it was requested and the extension carrying the
+    // request was there, not that the layer honored it -- there is no way to
+    // ask the layer what it enabled. The behavioral evidence is elsewhere and
+    // is strong: turning this on immediately reported a real hazard in the
+    // swapchain path, which is the change that added this test. A probe that
+    // constructed a hazard on purpose was written first and then removed,
+    // because every hazard reachable through this HAL is now prevented by the
+    // fix -- which is the outcome wanted, and leaves nothing to provoke.
+    let Ok(ctx) = VulkanContext::with_config(ContextConfig {
+        device: DevicePreference::Auto,
+        validation: true,
+    }) else {
+        eprintln!("skipping: no Vulkan device");
+        return;
+    };
+    if !ctx.validation_active() {
+        eprintln!("skipping: the validation layer is unavailable");
+        return;
+    }
+    assert!(
+        ctx.sync_validation_active(),
+        "the validation layer is on but synchronization validation is not, so a \
+         clean log in this suite says only that every call was well formed"
+    );
+}

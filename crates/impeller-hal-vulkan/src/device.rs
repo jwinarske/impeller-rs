@@ -189,6 +189,13 @@ pub struct VulkanContext {
     // and before the instance that owns it.
     debug_messenger: Option<(ash::ext::debug_utils::Instance, vk::DebugUtilsMessengerEXT)>,
     validation_log: Arc<ValidationLog>,
+    /// Whether the layer was asked to check synchronization as well as calls.
+    ///
+    /// Recorded because a clean validation log means two quite different things
+    /// depending on it, and nothing else distinguishes them: a run with only
+    /// core validation reports every call well formed and says nothing at all
+    /// about whether one access was ordered against the next.
+    sync_validation: bool,
     // Declaration order is destruction order: the device must outlive nothing
     // and the instance must outlive the device, so Drop tears down in reverse.
     // The allocator must release its memory before the device goes away, which
@@ -268,6 +275,12 @@ impl VulkanContext {
         let mut instance_extensions: Vec<CString> = Vec::new();
         if want_validation {
             instance_extensions.push(CString::new("VK_EXT_debug_utils").unwrap());
+            // Carries the request for synchronization validation below. Its
+            // absence is not fatal: the chained struct is then ignored and what
+            // is lost is the extra checking rather than the instance.
+            if layer_extension_available(&entry, VALIDATION_LAYER, "VK_EXT_validation_features") {
+                instance_extensions.push(CString::new("VK_EXT_validation_features").unwrap());
+            }
         }
         for &name in surface_extensions() {
             if instance_extension_available(&entry, name) {
@@ -276,10 +289,31 @@ impl VulkanContext {
         }
         let ext_ptrs: Vec<*const c_char> = instance_extensions.iter().map(|s| s.as_ptr()).collect();
 
-        let create_info = vk::InstanceCreateInfo::default()
+        // Synchronization validation, which the layer does not do by default.
+        // Core validation checks that each call is well formed; this checks
+        // that one access is ordered against the next -- a missing barrier, a
+        // read of an image the GPU has not finished writing. That is the class
+        // of mistake this renderer is most exposed to, because it synchronizes
+        // explicitly rather than through a driver that hides it, and the class
+        // whose symptom is a correct picture on the device it was written on
+        // and a wrong one elsewhere.
+        // Asked of the layer, not of the loader. `VK_EXT_validation_features` is
+        // the validation layer's own extension, so enumerating without naming
+        // the layer does not find it -- which reads as "unavailable" on a
+        // machine where it is installed and working.
+        let sync_validation_available = want_validation
+            && layer_extension_available(&entry, VALIDATION_LAYER, "VK_EXT_validation_features");
+        let sync_validation = [vk::ValidationFeatureEnableEXT::SYNCHRONIZATION_VALIDATION];
+        let mut validation_features =
+            vk::ValidationFeaturesEXT::default().enabled_validation_features(&sync_validation);
+
+        let mut create_info = vk::InstanceCreateInfo::default()
             .application_info(&app_info)
             .enabled_layer_names(&layer_ptrs)
             .enabled_extension_names(&ext_ptrs);
+        if sync_validation_available {
+            create_info = create_info.push_next(&mut validation_features);
+        }
         let instance = unsafe { entry.create_instance(&create_info, None) }
             .map_err(|e| backend_err("create_instance", e))?;
 
@@ -313,15 +347,18 @@ impl VulkanContext {
             physical_device,
             debug_messenger,
             validation_log,
+            sync_validation_available,
         )
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn finish(
         entry: ash::Entry,
         instance: ash::Instance,
         physical_device: vk::PhysicalDevice,
         debug_messenger: Option<(ash::ext::debug_utils::Instance, vk::DebugUtilsMessengerEXT)>,
         validation_log: Arc<ValidationLog>,
+        sync_validation: bool,
     ) -> Result<Self> {
         let available = match device_extensions(&instance, physical_device) {
             Ok(set) => set,
@@ -417,6 +454,7 @@ impl VulkanContext {
         Ok(Self {
             debug_messenger,
             validation_log,
+            sync_validation,
             allocator: Some(allocator),
             pipelines: PipelineCache::default(),
             command_pool,
@@ -515,6 +553,20 @@ impl VulkanContext {
     /// Requesting validation on a machine without the layer yields false here
     /// rather than an error, so tests can skip instead of failing on a machine
     /// that simply lacks the SDK.
+    /// Whether the layer was asked to check synchronization as well as calls.
+    ///
+    /// Core validation checks that each call is well formed. Synchronization
+    /// validation checks that one access is ordered against the next, which is
+    /// a separate feature the layer does not enable by default -- and it is the
+    /// one that matters most to a renderer that synchronizes explicitly, since
+    /// a missing barrier renders correctly on the device it was written on.
+    ///
+    /// A caller asserting a clean log wants to know this: without it the log
+    /// being empty says only that every call was well formed.
+    pub fn sync_validation_active(&self) -> bool {
+        self.sync_validation
+    }
+
     pub fn validation_active(&self) -> bool {
         self.debug_messenger.is_some()
     }
@@ -775,6 +827,28 @@ fn layer_available(entry: &ash::Entry, name: &str) -> bool {
     layers.iter().any(|l| {
         // SAFETY: the loader guarantees a NUL-terminated name.
         unsafe { CStr::from_ptr(l.layer_name.as_ptr()) }
+            .to_str()
+            .map(|s| s == name)
+            .unwrap_or(false)
+    })
+}
+
+/// Whether a layer provides an instance extension.
+///
+/// Separate from the loader-wide query because a layer's own extensions are
+/// only listed when that layer is named: asking the loader about one and
+/// getting "no" says nothing about whether the layer has it.
+fn layer_extension_available(entry: &ash::Entry, layer: &str, name: &str) -> bool {
+    let Ok(layer_name) = CString::new(layer) else {
+        return false;
+    };
+    let Ok(exts) = (unsafe { entry.enumerate_instance_extension_properties(Some(&layer_name)) })
+    else {
+        return false;
+    };
+    exts.iter().any(|e| {
+        // SAFETY: the loader guarantees a NUL-terminated name.
+        unsafe { CStr::from_ptr(e.extension_name.as_ptr()) }
             .to_str()
             .map(|s| s == name)
             .unwrap_or(false)
