@@ -847,15 +847,25 @@ impl Canvas {
         }
     }
 
+    /// Fill or stroke a rectangle.
+    ///
+    /// An antialiased solid fill takes the same distance field a rounded
+    /// rectangle does, with no corner to round. The vertex count is the same
+    /// either way -- a rectangle is four vertices whichever route it takes --
+    /// so what this buys is the edge: the pass does not have to multisample for
+    /// a shape that computes its own coverage, which is four times the fill and
+    /// four times the bandwidth saved on a frame made mostly of rectangles.
     pub fn draw_rect(&mut self, rect: Rect, paint: &Paint) -> Result<&mut Self> {
         if rect.is_empty() {
             return Ok(self);
+        }
+        if let Some(material) = self.analytic_rrect(rect, 0.0, paint) {
+            return self.draw_analytic(rect, material, paint);
         }
         let path = rect.to_path();
         self.draw_path(&path, paint)
     }
 
-    /// Draw a circle, approximated by four cubics.
     /// Fill or stroke a rectangle with rounded corners.
     ///
     /// The shape an interface is mostly made of, and the reason it is here
@@ -900,7 +910,10 @@ impl Canvas {
         let Shader::Solid(color) = &paint.shader else {
             return None;
         };
-        if radius.is_nan() || radius <= 0.0 {
+        // A radius of zero is a plain rectangle, which this field describes as
+        // well as any other: with no corner to round, the expression is the
+        // distance to the nearer edge. NaN is not a radius and falls back.
+        if radius.is_nan() || radius < 0.0 {
             return None;
         }
         let to_clip = self.target.projection() * self.transform;

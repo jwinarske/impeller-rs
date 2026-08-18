@@ -1000,9 +1000,19 @@ permutations on GLES.
   at one sample, which is four times less fill and bandwidth for an edge it
   was already going to get right.
 
-  Plain rects and ellipses are **not implemented** this way. A tessellated
-  rounded rectangle does at least reach the fan fill, since its flattened
-  outline is convex, so it skips the sweep and the stencil.
+  A plain rectangle is the same field with no corner to round, and takes it for
+  the second reason rather than the first: four vertices is four vertices
+  either way, but the pass no longer multisamples for it. That is the shape a
+  frame is mostly made of, so it is where the saving is largest — and it is
+  invisible on an axis-aligned rectangle at integer bounds, which has no edge
+  to antialias, and worth the most on a rotated or fractionally placed one,
+  which is what needed four samples before.
+
+  Ellipses are **not implemented** this way; there is no closed form for the
+  distance to one, and the approximations trade accuracy for iteration in a way
+  the shapes above do not. A tessellated rounded rectangle does at least reach
+  the fan fill, since its flattened outline is convex, so it skips the sweep and
+  the stencil.
 
   Convexity is a correctness question, not only a speed one. A fan fill
   triangulates from one vertex and has no notion of a fill rule, so a polygon

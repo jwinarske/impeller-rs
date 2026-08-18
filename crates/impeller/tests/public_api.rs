@@ -611,6 +611,69 @@ fn only_an_antialiased_solid_fill_takes_the_analytic_path() {
 }
 
 #[test]
+fn an_antialiased_rectangle_antialiases_without_multisampling() {
+    let Some(mut ctx) = context() else { return };
+    // A rectangle is four vertices whichever route it takes, so the distance
+    // field buys nothing there. What it buys is the edge: the pass no longer
+    // has to multisample for a shape that computes its own coverage, and a
+    // frame made mostly of rectangles is the common case.
+    //
+    // Rotated and off the pixel grid, because an axis-aligned rectangle on
+    // integer bounds has no edge to antialias and would show nothing either
+    // way.
+    let draw = |ctx: &mut Context, anti_alias: bool| {
+        let mut canvas = Canvas::new(SIZE);
+        canvas.clear(Color::BLACK);
+        canvas.save();
+        canvas.translate(64.0, 64.0);
+        canvas.rotate(0.35);
+        canvas.translate(-64.0, -64.0);
+        canvas
+            .draw_rect(
+                Rect::new(30.5, 30.5, 97.5, 97.5),
+                &Paint::fill(Color::WHITE).with_anti_alias(anti_alias),
+            )
+            .expect("rect");
+        canvas.restore();
+        let recording = canvas.finish();
+        let samples = recording.root().descriptor.samples;
+        let pixels = render_recording(ctx, &recording);
+        let partial = pixels
+            .chunks_exact(4)
+            .filter(|texel| texel[0] > 8 && texel[0] < 247)
+            .count();
+        let coverage: u64 = pixels.chunks_exact(4).map(|texel| texel[0] as u64).sum();
+        (samples, partial, coverage as f64)
+    };
+
+    let (samples, partial, coverage) = draw(&mut ctx, true);
+    assert_eq!(
+        samples, 1,
+        "an antialiased rectangle should not multisample the pass"
+    );
+    assert!(
+        partial > 100,
+        "a rotated antialiased rectangle should have partly covered pixels, found {partial}"
+    );
+
+    // Still the right rectangle: a rotation preserves area, so the coverage is
+    // the square's own however it is turned.
+    let side = 97.5 - 30.5;
+    let exact = side * side * 255.0;
+    assert!(
+        (coverage - exact).abs() / exact < 0.01,
+        "the rotated rectangle covers {coverage} against an exact {exact}"
+    );
+
+    // And asking for hard edges still gives them.
+    let (_, aliased_partial, _) = draw(&mut ctx, false);
+    assert_eq!(
+        aliased_partial, 0,
+        "an aliased rectangle should have no partly covered pixels"
+    );
+}
+
+#[test]
 fn an_antialiased_circle_uses_the_same_distance_field() {
     let Some(mut ctx) = context() else { return };
     // A circle is a rounded rectangle: a square whose corner radius is half its
