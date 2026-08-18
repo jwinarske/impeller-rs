@@ -11,6 +11,7 @@ drm = { version = "0.15.0", default-features = false }
 impeller-hal = { workspace = true }
 impeller-present = { workspace = true }
 log = { workspace = true }
+rustix = { version = "1.1.4", default-features = false, features = ["fs"] }
 
 [dev-dependencies]
 impeller-hal-vulkan = { workspace = true }

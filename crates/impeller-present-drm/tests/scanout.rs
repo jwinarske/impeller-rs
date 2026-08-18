@@ -292,23 +292,25 @@ fn a_buffer_still_on_screen_is_never_handed_back() {
         return;
     }
     let (mut output, log) = FakeOutput::new(display_formats(&ctx));
-    // No automatic flips: nothing ever leaves the screen, so after the ring is
-    // full there is no free slot and acquiring must fail rather than hand back
-    // a buffer the display is reading.
+    // No automatic flips: nothing ever leaves the screen. A display controller
+    // takes one flip at a time, so the loop stalls at the second frame's
+    // commit rather than getting two in and stalling on the third acquire —
+    // which is what this test expected before the target learned to wait for
+    // the outstanding flip, and what a real controller refuses outright.
     output.auto_flip = false;
     let mut target =
         DrmScanoutTarget::<VulkanHal, _>::new(&mut ctx, output, 2).expect("scanout target");
     let batch = scene();
 
     frame(&mut ctx, &mut target, &batch).expect("first frame");
-    frame(&mut ctx, &mut target, &batch).expect("second frame");
 
-    // Both buffers are committed and neither has flipped away. Reusing one now
-    // would tear, so the loop must stall instead.
+    // The first frame is committed and has not flipped away. Committing again
+    // would be refused by a real controller, and reusing its buffer would
+    // tear, so the loop must stall instead.
     let stalled = frame(&mut ctx, &mut target, &batch);
     assert!(
         stalled.is_err(),
-        "a buffer still on screen was handed back for drawing"
+        "a second frame was committed while the first had not flipped"
     );
     assert!(
         log.lock().unwrap().waits > 0,

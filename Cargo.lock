@@ -335,6 +335,7 @@ dependencies = [
  "impeller-hal",
  "impeller-present",
  "impeller-shaders",
+ "rustix",
 ]
 
 [[package]]
@@ -357,6 +358,7 @@ dependencies = [
  "impeller-hal-vulkan",
  "impeller-present",
  "log",
+ "rustix",
 ]
 
 [[package]]

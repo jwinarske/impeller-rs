@@ -12,8 +12,11 @@
 //! plumbing — testable without a display attached.
 
 pub mod device;
+pub mod kms;
 pub mod output;
 pub mod target;
 
 pub use output::{CommitRequest, DmaBufPlanes, FbHandle, Mode, OutputEvent, ScanoutOutput};
 pub use target::{DrmScanoutTarget, DEFAULT_RING_DEPTH};
+
+pub use kms::KmsOutput;

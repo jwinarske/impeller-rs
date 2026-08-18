@@ -16,6 +16,7 @@
 
 use impeller_hal::{Error, Fourcc, Modifier, Result};
 use std::os::fd::{AsFd, BorrowedFd, OwnedFd};
+use std::os::unix::fs::OpenOptionsExt as _;
 
 /// An open KMS device.
 pub struct DrmDevice {
@@ -61,10 +62,16 @@ impl DrmDevice {
     /// Read-write, because that is what the enumeration ioctls want, and
     /// opening a card another process is master of is allowed — it is becoming
     /// master that is not.
+    ///
+    /// Non-blocking, which matters for one caller and not at all for the rest:
+    /// reading events from a blocking DRM fd waits until one arrives, so a
+    /// `poll_events` that is documented not to block would block forever the
+    /// first time nothing had happened yet. Nothing else here reads the fd.
     pub fn open(path: &str) -> Result<Self> {
         let file = std::fs::OpenOptions::new()
             .read(true)
             .write(true)
+            .custom_flags(rustix::fs::OFlags::NONBLOCK.bits() as i32)
             .open(path)
             .map_err(|e| Error::Backend {
                 backend: "drm",
@@ -449,5 +456,35 @@ mod machine_tests {
                 .any(|s| s.modifiers.contains(&Modifier::LINEAR)),
             "no advertised format accepts a linear layout"
         );
+    }
+}
+
+impl DrmDevice {
+    /// Become the device's modesetting master, and enable atomic commits.
+    ///
+    /// Everything that changes what is on screen needs this, and only one
+    /// process may hold it at a time — a compositor holds it on any card
+    /// driving a display. Failing is therefore a normal outcome and not an
+    /// error in this code: the answer is another device, or a bare VT.
+    ///
+    /// Atomic is asked for at the same time because the two travel together:
+    /// the commit path here is atomic-only, and a device that cannot do atomic
+    /// is one this cannot drive at all.
+    pub fn become_master(&self) -> Result<()> {
+        use drm::Device as _;
+
+        self.acquire_master_lock()
+            .map_err(|e| backend_err("acquiring the modesetting master lock", e))?;
+        self.set_client_capability(drm::ClientCapability::Atomic, true)
+            .map_err(|e| backend_err("enabling atomic modesetting", e))?;
+        Ok(())
+    }
+
+    /// Give the master lock back.
+    pub fn release_master(&self) -> Result<()> {
+        use drm::Device as _;
+
+        self.release_master_lock()
+            .map_err(|e| backend_err("releasing the modesetting master lock", e))
     }
 }

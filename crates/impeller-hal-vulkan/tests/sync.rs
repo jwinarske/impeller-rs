@@ -313,3 +313,52 @@ fn frames_may_be_retired_out_of_the_order_they_were_submitted() {
     ctx.destroy_texture(second_target);
     assert_clean(&ctx);
 }
+
+#[test]
+fn an_exported_sync_file_actually_signals() {
+    let Some(mut ctx) = context() else { return };
+    // Everything else here checks that a sync_file can be exported and that it
+    // outlives the fence it came from. Nothing checked the property the whole
+    // export exists for: that it *signals* when the work completes.
+    //
+    // That gap matters because a display commit carrying one waits on it. A
+    // sync_file that never signals produces a flip that never lands — a frame
+    // loop that stops, with nothing in the rendered output to say why.
+    let batch = scene();
+    let mut tex = target(&mut ctx);
+    let fence = ctx
+        .submit_batch_deferred(&mut tex, &batch, PassDescriptor::clear([0.0; 4]))
+        .expect("deferred submission");
+
+    let Ok(fd) = fence.export_sync_file() else {
+        eprintln!("skipping: this device cannot export a sync_file");
+        ctx.retire_fence(fence);
+        ctx.destroy_texture(tex);
+        return;
+    };
+
+    // A signalled sync_file becomes readable. Polling is how anything else
+    // waiting on one finds out, including the kernel when it latches a flip.
+    let borrowed = std::os::fd::AsFd::as_fd(&fd);
+    let mut fds = [rustix::event::PollFd::new(
+        &borrowed,
+        rustix::event::PollFlags::IN,
+    )];
+    let ready = rustix::event::poll(
+        &mut fds,
+        Some(&rustix::event::Timespec {
+            tv_sec: 2,
+            tv_nsec: 0,
+        }),
+    )
+    .expect("poll");
+    assert!(
+        ready > 0,
+        "the exported sync_file never signalled, so anything waiting on it \
+         — a display commit above all — would wait forever"
+    );
+
+    ctx.retire_fence(fence);
+    ctx.destroy_texture(tex);
+    assert_clean(&ctx);
+}

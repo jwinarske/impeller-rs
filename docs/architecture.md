@@ -73,13 +73,32 @@ display when no windowing system exists. Any design that treats DRM as a
 backend, or that couples a rendering backend to a presentation path, is wrong
 by construction.
 
-**The scanout path is implemented above KMS and not yet down to it.** What
-exists and is tested: the frame loop's buffer ring, the fence plumbing, format
-and modifier negotiation, and dma-buf export from Vulkan. What does not: any
-implementation of `ScanoutOutput`, which is where opening a card, importing a
-buffer as a framebuffer, committing, and reading events all live. The trait is
-driven by a recording stand-in, which is the right way to test ring accounting
-and the wrong way to learn whether a display controller accepts the buffers.
+**The scanout path runs end to end against a real KMS device.** A buffer this
+renderer allocates, draws into and exports as a dma-buf is accepted by a display
+controller as a framebuffer, the mode is set, and frames flip in turn. What
+makes that checkable is the virtual KMS driver: only one process may be master
+of a card and a compositor holds it on any card driving a display, so the
+alternative was untested modesetting code.
+
+Three things the recording stand-in had hidden showed up the moment a real
+device was on the other end, and each is a defect rather than a surprise.
+
+A display controller takes **one flip at a time**, which is a smaller number
+than the ring depth and a different thing from it. The ring bounds buffers in
+flight so the renderer can work ahead; commits have to be bounded separately,
+and committing while a flip is outstanding is refused by the kernel rather than
+queued. The wait sits immediately before the commit, not in `acquire`, because
+putting it there would stop the renderer working ahead — which is what the ring
+is for.
+
+Reading events from a **blocking** device fd waits until one arrives, so a
+`poll_events` documented not to block would block forever the first time
+nothing had happened. The device is opened non-blocking for that one caller.
+
+And `present` took the frame's fence out of its slot before a step that could
+fail, so an error dropped the fence un-retired and teardown then freed a buffer
+the GPU was still reading. The validation layer named it; nothing about the
+output would have.
 
 The half of it that needs no privilege now exists and is real. Enumerating
 connectors, modes and planes, and reading the format and modifier lists a plane
@@ -102,13 +121,19 @@ against a list a test wrote. Both halves used to come from the same place; the
 display's half is now what a display advertises, and on this machine the two
 agree on a tiled layout rather than falling back to linear.
 
-Closing the rest needs a device this project can become master of, and that is a
-property of the machine rather than of the code: a compositor holds master on
-any card driving a display, so it means a bare VT or the virtual KMS driver.
-`cargo xtask drm` reports which of those a given machine offers, and now also
-what its primary plane would accept. Writing the committing half against neither
-would be exactly the untested KMS code this document's testing model exists to
-rule out.
+**One thing remains unverified, and it is the one the path exists for.** The
+render fence is attached to the commit as `IN_FENCE_FD` so that the kernel
+latches the flip when rendering completes rather than the caller blocking until
+it has. The virtual KMS driver advertises that property on its plane and then
+never completes the flip for a commit carrying one. The fence is not at fault:
+the Vulkan suite now checks that an exported sync_file actually signals, which
+was the other candidate and was itself untested until this went looking. So the
+explicit path is implemented, believed correct, and demonstrated by nothing —
+real hardware is what would settle it, and until then the tests take the
+CPU-wait fallback and say so.
+
+`cargo xtask drm` reports whether a machine can host this lane at all, and what
+its primary plane would accept.
 
 ### Configuration matrix
 

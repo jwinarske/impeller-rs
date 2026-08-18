@@ -42,6 +42,13 @@ pub struct DrmScanoutTarget<H: Hal, O: ScanoutOutput> {
     extent: Extent2D,
     /// Set once the first commit has established the mode.
     mode_set: bool,
+    /// Whether a commit is waiting for its flip.
+    ///
+    /// A display controller takes one at a time, which is a smaller number
+    /// than the ring depth and a different thing from it: the ring bounds
+    /// buffers in flight so the renderer can work ahead, and this bounds
+    /// commits so the kernel does not refuse one.
+    flip_pending: bool,
     /// Commits made without a sync_file attached, because the device could not
     /// export one.
     cpu_waits: u64,
@@ -79,6 +86,7 @@ where
             format,
             extent,
             mode_set: false,
+            flip_pending: false,
             cpu_waits: 0,
         };
         target.build_ring(ctx, depth.max(2), &candidates)?;
@@ -144,11 +152,39 @@ where
                             slot.on_screen = false;
                         }
                     }
+                    self.flip_pending = false;
                 }
                 OutputEvent::Reconfigured => reconfigured = true,
             }
         }
         reconfigured
+    }
+
+    /// Block until the flip already committed has landed.
+    ///
+    /// Returns immediately where none is outstanding, which is every frame on a
+    /// target whose display keeps up.
+    fn await_pending_flip(&mut self) -> Result<()> {
+        if !self.flip_pending {
+            return Ok(());
+        }
+        let budget = self.output.mode().frame_nanos().max(1);
+        let deadline = std::time::Instant::now()
+            + std::time::Duration::from_nanos(budget.saturating_mul(8).max(1_000_000));
+        while self.flip_pending {
+            let events = self.output.wait_for_event(budget)?;
+            let reconfigured = self.drain_events(events);
+            if reconfigured {
+                return Err(Error::Unsupported("output reconfigured; rebuild the ring"));
+            }
+
+            if self.flip_pending && std::time::Instant::now() >= deadline {
+                // The display has stopped. Blocking forever would hide that,
+                // and committing anyway would be refused.
+                return Err(Error::Timeout);
+            }
+        }
+        Ok(())
     }
 
     /// Index of a slot that is neither on screen nor still being rendered into.
@@ -243,26 +279,50 @@ where
             return Err(Error::Unsupported("present without a matching acquire"));
         };
 
+        // Waited for before the fence is taken out of its slot, not after. A
+        // failure here leaves the slot holding its fence, so teardown can still
+        // wait on it; taking it first and failing afterwards drops it
+        // un-retired, and the buffer it was still rendering into gets freed
+        // while the GPU is reading it.
+        if let Err(e) = self.await_pending_flip() {
+            self.acquired = Some(index);
+            return Err(e);
+        }
+
         // The fence for this frame's rendering was stored by the caller through
         // `submit`; without one there is nothing to attach and nothing to gate
         // reuse on.
         let fence = self.slots[index].fence.take();
+        // Exported where the device can, and waited on where it cannot. The
+        // error is handled after the match rather than inside it, so the fence
+        // can be put back: a failure that dropped it would leave teardown with
+        // nothing to wait on and a buffer freed while the GPU reads it.
         #[cfg(unix)]
-        let in_fence_fd = match &fence {
-            Some(fence) => match fence.export_sync_file() {
-                Ok(fd) => Some(fd),
+        let mut in_fence_fd = None;
+        #[cfg(unix)]
+        let wait_failed = match &fence {
+            Some(f) => match f.export_sync_file() {
+                Ok(fd) => {
+                    in_fence_fd = Some(fd);
+                    None
+                }
                 Err(_) => {
                     // Either the device cannot export, or the work already
                     // finished so there is nothing left to wait on. Both mean
                     // committing without a fence, and the first is worth
                     // counting because it costs a frame of latency every time.
                     self.cpu_waits += 1;
-                    fence.wait(FRAME_WAIT_TIMEOUT)?;
-                    None
+                    f.wait(FRAME_WAIT_TIMEOUT).err()
                 }
             },
             None => None,
         };
+        #[cfg(unix)]
+        if let Some(e) = wait_failed {
+            self.slots[index].fence = fence;
+            self.acquired = Some(index);
+            return Err(e);
+        }
 
         let request = CommitRequest {
             fb: self.slots[index].fb,
@@ -271,6 +331,7 @@ where
             allow_modeset: !self.mode_set,
         };
         self.output.commit(request)?;
+        self.flip_pending = true;
         self.mode_set = true;
         self.slots[index].on_screen = true;
         self.slots[index].fence = fence;
