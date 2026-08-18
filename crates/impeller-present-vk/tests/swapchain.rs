@@ -91,13 +91,18 @@ fn a_swapchain_reports_a_usable_configuration() {
             "a swapchain of {} image(s) cannot overlap drawing with display",
             target.image_count()
         );
-        // Linear rather than sRGB: color is linear inside the renderer and the
-        // attachment format applies the transfer function, so an sRGB surface
-        // format would apply it to values that already carry it.
+        // sRGB where the surface offers it, which every ordinary one does. The
+        // renderer's colors are linear and the presentation engine is told the
+        // image holds sRGB, so the attachment is what encodes between them. A
+        // linear format is accepted as a fallback and is a little over a third
+        // too dark at mid grey, which is why it is not the preference.
         assert!(
             matches!(
                 target.format(),
-                PixelFormat::Bgra8Unorm | PixelFormat::Rgba8Unorm
+                PixelFormat::Bgra8UnormSrgb
+                    | PixelFormat::Rgba8UnormSrgb
+                    | PixelFormat::Bgra8Unorm
+                    | PixelFormat::Rgba8Unorm
             ),
             "unexpected surface format {:?}",
             target.format()
@@ -251,10 +256,25 @@ fn a_presented_frame_holds_what_was_drawn_into_it() {
             pixels[middle + 2],
             pixels[middle + 3],
         ];
-        // The surface may be BGRA, so the channels are compared as a set of
-        // the two orderings rather than assumed.
-        let rgba = [64u8, 128, 191, 255];
-        let bgra = [191u8, 128, 64, 255];
+        // What the surface should hold, derived from what was drawn rather than
+        // written down: an sRGB attachment encodes on write, so the byte is the
+        // linear value put through the transfer function, and a linear one
+        // stores it as it was. Stating it as a constant would have been a
+        // second place to make the same mistake the format choice made.
+        let encode = |linear: f32| {
+            let encoded = if target.format().is_srgb() {
+                if linear <= 0.003_130_8 {
+                    linear * 12.92
+                } else {
+                    1.055 * linear.powf(1.0 / 2.4) - 0.055
+                }
+            } else {
+                linear
+            };
+            (encoded * 255.0).round() as u8
+        };
+        let rgba = [encode(0.25), encode(0.5), encode(0.75), 255];
+        let bgra = [encode(0.75), encode(0.5), encode(0.25), 255];
         let near = |want: [u8; 4]| {
             got.iter()
                 .zip(&want)
@@ -454,9 +474,22 @@ fn a_frame_with_layers_can_be_presented() {
             "the scene has no layer, so this proves nothing"
         );
 
-        // Offscreen first, as the reference.
-        let expected =
-            impeller_core::render_offscreen::<VulkanHal>(ctx, &recording, &[]).expect("offscreen");
+        // Offscreen first, as the reference -- into the format the swapchain
+        // chose rather than a fixed one. The question here is whether
+        // presenting changes what was drawn, and rendering the reference into a
+        // linear target while the surface is sRGB would answer a different one:
+        // the two would differ by the transfer function everywhere, which is
+        // the encoding working rather than presentation failing.
+        let mut reference = ctx
+            .create_texture(&impeller_hal::TextureDescriptor::offscreen(
+                target.extent(),
+                target.format(),
+            ))
+            .expect("reference target");
+        impeller_core::execute::<VulkanHal>(ctx, &mut reference, &recording, &[])
+            .expect("offscreen");
+        let expected = ctx.read_texture(&mut reference).expect("read reference");
+        ctx.destroy_texture(reference);
 
         let _ = target.acquire(ctx).expect("acquire");
         target

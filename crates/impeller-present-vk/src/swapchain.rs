@@ -702,17 +702,26 @@ fn choose_format(
     }
     if formats.len() == 1 && formats[0].format == vk::Format::UNDEFINED {
         return Ok((
-            vk::Format::B8G8R8A8_UNORM,
+            vk::Format::B8G8R8A8_SRGB,
             vk::ColorSpaceKHR::SRGB_NONLINEAR,
-            PixelFormat::Bgra8Unorm,
+            PixelFormat::Bgra8UnormSrgb,
         ));
     }
 
-    // In preference order, and all of them non-sRGB: color is linear inside
-    // this renderer and the conversion is the attachment format's job, so
-    // picking an sRGB surface format would apply the transfer function to
-    // values that already carry it.
+    // sRGB first, because the conversion is the attachment format's job and
+    // this is the attachment. Color is linear inside the renderer -- the
+    // shaders end by premultiplying and say so -- and the color space asked for
+    // below is `SRGB_NONLINEAR`, which is the presentation engine being told
+    // the image already holds sRGB-encoded values. An sRGB format is what
+    // encodes them on write; a linear one hands the display linear light to
+    // read as though it were encoded, which is every window a little over a
+    // third too dark at mid grey and wrong nowhere it announces itself.
+    //
+    // The linear formats stay as a fallback, since a surface offering only
+    // those is better served darkly than not at all.
     let wanted = [
+        (vk::Format::B8G8R8A8_SRGB, PixelFormat::Bgra8UnormSrgb),
+        (vk::Format::R8G8B8A8_SRGB, PixelFormat::Rgba8UnormSrgb),
         (vk::Format::B8G8R8A8_UNORM, PixelFormat::Bgra8Unorm),
         (vk::Format::R8G8B8A8_UNORM, PixelFormat::Rgba8Unorm),
     ];
@@ -838,27 +847,42 @@ mod tests {
             color_space: vk::ColorSpaceKHR::SRGB_NONLINEAR,
         }];
         let (vk_format, _, format) = choose_format(&formats).expect("choose");
-        assert_eq!(vk_format, vk::Format::B8G8R8A8_UNORM);
-        assert_eq!(format, PixelFormat::Bgra8Unorm);
+        assert_eq!(vk_format, vk::Format::B8G8R8A8_SRGB);
+        assert_eq!(format, PixelFormat::Bgra8UnormSrgb);
     }
 
     #[test]
-    fn an_srgb_surface_format_is_not_chosen_over_a_linear_one() {
-        // Color is linear inside this renderer and the attachment format
-        // applies the transfer function, so picking an sRGB surface format
-        // would apply it to values that already carry it.
+    fn an_srgb_surface_format_is_chosen_over_a_linear_one() {
+        // The renderer's colors are linear and the presentation engine is told
+        // the image holds sRGB. Something has to encode between the two, and an
+        // sRGB attachment is the thing that does it for free -- so a surface
+        // offering both should be taken at the sRGB one.
         let formats = [
-            vk::SurfaceFormatKHR {
-                format: vk::Format::B8G8R8A8_SRGB,
-                color_space: vk::ColorSpaceKHR::SRGB_NONLINEAR,
-            },
             vk::SurfaceFormatKHR {
                 format: vk::Format::B8G8R8A8_UNORM,
                 color_space: vk::ColorSpaceKHR::SRGB_NONLINEAR,
             },
+            vk::SurfaceFormatKHR {
+                format: vk::Format::B8G8R8A8_SRGB,
+                color_space: vk::ColorSpaceKHR::SRGB_NONLINEAR,
+            },
         ];
-        let (vk_format, _, _) = choose_format(&formats).expect("choose");
-        assert_eq!(vk_format, vk::Format::B8G8R8A8_UNORM);
+        let (vk_format, _, format) = choose_format(&formats).expect("choose");
+        assert_eq!(vk_format, vk::Format::B8G8R8A8_SRGB);
+        assert_eq!(format, PixelFormat::Bgra8UnormSrgb);
+    }
+
+    #[test]
+    fn a_surface_offering_only_linear_formats_still_works() {
+        // Darkly, but a window is better than a refusal: the fallback exists so
+        // a surface with no sRGB format is served rather than turned away.
+        let formats = [vk::SurfaceFormatKHR {
+            format: vk::Format::R8G8B8A8_UNORM,
+            color_space: vk::ColorSpaceKHR::SRGB_NONLINEAR,
+        }];
+        let (vk_format, _, format) = choose_format(&formats).expect("choose");
+        assert_eq!(vk_format, vk::Format::R8G8B8A8_UNORM);
+        assert_eq!(format, PixelFormat::Rgba8Unorm);
     }
 
     #[test]

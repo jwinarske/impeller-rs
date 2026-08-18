@@ -637,9 +637,19 @@ minimum, which produces a swapchain one pixel across that behaves correctly in
 every other respect — it acquires, presents, cycles images and rebuilds, and
 only a test that reads pixels back notices.
 
-Surface formats are chosen non-sRGB. Color is linear inside the renderer and the
-attachment format applies the transfer function, so an sRGB surface format would
-apply it to values that already carry it. Present mode falls back rather than
+Surface formats are chosen sRGB where one is offered, with the linear formats
+kept as a fallback. Color is linear inside the renderer and the attachment
+format applies the transfer function, and the color space asked for is
+`SRGB_NONLINEAR` — which is the presentation engine being told the image already
+holds encoded values. An sRGB attachment is what encodes them on write.
+
+This was the other way round, on reasoning that inverted itself: that an sRGB
+format would apply the transfer to values already carrying it. Linear values do
+not carry it, which is what makes them linear. Presented through a linear
+format, mid grey reached the display as 128 where 188 is what it should be —
+every window a little over a third too dark, and nowhere announcing itself. The
+same mistake had been made in the bundled example, found by looking at its
+output; this one had a unit test holding it in place. Present mode falls back rather than
 failing: FIFO is required of every implementation and mailbox is a latency
 preference, not a correctness requirement.
 
