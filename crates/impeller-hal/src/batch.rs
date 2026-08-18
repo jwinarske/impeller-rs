@@ -319,12 +319,37 @@ impl Batch {
         self.draws.iter().any(|draw| draw.stencil.needs_stencil())
     }
 
-    /// The largest stencil value this batch can produce.
+    /// The deepest clip stack an eight-bit stencil can distinguish.
     ///
-    /// A backend checks this against what its attachment can hold. Eight bits
-    /// is the only depth every device is required to offer, so a clip stack
-    /// deeper than that is refused rather than silently wrapping around to
-    /// zero and admitting everything it was meant to exclude.
+    /// Eight bits is the only stencil depth every device is required to offer,
+    /// on either graphics API, so this is the portable limit rather than any
+    /// one device's.
+    pub const MAX_CLIP_DEPTH: u32 = 255;
+
+    /// Refuse a batch whose clip stack is deeper than a stencil can hold.
+    ///
+    /// Here rather than in each backend because the limit is a property of the
+    /// stencil format both are required to offer, and the failure it prevents
+    /// is one neither can detect afterwards: past the limit the value wraps or
+    /// saturates, and either way a later test for a depth that no longer fits
+    /// admits every pixel the clip was meant to exclude. Nothing about that
+    /// looks like an error -- it draws content the caller clipped away.
+    ///
+    /// It was in one backend and not the other, so the same recording was
+    /// refused on Vulkan and silently rendered wrong on GLES.
+    pub fn check_clip_depth(&self) -> Result<()> {
+        let depth = self.max_clip_depth();
+        if depth > Self::MAX_CLIP_DEPTH {
+            return Err(Error::LimitExceeded {
+                what: "clip nesting depth",
+                requested: depth as u64,
+                limit: Self::MAX_CLIP_DEPTH as u64,
+            });
+        }
+        Ok(())
+    }
+
+    /// The largest stencil value this batch can produce.
     pub fn max_clip_depth(&self) -> u32 {
         self.draws
             .iter()

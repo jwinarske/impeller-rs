@@ -8,7 +8,8 @@
 
 use impeller::{
     Atlas, BackendPreference, BlendMode, Canvas, Color, Context, Coverage, Extent2D, GlyphKey,
-    GradientStop, Layer, Paint, PathBuilder, PixelFormat, PositionedGlyph, Rect, Vec2,
+    GradientStop, Layer, Paint, Path, PathBuilder, PixelFormat, PositionedGlyph, Rect, Result,
+    Vec2,
 };
 
 const SIZE: Extent2D = Extent2D {
@@ -313,6 +314,133 @@ fn the_backends_agree_on_an_srgb_surface() {
         first[0] != first[1] || first[1] != first[2],
         "the test color came back gray, so a channel swap would be invisible"
     );
+}
+
+/// Nest `count` identical stencil clips, draw, and return what came back.
+///
+/// The clip is a triangle rather than a rectangle so it cannot become a
+/// scissor: the depth being counted lives in the stencil, and an axis-aligned
+/// clip never reaches it.
+fn deeply_clipped(ctx: &mut Context, count: usize, last: Option<&Path>) -> Result<Vec<u8>> {
+    let extent = Extent2D::new(64, 64);
+    let corner = |size: f32| {
+        let mut b = PathBuilder::new();
+        b.move_to(Vec2::ZERO)
+            .line_to(Vec2::new(size, 0.0))
+            .line_to(Vec2::new(0.0, size))
+            .close();
+        b.build()
+    };
+    let big = corner(64.0);
+
+    let mut canvas = Canvas::new(extent);
+    canvas.clear(Color::BLACK);
+    for _ in 0..count {
+        canvas.save();
+        canvas.clip_path(&big).expect("clip");
+    }
+    if let Some(path) = last {
+        canvas.save();
+        canvas.clip_path(path).expect("clip");
+    }
+    canvas
+        .draw_rect(
+            Rect::from_size(64.0, 64.0),
+            &Paint::fill(Color::WHITE).with_anti_alias(false),
+        )
+        .expect("fill");
+    for _ in 0..count + usize::from(last.is_some()) {
+        canvas.restore();
+    }
+
+    let mut surface = ctx.create_surface(extent, PixelFormat::Rgba8Unorm)?;
+    let outcome = ctx
+        .draw(&mut surface, &canvas.finish())
+        .and_then(|()| ctx.read(&mut surface));
+    ctx.destroy_surface(surface);
+    outcome
+}
+
+#[test]
+fn a_clip_stack_deeper_than_the_stencil_is_refused_by_every_backend() {
+    // The stencil counts nesting depth and every device is required to offer
+    // eight bits of it, so 255 is the portable limit. Past it the count
+    // saturates or wraps, and a later test for a depth that no longer fits
+    // admits every pixel the clip was meant to exclude -- which draws content
+    // the caller clipped away and looks like nothing at all.
+    //
+    // One backend refused and the other did not, so the same recording was an
+    // error on Vulkan and a wrong picture on GLES. The check now lives beside
+    // the depth it reads, because the limit belongs to the stencil format both
+    // are required to offer rather than to either of them.
+    let mut contexts = every_backend();
+    assert!(!contexts.is_empty(), "no backend, so nothing here ran");
+
+    for ctx in &mut contexts {
+        let backend = ctx.backend();
+        let error = deeply_clipped(ctx, 300, None)
+            .err()
+            .unwrap_or_else(|| panic!("{backend} accepted a clip stack of 300"));
+        let text = error.to_string();
+        assert!(
+            text.contains("clip nesting depth") && text.contains("255"),
+            "{backend} refused for the wrong reason: {text}"
+        );
+    }
+}
+
+#[test]
+fn nesting_up_to_the_limit_still_works() {
+    // The other half, and the one that would catch a limit set so low it broke
+    // legitimate drawing: a refusal is only correct if what it refuses is past
+    // what the stencil can actually hold.
+    let mut contexts = every_backend();
+    assert!(!contexts.is_empty(), "no backend, so nothing here ran");
+
+    for ctx in &mut contexts {
+        let backend = ctx.backend();
+        let pixels = deeply_clipped(ctx, 255, None)
+            .unwrap_or_else(|e| panic!("{backend} refused a legal clip stack of 255: {e}"));
+        let at = |x: u32, y: u32| pixels[((y * 64 + x) * 4) as usize];
+        assert_eq!(at(4, 4), 255, "{backend}: inside the clip should be drawn");
+        assert_eq!(at(60, 60), 0, "{backend}: outside the clip should not be");
+    }
+}
+
+#[test]
+fn the_innermost_clip_still_applies_at_the_limit() {
+    // Depth alone is not the property. What goes wrong past the limit is that
+    // the innermost clip stops narrowing anything, so this nests to just under
+    // the limit and then adds a much smaller clip: a point inside the outer
+    // clips but outside the inner one must not be drawn. With the count
+    // saturated that point was white, and nothing about it read as an error.
+    let mut contexts = every_backend();
+    assert!(!contexts.is_empty(), "no backend, so nothing here ran");
+
+    let mut small = PathBuilder::new();
+    small
+        .move_to(Vec2::ZERO)
+        .line_to(Vec2::new(16.0, 0.0))
+        .line_to(Vec2::new(0.0, 16.0))
+        .close();
+    let small = small.build();
+
+    for ctx in &mut contexts {
+        let backend = ctx.backend();
+        let pixels = deeply_clipped(ctx, 254, Some(&small))
+            .unwrap_or_else(|e| panic!("{backend} refused a legal clip stack: {e}"));
+        let at = |x: u32, y: u32| pixels[((y * 64 + x) * 4) as usize];
+        assert_eq!(
+            at(3, 3),
+            255,
+            "{backend}: inside every clip should be drawn"
+        );
+        assert_eq!(
+            at(30, 10),
+            0,
+            "{backend}: the innermost clip stopped excluding anything"
+        );
+    }
 }
 
 #[test]

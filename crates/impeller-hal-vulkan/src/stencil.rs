@@ -22,14 +22,6 @@ use gpu_allocator::vulkan::{Allocation, AllocationCreateDesc, AllocationScheme};
 use gpu_allocator::MemoryLocation;
 use impeller_hal::{Error, Extent2D, Result};
 
-/// The deepest clip stack an eight-bit stencil can distinguish.
-///
-/// Eight bits is the only stencil depth every Vulkan implementation is required
-/// to offer, so this is the portable limit rather than this device's. Exceeding
-/// it wraps to zero, which does not fail — it silently admits everything the
-/// clip was meant to exclude — so it is refused instead.
-pub const MAX_CLIP_DEPTH: u32 = 255;
-
 /// A stencil attachment and the memory behind it.
 pub struct StencilBuffer {
     pub image: vk::Image,

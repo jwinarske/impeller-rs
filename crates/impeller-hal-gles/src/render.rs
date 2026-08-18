@@ -195,6 +195,11 @@ impl GlesContext {
                 });
             }
         }
+        // Alongside the slot check above and for the same reason: before
+        // anything is bound. A clip stack deeper than the stencil can count to
+        // is refused rather than saturating, which would draw content the
+        // caller clipped away and look like nothing at all.
+        batch.check_clip_depth()?;
         let placeholder = self.placeholder_texture()?;
         if !pass.samples.is_power_of_two() {
             return Err(Error::Unsupported("sample count is not a power of two"));

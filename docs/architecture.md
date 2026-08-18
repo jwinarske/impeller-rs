@@ -1002,7 +1002,14 @@ permutations on GLES.
   submitted as one pass, in submission order rather than sorted by pipeline
   (see above). Save layers become offscreen
   targets with a paint-composited restore, sized to the caller's bounds where
-  given; path clipping is stencil-based. Blur is **not implemented** — there is
+  given; path clipping is stencil-based, and bounded at 255 levels because that
+  is what eight bits of stencil counts to and eight is what every device is
+  required to offer. Deeper is refused rather than allowed to saturate, since a
+  saturated count makes the innermost clip stop excluding anything — content
+  the caller clipped away is drawn, and nothing about that reads as an error.
+  The check lives beside the depth it reads rather than in a backend, because
+  it was in one backend and not the other and the same recording was therefore
+  an error on Vulkan and a wrong picture on GLES. Blur is **not implemented** — there is
   no blur anywhere in the tree, and a multi-pass separable one is the intended
   shape rather than something that exists.
 - **Text** (`impeller-text`): shelf packing of caller-supplied coverage into

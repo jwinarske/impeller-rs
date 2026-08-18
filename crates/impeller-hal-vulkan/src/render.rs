@@ -446,13 +446,7 @@ impl VulkanContext {
         if !batch.uses_stencil() {
             return Ok(None);
         }
-        if batch.max_clip_depth() > crate::stencil::MAX_CLIP_DEPTH {
-            return Err(Error::LimitExceeded {
-                what: "clip nesting depth",
-                requested: batch.max_clip_depth() as u64,
-                limit: crate::stencil::MAX_CLIP_DEPTH as u64,
-            });
-        }
+        batch.check_clip_depth()?;
         crate::stencil::stencil_format(self).map(Some)
     }
 
