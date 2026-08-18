@@ -34,6 +34,12 @@ jobs:
   verify:
     name: verify (software rendering)
     runs-on: ubuntu-latest
+    # The whole job takes a few minutes when nothing is wrong. A cap turns a
+    # hung step into a failure somebody sees rather than an hour of a runner
+    # sitting on it -- which is not hypothetical: this was added after watching
+    # `apt-get` stall for ten minutes on a step that normally takes twenty
+    # seconds, with nothing to say how long it intended to keep trying.
+    timeout-minutes: 30
     env:
       # Scoped to this job rather than the workflow: the other one builds
       # cargo-deny from source, and denying warnings there would fail this
@@ -123,6 +129,7 @@ jobs:
   msrv:
     name: minimum supported toolchain
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
       # Read from the manifest rather than written twice. A job that pinned its
@@ -149,6 +156,7 @@ jobs:
   cross:
     name: cross-compile (${{ matrix.target }})
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     strategy:
       fail-fast: false
       matrix:
@@ -174,6 +182,7 @@ jobs:
   supply-chain:
     name: supply chain
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
       - name: Cache cargo-deny
