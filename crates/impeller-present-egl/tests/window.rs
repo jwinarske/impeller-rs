@@ -11,6 +11,7 @@
 //! anything, so nothing drawn here is.
 
 use impeller_hal::{Batch, BlendMode, Extent2D, Material, PassDescriptor, PixelFormat};
+use impeller_hal_gles::Validated as GlesValidated;
 use impeller_hal_gles::{DisplayTarget, GlesContext};
 use impeller_present::PresentTarget;
 use impeller_present_egl::{create_offscreen_surface, destroy_surface, WindowTarget};
@@ -56,8 +57,8 @@ fn top_band() -> Batch {
     batch
 }
 
-fn setup() -> Option<(GlesContext, khronos_egl::Surface)> {
-    let ctx = match GlesContext::new(DisplayTarget::Surfaceless) {
+fn setup() -> Option<(GlesValidated, khronos_egl::Surface)> {
+    let ctx = match GlesValidated::new(DisplayTarget::Surfaceless) {
         Ok(ctx) => ctx,
         Err(e) => {
             eprintln!("skipping: no GLES context ({e})");

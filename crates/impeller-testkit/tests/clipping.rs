@@ -18,7 +18,8 @@ use impeller_hal::{
     Batch, BlendMode, ClipState, Extent2D, Hal, HalContext, Material, PassDescriptor, PixelFormat,
     Scissor, TextureDescriptor,
 };
-use impeller_hal_gles::{DisplayTarget, GlesContext, GlesHal};
+use impeller_hal_gles::Validated as GlesValidated;
+use impeller_hal_gles::{DisplayTarget, GlesHal};
 use impeller_hal_vulkan::Validated;
 use impeller_hal_vulkan::{DevicePreference, VulkanHal};
 
@@ -138,7 +139,7 @@ fn a_clip_confines_a_draw_on_vulkan() {
 
 #[test]
 fn a_clip_confines_a_draw_on_gles() {
-    let Ok(mut ctx) = GlesContext::new(DisplayTarget::Surfaceless) else {
+    let Ok(mut ctx) = GlesValidated::new(DisplayTarget::Surfaceless) else {
         eprintln!("skipping: no GLES context");
         return;
     };
@@ -150,7 +151,7 @@ fn the_backends_place_a_clip_in_the_same_half_of_the_target() {
     let Ok(mut vulkan) = Validated::new(DevicePreference::Auto) else {
         return;
     };
-    let Ok(mut gles) = GlesContext::new(DisplayTarget::Surfaceless) else {
+    let Ok(mut gles) = GlesValidated::new(DisplayTarget::Surfaceless) else {
         return;
     };
 
@@ -177,7 +178,7 @@ fn an_unclipped_draw_covers_the_whole_target() {
                 Ok(mut ctx) => render::<VulkanHal>(&mut ctx, None),
                 Err(_) => continue,
             },
-            _ => match GlesContext::new(DisplayTarget::Surfaceless) {
+            _ => match GlesValidated::new(DisplayTarget::Surfaceless) {
                 Ok(mut ctx) => render::<GlesHal>(&mut ctx, None),
                 Err(_) => continue,
             },
@@ -205,7 +206,7 @@ fn a_clip_does_not_restrict_the_clear() {
         assert_background_outside(&pixels, corner, "vulkan");
         checked += 1;
     }
-    if let Ok(mut ctx) = GlesContext::new(DisplayTarget::Surfaceless) {
+    if let Ok(mut ctx) = GlesValidated::new(DisplayTarget::Surfaceless) {
         let pixels = render::<GlesHal>(&mut ctx, Some(corner));
         assert_background_outside(&pixels, corner, "gles");
         checked += 1;
@@ -391,7 +392,7 @@ fn a_stencil_clip_confines_a_draw_on_both_backends() {
         assert_eq!(covered_bounds(&pixels), want, "vulkan");
         ran += 1;
     }
-    if let Ok(mut ctx) = GlesContext::new(DisplayTarget::Surfaceless) {
+    if let Ok(mut ctx) = GlesValidated::new(DisplayTarget::Surfaceless) {
         let pixels = render_batch::<GlesHal>(&mut ctx, &batch, 1);
         assert_eq!(covered_bounds(&pixels), want, "gles");
         ran += 1;
@@ -404,7 +405,7 @@ fn the_backends_agree_pixel_for_pixel_on_a_nested_stencil_clip() {
     let Ok(mut vulkan) = Validated::new(DevicePreference::Auto) else {
         return;
     };
-    let Ok(mut gles) = GlesContext::new(DisplayTarget::Surfaceless) else {
+    let Ok(mut gles) = GlesValidated::new(DisplayTarget::Surfaceless) else {
         return;
     };
     // A stencil clip has no per-fragment arithmetic in it: a pixel is either
@@ -429,7 +430,7 @@ fn a_stencil_clip_leaves_no_trace_on_a_later_pass() {
     // second pass here render nothing at all, which no test of the first pass
     // could catch.
     let mut ran = 0;
-    if let Ok(mut ctx) = GlesContext::new(DisplayTarget::Surfaceless) {
+    if let Ok(mut ctx) = GlesValidated::new(DisplayTarget::Surfaceless) {
         let _ = render_batch::<GlesHal>(&mut ctx, &stencil_clipped_batch(true), 1);
         let mut plain = Batch::new();
         plain
@@ -465,7 +466,7 @@ fn a_multisampled_stencil_clip_agrees_between_the_backends() {
     let Ok(mut vulkan) = Validated::new(DevicePreference::Auto) else {
         return;
     };
-    let Ok(mut gles) = GlesContext::new(DisplayTarget::Surfaceless) else {
+    let Ok(mut gles) = GlesValidated::new(DisplayTarget::Surfaceless) else {
         return;
     };
     if !(vulkan.capabilities().sample_counts.supports(4)

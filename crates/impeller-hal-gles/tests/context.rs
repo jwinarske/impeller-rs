@@ -4,10 +4,11 @@
 //! without a graphics stack still gets a green run, while lanes that must have
 //! GLES enforce it through the image they run on.
 
-use impeller_hal_gles::{DisplayTarget, GlesContext};
+use impeller_hal_gles::DisplayTarget;
+use impeller_hal_gles::Validated as GlesValidated;
 
-fn context() -> Option<GlesContext> {
-    match GlesContext::new(DisplayTarget::Surfaceless) {
+fn context() -> Option<GlesValidated> {
+    match GlesValidated::new(DisplayTarget::Surfaceless) {
         Ok(ctx) => Some(ctx),
         Err(e) => {
             eprintln!("skipping: no usable GLES context ({e})");
@@ -124,7 +125,7 @@ fn contexts_can_be_created_and_dropped_repeatedly() {
     // Teardown unbinds before destroying; getting that wrong tends to leak the
     // display and show up on a later cycle rather than the first.
     for i in 0..3 {
-        let ctx = GlesContext::new(DisplayTarget::Surfaceless)
+        let ctx = GlesValidated::new(DisplayTarget::Surfaceless)
             .unwrap_or_else(|e| panic!("cycle {i}: {e}"));
         assert!(!ctx.capabilities().device_name.is_empty());
     }

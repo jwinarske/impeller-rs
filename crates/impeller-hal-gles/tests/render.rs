@@ -8,13 +8,14 @@
 use impeller_hal::{
     Batch, BlendMode, Extent2D, Material, PassDescriptor, PixelFormat, TextureDescriptor,
 };
-use impeller_hal_gles::{DisplayTarget, GlesContext, GlesTexture};
+use impeller_hal_gles::Validated as GlesValidated;
+use impeller_hal_gles::{DisplayTarget, GlesTexture};
 
 const SIZE: u32 = 32;
 const BLACK: [f32; 4] = [0.0, 0.0, 0.0, 1.0];
 
-fn context() -> Option<GlesContext> {
-    match GlesContext::new(DisplayTarget::Surfaceless) {
+fn context() -> Option<GlesValidated> {
+    match GlesValidated::new(DisplayTarget::Surfaceless) {
         Ok(ctx) => Some(ctx),
         Err(e) => {
             eprintln!("skipping: no usable GLES context ({e})");
@@ -23,7 +24,7 @@ fn context() -> Option<GlesContext> {
     }
 }
 
-fn target(ctx: &mut GlesContext) -> GlesTexture {
+fn target(ctx: &mut GlesValidated) -> GlesTexture {
     ctx.create_texture(&TextureDescriptor::offscreen(
         Extent2D::new(SIZE, SIZE),
         PixelFormat::Rgba8Unorm,
@@ -39,7 +40,7 @@ fn band(y0: f32, y1: f32) -> [[f32; 2]; 4] {
     [[-1.0, y0], [1.0, y0], [1.0, y1], [-1.0, y1]]
 }
 
-fn render(ctx: &mut GlesContext, batch: &Batch) -> Vec<u8> {
+fn render(ctx: &mut GlesValidated, batch: &Batch) -> Vec<u8> {
     let mut tex = target(ctx);
     ctx.submit_batch(&mut tex, batch, PassDescriptor::clear(BLACK))
         .expect("submit");
@@ -233,7 +234,7 @@ fn an_empty_batch_still_clears() {
 /// many samples are taken.
 const SHALLOW: [[f32; 2]; 3] = [[-1.0, -1.0], [1.0, -1.0], [-1.0, 0.35]];
 
-fn render_at(ctx: &mut GlesContext, samples: u32) -> Vec<u8> {
+fn render_at(ctx: &mut GlesValidated, samples: u32) -> Vec<u8> {
     let mut batch = Batch::new();
     batch
         .push(

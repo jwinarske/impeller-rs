@@ -15,9 +15,11 @@
 //! is not implemented yet.
 
 pub mod context;
+pub mod debug;
 pub mod hal;
 pub mod render;
 
-pub use context::{DisplayTarget, Egl, GlesContext};
+pub use context::{DisplayTarget, Egl, GlesConfig, GlesContext};
+pub use debug::{DebugMessage, DebugSeverity, Validated};
 pub use hal::GlesHal;
 pub use render::GlesTexture;

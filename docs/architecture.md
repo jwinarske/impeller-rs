@@ -1181,7 +1181,18 @@ The levels below are the plan. The right-hand column says where each runs, and
 **"CI" describes none of them: there is no CI**. What exists is `ci/smoke.sh`,
 run by hand, which does the whole of L0, L1 and L3 and part of L4.
 
-**Every Vulkan context in the suite runs with the validation layer on, and
+**Every context in the suite reports what the driver said about it.** On
+Vulkan that is the validation layer; on GLES it is `GL_KHR_debug`, which every
+3.2 implementation offers and which is the driver reporting on itself rather
+than a layer to load. The two cover different ground — the layer tracks object
+lifetimes and synchronization, and `KHR_debug` does not — but `KHR_debug` covers
+what a state machine gets wrong, which is a call made with the wrong state
+bound, and that is most of what this backend can get wrong. Messages are
+requested synchronously so one arrives inside the call that caused it. Both are
+read by a guard that asserts when the context drops, and both classify severity
+the same way, so "no errors" means one thing across the two.
+
+**The Vulkan half of that runs with the validation layer on, and
 asserts what it reported.** Capturing the messenger is what makes that
 assertable; a guard that checks the log when a context drops is what makes it
 asserted, which is not the same thing. A test that turns the layer on and never

@@ -13,7 +13,8 @@ use impeller_hal::{
     blend::blend_advanced, Batch, BlendFactor, BlendMode, Error, Extent2D, Hal, HalContext,
     Material, PassDescriptor, PixelFormat, TextureDescriptor,
 };
-use impeller_hal_gles::{DisplayTarget, GlesContext, GlesHal};
+use impeller_hal_gles::Validated as GlesValidated;
+use impeller_hal_gles::{DisplayTarget, GlesHal};
 use impeller_hal_vulkan::Validated;
 use impeller_hal_vulkan::{DevicePreference, VulkanContext, VulkanHal};
 
@@ -225,7 +226,7 @@ fn every_mode_matches_its_equation_on_vulkan() {
 
 #[test]
 fn every_mode_matches_its_equation_on_gles() {
-    let Ok(mut ctx) = GlesContext::new(DisplayTarget::Surfaceless) else {
+    let Ok(mut ctx) = GlesValidated::new(DisplayTarget::Surfaceless) else {
         eprintln!("skipping: no GLES context");
         return;
     };
@@ -255,7 +256,7 @@ fn a_mode_the_device_cannot_do_is_refused_rather_than_approximated() {
             ran_on.push("vulkan");
         }
     }
-    if let Ok(mut ctx) = GlesContext::new(DisplayTarget::Surfaceless) {
+    if let Ok(mut ctx) = GlesValidated::new(DisplayTarget::Surfaceless) {
         if !ctx.capabilities().advanced_blend {
             for mode in BlendMode::ADVANCED {
                 assert!(
@@ -283,7 +284,7 @@ fn the_porter_duff_modes_agree_between_the_backends() {
     let Ok(mut vulkan) = Validated::new(DevicePreference::Auto) else {
         return;
     };
-    let Ok(mut gles) = GlesContext::new(DisplayTarget::Surfaceless) else {
+    let Ok(mut gles) = GlesValidated::new(DisplayTarget::Surfaceless) else {
         return;
     };
 

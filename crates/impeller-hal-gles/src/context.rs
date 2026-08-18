@@ -62,10 +62,36 @@ pub struct GlesContext {
     /// rather than transparent so that binding it in place of a real texture
     /// shows up as a blank shape rather than as nothing at all.
     placeholder: Option<glow::Texture>,
+    /// Driver diagnostics, where debug output was asked for and available.
+    debug: Option<std::sync::Arc<crate::debug::DebugLog>>,
+}
+
+/// How a context is created.
+///
+/// Mirrors the Vulkan backend's, and for the same reason: the checking costs
+/// real time per call, so it is asked for rather than assumed, and tests are
+/// what ask.
+#[derive(Debug, Clone, Copy)]
+pub struct GlesConfig {
+    pub target: DisplayTarget,
+    /// Request `GL_KHR_debug` and capture what the driver reports.
+    pub debug: bool,
 }
 
 impl GlesContext {
     pub fn new(target: DisplayTarget) -> Result<Self> {
+        Self::with_config(GlesConfig {
+            target,
+            debug: false,
+        })
+    }
+
+    /// Create a context with explicit configuration.
+    ///
+    /// Named `settings` rather than `config` because an EGL config is a
+    /// different thing that this function also has to hold.
+    pub fn with_config(settings: GlesConfig) -> Result<Self> {
+        let target = settings.target;
         // SAFETY: loads libEGL by soname and keeps it alive for the lifetime of
         // the returned instance, which this struct owns.
         let egl = unsafe { Egl::load_required() }.map_err(|e| Error::Backend {
@@ -166,7 +192,7 @@ impl GlesContext {
 
         // SAFETY: a context is current on this thread, so entry points resolved
         // here are valid for it.
-        let gl = unsafe {
+        let mut gl = unsafe {
             glow::Context::from_loader_function(|name| {
                 egl.get_proc_address(name)
                     .map_or(std::ptr::null(), |p| p as *const std::ffi::c_void)
@@ -175,6 +201,19 @@ impl GlesContext {
 
         let gl_extensions = gl_extension_set(&gl);
         let capabilities = detect_capabilities(&gl, &egl_extensions);
+
+        // Asked for and available are separate questions, and a driver without
+        // debug output still renders. `debug_active` reports which happened, so
+        // a caller asserting on the log can tell "clean" from "not looking".
+        let debug = if settings.debug && gl_extensions.contains("GL_KHR_debug") {
+            let log = std::sync::Arc::new(crate::debug::DebugLog::default());
+            // SAFETY: the context was made current above and stays current on
+            // this thread for as long as it lives.
+            unsafe { crate::debug::install(&mut gl, log.clone()) };
+            Some(log)
+        } else {
+            None
+        };
 
         Ok(Self {
             gl,
@@ -187,11 +226,35 @@ impl GlesContext {
             gl_extensions,
             program: None,
             placeholder: None,
+            debug,
         })
     }
 
     pub fn capabilities(&self) -> &Capabilities {
         &self.capabilities
+    }
+
+    /// Whether the driver is reporting diagnostics into this context's log.
+    ///
+    /// False where debug output was not asked for, and also where it was asked
+    /// for and the driver has none. The distinction matters to a caller that
+    /// asserts the log is clean: an empty log means nothing at all if nothing
+    /// was ever going to be written to it.
+    pub fn debug_active(&self) -> bool {
+        self.debug.is_some()
+    }
+
+    /// Everything the driver has reported for this context so far.
+    pub fn debug_messages(&self) -> Vec<crate::debug::DebugMessage> {
+        self.debug
+            .as_ref()
+            .map(|log| log.messages())
+            .unwrap_or_default()
+    }
+
+    /// Whether the driver has reported no errors.
+    pub fn debug_clean(&self) -> bool {
+        self.debug.as_ref().is_none_or(|log| log.is_clean())
     }
 
     /// A one-pixel opaque white texture, for draws that sample nothing.

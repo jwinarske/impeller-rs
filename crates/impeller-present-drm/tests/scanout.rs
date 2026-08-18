@@ -300,6 +300,9 @@ fn a_buffer_still_on_screen_is_never_handed_back() {
     output.auto_flip = false;
     let mut target =
         DrmScanoutTarget::<VulkanHal, _>::new(&mut ctx, output, 2).expect("scanout target");
+    // This display is never going to flip, which the test arranged, so there is
+    // nothing to learn from waiting the full default for it.
+    target.set_flip_timeout(std::time::Duration::from_millis(50));
     let batch = scene();
 
     frame(&mut ctx, &mut target, &batch).expect("first frame");

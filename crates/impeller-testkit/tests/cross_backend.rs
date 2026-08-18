@@ -10,7 +10,8 @@
 //! translation that diverged would show up here rather than as a report from
 //! whoever ran the other backend first.
 
-use impeller_hal_gles::{DisplayTarget, GlesContext, GlesHal};
+use impeller_hal_gles::Validated as GlesValidated;
+use impeller_hal_gles::{DisplayTarget, GlesHal};
 use impeller_hal_vulkan::Validated;
 use impeller_hal_vulkan::{DevicePreference, VulkanHal};
 use impeller_testkit::{accepts, compare, corpus, render_scene, Scene};
@@ -21,7 +22,7 @@ fn the_corpus_matches_across_backends() {
         eprintln!("skipping: no Vulkan device");
         return;
     };
-    let Ok(mut gles) = GlesContext::new(DisplayTarget::Surfaceless) else {
+    let Ok(mut gles) = GlesValidated::new(DisplayTarget::Surfaceless) else {
         eprintln!("skipping: no GLES context");
         return;
     };
@@ -113,7 +114,7 @@ fn both_backends_agree_on_orientation() {
     let Ok(mut vulkan) = Validated::new(DevicePreference::Auto) else {
         return;
     };
-    let Ok(mut gles) = GlesContext::new(DisplayTarget::Surfaceless) else {
+    let Ok(mut gles) = GlesValidated::new(DisplayTarget::Surfaceless) else {
         return;
     };
 
@@ -156,7 +157,7 @@ fn a_bounded_layer_renders_like_a_full_size_one_on_every_backend() {
     // one encodes a pass into a command buffer and the other rebinds a
     // framebuffer on a global state machine.
     let mut vulkan = Validated::new(DevicePreference::Auto).ok();
-    let mut gles = GlesContext::new(DisplayTarget::Surfaceless).ok();
+    let mut gles = GlesValidated::new(DisplayTarget::Surfaceless).ok();
     if vulkan.is_none() && gles.is_none() {
         eprintln!("skipping: no backend available");
         return;

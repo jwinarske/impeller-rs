@@ -60,6 +60,14 @@ pub struct DrmScanoutTarget<H: Hal, O: ScanoutOutput> {
     /// Commits made without a sync_file attached, because the device could not
     /// export one.
     cpu_waits: u64,
+    /// How long a committed flip may take before the display is called stopped.
+    ///
+    /// Adjustable because the right answer differs by who is asking. A frame
+    /// loop wants the project's standard, which is generous on purpose: a wait
+    /// that reaches it has hit a display that stopped rather than a slow frame.
+    /// A test that deliberately never flips wants to find that out quickly, and
+    /// would otherwise spend the whole timeout proving something it arranged.
+    flip_timeout: std::time::Duration,
 }
 
 impl<H: Hal, O: ScanoutOutput> DrmScanoutTarget<H, O>
@@ -96,6 +104,7 @@ where
             mode_set: false,
             flip_pending: false,
             cpu_waits: 0,
+            flip_timeout: FRAME_WAIT_TIMEOUT,
         };
         target.build_ring(ctx, depth.max(2), &candidates)?;
         Ok(target)
@@ -177,9 +186,11 @@ where
         if !self.flip_pending {
             return Ok(());
         }
+        // Polled once per frame, so the wait wakes with the display rather
+        // than on a timer of its own.
         let budget = self.output.mode().frame_nanos().max(1);
-        let deadline = std::time::Instant::now()
-            + std::time::Duration::from_nanos(budget.saturating_mul(8).max(1_000_000));
+        // Given up on at the point [`Self::set_flip_timeout`] describes.
+        let deadline = std::time::Instant::now() + self.flip_timeout;
         while self.flip_pending {
             let events = self.output.wait_for_event(budget)?;
             let reconfigured = self.drain_events(events);
@@ -407,6 +418,22 @@ where
             ctx.destroy_texture(slot.texture);
         }
         self.acquired = None;
+    }
+
+    /// How long a committed flip may take before the display is called stopped.
+    ///
+    /// The default is the project's standard frame-loop wait, which is generous
+    /// on purpose: reaching it means a display that stopped rather than a slow
+    /// frame, and a bound tight enough to trip on a scheduling stall reports a
+    /// working display as a hung one. This was eight frame periods -- a hundred
+    /// and thirty milliseconds at sixty hertz -- which is inside the range a
+    /// loaded machine or a virtual driver reaches while working correctly.
+    ///
+    /// Worth lowering where a caller would rather find out quickly, and what a
+    /// test that arranges a display which never flips uses so that it does not
+    /// spend the whole default proving what it set up.
+    pub fn set_flip_timeout(&mut self, timeout: std::time::Duration) {
+        self.flip_timeout = timeout;
     }
 
     /// Record the fence for the frame currently being rendered.

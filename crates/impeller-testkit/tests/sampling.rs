@@ -11,7 +11,8 @@ use impeller_hal::{
     Batch, BlendMode, Extent2D, Hal, HalContext, Material, PassDescriptor, PixelFormat,
     TextureDescriptor, TileMode,
 };
-use impeller_hal_gles::{DisplayTarget, GlesContext, GlesHal};
+use impeller_hal_gles::Validated as GlesValidated;
+use impeller_hal_gles::{DisplayTarget, GlesHal};
 use impeller_hal_vulkan::Validated;
 use impeller_hal_vulkan::{DevicePreference, VulkanHal};
 
@@ -127,7 +128,7 @@ fn an_upload_survives_a_round_trip_through_readback() {
         assert_eq!(got, want, "vulkan changed the pixels in transit");
         ran += 1;
     }
-    if let Ok(mut ctx) = GlesContext::new(DisplayTarget::Surfaceless) {
+    if let Ok(mut ctx) = GlesValidated::new(DisplayTarget::Surfaceless) {
         let mut texture = ctx
             .create_texture(&TextureDescriptor::offscreen(
                 SOURCE,
@@ -169,7 +170,7 @@ fn an_image_lands_the_right_way_up_on_both_backends() {
         assert_quadrants(&pixels, "vulkan");
         ran += 1;
     }
-    if let Ok(mut ctx) = GlesContext::new(DisplayTarget::Surfaceless) {
+    if let Ok(mut ctx) = GlesValidated::new(DisplayTarget::Surfaceless) {
         let pixels = render::<GlesHal>(&mut ctx, full_target_mapping());
         assert_quadrants(&pixels, "gles");
         ran += 1;
@@ -182,7 +183,7 @@ fn the_backends_agree_on_a_sampled_image() {
     let Ok(mut vulkan) = Validated::new(DevicePreference::Auto) else {
         return;
     };
-    let Ok(mut gles) = GlesContext::new(DisplayTarget::Surfaceless) else {
+    let Ok(mut gles) = GlesValidated::new(DisplayTarget::Surfaceless) else {
         return;
     };
     let a = render::<VulkanHal>(&mut vulkan, full_target_mapping());
@@ -213,7 +214,7 @@ fn alpha_scales_the_sampled_color() {
                 Ok(mut ctx) => render::<VulkanHal>(&mut ctx, material),
                 Err(_) => continue,
             },
-            _ => match GlesContext::new(DisplayTarget::Surfaceless) {
+            _ => match GlesValidated::new(DisplayTarget::Surfaceless) {
                 Ok(mut ctx) => render::<GlesHal>(&mut ctx, material),
                 Err(_) => continue,
             },
@@ -315,7 +316,7 @@ fn a_batch_naming_a_texture_nobody_supplied_is_refused() {
         );
         ran += 1;
     }
-    if let Ok(mut ctx) = GlesContext::new(DisplayTarget::Surfaceless) {
+    if let Ok(mut ctx) = GlesValidated::new(DisplayTarget::Surfaceless) {
         let mut target = ctx
             .create_texture(&TextureDescriptor::offscreen(SIZE, PixelFormat::Rgba8Unorm))
             .expect("target");
@@ -419,7 +420,7 @@ fn a_single_channel_texture_round_trips_on_both_backends() {
         );
         ran += 1;
     }
-    if let Ok(mut ctx) = GlesContext::new(DisplayTarget::Surfaceless) {
+    if let Ok(mut ctx) = GlesValidated::new(DisplayTarget::Surfaceless) {
         let mut texture = ctx
             .create_texture(&TextureDescriptor::offscreen(SOURCE, PixelFormat::R8Unorm))
             .expect("texture");
@@ -454,7 +455,7 @@ fn a_single_channel_texture_samples_as_coverage() {
         assert_coverage(&render_coverage::<VulkanHal>(&mut ctx, &texels), "vulkan");
         ran += 1;
     }
-    if let Ok(mut ctx) = GlesContext::new(DisplayTarget::Surfaceless) {
+    if let Ok(mut ctx) = GlesValidated::new(DisplayTarget::Surfaceless) {
         assert_coverage(&render_coverage::<GlesHal>(&mut ctx, &texels), "gles");
         ran += 1;
     }
