@@ -436,6 +436,32 @@ to the clip that was in force when it opened, so content the clip excludes is
 discarded once instead of prevented from being drawn. That costs some work
 inside the layer and saves rebuilding a stencil clip in a second target.
 
+**A layer's target is the size of its bounds, where the caller states them.**
+`save_layer` with no bounds allocates a target the size of the frame, which is
+the only safe answer when nothing is known about what the layer covers: a layer
+is opened before its contents are recorded, so the recorder cannot measure them
+without deferring the allocation. `save_layer_bounds` takes the caller's promise
+instead, and a layer over a tenth of the frame then costs a tenth of the memory
+and a tenth of the fill. The promise is enforced rather than trusted — content
+outside the region is clipped by the target's own edges, so understating the
+bounds shows as drawing cut off rather than as reading past an allocation.
+
+The bounds are stated in user space and taken to device pixels through the
+transform in force, rounded outward to whole pixels so a fractional edge never
+loses coverage, and narrowed to the enclosing target. Whole pixels because the
+composite samples the layer one texel to one pixel, which only stays exact on an
+integer offset. A region that survives none of that — an empty one, or one under
+a transform that leaves it non-rectangular — falls back to a full-size layer,
+since a smaller target would be a guess and guessing wrong loses drawing.
+
+Placing a target inside the frame means two mappings have to agree about where
+it is: geometry is tessellated in the frame's device pixels and projected onto
+the target's clip space, and a paint states its geometry in user space and
+carries the inverse mapping back. They are derived from one description of the
+target for that reason. A test renders each scene twice, with bounds and
+without, and requires the results to match; that is the whole guarantee, since
+bounds are an optimization and nothing about the output may depend on them.
+
 A layer left open at `finish` is composited rather than discarded. An unbalanced
 `save_layer` is a caller mistake either way, and dropping everything drawn since
 it looks like a rendering fault rather than like the missing `restore` it is.

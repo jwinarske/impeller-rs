@@ -8,7 +8,9 @@
 use glam::{Affine2, Vec2};
 use impeller_geometry::stroke::StrokeStyle;
 use impeller_geometry::tessellate::{Tessellator, VertexBuffers};
-use impeller_geometry::transform::{max_scale, transform_points, viewport_projection};
+use impeller_geometry::transform::{
+    invert_or_identity, max_scale, transform_points, viewport_projection,
+};
 use impeller_geometry::{flatten::DEFAULT_TOLERANCE, Path};
 use impeller_hal::{Batch, BlendMode, ClipState, Extent2D, Material, Result, Scissor, Stop};
 
@@ -59,13 +61,17 @@ impl Paint {
         target: Extent2D,
     ) -> Self {
         let to_clip = viewport_projection(target.width, target.height) * transform;
+        let axis = end - start;
         let start = to_clip.transform_point2(start);
-        let end = to_clip.transform_point2(end);
         Self {
             material: Material::LinearGradient {
                 start: [start.x, start.y],
-                axis: [end.x - start.x, end.y - start.y],
-                to_local: [1.0, 0.0, 0.0, 1.0],
+                axis: [axis.x, axis.y],
+                // The axis stays in the space it was given in, and the shader is
+                // told how to get back there. Differencing the two endpoints in
+                // clip space instead would let the target's aspect ratio into
+                // the gradient's direction.
+                to_local: invert_or_identity(to_clip.matrix2),
                 stops,
             },
             blend: BlendMode::default(),
@@ -102,6 +108,14 @@ pub struct Renderer {
     tessellator: Tessellator,
     clip_space: Vec<Vec2>,
     target: Extent2D,
+    /// Where the target sits within the frame, in device pixels.
+    ///
+    /// Zero for the frame itself and non-zero for a layer given bounds, which
+    /// renders into a target covering only part of it. Geometry arrives in the
+    /// frame's device space either way, so this is what places it: without it a
+    /// bounded layer's contents are mapped as though the layer filled the
+    /// frame, and land wherever the smaller viewport happens to put them.
+    origin: Vec2,
     tolerance: f32,
 }
 
@@ -111,6 +125,7 @@ impl Default for Renderer {
             tessellator: Tessellator::default(),
             clip_space: Vec::new(),
             target: Extent2D::new(1, 1),
+            origin: Vec2::ZERO,
             tolerance: DEFAULT_TOLERANCE,
         }
     }
@@ -128,12 +143,32 @@ impl Renderer {
     /// subtly misplaced.
     pub fn begin_frame(&mut self, target: Extent2D, tolerance: f32) -> &mut Self {
         self.target = target;
+        self.origin = Vec2::ZERO;
         self.tolerance = tolerance;
+        self
+    }
+
+    /// Aim subsequent drawing at a target placed within the frame.
+    ///
+    /// For a layer that was given bounds: its target is smaller than the frame
+    /// and offset within it, while the geometry handed over is still stated in
+    /// the frame's device pixels, because that is the space the caller's
+    /// transform produces. Tolerance is left alone deliberately — it is a
+    /// device-space quantity and the device has not changed size.
+    pub fn set_viewport(&mut self, origin: Vec2, target: Extent2D) -> &mut Self {
+        self.target = target;
+        self.origin = origin;
         self
     }
 
     pub fn target(&self) -> Extent2D {
         self.target
+    }
+
+    /// Device pixels to clip space for the target currently aimed at.
+    pub fn projection(&self) -> Affine2 {
+        viewport_projection(self.target.width, self.target.height)
+            * Affine2::from_translation(-self.origin)
     }
 
     /// Tessellate a filled path and map it into clip space.
@@ -146,8 +181,9 @@ impl Renderer {
     /// the target size and flatten far too coarsely.
     pub fn fill_path(&mut self, path: &Path, transform: Affine2) -> ClipGeometry<'_> {
         let path_tolerance = path_space_tolerance(self.tolerance, &transform);
+        let projection = self.projection();
         let buffers = self.tessellator.fill(path, path_tolerance);
-        Self::to_clip_space(&mut self.clip_space, buffers, transform, self.target)
+        Self::to_clip_space(&mut self.clip_space, buffers, transform, projection)
     }
 
     /// Tessellate a stroked path and map it into clip space.
@@ -162,8 +198,9 @@ impl Renderer {
         transform: Affine2,
     ) -> ClipGeometry<'_> {
         let path_tolerance = path_space_tolerance(self.tolerance, &transform);
+        let projection = self.projection();
         let buffers = self.tessellator.stroke(path, style, path_tolerance);
-        Self::to_clip_space(&mut self.clip_space, buffers, transform, self.target)
+        Self::to_clip_space(&mut self.clip_space, buffers, transform, projection)
     }
 
     /// Tessellate a filled path and append it to a batch.
@@ -217,11 +254,11 @@ impl Renderer {
         scratch: &'a mut Vec<Vec2>,
         buffers: &'a VertexBuffers,
         transform: Affine2,
-        target: Extent2D,
+        projection: Affine2,
     ) -> ClipGeometry<'a> {
         // One combined transform rather than two passes: composing first means
         // each vertex is touched once and rounds once.
-        let to_clip = viewport_projection(target.width, target.height) * transform;
+        let to_clip = projection * transform;
         scratch.clear();
         scratch.extend_from_slice(&buffers.vertices);
         transform_points(scratch, &to_clip);

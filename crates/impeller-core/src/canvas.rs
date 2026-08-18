@@ -10,7 +10,7 @@ use crate::paint::{Paint, Shader, Style};
 use crate::Color;
 use glam::{Affine2, Mat2, Vec2};
 use impeller_geometry::transform::{
-    preserves_axis_alignment, transformed_bounds, viewport_projection,
+    invert_or_identity, preserves_axis_alignment, transformed_bounds, viewport_projection,
 };
 use impeller_geometry::{Path, PathBuilder};
 use impeller_hal::{
@@ -86,6 +86,12 @@ pub struct Pass {
     pub descriptor: PassDescriptor,
     /// What each texture slot this pass samples refers to, in slot order.
     pub sources: Vec<TextureSource>,
+    /// The size of the target this pass renders into.
+    ///
+    /// Per pass rather than per recording, because a layer given bounds
+    /// renders into a target the size of those bounds. The root pass always
+    /// carries the recording's extent, since that is the caller's surface.
+    pub extent: Extent2D,
 }
 
 /// A finished recording, ready to submit.
@@ -102,7 +108,8 @@ pub struct Recording {
     /// a layer is finished when it is restored, which is necessarily before the
     /// draw that composites it.
     pub passes: Vec<Pass>,
-    /// The size every pass renders at.
+    /// The size of the caller's surface, which is what the root pass renders
+    /// at. A layer pass may be smaller; see [`Pass::extent`].
     pub extent: Extent2D,
 }
 
@@ -126,6 +133,47 @@ impl Recording {
     }
 }
 
+/// The target a pass renders into, placed within the frame.
+///
+/// A layer with bounds renders into a target the size of those bounds rather
+/// than the size of the frame, which is most of the point of giving bounds: a
+/// layer covering a tenth of the frame costs a tenth of the memory and a tenth
+/// of the fill. Everything that turns a device position into a clip position
+/// has to know where that target sits, which is what `origin` carries.
+#[derive(Debug, Clone, Copy)]
+struct Target {
+    /// Where this target's top-left corner sits in the frame, in device pixels.
+    /// Whole pixels, so that the composite samples texel centers exactly.
+    origin: Vec2,
+    extent: Extent2D,
+}
+
+impl Target {
+    fn frame(extent: Extent2D) -> Self {
+        Self {
+            origin: Vec2::ZERO,
+            extent,
+        }
+    }
+
+    /// Device position to clip position for this target.
+    fn projection(&self) -> Affine2 {
+        viewport_projection(self.extent.width, self.extent.height)
+            * Affine2::from_translation(-self.origin)
+    }
+
+    /// The whole target, in the device space the projection expects.
+    fn path(&self) -> Path {
+        Rect::new(
+            self.origin.x,
+            self.origin.y,
+            self.origin.x + self.extent.width as f32,
+            self.origin.y + self.extent.height as f32,
+        )
+        .to_path()
+    }
+}
+
 /// Transform and clip, saved together.
 ///
 /// One stack rather than two: a `save` and its `restore` bracket a subtree, and
@@ -146,6 +194,8 @@ struct LayerFrame {
     batch: Batch,
     sources: Vec<TextureSource>,
     paint: Layer,
+    /// The target the parent was drawing into, restored when the layer closes.
+    parent: Target,
 }
 
 /// How a layer is composited back onto what was underneath it.
@@ -188,14 +238,6 @@ impl Layer {
     }
 }
 
-/// A rectangle covering the whole target, in device pixels.
-///
-/// Used for the draws that step a stencil clip back, which must reach every
-/// pixel the clip could have touched.
-fn full_target_path(extent: Extent2D) -> Path {
-    Rect::new(0.0, 0.0, extent.width as f32, extent.height as f32).to_path()
-}
-
 /// Records drawing commands for one frame.
 pub struct Canvas {
     renderer: Renderer,
@@ -221,6 +263,8 @@ pub struct Canvas {
     /// already an order the passes can be executed in.
     finished: Vec<Pass>,
     extent: Extent2D,
+    /// The target being recorded into: the frame, or a bounded layer's.
+    target: Target,
     background: Option<Color>,
     /// Set once anything asks for antialiasing.
     ///
@@ -247,6 +291,7 @@ impl Canvas {
             sources: Vec::new(),
             finished: Vec::new(),
             extent,
+            target: Target::frame(extent),
             background: None,
             anti_alias: false,
             samples: 4,
@@ -314,7 +359,11 @@ impl Canvas {
             Vec2::new(rect.left, rect.top),
             Vec2::new(rect.right, rect.bottom),
         );
-        let narrowed = Scissor::from_device_bounds(min.into(), max.into(), self.extent);
+        let narrowed = Scissor::from_device_bounds(
+            (min - self.target.origin).into(),
+            (max - self.target.origin).into(),
+            self.target.extent,
+        );
         self.clip = Some(match self.clip {
             Some(existing) => existing.intersect(narrowed),
             None => narrowed,
@@ -387,10 +436,63 @@ impl Canvas {
                 batch: std::mem::take(&mut self.batch),
                 sources: std::mem::take(&mut self.sources),
                 paint: layer,
+                parent: self.target,
             }),
         });
         self.clip = None;
         self.depth = 0;
+        self
+    }
+
+    /// Open a layer that only needs to cover `bounds`.
+    ///
+    /// `bounds` is in the current user space, and is the caller's promise that
+    /// nothing drawn in the layer matters outside it. The layer gets a target
+    /// the size of that region rather than the size of the frame, which is the
+    /// whole reason to state it: a layer over a tenth of the frame then costs a
+    /// tenth of the memory and a tenth of the fill, and a frame that opens
+    /// several stops being dominated by full-frame allocations it does not use.
+    ///
+    /// The promise is enforced by construction rather than trusted. Content
+    /// outside the region is clipped away by the target's own edges, so a
+    /// caller who understates the bounds sees the drawing cut off — visible and
+    /// attributable, rather than reading stale memory.
+    ///
+    /// The region is taken to device pixels and rounded outward to whole ones,
+    /// so a fractional bound never costs coverage at the edge, and is narrowed
+    /// to what the enclosing target can show, since a layer larger than that
+    /// renders pixels nothing can sample. A region that comes out empty, or one
+    /// under a transform that does not keep rectangles rectangular, falls back
+    /// to a full-size layer: both are cases where a smaller target would be a
+    /// guess, and guessing wrong here loses drawing.
+    pub fn save_layer_bounds(&mut self, layer: Layer, bounds: Rect) -> &mut Self {
+        self.save_layer(layer);
+        if !preserves_axis_alignment(&self.transform) {
+            return self;
+        }
+        let (min, max) = transformed_bounds(
+            &self.transform,
+            Vec2::new(bounds.left, bounds.top),
+            Vec2::new(bounds.right, bounds.bottom),
+        );
+        let parent = self.target;
+        let left = min.x.floor().max(parent.origin.x);
+        let top = min.y.floor().max(parent.origin.y);
+        let right = max
+            .x
+            .ceil()
+            .min(parent.origin.x + parent.extent.width as f32);
+        let bottom = max
+            .y
+            .ceil()
+            .min(parent.origin.y + parent.extent.height as f32);
+        if !(right > left && bottom > top) {
+            return self;
+        }
+        self.aim_at(Target {
+            origin: Vec2::new(left, top),
+            extent: Extent2D::new((right - left) as u32, (bottom - top) as u32),
+        });
         self
     }
 
@@ -446,7 +548,7 @@ impl Canvas {
         if self.depth > previous.depth {
             // Stated in device pixels, so it goes through the identity rather
             // than whatever transform happens to be in force.
-            let whole = full_target_path(self.extent);
+            let whole = self.target.path();
             while self.depth > previous.depth {
                 let paint = RenderPaint {
                     material: Material::solid([1.0, 1.0, 1.0, 1.0]),
@@ -538,7 +640,7 @@ impl Canvas {
     /// the screen. Doing it here rather than in the fragment stage means the
     /// shader receives clip-space endpoints and needs no transform of its own.
     fn material_for(&mut self, shader: &Shader) -> Material {
-        let to_clip = viewport_projection(self.extent.width, self.extent.height) * self.transform;
+        let to_clip = self.target.projection() * self.transform;
         let stops_of = |stops: &[crate::paint::GradientStop]| -> Vec<Stop> {
             stops
                 .iter()
@@ -605,7 +707,7 @@ impl Canvas {
                     // Maps a clip-space offset back into the space the axis is
                     // stated in, which is the caller's. Without it the target's
                     // aspect ratio leaks into the gradient's direction.
-                    to_local: inverse_or_identity(to_clip.matrix2),
+                    to_local: invert_or_identity(to_clip.matrix2),
                     stops: stops_of(stops),
                 }
             }
@@ -620,7 +722,7 @@ impl Canvas {
                 let scaled = to_clip.matrix2 * Mat2::from_diagonal(Vec2::splat(*radius));
                 Material::RadialGradient {
                     center: [center_clip.x, center_clip.y],
-                    to_local: inverse_or_identity(scaled),
+                    to_local: invert_or_identity(scaled),
                     stops: stops_of(stops),
                 }
             }
@@ -633,7 +735,7 @@ impl Canvas {
                 let center_clip = to_clip.transform_point2(*center);
                 Material::SweepGradient {
                     center: [center_clip.x, center_clip.y],
-                    to_local: inverse_or_identity(to_clip.matrix2),
+                    to_local: invert_or_identity(to_clip.matrix2),
                     start_angle: *start_angle,
                     end_angle: *end_angle,
                     stops: stops_of(stops),
@@ -697,7 +799,7 @@ impl Canvas {
             }
         };
 
-        let to_clip = viewport_projection(self.extent.width, self.extent.height) * self.transform;
+        let to_clip = self.target.projection() * self.transform;
         let mut vertices = Vec::with_capacity(glyphs.len() * 4);
         let mut indices = Vec::with_capacity(glyphs.len() * 6);
         for glyph in glyphs {
@@ -764,6 +866,9 @@ impl Canvas {
         // it is composited over what is already there, so anywhere it drew
         // nothing must contribute nothing. Clearing to the background instead
         // would paint an opaque rectangle over the parent.
+        let layer = self.target;
+        self.aim_at(frame.parent);
+
         self.finished.push(Pass {
             batch,
             descriptor: PassDescriptor {
@@ -771,17 +876,35 @@ impl Canvas {
                 samples: self.pass_samples(),
             },
             sources,
+            extent: layer.extent,
         });
         let index = self.finished.len() - 1;
         let slot = self.slot_for(TextureSource::Layer(index));
 
-        // The layer is the size of the target, so the mapping from clip space
-        // to its texture coordinates is fixed: the top-left corner of clip
-        // space is the image's origin, and the axes are halved with Y negated
-        // because clip space spans two units and runs upward.
+        // Where the layer sits in the parent's clip space, and how much of that
+        // space one unit of the layer's texture spans. Clip space runs from -1
+        // to 1 and upward, so the axes are halved and Y is negated; the ratio
+        // of the two extents is what makes a layer smaller than its parent
+        // sample across its own full width rather than a fraction of it.
+        //
+        // For a full-size layer this comes out to the identity mapping between
+        // the target and the image — origin at the top-left of clip space,
+        // axes halved — which is what it was before bounds existed.
+        let parent = frame.parent;
+        let offset = layer.origin - parent.origin;
+        let origin = [
+            -1.0 + 2.0 * offset.x / parent.extent.width as f32,
+            1.0 - 2.0 * offset.y / parent.extent.height as f32,
+        ];
+        let to_local = [
+            0.5 * parent.extent.width as f32 / layer.extent.width as f32,
+            0.0,
+            0.0,
+            -0.5 * parent.extent.height as f32 / layer.extent.height as f32,
+        ];
         let material = Material::Image {
-            origin: [-1.0, 1.0],
-            to_local: [0.5, 0.0, 0.0, -0.5],
+            origin,
+            to_local,
             slot,
             alpha: frame.paint.alpha,
             tile: TileMode::Clamp,
@@ -792,13 +915,27 @@ impl Canvas {
             clip: self.clip,
             stencil: ClipState::content(self.depth),
         };
-        // Stated in device pixels and drawn through the identity, since a
-        // layer's contents are already where they belong: the transform applied
-        // to the shapes inside it, not again to the finished image.
-        let whole = full_target_path(self.extent);
+        // Exactly the layer's own rectangle, stated in device pixels and drawn
+        // through the identity: a layer's contents are already where they
+        // belong, the transform having been applied to the shapes inside it
+        // rather than again to the finished image. Covering more than the layer
+        // would sample outside it, which the clamped sampler answers by
+        // smearing the edge texels across the rest of the frame.
+        let whole = layer.path();
         let _ = self
             .renderer
             .fill_into(&mut self.batch, &whole, Affine2::IDENTITY, &paint);
+    }
+
+    /// Point both the canvas and its renderer at a target.
+    ///
+    /// Together rather than separately: the canvas derives a paint's mapping
+    /// from the target and the renderer derives the geometry's, and the two
+    /// have to agree or a shape lands in one place while its gradient runs
+    /// through another.
+    fn aim_at(&mut self, target: Target) {
+        self.target = target;
+        self.renderer.set_viewport(target.origin, target.extent);
     }
 
     /// The sample count a pass renders at.
@@ -831,6 +968,7 @@ impl Canvas {
                 samples,
             },
             sources: self.sources,
+            extent: self.extent,
         };
         let mut passes = self.finished;
         passes.push(root);
@@ -838,28 +976,6 @@ impl Canvas {
             passes,
             extent: self.extent,
         }
-    }
-}
-
-/// Invert a mapping, falling back to the identity if it cannot be inverted.
-///
-/// A degenerate transform — a zero scale, or one axis collapsed — has no
-/// inverse. That is a caller mistake rather than a renderer one, and the shape
-/// it fills is collapsed to nothing anyway, so the gradient it would have
-/// carried is not observable. Returning the identity keeps a non-finite matrix
-/// out of the shader, where it would spread NaN across every pixel of the draw.
-fn inverse_or_identity(matrix: Mat2) -> [f32; 4] {
-    let determinant = matrix.determinant();
-    let inverse = if determinant.abs() > 1e-9 && determinant.is_finite() {
-        matrix.inverse()
-    } else {
-        Mat2::IDENTITY
-    };
-    let columns = inverse.to_cols_array();
-    if columns.iter().all(|v| v.is_finite()) {
-        columns
-    } else {
-        Mat2::IDENTITY.to_cols_array()
     }
 }
 

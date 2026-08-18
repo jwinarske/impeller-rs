@@ -1776,3 +1776,330 @@ fn a_glyph_run_is_correct_after_the_atlas_has_been_repacked() {
         "the repacked glyph sampled the wrong part of the atlas"
     );
 }
+
+/// Render a scene twice — once with its layer told what it covers and once
+/// not — and require the two to agree.
+///
+/// Bounds are an optimization, so this is the whole guarantee: the pixels must
+/// not move. Checking against the unbounded path rather than against stored
+/// values means it keeps holding as both change, and it catches the failure
+/// this feature actually has, which is content landing in the wrong place
+/// because two mappings disagreed about where the target is.
+fn bounds_are_invisible(ctx: &mut Context, build: impl Fn(&mut Canvas, Option<Rect>)) {
+    let record = |bounds: Option<Rect>| {
+        let mut canvas = Canvas::new(SIZE);
+        canvas.clear(Color::BLACK);
+        build(&mut canvas, bounds);
+        canvas.finish()
+    };
+    let draw = |ctx: &mut Context, recording: &_| {
+        let mut surface = ctx
+            .create_surface(SIZE, PixelFormat::Rgba8Unorm)
+            .expect("surface");
+        ctx.draw(&mut surface, recording).expect("draw");
+        let pixels = ctx.read(&mut surface).expect("read");
+        ctx.destroy_surface(surface);
+        pixels
+    };
+
+    let bounded_recording = record(Some(LAYER_BOUNDS));
+    assert!(
+        bounded_recording
+            .passes
+            .iter()
+            .any(|p| p.extent.width < SIZE.width || p.extent.height < SIZE.height),
+        "no pass got a smaller target, so this compares two identical paths"
+    );
+
+    let full = draw(ctx, &record(None));
+    let bounded = draw(ctx, &bounded_recording);
+    let worst = full
+        .iter()
+        .zip(&bounded)
+        .map(|(a, b)| a.abs_diff(*b))
+        .max()
+        .unwrap_or(0);
+    assert!(
+        worst <= 1,
+        "a bounded layer differs from a full-size one by {worst}"
+    );
+    // And the scene drew something, so this is not a comparison of two black
+    // frames that would pass however broken the feature was.
+    assert!(full.iter().any(|&b| b > 32), "the scene rendered nothing");
+}
+
+/// The region the layer scenes below confine themselves to.
+const LAYER_BOUNDS: Rect = Rect {
+    left: 24.0,
+    top: 40.0,
+    right: 96.0,
+    bottom: 104.0,
+};
+
+/// Open a layer with or without bounds, so a scene reads the same either way.
+fn open_layer(canvas: &mut Canvas, bounds: Option<Rect>, layer: Layer) {
+    match bounds {
+        Some(b) => canvas.save_layer_bounds(layer, b),
+        None => canvas.save_layer(layer),
+    };
+}
+
+/// Something worth compositing: a gradient with a translucent shape over it.
+///
+/// Translucent so that the layer's alpha channel matters, which is where a
+/// mistake in the composite mapping shows up as a halo rather than as an
+/// offset.
+fn layer_contents(canvas: &mut Canvas) {
+    canvas
+        .draw_rect(
+            LAYER_BOUNDS,
+            &Paint::linear_gradient(
+                Vec2::new(LAYER_BOUNDS.left, LAYER_BOUNDS.top),
+                Vec2::new(LAYER_BOUNDS.right, LAYER_BOUNDS.bottom),
+                vec![
+                    GradientStop::new(Color::linear(1.0, 0.2, 0.0, 1.0), 0.0),
+                    GradientStop::new(Color::linear(0.0, 0.4, 1.0, 1.0), 1.0),
+                ],
+            )
+            .with_anti_alias(false),
+        )
+        .expect("gradient");
+    canvas
+        .draw_circle(
+            Vec2::new(60.0, 72.0),
+            26.0,
+            &Paint::fill(Color::linear(1.0, 1.0, 1.0, 0.7)).with_anti_alias(false),
+        )
+        .expect("circle");
+}
+
+#[test]
+fn a_bounded_layer_renders_the_same_as_a_full_size_one() {
+    let Some(mut ctx) = context() else { return };
+    bounds_are_invisible(&mut ctx, |canvas, bounds| {
+        open_layer(canvas, bounds, Layer::opacity(0.6));
+        layer_contents(canvas);
+        canvas.restore();
+    });
+}
+
+#[test]
+fn a_bounded_layer_renders_the_same_under_a_transform() {
+    let Some(mut ctx) = context() else { return };
+    // The bounds are stated in user space, so the transform in force when the
+    // layer opens has to be applied to them. Left out, the target lands
+    // somewhere else and the contents are cut off by its edges.
+    bounds_are_invisible(&mut ctx, |canvas, bounds| {
+        canvas.save();
+        canvas.translate(12.0, -8.0);
+        canvas.scale(0.75, 0.5);
+        open_layer(canvas, bounds, Layer::opacity(0.6));
+        layer_contents(canvas);
+        canvas.restore();
+        canvas.restore();
+    });
+}
+
+#[test]
+fn bounded_layers_nest() {
+    let Some(mut ctx) = context() else { return };
+    // An inner layer's target is placed within its parent's, not within the
+    // frame's. Compositing it as though the parent filled the frame puts it
+    // off by the parent's own offset, which is what this catches.
+    bounds_are_invisible(&mut ctx, |canvas, bounds| {
+        open_layer(canvas, bounds, Layer::opacity(0.8));
+        layer_contents(canvas);
+        open_layer(
+            canvas,
+            bounds.map(|_| Rect::new(40.0, 56.0, 88.0, 96.0)),
+            Layer::opacity(0.5),
+        );
+        canvas
+            .draw_rect(
+                Rect::new(40.0, 56.0, 88.0, 96.0),
+                &Paint::fill(Color::linear(0.1, 1.0, 0.3, 1.0)).with_anti_alias(false),
+            )
+            .expect("inner");
+        canvas.restore();
+        canvas.restore();
+    });
+}
+
+#[test]
+fn a_clip_inside_a_bounded_layer_lands_where_it_would_have() {
+    let Some(mut ctx) = context() else { return };
+    // A scissor is stated in device pixels and a bounded target starts
+    // somewhere other than the origin, so the two have to be reconciled. A
+    // stencil clip is a draw and goes through the same mapping the contents
+    // do; both are exercised here, since only the rectangle takes the scissor
+    // path.
+    bounds_are_invisible(&mut ctx, |canvas, bounds| {
+        open_layer(canvas, bounds, Layer::opacity(0.9));
+        canvas.save();
+        canvas
+            .clip_rect(Rect::new(32.0, 48.0, 84.0, 96.0))
+            .expect("scissor");
+        let mut triangle = PathBuilder::new();
+        triangle
+            .move_to(Vec2::new(60.0, 44.0))
+            .line_to(Vec2::new(92.0, 100.0))
+            .line_to(Vec2::new(28.0, 100.0))
+            .close();
+        canvas.clip_path(&triangle.build()).expect("stencil");
+        layer_contents(canvas);
+        canvas.restore();
+        canvas.restore();
+    });
+}
+
+#[test]
+fn an_antialiased_bounded_layer_renders_the_same_as_a_full_size_one() {
+    let Some(mut ctx) = context() else { return };
+    // Multisampling resolves per target, so a layer with its own smaller target
+    // resolves separately from the frame. The composite that brings it back
+    // must not soften its own edges on the way.
+    bounds_are_invisible(&mut ctx, |canvas, bounds| {
+        open_layer(canvas, bounds, Layer::opacity(0.7));
+        canvas
+            .draw_circle(
+                Vec2::new(60.0, 72.0),
+                28.0,
+                &Paint::fill(Color::linear(0.9, 0.4, 0.1, 1.0)),
+            )
+            .expect("circle");
+        canvas.restore();
+    });
+}
+
+#[test]
+fn glyphs_and_images_in_a_bounded_layer_land_where_they_would_have() {
+    let Some(mut ctx) = context() else { return };
+    // A glyph run builds its own quads and carries per-vertex texture
+    // coordinates, and an image paint maps clip space back to the image
+    // itself; neither goes through the path that fills a shape. Both derive
+    // their mapping from where the target is, so both need covering here.
+    let (atlas, solid, _) = two_glyph_atlas();
+    let image = upload_atlas(&mut ctx, &atlas);
+    let rect = atlas.get(solid).unwrap();
+
+    let record = |bounds: Option<Rect>| {
+        let mut canvas = Canvas::new(SIZE);
+        canvas.clear(Color::BLACK);
+        open_layer(&mut canvas, bounds, Layer::opacity(0.75));
+        canvas
+            .draw_rect(
+                Rect::new(28.0, 44.0, 92.0, 76.0),
+                &Paint::image(0, Rect::new(28.0, 44.0, 92.0, 76.0)).with_anti_alias(false),
+            )
+            .expect("image");
+        canvas
+            .draw_glyphs(
+                &[
+                    PositionedGlyph::new(solid, [32.0, 80.0], rect),
+                    PositionedGlyph::new(solid, [60.0, 80.0], rect),
+                ],
+                &atlas,
+                0,
+                &Paint::fill(Color::WHITE),
+            )
+            .expect("glyphs");
+        canvas.restore();
+        canvas.finish()
+    };
+    let mut draw = |recording: &_| {
+        let mut surface = ctx
+            .create_surface(SIZE, PixelFormat::Rgba8Unorm)
+            .expect("surface");
+        ctx.draw_with_images(&mut surface, recording, &[&image])
+            .expect("draw");
+        let pixels = ctx.read(&mut surface).expect("read");
+        ctx.destroy_surface(surface);
+        pixels
+    };
+
+    let bounded_recording = record(Some(LAYER_BOUNDS));
+    assert!(bounded_recording.passes[0].extent.width < SIZE.width);
+    let full = draw(&record(None));
+    let bounded = draw(&bounded_recording);
+    ctx.destroy_image(image);
+
+    let worst = full
+        .iter()
+        .zip(&bounded)
+        .map(|(a, b)| a.abs_diff(*b))
+        .max()
+        .unwrap_or(0);
+    assert!(worst <= 1, "glyphs or the image moved by {worst}");
+    assert!(full.iter().any(|&b| b > 32), "the scene rendered nothing");
+}
+
+#[test]
+fn a_layer_gets_a_target_the_size_of_its_bounds() {
+    // The point of the feature, stated as the number it is meant to change.
+    let mut canvas = Canvas::new(SIZE);
+    canvas.save_layer_bounds(Layer::default(), Rect::new(24.0, 40.0, 96.0, 104.0));
+    canvas
+        .draw_rect(
+            Rect::new(24.0, 40.0, 96.0, 104.0),
+            &Paint::fill(Color::WHITE),
+        )
+        .expect("rect");
+    canvas.restore();
+    let recording = canvas.finish();
+    assert_eq!(recording.passes[0].extent, Extent2D::new(72, 64));
+    assert_eq!(
+        recording.root().extent,
+        SIZE,
+        "the root is the caller's surface"
+    );
+}
+
+#[test]
+fn fractional_bounds_are_rounded_outward() {
+    // Rounding inward would drop the coverage of the pixels the bound falls
+    // inside, which is drawing lost to arithmetic.
+    let mut canvas = Canvas::new(SIZE);
+    canvas.save_layer_bounds(Layer::default(), Rect::new(24.3, 40.9, 95.1, 103.2));
+    canvas
+        .draw_rect(Rect::from_size(128.0, 128.0), &Paint::fill(Color::WHITE))
+        .expect("rect");
+    canvas.restore();
+    let recording = canvas.finish();
+    assert_eq!(recording.passes[0].extent, Extent2D::new(72, 64));
+}
+
+#[test]
+fn bounds_that_cannot_be_honored_fall_back_to_a_full_size_layer() {
+    // Every way of ending up without a usable region has to produce a working
+    // full-size layer rather than a smaller wrong one or a panic. A smaller
+    // target here would be a guess, and guessing wrong loses drawing.
+    fn layer_extent(open: impl FnOnce(&mut Canvas)) -> Extent2D {
+        let mut canvas = Canvas::new(SIZE);
+        open(&mut canvas);
+        canvas
+            .draw_rect(Rect::from_size(64.0, 64.0), &Paint::fill(Color::WHITE))
+            .expect("rect");
+        canvas.restore();
+        canvas.finish().passes[0].extent
+    }
+
+    // A rotation leaves the region a quadrilateral rather than a rectangle, so
+    // there is no rectangle of pixels that is exactly it.
+    let rotated = layer_extent(|canvas| {
+        canvas.rotate(0.4);
+        canvas.save_layer_bounds(Layer::default(), Rect::new(24.0, 40.0, 96.0, 104.0));
+    });
+    assert_eq!(rotated, SIZE, "rotated bounds");
+
+    // A region with no area, and one entirely outside the frame, both leave
+    // nothing to allocate.
+    let empty = layer_extent(|canvas| {
+        canvas.save_layer_bounds(Layer::default(), Rect::new(50.0, 50.0, 50.0, 50.0));
+    });
+    assert_eq!(empty, SIZE, "empty bounds");
+
+    let offscreen = layer_extent(|canvas| {
+        canvas.save_layer_bounds(Layer::default(), Rect::new(400.0, 400.0, 500.0, 500.0));
+    });
+    assert_eq!(offscreen, SIZE, "bounds outside the frame");
+}

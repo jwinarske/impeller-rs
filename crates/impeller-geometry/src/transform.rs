@@ -15,7 +15,7 @@
 //! scaled up has to happen more finely in path space. [`max_scale`] is what
 //! that adjustment is computed from.
 
-use glam::{Affine2, Vec2};
+use glam::{Affine2, Mat2, Vec2};
 
 /// Map device pixels onto clip space for a target of the given size.
 ///
@@ -103,6 +103,33 @@ pub fn transformed_bounds(transform: &Affine2, min: Vec2, max: Vec2) -> (Vec2, V
 pub fn transform_points(points: &mut [Vec2], transform: &Affine2) {
     for p in points.iter_mut() {
         *p = transform.transform_point2(*p);
+    }
+}
+
+/// Invert a mapping's linear part, falling back to the identity.
+///
+/// The result is in the column-major four-float form a shader's `to_local`
+/// takes, which is what every caller wants it for: a paint states its geometry
+/// in one space and the fragment stage arrives in another, so it carries the
+/// mapping between them.
+///
+/// A degenerate transform — a zero scale, or one axis collapsed — has no
+/// inverse. That is a caller mistake rather than a renderer one, and the shape
+/// it fills is collapsed to nothing anyway, so the paint it would have carried
+/// is not observable. Returning the identity keeps a non-finite matrix out of
+/// the shader, where it would spread NaN across every pixel of the draw.
+pub fn invert_or_identity(matrix: Mat2) -> [f32; 4] {
+    let determinant = matrix.determinant();
+    let inverse = if determinant.abs() > 1e-9 && determinant.is_finite() {
+        matrix.inverse()
+    } else {
+        Mat2::IDENTITY
+    };
+    let columns = inverse.to_cols_array();
+    if columns.iter().all(|v| v.is_finite()) {
+        columns
+    } else {
+        Mat2::IDENTITY.to_cols_array()
     }
 }
 

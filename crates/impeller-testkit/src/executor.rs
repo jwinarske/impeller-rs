@@ -8,7 +8,7 @@ use crate::image::Image;
 use crate::scene::{Fill, Item, Scene};
 use crate::shape::Shape;
 use glam::{Affine2, Mat2, Vec2};
-use impeller_geometry::transform::{transformed_bounds, viewport_projection};
+use impeller_geometry::transform::{invert_or_identity, transformed_bounds, viewport_projection};
 use impeller_hal::{
     Batch, BlendMode, ClipState, Extent2D, Hal, HalContext, Material, PassDescriptor, PixelFormat,
     Result, Scissor, Stop, TextureDescriptor,
@@ -76,23 +76,6 @@ fn material_for(item: &Item, transform: Affine2, target: Extent2D) -> Material {
             }
         }
     }
-}
-
-/// Invert a mapping, falling back to the identity where it cannot be inverted.
-///
-/// A degenerate transform collapses the shape to nothing, so the gradient it
-/// would have carried is not observable; returning the identity keeps a
-/// non-finite matrix out of the shader, where it would spread NaN across the
-/// whole draw.
-fn invert_or_identity(matrix: Mat2) -> [f32; 4] {
-    let determinant = matrix.determinant();
-    if determinant.abs() > 1e-9 && determinant.is_finite() {
-        let columns = matrix.inverse().to_cols_array();
-        if columns.iter().all(|v| v.is_finite()) {
-            return columns;
-        }
-    }
-    Mat2::IDENTITY.to_cols_array()
 }
 
 /// Record a scene's items into a batch.

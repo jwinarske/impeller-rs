@@ -293,7 +293,7 @@ where
             } else {
                 let mut target =
                     ctx.create_texture(&impeller_hal::TextureDescriptor::offscreen(
-                        recording.extent,
+                        pass.extent,
                         impeller_hal::PixelFormat::Rgba8Unorm,
                     ))?;
                 let result =
