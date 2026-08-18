@@ -118,6 +118,21 @@ impl Path {
         &self.points
     }
 
+    /// Whether every point in this path is a real location.
+    ///
+    /// A path carrying a NaN or an infinity is not a shape. It arrives when a
+    /// caller's own arithmetic has already gone wrong -- a division by a zero
+    /// extent, an inverted degenerate transform -- and there is no picture it
+    /// asks for, so the tessellator refuses one rather than inventing it.
+    ///
+    /// Worth having as a question rather than a debug assertion because lyon
+    /// asserts on a non-finite coordinate, and an assertion in a dependency
+    /// takes the process down. A library given a bad number should decline to
+    /// draw, not abort the application holding it.
+    pub fn is_finite(&self) -> bool {
+        self.points.iter().all(|p| p.is_finite())
+    }
+
     pub fn fill_rule(&self) -> FillRule {
         self.fill_rule
     }

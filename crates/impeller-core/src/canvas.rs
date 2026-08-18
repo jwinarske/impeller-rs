@@ -809,6 +809,9 @@ impl Canvas {
             } => {
                 let axis = *end - *start;
                 let start = to_clip.transform_point2(*start);
+                if !axis.is_finite() || !start.is_finite() {
+                    return Material::Solid([0.0; 4]);
+                }
                 Material::LinearGradient {
                     start: [start.x, start.y],
                     axis: [axis.x, axis.y],
@@ -830,6 +833,9 @@ impl Canvas {
                 // Folding the radius into the mapping means the shader measures
                 // against unit distance and never sees a radius at all.
                 let scaled = to_clip.matrix2 * Mat2::from_diagonal(Vec2::splat(*radius));
+                if !center_clip.is_finite() || !scaled.is_finite() {
+                    return Material::Solid([0.0; 4]);
+                }
                 Material::RadialGradient {
                     center: [center_clip.x, center_clip.y],
                     to_local: invert_or_identity(scaled),
@@ -845,6 +851,9 @@ impl Canvas {
                 tile,
             } => {
                 let center_clip = to_clip.transform_point2(*center);
+                if !center_clip.is_finite() || !start_angle.is_finite() || !end_angle.is_finite() {
+                    return Material::Solid([0.0; 4]);
+                }
                 Material::SweepGradient {
                     center: [center_clip.x, center_clip.y],
                     to_local: invert_or_identity(to_clip.matrix2),

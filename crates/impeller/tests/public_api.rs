@@ -1835,6 +1835,177 @@ fn tiled_ramp(ctx: &mut Context, tile: TileMode) -> Vec<u8> {
     render(ctx, canvas)
 }
 
+/// One call made with a value that is not a number, drawn onto a canvas.
+type PoisonedDraw = Box<dyn Fn(&mut Canvas)>;
+
+#[test]
+fn a_draw_placed_at_nan_contributes_nothing() {
+    let Some(mut ctx) = context() else { return };
+    // Infinity and NaN are not the same request. A caller who writes infinity
+    // means the largest thing available, and answering with a shape that covers
+    // everything is a defensible reading of it. NaN is not a location, a size,
+    // or a width; it is what arithmetic produces when it has already gone
+    // wrong, and there is no picture it asks for. So the rule is that such a
+    // draw contributes nothing, which is checkable by drawing it beside
+    // something valid and requiring the result to be untouched.
+    //
+    // Checked across the calls rather than one at a time, because a guard is
+    // usually added where a bug was found and the calls that were never
+    // reported keep whatever they had.
+    let reference = |ctx: &mut Context| {
+        let mut canvas = Canvas::new(SIZE);
+        canvas.clear(Color::BLACK);
+        canvas
+            .draw_rect(
+                Rect::new(16.0, 16.0, 112.0, 112.0),
+                &Paint::fill(Color::linear(0.0, 1.0, 0.0, 1.0)),
+            )
+            .expect("reference");
+        render(ctx, canvas)
+    };
+    let expected = reference(&mut ctx);
+
+    let n = f32::NAN;
+    // Each entry draws the same reference square and then one poisoned call.
+    let cases: Vec<(&str, PoisonedDraw)> = vec![
+        (
+            "rect",
+            Box::new(move |c: &mut Canvas| {
+                let _ = c.draw_rect(Rect::new(n, n, n, n), &Paint::fill(Color::WHITE));
+            }),
+        ),
+        (
+            "rect with a nan edge",
+            Box::new(move |c: &mut Canvas| {
+                let _ = c.draw_rect(Rect::new(0.0, 0.0, n, 64.0), &Paint::fill(Color::WHITE));
+            }),
+        ),
+        (
+            "rounded rect",
+            Box::new(move |c: &mut Canvas| {
+                let _ = c.draw_rrect(
+                    Rect::new(n, 0.0, 64.0, 64.0),
+                    8.0,
+                    &Paint::fill(Color::WHITE),
+                );
+            }),
+        ),
+        (
+            "circle",
+            Box::new(move |c: &mut Canvas| {
+                let _ = c.draw_circle(Vec2::new(n, 64.0), 32.0, &Paint::fill(Color::WHITE));
+            }),
+        ),
+        (
+            "oval",
+            Box::new(move |c: &mut Canvas| {
+                let _ = c.draw_oval(Rect::new(0.0, n, 64.0, 64.0), &Paint::fill(Color::WHITE));
+            }),
+        ),
+        (
+            "line",
+            Box::new(move |c: &mut Canvas| {
+                let _ = c.draw_line(
+                    Vec2::new(n, 0.0),
+                    Vec2::new(128.0, 128.0),
+                    &Paint::stroke(Color::WHITE, 4.0),
+                );
+            }),
+        ),
+        (
+            "line of nan width",
+            Box::new(move |c: &mut Canvas| {
+                let _ = c.draw_line(
+                    Vec2::new(0.0, 0.0),
+                    Vec2::new(128.0, 128.0),
+                    &Paint::stroke(Color::WHITE, n),
+                );
+            }),
+        ),
+        (
+            "path",
+            Box::new(move |c: &mut Canvas| {
+                let mut builder = PathBuilder::new();
+                builder.move_to(Vec2::new(0.0, 0.0));
+                builder.line_to(Vec2::new(n, 64.0));
+                builder.line_to(Vec2::new(64.0, 64.0));
+                builder.close();
+                let _ = c.draw_path(&builder.build(), &Paint::fill(Color::WHITE));
+            }),
+        ),
+        (
+            "translate",
+            Box::new(move |c: &mut Canvas| {
+                c.save();
+                c.translate(n, 0.0);
+                let _ = c.draw_rect(Rect::from_size(64.0, 64.0), &Paint::fill(Color::WHITE));
+                c.restore();
+            }),
+        ),
+        (
+            "scale",
+            Box::new(move |c: &mut Canvas| {
+                c.save();
+                c.scale(n, 1.0);
+                let _ = c.draw_rect(Rect::from_size(64.0, 64.0), &Paint::fill(Color::WHITE));
+                c.restore();
+            }),
+        ),
+        (
+            "rotate",
+            Box::new(move |c: &mut Canvas| {
+                c.save();
+                c.rotate(n);
+                let _ = c.draw_rect(Rect::from_size(64.0, 64.0), &Paint::fill(Color::WHITE));
+                c.restore();
+            }),
+        ),
+        (
+            "gradient endpoints",
+            Box::new(move |c: &mut Canvas| {
+                let _ = c.draw_rect(
+                    Rect::from_size(64.0, 64.0),
+                    &Paint::linear_gradient(
+                        Vec2::new(n, n),
+                        Vec2::new(n, n),
+                        vec![
+                            GradientStop::new(Color::WHITE, 0.0),
+                            GradientStop::new(Color::BLACK, 1.0),
+                        ],
+                    ),
+                );
+            }),
+        ),
+    ];
+
+    let mut wrong = Vec::new();
+    for (name, poison) in &cases {
+        let mut canvas = Canvas::new(SIZE);
+        canvas.clear(Color::BLACK);
+        canvas
+            .draw_rect(
+                Rect::new(16.0, 16.0, 112.0, 112.0),
+                &Paint::fill(Color::linear(0.0, 1.0, 0.0, 1.0)),
+            )
+            .expect("reference");
+        poison(&mut canvas);
+        let got = render(&mut ctx, canvas);
+        let differing = got
+            .chunks_exact(4)
+            .zip(expected.chunks_exact(4))
+            .filter(|(a, b)| a != b)
+            .count();
+        if differing > 0 {
+            wrong.push(format!("{name} changed {differing} pixel(s)"));
+        }
+    }
+    assert!(
+        wrong.is_empty(),
+        "a draw at NaN should contribute nothing:\n  {}",
+        wrong.join("\n  ")
+    );
+}
+
 #[test]
 fn a_gradient_tiles_beyond_its_own_extent() {
     let Some(mut ctx) = context() else { return };

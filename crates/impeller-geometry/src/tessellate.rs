@@ -79,6 +79,16 @@ impl Tessellator {
     /// `tolerance` is the flattening tolerance in device pixels, already
     /// scaled for the transform the result will be drawn under.
     pub fn fill(&mut self, path: &Path, tolerance: f32) -> &VertexBuffers {
+        // Checked here rather than at each call site, because every route into
+        // the tessellator -- a path a caller built, a rounded rectangle, an
+        // oval, the outline of a line -- ends up on this line, and lyon asserts
+        // on a non-finite coordinate rather than declining it. One guard at the
+        // boundary covers all of them; a guard per shape covers the ones
+        // somebody remembered.
+        if !path.is_finite() {
+            self.buffers.clear();
+            return &self.buffers;
+        }
         self.buffers.clear();
 
         let polylines = flatten(path, tolerance);
@@ -111,6 +121,12 @@ impl Tessellator {
     /// does not have, so pre-flattening would stipple a smooth curve with
     /// spurious miter or round joins along its length.
     pub fn stroke(&mut self, path: &Path, style: &StrokeStyle, tolerance: f32) -> &VertexBuffers {
+        // As in `fill`: lyon asserts on a coordinate that is not a number, and
+        // a stroke reaches it by a different road.
+        if !path.is_finite() {
+            self.buffers.clear();
+            return &self.buffers;
+        }
         use lyon_tessellation::{
             BuffersBuilder, LineCap as LyonCap, LineJoin as LyonJoin, StrokeOptions,
         };
