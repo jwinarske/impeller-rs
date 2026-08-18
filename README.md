@@ -53,9 +53,10 @@ modifier negotiation — and dma-buf export from Vulkan is real. A buffer this
 renderer allocates, draws into and exports is accepted by a real display
 controller as a framebuffer, the mode is set, and frames flip in turn — checked
 against the virtual KMS driver, since a compositor holds master on any card
-driving a display. What is not demonstrated is handing the render fence to the
-commit: that is implemented, and vkms never completes a flip for a commit
-carrying one, so it waits on real hardware to be confirmed.
+driving a display. The render fence rides each commit, so the
+kernel latches the flip when rendering completes and the frame loop blocks on
+nothing — except on a commit that also sets the mode, which vkms will not
+complete with a fence attached and which happens once per output.
 
 `cargo xtask drm` says whether a given machine could run that lane.
 

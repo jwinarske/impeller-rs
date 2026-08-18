@@ -121,16 +121,27 @@ against a list a test wrote. Both halves used to come from the same place; the
 display's half is now what a display advertises, and on this machine the two
 agree on a tiled layout rather than falling back to linear.
 
-**One thing remains unverified, and it is the one the path exists for.** The
-render fence is attached to the commit as `IN_FENCE_FD` so that the kernel
-latches the flip when rendering completes rather than the caller blocking until
-it has. The virtual KMS driver advertises that property on its plane and then
-never completes the flip for a commit carrying one. The fence is not at fault:
-the Vulkan suite now checks that an exported sync_file actually signals, which
-was the other candidate and was itself untested until this went looking. So the
-explicit path is implemented, believed correct, and demonstrated by nothing —
-real hardware is what would settle it, and until then the tests take the
-CPU-wait fallback and say so.
+**The fence rides the commit, and that is demonstrated.** It is attached as
+`IN_FENCE_FD` so the kernel latches the flip when rendering completes rather
+than the caller blocking until it has, and a run of frames against a real
+device blocks on nothing.
+
+With one exception, which is a real constraint rather than a caveat: **a commit
+that also sets the mode does not carry a fence.** The virtual KMS driver never
+completes a flip for one that does. A modeset happens on the first frame and
+after a hotplug, so waiting on the CPU there costs one stall in the life of an
+output, and the alternative was a path demonstrated by nothing.
+
+Finding that cost a detour worth recording, because the first suspicion was
+wrong. The fence looked like the culprit, and the Vulkan suite turned out to be
+able to export a sync_file and check it outlived its fence while never checking
+that it *signals*. It does; that check now exists; and the fault was the
+pairing with a modeset rather than either half alone.
+
+The count of CPU waits is what a test asserts against, because it is the only
+thing that distinguishes the explicit path from the fallback: eight frames
+report one wait, and a build that quietly stopped attaching the fence would
+report eight.
 
 `cargo xtask drm` reports whether a machine can host this lane at all, and what
 its primary plane would accept.

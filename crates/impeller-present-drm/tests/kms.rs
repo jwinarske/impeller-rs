@@ -259,19 +259,15 @@ fn the_scanout_target_drives_a_real_display_controller() {
                 BlendMode::Src,
             )
             .expect("push");
-        // The waiting submission rather than the deferred one, so no fence is
-        // attached to the commit.
-        //
-        // The deferred arrangement is what this path exists for — the fence
-        // rides the commit and nothing blocks — and it cannot be exercised
-        // here: vkms advertises `IN_FENCE_FD` and then never completes a flip
-        // for a commit carrying one. The fence is not at fault; the Vulkan
-        // suite checks that an exported sync_file signals, which was the other
-        // candidate. Testing the rest of the stack through the fallback is
-        // better than testing none of it, and worth saying rather than
-        // quietly writing the test that passes.
-        ctx.submit_batch(image, &batch, PassDescriptor::clear([0.0; 4]))
-            .expect("submission");
+        // Deferred every frame, so every commit has a fence to hand the
+        // kernel. The target withholds it on the one commit that also
+        // modesets, which is the case vkms never completes a flip for.
+        let fence = ctx
+            .submit_batch_deferred(image, &batch, PassDescriptor::clear([0.0; 4]))
+            .expect("deferred submission");
+        target
+            .set_frame_fence(fence)
+            .expect("attach the render fence");
         target
             .present(&mut ctx)
             .unwrap_or_else(|e| panic!("frame {frame}: {e}"));
@@ -280,8 +276,15 @@ fn the_scanout_target_drives_a_real_display_controller() {
     // Every frame reached the controller, and the ring did not stall waiting
     // for one that never flipped. The CPU-wait count is what says whether the
     // fence rode the commit or the frame loop had to block first.
-    // No fence was attached, so nothing here waited on one either.
-    assert_eq!(target.cpu_waits(), 0);
+    // Exactly one: the first frame, whose commit also set the mode. Every
+    // frame after it handed its fence to the kernel and blocked on nothing,
+    // which is the property the DRM path exists for and the one a count of
+    // zero-or-eight would fail to distinguish.
+    assert_eq!(
+        target.cpu_waits(),
+        1,
+        "expected a stall only on the modesetting frame"
+    );
     eprintln!("ring depth {}", target.ring_depth());
     target.destroy(&mut ctx);
 }

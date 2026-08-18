@@ -293,28 +293,45 @@ where
         // `submit`; without one there is nothing to attach and nothing to gate
         // reuse on.
         let fence = self.slots[index].fence.take();
-        // Exported where the device can, and waited on where it cannot. The
-        // error is handled after the match rather than inside it, so the fence
-        // can be put back: a failure that dropped it would leave teardown with
-        // nothing to wait on and a buffer freed while the GPU reads it.
+        // A modeset commit does not carry the fence. Attaching one to a commit
+        // that also reconfigures the pipeline is what the virtual KMS driver
+        // never completes a flip for, and a modeset happens on the first frame
+        // and after a hotplug — so waiting on the CPU there costs one stall in
+        // the life of an output and buys a path that demonstrably works.
+        //
+        // Every other frame hands the fence to the kernel and blocks on
+        // nothing, which is what the whole arrangement is for.
+        let will_modeset = !self.mode_set;
+
+        // The error is handled after the match rather than inside it, so the
+        // fence can be put back: a failure that dropped it would leave teardown
+        // with nothing to wait on and a buffer freed while the GPU reads it.
         #[cfg(unix)]
         let mut in_fence_fd = None;
         #[cfg(unix)]
         let wait_failed = match &fence {
-            Some(f) => match f.export_sync_file() {
-                Ok(fd) => {
-                    in_fence_fd = Some(fd);
+            Some(f) => {
+                let exported = if will_modeset {
                     None
+                } else {
+                    f.export_sync_file().ok()
+                };
+                match exported {
+                    Some(fd) => {
+                        in_fence_fd = Some(fd);
+                        None
+                    }
+                    None => {
+                        // Either this commit modesets, or the device cannot
+                        // export, or the work already finished so there is
+                        // nothing left to wait on. All three mean committing
+                        // without a fence, and the count is what says how often
+                        // a frame paid for it.
+                        self.cpu_waits += 1;
+                        f.wait(FRAME_WAIT_TIMEOUT).err()
+                    }
                 }
-                Err(_) => {
-                    // Either the device cannot export, or the work already
-                    // finished so there is nothing left to wait on. Both mean
-                    // committing without a fence, and the first is worth
-                    // counting because it costs a frame of latency every time.
-                    self.cpu_waits += 1;
-                    f.wait(FRAME_WAIT_TIMEOUT).err()
-                }
-            },
+            }
             None => None,
         };
         #[cfg(unix)]
