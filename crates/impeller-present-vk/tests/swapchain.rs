@@ -144,6 +144,22 @@ fn the_images_are_cycled_rather_than_reused_immediately() {
         // frame be drawn into an image the engine is still displaying. Reading
         // the pointer rather than an index because that is what the caller
         // actually renders into.
+        //
+        // How many images there are is the surface's to say: the target asks
+        // for one more than the minimum and clamps to the maximum, so a surface
+        // whose minimum and maximum are both one gets a single image and there
+        // is no cycling to observe. Older Mesa headless surfaces do exactly
+        // that, which is how this arrived -- as a failure on a CI runner and
+        // not on the same driver two releases newer. That is a property of the
+        // surface rather than a defect, so it is reported and skipped, and the
+        // census counts it.
+        if target.image_count() < 2 {
+            eprintln!(
+                "skipping: this surface offers {} image, so nothing cycles",
+                target.image_count()
+            );
+            return;
+        }
         let mut seen: Vec<*const u8> = Vec::new();
         for _ in 0..target.image_count() {
             let image = target.acquire(ctx).expect("acquire");
@@ -164,7 +180,10 @@ fn the_images_are_cycled_rather_than_reused_immediately() {
         };
         assert!(
             distinct > 1,
-            "every acquisition returned the same image, so nothing is double buffered"
+            "all {} acquisitions from a {}-image swapchain returned the same image, \
+             so nothing is double buffered",
+            target.image_count(),
+            target.image_count()
         );
     });
 }
