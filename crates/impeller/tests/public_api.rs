@@ -673,6 +673,145 @@ fn an_antialiased_rectangle_antialiases_without_multisampling() {
     );
 }
 
+/// The analytic shapes, drawn the same way by several tests below.
+fn analytic_shapes(canvas: &mut Canvas) {
+    canvas
+        .draw_rrect(
+            Rect::new(48.0, 38.0, 112.0, 70.0),
+            12.0,
+            &Paint::fill(Color::WHITE),
+        )
+        .expect("rrect");
+    canvas
+        .draw_circle(
+            Vec2::new(64.0, 80.0),
+            9.0,
+            &Paint::fill(Color::linear(1.0, 0.3, 0.2, 1.0)),
+        )
+        .expect("circle");
+}
+
+#[test]
+fn an_analytic_shape_lands_the_same_in_a_bounded_layer() {
+    let Some(mut ctx) = context() else { return };
+    // A shape drawn from a distance field locates itself in clip space, and a
+    // bounded layer's clip space is a smaller target at an offset inside the
+    // frame. So the two have to agree about where that target is, in the same
+    // way the geometry and the paint mappings already do -- and getting it
+    // wrong would put the shape somewhere else in the layer while leaving it
+    // the right shape, which no comparison against a tessellated version at
+    // the frame's origin would notice.
+    let extent = Extent2D::new(160, 120);
+    let region = Rect::new(40.0, 30.0, 120.0, 90.0);
+    let mut render_layered = |bounded: bool| {
+        let mut canvas = Canvas::new(extent);
+        canvas.clear(Color::BLACK);
+        let layer = Layer::opacity(0.8);
+        match bounded {
+            true => canvas.save_layer_bounds(layer, region),
+            false => canvas.save_layer(layer),
+        };
+        analytic_shapes(&mut canvas);
+        canvas.restore();
+        let recording = canvas.finish();
+        let first = recording.passes[0].extent;
+        let mut surface = ctx
+            .create_surface(extent, PixelFormat::Rgba8Unorm)
+            .expect("surface");
+        ctx.draw(&mut surface, &recording).expect("draw");
+        let pixels = ctx.read(&mut surface).expect("read");
+        ctx.destroy_surface(surface);
+        (pixels, first)
+    };
+
+    let (full, full_extent) = render_layered(false);
+    let (bounded, bounded_extent) = render_layered(true);
+    assert_eq!(full_extent, extent, "an unbounded layer covers the frame");
+    assert!(
+        bounded_extent.width < extent.width,
+        "the bounded layer should have gotten a smaller target"
+    );
+    let worst = full
+        .iter()
+        .zip(&bounded)
+        .map(|(a, b)| a.abs_diff(*b))
+        .max()
+        .unwrap_or(0);
+    assert_eq!(worst, 0, "the shape moved when the layer was bounded");
+    assert!(full.iter().any(|&b| b > 64), "the shapes rendered nothing");
+}
+
+#[test]
+fn a_clip_confines_an_analytic_shape_exactly() {
+    let Some(mut ctx) = context() else { return };
+    // A distance field is drawn onto a quad outset past the shape, so a clip
+    // has to cut the quad rather than the shape it stands for. Checked as an
+    // equality rather than a direction: inside the clip every pixel must match
+    // the unclipped drawing, and outside it every pixel must be untouched.
+    // Anything else -- a clip applied in the wrong space, or to the outset
+    // rather than to what it covers -- moves pixels one way or the other.
+    let extent = Extent2D::new(160, 120);
+    let clip = Rect::new(30.0, 30.0, 100.0, 100.0);
+    let mut render_clipped = |clipped: bool| {
+        let mut canvas = Canvas::new(extent);
+        canvas.clear(Color::BLACK);
+        if clipped {
+            canvas.save();
+            canvas.clip_rect(clip).expect("clip");
+        }
+        analytic_shapes(&mut canvas);
+        if clipped {
+            canvas.restore();
+        }
+        let mut surface = ctx
+            .create_surface(extent, PixelFormat::Rgba8Unorm)
+            .expect("surface");
+        ctx.draw(&mut surface, &canvas.finish()).expect("draw");
+        let pixels = ctx.read(&mut surface).expect("read");
+        ctx.destroy_surface(surface);
+        pixels
+    };
+
+    let open = render_clipped(false);
+    let confined = render_clipped(true);
+    let mut inside = 0;
+    let mut outside = 0;
+    for y in 0..extent.height {
+        for x in 0..extent.width {
+            let at = ((y * extent.width + x) * 4) as usize;
+            let within = (x as f32) >= clip.left
+                && (x as f32) < clip.right
+                && (y as f32) >= clip.top
+                && (y as f32) < clip.bottom;
+            if within {
+                assert_eq!(
+                    &confined[at..at + 4],
+                    &open[at..at + 4],
+                    "({x}, {y}) is inside the clip and should be untouched by it"
+                );
+                if open[at] > 64 {
+                    inside += 1;
+                }
+            } else {
+                assert_eq!(
+                    &confined[at..at + 4],
+                    &[0, 0, 0, 255],
+                    "({x}, {y}) is outside the clip and should not have been drawn"
+                );
+                if open[at] > 64 {
+                    outside += 1;
+                }
+            }
+        }
+    }
+    // The clip has to actually cut something, or both branches above are
+    // satisfied by a shape that never reached its edge.
+    assert!(
+        inside > 0 && outside > 0,
+        "the clip removed nothing: {inside} in, {outside} out"
+    );
+}
+
 #[test]
 fn an_antialiased_circle_uses_the_same_distance_field() {
     let Some(mut ctx) = context() else { return };
