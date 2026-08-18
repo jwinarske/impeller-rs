@@ -1106,6 +1106,12 @@ permutations on GLES.
   format encodes on write, so nothing in the pipeline knows the difference and
   a caller picks it when creating the surface.
 
+  A caller picks the format when creating the surface, and picking the wrong
+  one is not an error — it is an image that is arithmetically correct and looks
+  wrong. The bundled example rendered into a linear surface and wrote the bytes
+  to a file for a long time, which every viewer then read as sRGB: the result
+  was uniformly far too dark, and nothing about it said so.
+
   The property that ties the two together is a round trip: a color authored
   through `Color::srgb` and drawn into an sRGB surface comes back as the byte
   that was authored. That holds exactly on both backends, and a test also

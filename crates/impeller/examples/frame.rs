@@ -1,9 +1,15 @@
 //! Draw one frame and write it out.
 //!
-//! The thing to run first. It exercises most of what the renderer does — a
-//! gradient, a path clip, a group composited through a layer, a blend mode, an
-//! image, and a run of glyphs — through the public API alone, naming no backend
-//! and reaching for nothing below it.
+//! The thing to run first, and laid out as an interface rather than as a
+//! gallery of shapes: rounded cards over their own blurred shadows, circles,
+//! gradients clipped to rounded tracks, an image panel, a blend mode, and a run
+//! of glyphs. All through the public API, naming no backend and reaching for
+//! nothing below it.
+//!
+//! Arranged that way because the features are more convincing where they meet
+//! than in isolation. A drop shadow is a blurred layer holding the shape it
+//! belongs to, and it is only right if the blur reaches outside the bounds the
+//! layer was given — which is a thing to look at rather than assert.
 //!
 //! ```sh
 //! cargo run -p impeller --example frame -- frame.ppm
@@ -17,13 +23,22 @@
 
 use impeller::{
     Atlas, BackendPreference, BlendMode, Canvas, Color, Context, Coverage, Extent2D, GlyphKey,
-    GradientStop, Layer, Paint, PathBuilder, PixelFormat, PositionedGlyph, Rect, Vec2,
+    GradientStop, Layer, Paint, PixelFormat, PositionedGlyph, Rect, Vec2,
 };
 
 const SIZE: Extent2D = Extent2D {
     width: 512,
-    height: 384,
+    height: 512,
 };
+
+/// The surface format, which is what makes the written file look right.
+///
+/// Colors are linear inside the renderer, because blending and interpolation
+/// are operations on light. A file is not: every viewer reads one as sRGB. An
+/// sRGB surface encodes on write, so the bytes that come back are the ones a
+/// viewer expects — and this example rendered into a linear surface for a long
+/// time and produced an image that was correct arithmetic and far too dark.
+const FORMAT: PixelFormat = PixelFormat::Rgba8UnormSrgb;
 
 fn main() {
     let path = std::env::args()
@@ -70,9 +85,7 @@ fn main() {
     .expect("upload");
 
     let recording = compose(&atlas, &glyphs);
-    let mut surface = ctx
-        .create_surface(SIZE, PixelFormat::Rgba8Unorm)
-        .expect("surface");
+    let mut surface = ctx.create_surface(SIZE, FORMAT).expect("surface");
     ctx.draw_with_images(&mut surface, &recording, &[&image, &swatch])
         .expect("draw");
     let pixels = ctx.read(&mut surface).expect("read");
@@ -91,71 +104,132 @@ fn main() {
 }
 
 /// Everything the frame draws.
+///
+/// Laid out as an interface rather than as a gallery of shapes, because that is
+/// what the renderer is for and because the features are more convincing where
+/// they meet: a card is a rounded rectangle over its own blurred shadow, and
+/// the shadow is only right if the blur reaches past the layer that holds it.
 fn compose(atlas: &Atlas, glyphs: &[PositionedGlyph]) -> impeller::Recording {
     let mut canvas = Canvas::new(SIZE);
-    canvas.clear(Color::rgba8(18, 20, 28, 255));
+    canvas.clear(Color::srgb(0.93, 0.94, 0.96, 1.0));
 
-    // A gradient, whose endpoints travel through the transform with the shape
-    // rather than staying pinned to the screen.
+    // The header: a gradient behind everything, whose endpoints travel with the
+    // transform rather than staying pinned to the screen.
     canvas
         .draw_rect(
-            Rect::new(32.0, 32.0, 480.0, 160.0),
+            Rect::new(0.0, 0.0, 512.0, 96.0),
             &Paint::linear_gradient(
-                Vec2::new(32.0, 32.0),
-                Vec2::new(480.0, 160.0),
+                Vec2::new(0.0, 0.0),
+                Vec2::new(512.0, 96.0),
                 vec![
-                    GradientStop::new(Color::rgba8(40, 70, 160, 255), 0.0),
-                    GradientStop::new(Color::rgba8(180, 60, 120, 255), 0.55),
-                    GradientStop::new(Color::rgba8(240, 180, 80, 255), 1.0),
+                    GradientStop::new(Color::srgb(0.18, 0.22, 0.55, 1.0), 0.0),
+                    GradientStop::new(Color::srgb(0.55, 0.20, 0.45, 1.0), 1.0),
                 ],
             ),
         )
-        .expect("gradient");
+        .expect("header");
 
-    // A group composited at reduced opacity. Drawn directly, the two circles
-    // would show where they overlap; through a layer they do not, because the
-    // group is made first and faded once.
-    canvas.save_layer(Layer::opacity(0.65));
-    for (x, color) in [(180.0, (230, 90, 70)), (240.0, (70, 200, 160))] {
+    // Two cards, each a rounded rectangle over its own shadow. The shadow is a
+    // blurred layer holding the same shape in black, offset down -- which is
+    // what a drop shadow is, and needs the blur to reach outside the bounds the
+    // layer was given or it would end in a straight line.
+    for (index, top) in [128.0f32, 248.0].into_iter().enumerate() {
+        let card = Rect::new(32.0, top, 480.0, top + 96.0);
+        let shadow = Rect::new(card.left, card.top + 8.0, card.right, card.bottom + 8.0);
+
+        canvas.save_layer_bounds(Layer::opacity(0.30).with_blur(9.0), shadow);
+        canvas
+            .draw_rrect(shadow, 18.0, &Paint::fill(Color::srgb(0.0, 0.0, 0.0, 1.0)))
+            .expect("shadow");
+        canvas.restore();
+
+        canvas
+            .draw_rrect(card, 18.0, &Paint::fill(Color::srgb(1.0, 1.0, 1.0, 1.0)))
+            .expect("card");
+
+        // An avatar: a circle, which takes the same distance field the card
+        // does and so is a curve rather than a polygon approximating one.
         canvas
             .draw_circle(
-                Vec2::new(x, 108.0),
-                52.0,
-                &Paint::fill(Color::rgba8(color.0, color.1, color.2, 255)),
+                Vec2::new(card.left + 48.0, card.top + 48.0),
+                26.0,
+                &Paint::fill(if index == 0 {
+                    Color::srgb(0.95, 0.55, 0.25, 1.0)
+                } else {
+                    Color::srgb(0.30, 0.75, 0.60, 1.0)
+                }),
             )
-            .expect("circle");
-    }
-    canvas.restore();
+            .expect("avatar");
 
-    // A path clip, which no rectangle expresses and which the stencil carries.
+        // A progress bar clipped to its own rounded ends, with the fill drawn
+        // past them so the clip is what shapes it.
+        let track = Rect::new(
+            card.left + 92.0,
+            card.top + 60.0,
+            card.right - 24.0,
+            card.top + 72.0,
+        );
+        canvas
+            .draw_rrect(track, 6.0, &Paint::fill(Color::srgb(0.89, 0.90, 0.93, 1.0)))
+            .expect("track");
+        canvas.save();
+        canvas
+            .clip_path(&track.to_rounded_path(6.0))
+            .expect("clip to the track");
+        let fraction = if index == 0 { 0.7 } else { 0.35 };
+        canvas
+            .draw_rect(
+                Rect::new(
+                    track.left,
+                    track.top,
+                    track.left + track.width() * fraction,
+                    track.bottom,
+                ),
+                &Paint::linear_gradient(
+                    Vec2::new(track.left, 0.0),
+                    Vec2::new(track.right, 0.0),
+                    vec![
+                        GradientStop::new(Color::srgb(0.35, 0.65, 1.0, 1.0), 0.0),
+                        GradientStop::new(Color::srgb(0.55, 0.35, 0.95, 1.0), 1.0),
+                    ],
+                ),
+            )
+            .expect("progress");
+        canvas.restore();
+    }
+
+    // A panel showing the image paint, clipped to rounded corners. Clipping to
+    // a rounded rectangle goes through the stencil rather than the distance
+    // field: a clip is not a shape being filled, and the two do not share a
+    // path yet.
+    let panel = Rect::new(32.0, 368.0, 236.0, 464.0);
     canvas.save();
-    let mut triangle = PathBuilder::new();
-    triangle
-        .move_to(Vec2::new(256.0, 196.0))
-        .line_to(Vec2::new(400.0, 340.0))
-        .line_to(Vec2::new(112.0, 340.0))
-        .close();
-    canvas.clip_path(&triangle.build()).expect("clip");
     canvas
-        .draw_rect(
-            Rect::new(96.0, 190.0, 416.0, 348.0),
-            &Paint::image(1, Rect::new(96.0, 190.0, 416.0, 348.0)),
-        )
+        .clip_path(&panel.to_rounded_path(18.0))
+        .expect("clip to the panel");
+    canvas
+        .draw_rect(panel, &Paint::image(1, panel))
         .expect("image");
     canvas.restore();
 
-    // A blend mode over the top. Plus accumulates rather than replacing, which
-    // is what makes the overlap brighten.
+    // A blend over the top. Plus accumulates rather than replacing, which is
+    // what makes the overlap brighten.
     canvas
         .draw_circle(
-            Vec2::new(430.0, 300.0),
-            60.0,
-            &Paint::fill(Color::rgba8(90, 60, 140, 255)).with_blend(BlendMode::Plus),
+            Vec2::new(428.0, 60.0),
+            40.0,
+            &Paint::fill(Color::srgb(0.25, 0.18, 0.45, 1.0)).with_blend(BlendMode::Plus),
         )
         .expect("glow");
 
+    // A run of glyphs, which is one draw however many there are.
     canvas
-        .draw_glyphs(glyphs, atlas, 0, &Paint::fill(Color::WHITE))
+        .draw_glyphs(
+            glyphs,
+            atlas,
+            0,
+            &Paint::fill(Color::srgb(0.25, 0.27, 0.33, 1.0)),
+        )
         .expect("glyphs");
 
     canvas.finish()
@@ -197,7 +271,7 @@ fn build_atlas() -> (Atlas, Vec<PositionedGlyph>) {
             .expect("atlas insert");
         run.push(PositionedGlyph::new(
             key,
-            [40.0 + i as f32 * 14.0, 356.0],
+            [364.0 + i as f32 * 14.0, 476.0],
             rect,
         ));
     }
