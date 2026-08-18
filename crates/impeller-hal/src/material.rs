@@ -60,6 +60,7 @@ pub mod kind {
     pub const SWEEP: f32 = 3.0;
     pub const IMAGE: f32 = 4.0;
     pub const GLYPH: f32 = 5.0;
+    pub const BLUR: f32 = 6.0;
 }
 
 /// Tile mode selector shared with the shader.
@@ -162,6 +163,32 @@ pub enum Material {
         alpha: f32,
         tile: TileMode,
     },
+    /// One axis of a separable Gaussian blur of a sampled texture.
+    ///
+    /// Separable because a two-dimensional Gaussian is the product of two
+    /// one-dimensional ones, so blurring along each axis in turn gives the
+    /// same result as a square of taps at a fraction of the cost: at a radius
+    /// of sixteen that is thirty-three taps against a thousand and eighty-nine.
+    /// Two passes are the price, which is why this names an axis rather than
+    /// describing the whole blur.
+    Blur {
+        origin: [f32; 2],
+        to_local: ToLocal,
+        slot: u32,
+        /// One tap's step, in the sampled texture's own coordinates.
+        ///
+        /// The axis and the texel size together: a horizontal pass over a
+        /// target `w` wide steps `(1/w, 0)`. Stated here rather than derived in
+        /// the shader because the shader does not know the size of what it is
+        /// sampling.
+        step: [f32; 2],
+        /// Standard deviation, in taps.
+        ///
+        /// The tap count follows from it -- three deviations each way covers
+        /// better than four nines of the curve -- so a caller sets how soft the
+        /// result is and nothing else.
+        sigma: f32,
+    },
     /// Coverage sampled from an atlas, tinting one color.
     ///
     /// Distinct from [`Self::Image`] in two ways that matter. The texture is
@@ -210,22 +237,35 @@ impl Material {
             // What the texture holds is unknown here, so only a zero alpha
             // makes an image provably invisible.
             Self::Image { alpha, .. } => *alpha <= 0.0,
+            // A blur of nothing is nothing, but the pass still has to run: what
+            // it samples is not knowable from here.
+            Self::Blur { .. } => false,
             Self::Glyph { color, .. } => color[3] <= 0.0,
         }
     }
 
     /// The texture slot this samples, for a backend building its bindings.
+    ///
+    /// Matched exhaustively rather than with a catch-all. A variant that
+    /// samples something and is not listed here reports no slot, so the backend
+    /// binds its placeholder and the draw comes out flat white -- a plausible
+    /// picture rather than an error, and one nothing else would explain.
     pub fn texture_slot(&self) -> Option<u32> {
         match self {
-            Self::Image { slot, .. } | Self::Glyph { slot, .. } => Some(*slot),
-            _ => None,
+            Self::Image { slot, .. } | Self::Glyph { slot, .. } | Self::Blur { slot, .. } => {
+                Some(*slot)
+            }
+            Self::Solid(_)
+            | Self::LinearGradient { .. }
+            | Self::RadialGradient { .. }
+            | Self::SweepGradient { .. } => None,
         }
     }
 
     /// The stops, for any material that has them.
     fn stops(&self) -> &[Stop] {
         match self {
-            Self::Solid(_) | Self::Image { .. } | Self::Glyph { .. } => &[],
+            Self::Solid(_) | Self::Image { .. } | Self::Glyph { .. } | Self::Blur { .. } => &[],
             Self::LinearGradient { stops, .. }
             | Self::RadialGradient { stops, .. }
             | Self::SweepGradient { stops, .. } => stops,
@@ -258,6 +298,25 @@ impl Material {
 
         // An image carries no stops and no count, and must be packed before
         // the gradient path below decides it has too few to interpolate.
+        if let Self::Blur {
+            origin,
+            to_local,
+            step,
+            sigma,
+            ..
+        } = self
+        {
+            out[layout::GEOMETRY] = origin[0];
+            out[layout::GEOMETRY + 1] = origin[1];
+            out[layout::GEOMETRY + 2] = step[0];
+            out[layout::GEOMETRY + 3] = step[1];
+            out[layout::TO_LOCAL..layout::TO_LOCAL + 4].copy_from_slice(to_local);
+            out[layout::PARAMS] = 1.0;
+            out[layout::PARAMS + 1] = kind::BLUR;
+            out[layout::PARAMS + 2] = *sigma;
+            return out;
+        }
+
         if let Self::Image {
             origin,
             to_local,
@@ -297,7 +356,7 @@ impl Material {
         }
 
         match self {
-            Self::Solid(_) | Self::Image { .. } | Self::Glyph { .. } => {
+            Self::Solid(_) | Self::Image { .. } | Self::Glyph { .. } | Self::Blur { .. } => {
                 unreachable!("handled above")
             }
             Self::LinearGradient {

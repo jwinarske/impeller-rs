@@ -145,6 +145,48 @@ fn sample_image(clip: vec2<f32>) -> vec4<f32> {
     return texel * paint.geometry.z;
 }
 
+/// One axis of a separable Gaussian blur of the bound texture.
+///
+/// Two passes of this give the same result as a square of taps, because a
+/// two-dimensional Gaussian is the product of two one-dimensional ones -- at a
+/// radius of sixteen, thirty-three taps against a thousand and eighty-nine.
+///
+/// The weights are computed rather than looked up. A table would need a size
+/// chosen in advance and a branch per size; an exponential per tap is a handful
+/// of instructions on hardware that has one, and this is bandwidth-bound long
+/// before it is arithmetic-bound.
+fn blur_along_axis(clip: vec2<f32>) -> vec4<f32> {
+    let uv = to_gradient_space(clip);
+    let step = paint.geometry.zw;
+    let sigma = max(paint.params.z, 1e-4);
+    // Three deviations each way, which covers better than four nines of the
+    // curve -- past that a tap contributes less than the eight-bit target can
+    // represent. Bounded because a shader loop must be, and because a radius
+    // beyond this costs bandwidth for a difference nobody can see.
+    let radius = min(ceil(sigma * 3.0), 32.0);
+
+    // Two reciprocals hoisted out of the loop, which the compiler may or may
+    // not do for a divide by a uniform expression.
+    let denominator = -0.5 / (sigma * sigma);
+    var total = vec4<f32>(0.0);
+    var weight_sum = 0.0;
+    var i = -radius;
+    loop {
+        if (i > radius) { break; }
+        let weight = exp(i * i * denominator);
+        // Clamped, so the edge extends rather than the blur pulling in
+        // transparent black from outside and darkening the border. The target
+        // is sized to the content, so there is nothing outside worth reading.
+        let coord = clamp(uv + step * i, vec2<f32>(0.0), vec2<f32>(1.0));
+        total = total + textureSampleLevel(image_texture, image_sampler, coord, 0.0) * weight;
+        weight_sum = weight_sum + weight;
+        i = i + 1.0;
+    }
+    // Normalized by what was actually summed rather than by the analytic
+    // integral, so a truncated tail does not darken the result.
+    return total / max(weight_sum, 1e-6);
+}
+
 @fragment
 fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     var colour: vec4<f32> = paint.stops[0];
@@ -186,6 +228,11 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     // already and the conversion below would apply alpha a second time.
     if (kind > 3.5 && kind < 4.5) {
         return sample_image(in.clip);
+    }
+    if (kind > 5.5) {
+        // Already premultiplied, like anything else sampled from a target, and
+        // a weighted average of premultiplied colors is premultiplied.
+        return blur_along_axis(in.clip);
     }
     if (kind > 4.5) {
         // Coverage rather than color: one channel scaling a solid, which is

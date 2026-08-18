@@ -109,6 +109,7 @@ fn record_node(canvas: &mut Canvas, node: &Node, anti_alias: bool) -> Result<()>
             canvas.save();
             canvas.concat(transform.to_affine());
             let layer = Layer {
+                blur: layer.blur,
                 alpha: layer.alpha,
                 blend: layer.blend,
             };

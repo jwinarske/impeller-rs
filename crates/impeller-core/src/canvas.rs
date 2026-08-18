@@ -268,6 +268,17 @@ struct LayerFrame {
 /// its shader to matter.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Layer {
+    /// Blur the group before compositing it, with this standard deviation in
+    /// device pixels.
+    ///
+    /// Zero for no blur, which is the default and costs nothing: the extra
+    /// passes are only recorded where a caller asked for one.
+    ///
+    /// On the group rather than on a paint, because a blur is a function of a
+    /// finished image and a paint describes one shape. Blurring each shape and
+    /// compositing the results is a different picture from blurring the
+    /// composite, and the second is what a shadow or a frosted panel means.
+    pub blur: f32,
     /// Scales the whole layer on the way back. This is what makes group opacity
     /// differ from per-shape opacity: two overlapping half-transparent shapes
     /// in a layer show one blended edge, where the same shapes drawn directly
@@ -280,6 +291,7 @@ pub struct Layer {
 impl Default for Layer {
     fn default() -> Self {
         Self {
+            blur: 0.0,
             alpha: 1.0,
             blend: BlendMode::SrcOver,
         }
@@ -296,6 +308,20 @@ impl Layer {
 
     pub fn with_blend(mut self, blend: BlendMode) -> Self {
         self.blend = blend;
+        self
+    }
+
+    /// Blur the finished group, with `sigma` in device pixels.
+    ///
+    /// Anything at or below zero, or not a number, means no blur rather than an
+    /// error: a caller animating a shadow's softness to nothing should get the
+    /// sharp thing, not a refusal at the end of the animation.
+    pub fn with_blur(mut self, sigma: f32) -> Self {
+        self.blur = if sigma.is_finite() && sigma > 0.0 {
+            sigma
+        } else {
+            0.0
+        };
         self
     }
 }
@@ -535,12 +561,23 @@ impl Canvas {
     /// [`Self::clip_rect`] does with the same box, and for the same reason —
     /// there the box would admit pixels the caller asked to remove.
     pub fn save_layer_bounds(&mut self, layer: Layer, bounds: Rect) -> &mut Self {
+        let blur = layer.blur;
         self.save_layer(layer);
         let (min, max) = transformed_bounds(
             &self.transform,
             Vec2::new(bounds.left, bounds.top),
             Vec2::new(bounds.right, bounds.bottom),
         );
+        // A blur reaches past what it was given. The caller states where the
+        // content is, which is the question they can answer; how far a blur
+        // carries it is this renderer's arithmetic, and a target sized to the
+        // content alone would cut the halo off square at the bound -- the
+        // failure looking exactly like a shadow with a straight edge.
+        //
+        // Three deviations, matching where the shader stops taking taps, so the
+        // target covers everything the blur will actually read.
+        let reach = if blur > 0.0 { (blur * 3.0).ceil() } else { 0.0 };
+        let (min, max) = (min - Vec2::splat(reach), max + Vec2::splat(reach));
         let parent = self.target;
         let left = min.x.floor().max(parent.origin.x);
         let top = min.y.floor().max(parent.origin.y);
@@ -963,7 +1000,10 @@ impl Canvas {
             sources,
             extent: layer.extent,
         });
-        let index = self.finished.len() - 1;
+        let mut index = self.finished.len() - 1;
+        if frame.paint.blur > 0.0 {
+            index = self.blur_passes(index, layer, frame.paint.blur);
+        }
         let slot = self.slot_for(TextureSource::Layer(index));
 
         // Where the layer sits in the parent's clip space, and how much of that
@@ -1010,6 +1050,77 @@ impl Canvas {
         let _ = self
             .renderer
             .fill_into(&mut self.batch, &whole, Affine2::IDENTITY, &paint);
+    }
+
+    /// Blur a finished layer, and answer which pass now holds the result.
+    ///
+    /// Two passes, one per axis, because a two-dimensional Gaussian is the
+    /// product of two one-dimensional ones: the same picture as a square of
+    /// taps, at a fraction of the work. Each renders a quad covering its whole
+    /// target and samples the pass before it.
+    ///
+    /// Both are the size of the layer, so a bounded layer's blur costs what the
+    /// bound says and not what the frame is. The composite that follows is
+    /// unchanged, and still applies the layer's alpha and blend -- keeping the
+    /// blur passes pure means neither has to know about compositing.
+    fn blur_passes(&mut self, source: usize, target: Target, sigma: f32) -> usize {
+        // Clip space spans two units and runs upward, so this is the mapping
+        // that turns a full-target quad's clip position into the texture
+        // coordinates of the pass it samples -- the same pair a layer
+        // composite uses at zero offset, since these targets are the same size.
+        let origin = [-1.0, 1.0];
+        let to_local = [0.5, 0.0, 0.0, -0.5];
+        // A step of one texel along each axis, in the sampled texture's own
+        // coordinates. The shader cannot derive this: it does not know the size
+        // of what it is sampling.
+        let steps = [
+            [1.0 / target.extent.width as f32, 0.0],
+            [0.0, 1.0 / target.extent.height as f32],
+        ];
+
+        let mut sampled = source;
+        for step in steps {
+            let material = Material::Blur {
+                origin,
+                to_local,
+                slot: 0,
+                step,
+                sigma,
+            };
+            // A pass of its own, so its slot table starts empty and the one
+            // slot it uses is the pass it samples.
+            let mut batch = Batch::new();
+            let sources = vec![TextureSource::Layer(sampled)];
+            let paint = RenderPaint {
+                material,
+                // Replaces rather than blends: the target is cleared and this
+                // covers all of it, so anything else would blend against the
+                // clear for no reason.
+                blend: BlendMode::Src,
+                clip: None,
+                stencil: ClipState::UNCLIPPED,
+            };
+            let quad = target.path();
+            let mut renderer = Renderer::new();
+            renderer.begin_frame(self.extent, TOLERANCE);
+            renderer.set_viewport(target.origin, target.extent);
+            let _ = renderer.fill_into(&mut batch, &quad, Affine2::IDENTITY, &paint);
+
+            self.finished.push(Pass {
+                batch,
+                descriptor: PassDescriptor {
+                    clear: Some([0.0; 4]),
+                    // One sample: this reads a resolved image and writes
+                    // another, so multisampling it would resolve twice for no
+                    // difference.
+                    samples: 1,
+                },
+                sources,
+                extent: target.extent,
+            });
+            sampled = self.finished.len() - 1;
+        }
+        sampled
     }
 
     /// Point both the canvas and its renderer at a target.

@@ -219,6 +219,9 @@ impl Item {
 /// no geometry to stroke, so a paint would mostly be fields that do nothing.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct LayerSpec {
+    /// Standard deviation of a blur over the finished group, in device pixels.
+    /// Zero for none.
+    pub blur: f32,
     pub alpha: f32,
     pub blend: BlendMode,
 }
@@ -226,6 +229,7 @@ pub struct LayerSpec {
 impl Default for LayerSpec {
     fn default() -> Self {
         Self {
+            blur: 0.0,
             alpha: 1.0,
             blend: BlendMode::SrcOver,
         }
@@ -242,6 +246,11 @@ impl LayerSpec {
 
     pub fn with_blend(mut self, blend: BlendMode) -> Self {
         self.blend = blend;
+        self
+    }
+
+    pub fn with_blur(mut self, blur: f32) -> Self {
+        self.blur = blur;
         self
     }
 }
@@ -1120,6 +1129,35 @@ pub fn corpus() -> Vec<Scene> {
             )],
         )
         .with_samples(4),
+        // A blurred group, which is three passes rather than one: the contents,
+        // then one per axis of a separable Gaussian. Two backends that agreed
+        // on everything else could still differ here, since this is the only
+        // thing that samples a target it just rendered, twice, with computed
+        // weights.
+        Scene::tree(
+            "layer-blurred",
+            vec![Node::layer(
+                LayerSpec::default().with_blur(6.0),
+                vec![
+                    Item::fill(
+                        Shape::Rect {
+                            min: [32.0, 32.0],
+                            max: [96.0, 72.0],
+                        },
+                        WHITE,
+                    )
+                    .into(),
+                    Item::fill(
+                        Shape::Circle {
+                            center: [64.0, 92.0],
+                            radius: 18.0,
+                        },
+                        RED,
+                    )
+                    .into(),
+                ],
+            )],
+        ),
         // Layers. Everything below here needs the scene to be a tree, and none
         // of it could be said at all while a scene was a flat list of items --
         // which is why layer compositing went uncompared across backends for as

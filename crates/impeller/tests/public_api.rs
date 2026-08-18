@@ -2376,6 +2376,151 @@ fn layer_contents(canvas: &mut Canvas) {
         .expect("circle");
 }
 
+/// The region the blur scenes draw into.
+const BLUR_REGION: Rect = Rect {
+    left: 40.0,
+    top: 40.0,
+    right: 88.0,
+    bottom: 88.0,
+};
+
+/// A white square in a layer, blurred by `sigma`, optionally bounded.
+fn blurred_square(ctx: &mut Context, sigma: f32, bounds: Option<Rect>) -> Vec<u8> {
+    let mut canvas = Canvas::new(SIZE);
+    canvas.clear(Color::BLACK);
+    let layer = Layer::default().with_blur(sigma);
+    match bounds {
+        Some(region) => canvas.save_layer_bounds(layer, region),
+        None => canvas.save_layer(layer),
+    };
+    canvas
+        .draw_rect(
+            BLUR_REGION,
+            &Paint::fill(Color::WHITE).with_anti_alias(false),
+        )
+        .expect("square");
+    canvas.restore();
+    render(ctx, canvas)
+}
+
+#[test]
+fn a_blurred_layer_spreads_beyond_the_shape_it_holds() {
+    let Some(mut ctx) = context() else { return };
+    // What a blur is for, stated as the thing that distinguishes it: light
+    // where the shape is not. A sharp layer has nothing outside the square.
+    let sharp = blurred_square(&mut ctx, 0.0, None);
+    let soft = blurred_square(&mut ctx, 8.0, None);
+    let at = |pixels: &[u8], x: u32, y: u32| pixels[((y * SIZE.width + x) * 4) as usize];
+
+    assert_eq!(at(&sharp, 64, 34), 0, "a sharp layer stops at its edge");
+    assert!(
+        at(&soft, 64, 34) > 32,
+        "a blurred layer should reach past its shape, got {}",
+        at(&soft, 64, 34)
+    );
+    // And it falls off with distance rather than being a uniform smear, which
+    // is what a Gaussian means and what a box filter would not give.
+    let near = at(&soft, 64, 36);
+    let far = at(&soft, 64, 28);
+    assert!(
+        near > far && far > 0,
+        "the blur should fall off with distance, got {near} then {far}"
+    );
+    // The middle of a shape much larger than the blur is untouched, so the
+    // weights sum to one rather than darkening what they average.
+    assert_eq!(at(&soft, 64, 64), 255, "the middle should be undimmed");
+}
+
+#[test]
+fn a_larger_sigma_spreads_further() {
+    let Some(mut ctx) = context() else { return };
+    // The parameter does what it says, monotonically. A blur that ignored
+    // sigma, or scaled it by the wrong thing, would still pass the test above.
+    let at = |pixels: &[u8], x: u32, y: u32| pixels[((y * SIZE.width + x) * 4) as usize] as i32;
+    let small = blurred_square(&mut ctx, 3.0, None);
+    let large = blurred_square(&mut ctx, 12.0, None);
+    let probe = (64, 30);
+    assert!(
+        at(&large, probe.0, probe.1) > at(&small, probe.0, probe.1),
+        "a larger sigma should reach further"
+    );
+    // And spends the light it moved rather than adding any: brighter outside
+    // has to come from dimmer inside. Measured well inside the edge, since the
+    // two profiles cross over within a pixel of it -- at the boundary itself
+    // both are near half and which is greater says nothing.
+    assert!(
+        at(&large, 64, 46) < at(&small, 64, 46),
+        "spreading further should dim the inside it came from"
+    );
+}
+
+#[test]
+fn a_blur_of_zero_records_no_extra_passes() {
+    // The passes are only recorded where a blur was asked for, so a caller
+    // animating one to nothing pays nothing at the end of the animation.
+    let mut canvas = Canvas::new(SIZE);
+    canvas.save_layer(Layer::default());
+    canvas
+        .draw_rect(BLUR_REGION, &Paint::fill(Color::WHITE))
+        .expect("square");
+    canvas.restore();
+    let plain = canvas.finish().passes.len();
+
+    for sigma in [0.0, -3.0, f32::NAN] {
+        let mut canvas = Canvas::new(SIZE);
+        canvas.save_layer(Layer::default().with_blur(sigma));
+        canvas
+            .draw_rect(BLUR_REGION, &Paint::fill(Color::WHITE))
+            .expect("square");
+        canvas.restore();
+        assert_eq!(
+            canvas.finish().passes.len(),
+            plain,
+            "a blur of {sigma} should record no extra passes"
+        );
+    }
+}
+
+#[test]
+fn a_bounded_blurred_layer_matches_a_full_size_one() {
+    let Some(mut ctx) = context() else { return };
+    // Bounds stay invisible with a blur, which takes more than sizing the
+    // target to what the caller said: a blur reaches past its content, so a
+    // target sized to the content alone cuts the halo off square at the bound.
+    // The caller states where the content is, which is the question they can
+    // answer; how far the blur carries it is this renderer's arithmetic.
+    let full = blurred_square(&mut ctx, 8.0, None);
+    let bounded = blurred_square(&mut ctx, 8.0, Some(BLUR_REGION));
+
+    let worst = full
+        .iter()
+        .zip(&bounded)
+        .map(|(a, b)| a.abs_diff(*b))
+        .max()
+        .unwrap_or(0);
+    assert_eq!(
+        worst, 0,
+        "bounding a blurred layer changed the picture by {worst}"
+    );
+    // And it did bound something, or this compares two identical recordings.
+    let mut canvas = Canvas::new(SIZE);
+    canvas.save_layer_bounds(Layer::default().with_blur(8.0), BLUR_REGION);
+    canvas
+        .draw_rect(BLUR_REGION, &Paint::fill(Color::WHITE))
+        .expect("square");
+    canvas.restore();
+    let recording = canvas.finish();
+    assert!(
+        recording.passes[0].extent.width < SIZE.width,
+        "the layer should still have gotten a smaller target"
+    );
+    // Larger than the content by the blur's reach, not equal to it.
+    assert!(
+        recording.passes[0].extent.width > BLUR_REGION.width() as u32,
+        "the target should be outset past the content it holds"
+    );
+}
+
 #[test]
 fn a_bounded_layer_renders_the_same_as_a_full_size_one() {
     let Some(mut ctx) = context() else { return };
