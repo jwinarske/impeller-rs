@@ -47,6 +47,8 @@ pub struct Outcome {
     /// and the panic message is the difference between a fix and another push
     /// to find out. Both were learned that way.
     pub failures: Vec<Failure>,
+    /// Where the harness's whole output was written, when it could be.
+    pub log: Option<String>,
     pub skips: Vec<Skip>,
     /// True where the suite itself came back non-zero.
     pub broke: bool,
@@ -88,6 +90,7 @@ pub fn run(extra: &[String]) -> Outcome {
                 passed: 0,
                 failed: 0,
                 failures: Vec::new(),
+                log: None,
                 skips: Vec::new(),
                 broke: true,
             };
@@ -102,7 +105,19 @@ pub fn run(extra: &[String]) -> Outcome {
         String::from_utf8_lossy(&output.stderr)
     );
 
-    parse(&text, !output.status.success())
+    // Kept, because the census is a summary and a summary is not always
+    // enough. Twice now a failure on a machine I cannot reach has cost a push
+    // to learn something the harness had already said and nothing had written
+    // down. The path is printed with the census rather than only on failure,
+    // so it is a thing that exists rather than a thing to remember.
+    let log = std::path::Path::new("target").join("verify.log");
+    let saved = std::fs::create_dir_all("target")
+        .and_then(|()| std::fs::write(&log, text.as_bytes()))
+        .is_ok();
+
+    let mut outcome = parse(&text, !output.status.success());
+    outcome.log = saved.then(|| log.display().to_string());
+    outcome
 }
 
 /// Turn the harness's output into a census.
@@ -195,6 +210,7 @@ fn parse(text: &str, broke: bool) -> Outcome {
         passed,
         failed,
         failures,
+        log: None,
         skips: reasons
             .into_iter()
             .map(|(reason, count)| Skip { reason, count })
@@ -211,8 +227,20 @@ pub fn text(outcome: &Outcome) -> String {
     ));
     for failure in &outcome.failures {
         out.push_str(&format!("    FAILED  {}\n", failure.name));
+        if failure.detail.is_empty() {
+            // Not every failure is a panic: a test binary can abort, or die on
+            // a signal, and then there is no message to pair with a name. Say
+            // that rather than print a name and a blank, which reads as a
+            // parser that missed something.
+            out.push_str("              (no panic message; see the log below)\n");
+        }
         for line in &failure.detail {
             out.push_str(&format!("              {line}\n"));
+        }
+    }
+    if let Some(log) = &outcome.log {
+        if !outcome.failures.is_empty() {
+            out.push_str(&format!("    full output in {log}\n"));
         }
     }
     let skipped: usize = outcome.skips.iter().map(|s| s.count).sum();
