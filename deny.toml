@@ -8,7 +8,18 @@
 #
 # The known footgun is khronos-egl's "static" feature, which pulls in
 # link-time libEGL via pkg-config. The workspace pins it to "dynamic"
-# (dlopen); this ban is the automated enforcement of that pin.
+# (dlopen); this ban is meant to be the automated enforcement of that pin.
+#
+# Nothing runs this file. It is not invoked by `ci/smoke.sh`, there is no CI,
+# and the cargo-deny installed on the machine this was last checked from
+# predates edition 2024 and cannot parse the workspace at all. So the rule it
+# describes lived here as a comment.
+#
+# The architectural half of it — that no crate in the graph builds native code
+# — is now enforced by a test in `xtask/tests/dependencies.rs`, which needs
+# nothing installed and runs with everything else. What is still only described
+# here is the rest of what cargo-deny would do: licenses, advisories, and
+# duplicate versions.
 
 [bans]
 multiple-versions = "warn"

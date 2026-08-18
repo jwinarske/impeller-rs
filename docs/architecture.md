@@ -929,8 +929,13 @@ backend:
 **Build time: every dependency compiles from pure Rust source.** No C or C++
 toolchain, no pkg-config, no system headers. `cargo build` with any feature
 combination needs only a Rust toolchain, which is what keeps cross-compilation
-to aarch64 and riscv64 boards and containerized CI builds trivial. This is
-enforced by `deny.toml`, which bans `pkg-config`, `cmake`, and `cc` outright.
+to aarch64 and riscv64 boards and containerized CI builds trivial. `deny.toml`
+describes this as a ban on `pkg-config`, `cmake` and `cc`, and describes it as
+automated enforcement, which it was not: nothing invoked cargo-deny. It is now
+enforced by a test that reads the workspace's dependency graph and fails on any
+crate whose job is to compile, locate, or generate bindings to something that is
+not Rust. That needs nothing installed, which matters for a rule whose whole
+value is that it holds on a machine nobody has configured.
 
 The known footgun is `khronos-egl`'s `static` feature, which pulls in link-time
 libEGL via pkg-config. It is pinned to `dynamic`, which dlopens instead.
@@ -964,18 +969,26 @@ project itself ships, on Apple platforms only.
 **Tests are part of the phase.** A phase without its test suites merged is not
 done. There is no end-of-project testing phase.
 
-**One corpus, many executions.** Scenes are data — a versioned serialized IR of
-canvas calls — not Rust code. A single corpus drives golden, conformance,
-performance, and on-device runs across every backend and presentation
-combination. New features add scenes once and the matrix multiplies coverage
-automatically. Every rendering bug fixed adds a regression-pin scene, and that
-set grows monotonically.
+**One corpus, many executions.** A single corpus drives every execution there
+is, so a new feature adds scenes once and the matrix multiplies coverage.
+Every rendering bug fixed adds a regression-pin scene, and that set grows
+monotonically.
 
-`impeller-testkit` provides the executors (offscreen, WSI, DRM), the
-comparators (per-channel tolerance with an outlier budget, perceptual
-comparison where cross-driver float variance is expected, CRC equality for
-scanout), and a single report schema emitted identically by CI containers and
-by a shell on an embedded board.
+What that means today, stated precisely because the aspiration and the state
+are easy to confuse. The corpus is Rust: a couple of dozen `Scene` values built
+in `impeller-testkit`. The intent is for scenes to be data — a versioned
+serialized IR of canvas calls — so that a corpus can be shared with a board and
+with upstream's assets, and nothing is serialized yet.
+
+`impeller-testkit` provides one executor, which renders a scene offscreen, and
+two comparators: per-channel tolerance with an outlier budget, and the
+derivation below that chooses between exact and tolerant. The executions it
+drives are the cross-backend comparison and the cross-device conformance run.
+
+Not yet built, and named here rather than described in the present tense: WSI
+and DRM executors, a perceptual comparator for cases where cross-driver float
+variance is expected, CRC equality for scanout, and a report schema emitted
+identically by CI and by a shell on a board.
 
 Tolerance is derived from what a scene does rather than assigned per scene:
 **exact where a value is transported, tolerant where it is computed per
@@ -990,18 +1003,25 @@ number, and a genuine divergence cannot be waved through by loosening one entry.
 Where per-driver tables become necessary, tightening one is a normal change and
 **loosening one requires a linked driver-bug issue**.
 
-| Level | What | Where |
-|---|---|---|
-| L0 | Unit: math, path ops, atlas packing, negotiation logic | Every merge, no GPU |
-| L1 | Property: tessellation invariants, Bezier tolerance, stroke under transform | Every merge, no GPU |
-| L2 | Golden: corpus to offscreen render, image compare | Every merge on software GPU |
-| L3 | Conformance: same corpus, cross-backend and cross-presentation diffs | Every merge (software) |
-| L4 | Presentation: resize storms, flip pacing, fence ordering, hotplug | VKMS and headless WSI in CI |
-| L5 | Stress and soak: atlas thrash, layer-depth bombs, leak detection | Nightly and weekly, hardware |
-| L6 | Performance: micro and full-frame benches with regression gating | Nightly, quiet runners |
-| L7 | Fuzz: path data, scene descriptions, dma-buf negotiation | Continuous background |
+The levels below are the plan. The right-hand column says where each runs, and
+**"CI" describes none of them: there is no CI**. What exists is `ci/smoke.sh`,
+run by hand, which does the whole of L0, L1 and L3 and part of L4.
 
-### VKMS gives the DRM path merge-blocking coverage
+| Level | What | Where | State |
+|---|---|---|---|
+| L0 | Unit: math, path ops, atlas packing, negotiation logic | Every merge, no GPU | runs |
+| L1 | Property: tessellation invariants, Bezier tolerance, stroke under transform | Every merge, no GPU | runs |
+| L2 | Golden: corpus to offscreen render, image compare | Every merge on software GPU | none — comparison is against another implementation rather than a stored image, deliberately, and no golden apparatus exists |
+| L3 | Conformance: same corpus, cross-backend and cross-presentation diffs | Every merge (software) | runs, cross-backend and cross-device; cross-presentation only for the offscreen target |
+| L4 | Presentation: resize storms, flip pacing, fence ordering, hotplug | VKMS and headless WSI in CI | partial — headless WSI runs on both backends, fence ordering is checked under the validation layer; no VKMS, no resize storms, no hotplug |
+| L5 | Stress and soak: atlas thrash, layer-depth bombs, leak detection | Nightly and weekly, hardware | none |
+| L6 | Performance: micro and full-frame benches with regression gating | Nightly, quiet runners | none — there is no benchmark in the tree |
+| L7 | Fuzz: path data, scene descriptions, dma-buf negotiation | Continuous background | none |
+
+### VKMS would give the DRM path merge-blocking coverage
+
+**Not set up.** Nothing in this section runs; it records why the lane is worth
+building. `cargo xtask drm` reports whether a given machine could host it.
 
 VKMS provides CI with a real KMS device — atomic modesetting, vblank
 simulation, writeback connectors, and CRTC CRC — with no display hardware.
