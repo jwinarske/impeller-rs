@@ -211,6 +211,20 @@ impl Item {
         self.transform = transform;
         self
     }
+
+    /// Whether the public API will draw this item from a distance field rather
+    /// than from triangles.
+    ///
+    /// Mirrors the condition `Canvas::draw_rrect` applies. Stated here because
+    /// the tolerance is derived from what a scene does, and what this one does
+    /// depends on which path the call takes -- so a scene that says "rounded
+    /// rectangle, filled, antialiased" is saying "coverage from a distance
+    /// field", whether or not it knows the name for it.
+    fn is_analytic(&self) -> bool {
+        matches!(self.shape, crate::shape::Shape::RoundedRect { radius, .. } if radius > 0.0)
+            && self.stroke.is_none()
+            && matches!(self.fill, Fill::Solid(_))
+    }
 }
 
 /// How a group is composited back onto what is underneath it.
@@ -453,6 +467,19 @@ impl Scene {
         // A layer is composited back with a blend and an alpha, which is the
         // same per-fragment arithmetic a translucent draw does, so a scene that
         // groups anything is computed whatever its items are.
+        // A distance field first, because what it permits is smaller than the
+        // multisample budget and needs no count: the derivative that sets the
+        // edge width is implementation-defined, so coverage differs by a unit
+        // or two along the whole edge rather than by a sample's worth at a few
+        // pixels.
+        //
+        // Conditional on multisampling too, since that is what makes the
+        // executor ask for antialiasing and the call take that path. Without
+        // it this would loosen the aliased rounded-rectangle scene, which is
+        // drawn from triangles and should still compare exactly.
+        if self.samples > 1 && self.items().any(Item::is_analytic) {
+            return crate::image::Tolerance::ANALYTIC;
+        }
         // Multisampling first, because it permits something the others do not:
         // a whole sample's worth of difference at an edge, on a few pixels. The
         // rest permit a unit everywhere and nothing more.
@@ -1111,6 +1138,21 @@ pub fn corpus() -> Vec<Scene> {
                 ),
             ],
         ),
+        // Multisampled, so the executor asks for antialiasing and the public
+        // call takes its analytic path -- which the corpus would otherwise
+        // never reach, since every other scene here hands over a path.
+        Scene::new(
+            "rounded-rect-analytic",
+            vec![Item::fill(
+                Shape::RoundedRect {
+                    min: [24.0, 24.0],
+                    max: [104.0, 88.0],
+                    radius: 22.0,
+                },
+                GREEN,
+            )],
+        )
+        .with_samples(4),
         Scene::new(
             "rounded-rect-stroked",
             vec![Item::stroke(
@@ -1372,5 +1414,44 @@ mod tests {
         };
         let p = t.to_affine().transform_point2(Vec2::new(1.0, 1.0));
         assert!((p - Vec2::new(12.0, 7.0)).length() < 1e-5);
+    }
+}
+
+#[cfg(test)]
+mod tolerance_tests {
+    use super::*;
+    use crate::image::Tolerance;
+
+    fn rounded(radius: f32) -> Shape {
+        Shape::RoundedRect {
+            min: [10.0, 10.0],
+            max: [90.0, 70.0],
+            radius,
+        }
+    }
+
+    #[test]
+    fn only_a_scene_that_will_be_drawn_analytically_gets_that_budget() {
+        // The budget is for coverage computed from a screen-space derivative,
+        // and a scene drawn from triangles must not receive it just for
+        // containing the same shape. Aliased, the call tessellates.
+        let aliased = Scene::new("aliased", vec![Item::fill(rounded(12.0), WHITE)]);
+        assert_eq!(aliased.tolerance(), Tolerance::EXACT);
+
+        let antialiased =
+            Scene::new("antialiased", vec![Item::fill(rounded(12.0), WHITE)]).with_samples(4);
+        assert_eq!(antialiased.tolerance(), Tolerance::ANALYTIC);
+
+        // A stroke is a different shape and is tessellated either way.
+        let stroked = Scene::new(
+            "stroked",
+            vec![Item::stroke(rounded(12.0), StrokeSpec::new(4.0), WHITE)],
+        )
+        .with_samples(4);
+        assert_eq!(stroked.tolerance(), Tolerance::MULTISAMPLED);
+
+        // A radius of zero is a plain rectangle, with no distance field.
+        let square = Scene::new("square", vec![Item::fill(rounded(0.0), WHITE)]).with_samples(4);
+        assert_eq!(square.tolerance(), Tolerance::MULTISAMPLED);
     }
 }

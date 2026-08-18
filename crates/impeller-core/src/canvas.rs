@@ -871,8 +871,83 @@ impl Canvas {
         if rect.is_empty() {
             return Ok(self);
         }
+        if let Some(material) = self.analytic_rrect(rect, radius, paint) {
+            return self.draw_analytic(rect, radius, material, paint);
+        }
         let path = rect.to_rounded_path(radius);
         self.draw_path(&path, paint)
+    }
+
+    /// A paint for the fragment-evaluated rounded rectangle, where one applies.
+    ///
+    /// Only a solid fill that asked for antialiasing. A stroke is a different
+    /// shape, a gradient or an image would need both its own mapping and this
+    /// one at once — which is the case the push-constant budget was sized
+    /// against — and an aliased fill is asking for hard edges, which the
+    /// tessellated path gives and this one deliberately does not.
+    fn analytic_rrect(&self, rect: Rect, radius: f32, paint: &Paint) -> Option<Material> {
+        if !paint.anti_alias || !matches!(paint.style, Style::Fill) {
+            return None;
+        }
+        let Shader::Solid(color) = &paint.shader else {
+            return None;
+        };
+        if radius.is_nan() || radius <= 0.0 {
+            return None;
+        }
+        let to_clip = self.target.projection() * self.transform;
+        let center = Vec2::new(
+            (rect.left + rect.right) / 2.0,
+            (rect.top + rect.bottom) / 2.0,
+        );
+        let center_clip = to_clip.transform_point2(center);
+        Some(Material::RoundedRect {
+            color: color.to_array(),
+            center: [center_clip.x, center_clip.y],
+            half_size: [rect.width() / 2.0, rect.height() / 2.0],
+            // Maps a clip-space offset from the centre back into the shape's
+            // own space, so the distance is measured where the radius means
+            // what the caller said. Measuring in clip space would round the
+            // corners by different amounts on each axis of a target that is
+            // not square.
+            to_local: invert_or_identity(to_clip.matrix2),
+            radius: radius.min(rect.width() / 2.0).min(rect.height() / 2.0),
+        })
+    }
+
+    /// Draw the quad a fragment-evaluated shape is painted onto.
+    ///
+    /// Outset by a pixel, because the coverage ramp runs half a pixel either
+    /// side of the edge: a quad ending exactly at the shape would clip the
+    /// outer half of its own antialiasing and leave a hard edge on a shape
+    /// drawn to be soft. Outsetting costs a ring of fragments that compute a
+    /// coverage of zero.
+    fn draw_analytic(
+        &mut self,
+        rect: Rect,
+        _radius: f32,
+        material: Material,
+        paint: &Paint,
+    ) -> Result<&mut Self> {
+        let outset = Rect::new(
+            rect.left - 1.0,
+            rect.top - 1.0,
+            rect.right + 1.0,
+            rect.bottom + 1.0,
+        );
+        let render_paint = RenderPaint {
+            material,
+            blend: paint.blend,
+            clip: self.clip,
+            stencil: ClipState::content(self.depth),
+        };
+        self.renderer.fill_into(
+            &mut self.batch,
+            &outset.to_path(),
+            self.transform,
+            &render_paint,
+        )?;
+        Ok(self)
     }
 
     pub fn draw_circle(&mut self, center: Vec2, radius: f32, paint: &Paint) -> Result<&mut Self> {

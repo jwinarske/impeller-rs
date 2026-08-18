@@ -528,6 +528,180 @@ fn a_rounded_rectangle_cuts_its_corners_and_keeps_its_edges() {
 }
 
 #[test]
+fn an_antialiased_rounded_rectangle_is_two_triangles() {
+    // The point of evaluating the shape per fragment: the vertex cost stops
+    // depending on how round it is. Tessellated, a corner is an arc flattened
+    // to a tolerance; here it is arithmetic in the fragment stage, and the
+    // geometry is the quad it runs over.
+    let region = Rect::new(16.0, 32.0, 112.0, 96.0);
+    let vertices = |paint: &Paint| {
+        let mut canvas = Canvas::new(SIZE);
+        canvas.draw_rrect(region, 16.0, paint).expect("rrect");
+        canvas
+            .finish()
+            .passes
+            .iter()
+            .map(|pass| pass.batch.vertices().len())
+            .sum::<usize>()
+    };
+
+    let analytic = vertices(&Paint::fill(Color::WHITE));
+    assert_eq!(analytic, 4, "an antialiased fill should be one quad");
+    // The tessellated path is still there and still used, so this is a
+    // comparison rather than a claim about what was replaced.
+    let tessellated = vertices(&Paint::fill(Color::WHITE).with_anti_alias(false));
+    assert!(
+        tessellated > analytic * 4,
+        "the tessellated path should cost many more vertices, got {tessellated}"
+    );
+}
+
+#[test]
+fn only_an_antialiased_solid_fill_takes_the_analytic_path() {
+    // Everything else falls back to tessellation, and should: a stroke is a
+    // different shape, a gradient or an image would need its own mapping and
+    // this one at once -- which is the case the push-constant budget was sized
+    // against -- and an aliased fill is asking for the hard edges the
+    // tessellated path gives.
+    let region = Rect::new(16.0, 32.0, 112.0, 96.0);
+    let vertices = |paint: &Paint, radius: f32| {
+        let mut canvas = Canvas::new(SIZE);
+        canvas.draw_rrect(region, radius, paint).expect("rrect");
+        canvas
+            .finish()
+            .passes
+            .iter()
+            .map(|pass| pass.batch.vertices().len())
+            .sum::<usize>()
+    };
+
+    assert_eq!(
+        vertices(&Paint::fill(Color::WHITE), 16.0),
+        4,
+        "the fast path"
+    );
+    // A radius of zero is not in the list below because it is a plain
+    // rectangle either way, so a vertex count cannot tell which path drew it.
+    // That it stays a plain rectangle is checked where the clamping is.
+    for (name, paint, radius) in [
+        (
+            "aliased",
+            Paint::fill(Color::WHITE).with_anti_alias(false),
+            16.0,
+        ),
+        ("stroked", Paint::stroke(Color::WHITE, 4.0), 16.0),
+        (
+            "gradient",
+            Paint::linear_gradient(
+                Vec2::ZERO,
+                Vec2::new(64.0, 0.0),
+                vec![
+                    GradientStop::new(Color::WHITE, 0.0),
+                    GradientStop::new(Color::BLACK, 1.0),
+                ],
+            ),
+            16.0,
+        ),
+    ] {
+        assert!(
+            vertices(&paint, radius) > 4,
+            "{name} should have fallen back to tessellation"
+        );
+    }
+}
+
+#[test]
+fn the_analytic_shape_matches_the_tessellated_one() {
+    let Some(mut ctx) = context() else { return };
+    // Two quite different ways of deciding which pixels the shape covers, held
+    // against each other. Per pixel they differ at the edge -- four samples can
+    // only say nothing, a quarter, a half, three quarters or all, where a
+    // distance says anything in between -- so the comparison is of total
+    // coverage, which is the same question both are answering.
+    //
+    // Under anisotropic scale as well, since that is where measuring the
+    // distance in the wrong space would round the corners by different amounts
+    // on each axis and still look plausible.
+    let extent = Extent2D::new(160, 120);
+    let region = Rect::new(40.0, 30.0, 120.0, 90.0);
+    let mut coverage = |analytic: bool, sx: f32, sy: f32| {
+        let mut canvas = Canvas::new(extent).with_samples(4);
+        canvas.clear(Color::BLACK);
+        canvas.save();
+        canvas.translate(80.0, 60.0);
+        canvas.scale(sx, sy);
+        canvas.translate(-80.0, -60.0);
+        if analytic {
+            canvas
+                .draw_rrect(region, 20.0, &Paint::fill(Color::WHITE))
+                .expect("rrect");
+        } else {
+            canvas
+                .draw_path(&region.to_rounded_path(20.0), &Paint::fill(Color::WHITE))
+                .expect("path");
+        }
+        canvas.restore();
+        let mut surface = ctx
+            .create_surface(extent, PixelFormat::Rgba8Unorm)
+            .expect("surface");
+        ctx.draw(&mut surface, &canvas.finish()).expect("draw");
+        let pixels = ctx.read(&mut surface).expect("read");
+        ctx.destroy_surface(surface);
+        pixels
+            .chunks_exact(4)
+            .map(|texel| texel[0] as u64)
+            .sum::<u64>()
+    };
+
+    for (sx, sy) in [(1.0, 1.0), (1.4, 0.8), (0.6, 1.3)] {
+        let analytic = coverage(true, sx, sy) as f64;
+        let tessellated = coverage(false, sx, sy) as f64;
+        let error = (analytic - tessellated).abs() / tessellated;
+        assert!(
+            error < 0.01,
+            "at scale ({sx}, {sy}) the two paths cover different areas: \
+             {analytic} against {tessellated}, {:.2}% apart",
+            error * 100.0
+        );
+    }
+}
+
+#[test]
+fn the_analytic_shape_antialiases_without_multisampling() {
+    let Some(mut ctx) = context() else { return };
+    // What the distance field buys beyond the vertex count. A tessellated
+    // shape at one sample has hard edges; this one does not, because coverage
+    // is a number the fragment stage computes rather than a count of samples.
+    let mut canvas = Canvas::new(SIZE);
+    canvas.clear(Color::BLACK);
+    canvas
+        .draw_rrect(
+            Rect::new(16.0, 32.0, 112.0, 96.0),
+            16.0,
+            &Paint::fill(Color::WHITE),
+        )
+        .expect("rrect");
+    let recording = canvas.finish();
+    // One sample: nothing here asked for multisampling, and the analytic path
+    // does not turn it on.
+    assert_eq!(
+        recording.root().descriptor.samples,
+        1,
+        "the analytic path should not need a multisampled pass"
+    );
+
+    let pixels = render_recording(&mut ctx, &recording);
+    let partial = pixels
+        .chunks_exact(4)
+        .filter(|texel| texel[0] > 8 && texel[0] < 247)
+        .count();
+    assert!(
+        partial > 40,
+        "an analytic edge should have partly covered pixels, found {partial}"
+    );
+}
+
+#[test]
 fn a_radius_larger_than_the_rectangle_is_clamped() {
     let Some(mut ctx) = context() else { return };
     // Past half the shorter side the corner arcs would overlap and the outline

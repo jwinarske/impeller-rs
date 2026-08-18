@@ -145,6 +145,51 @@ fn sample_image(clip: vec2<f32>) -> vec4<f32> {
     return texel * paint.geometry.z;
 }
 
+/// Signed distance from a rounded rectangle, negative inside.
+///
+/// The standard formulation: fold into one quadrant by symmetry, measure to
+/// the inset box, and subtract the radius. `max(q, 0)` is the distance outside
+/// along each axis and `min(max(q.x, q.y), 0)` the distance inside along the
+/// nearer one, so the two cases share an expression rather than a branch.
+fn rounded_rect_distance(point: vec2<f32>, half_size: vec2<f32>, radius: f32) -> f32 {
+    let q = abs(point) - half_size + vec2<f32>(radius);
+    return min(max(q.x, q.y), 0.0) + length(max(q, vec2<f32>(0.0))) - radius;
+}
+
+/// A rounded rectangle evaluated here rather than built out of triangles.
+///
+/// Two triangles cover it whatever the radius, where tessellating costs
+/// vertices in proportion to how round it is. The edge antialiases from the
+/// distance the shape already computes, which is a better edge than
+/// multisampling gives and costs one sample rather than four.
+fn rounded_rect_coverage(clip: vec2<f32>) -> vec4<f32> {
+    let point = to_gradient_space(clip);
+    let half_size = paint.geometry.zw;
+    let radius = clamp(paint.params.z, 0.0, min(half_size.x, half_size.y));
+    let distance = rounded_rect_distance(point, half_size, radius);
+
+    // How much the distance changes across one pixel, which is what turns a
+    // distance into a coverage. Taken from the derivative rather than passed
+    // in, so it stays right under a transform the paint never sees -- a shape
+    // scaled up antialiases over the same pixel, not the same unit.
+    //
+    // The gradient's magnitude, not `fwidth`. `fwidth` sums the two partial
+    // derivatives, which is their L1 norm and over-estimates the true rate by
+    // up to the square root of two -- and by much more under a transform that
+    // scales the axes differently, where it adds a large derivative to a small
+    // one. The result is an edge softer than a pixel, which reads as a blurry
+    // shape rather than an antialiased one.
+    let gradient = vec2<f32>(dpdx(distance), dpdy(distance));
+    let width = length(gradient);
+    // Half a pixel each way. A pixel whose centre sits on the edge is half
+    // covered, which is what the linear ramp says at distance zero.
+    let coverage = clamp(0.5 - distance / max(width, 1e-6), 0.0, 1.0);
+
+    let tint = paint.stops[0];
+    let alpha = tint.a * coverage;
+    return vec4<f32>(tint.rgb * alpha, alpha);
+}
+
 /// One axis of a separable Gaussian blur of the bound texture.
 ///
 /// Two passes of this give the same result as a square of taps, because a
@@ -241,6 +286,9 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     // already and the conversion below would apply alpha a second time.
     if (kind > 3.5 && kind < 4.5) {
         return sample_image(in.clip);
+    }
+    if (kind > 6.5) {
+        return rounded_rect_coverage(in.clip);
     }
     if (kind > 5.5) {
         // Already premultiplied, like anything else sampled from a target, and

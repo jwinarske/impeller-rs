@@ -84,6 +84,25 @@ impl Tolerance {
     /// -- a shape in the wrong place, a color computed differently, a missing
     /// draw -- moves far more of the image than that, so this stays able to
     /// tell a rasterization tie from a divergence.
+    /// A few units everywhere, no outliers.
+    ///
+    /// For coverage computed from a distance field, where the width of the
+    /// edge comes from a screen-space derivative. Both specifications leave
+    /// those to the implementation -- they may be evaluated once per
+    /// two-by-two quad, or by differencing neighbours, and the choice is not
+    /// observable except through exactly this. A derivative differing by a
+    /// percent moves coverage by a couple of units along the whole edge, which
+    /// is small everywhere rather than large somewhere.
+    ///
+    /// Bounded by magnitude rather than by count, which is the opposite of the
+    /// multisample budget and matches the opposite failure: a shape in the
+    /// wrong place or the wrong size moves edge pixels by far more than four,
+    /// so this stays able to tell arithmetic from a defect.
+    pub const ANALYTIC: Self = Self {
+        per_channel: 4,
+        outlier_fraction: 0.0,
+    };
+
     pub const MULTISAMPLED: Self = Self {
         per_channel: 1,
         outlier_fraction: 0.001,

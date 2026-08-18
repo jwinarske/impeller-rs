@@ -15,6 +15,7 @@
 
 use crate::image::Image;
 use crate::scene::{Fill, Item, Node, Scene};
+use crate::shape::Shape;
 use impeller_core::{
     Canvas, Color, GradientStop, Layer, Paint, Recording, Rect, Shader, Style, Vec2,
 };
@@ -97,7 +98,24 @@ fn record_node(canvas: &mut Canvas, node: &Node, anti_alias: bool) -> Result<()>
             if let Some(shape) = &item.clip_shape {
                 canvas.clip_path(&shape.to_path())?;
             }
-            canvas.draw_path(&item.shape.to_path(), &paint_for(item, anti_alias))?;
+            let paint = paint_for(item, anti_alias);
+            // A rounded rectangle goes through the call the public API offers
+            // for it rather than through its path, so the corpus exercises
+            // whichever way that call decides to draw it. Sending the path
+            // instead would pin the corpus to the tessellated one and leave the
+            // choice untested by everything the corpus drives.
+            match &item.shape {
+                Shape::RoundedRect { min, max, radius } => {
+                    canvas.draw_rrect(
+                        Rect::new(min[0], min[1], max[0], max[1]),
+                        *radius,
+                        &paint,
+                    )?;
+                }
+                shape => {
+                    canvas.draw_path(&shape.to_path(), &paint)?;
+                }
+            }
             canvas.restore();
         }
         Node::Layer {

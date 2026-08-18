@@ -61,6 +61,7 @@ pub mod kind {
     pub const IMAGE: f32 = 4.0;
     pub const GLYPH: f32 = 5.0;
     pub const BLUR: f32 = 6.0;
+    pub const ROUNDED_RECT: f32 = 7.0;
 }
 
 /// Tile mode selector shared with the shader.
@@ -163,6 +164,30 @@ pub enum Material {
         alpha: f32,
         tile: TileMode,
     },
+    /// A rounded rectangle evaluated per fragment rather than tessellated.
+    ///
+    /// The shape an interface is mostly made of, and the one where computing
+    /// coverage beats building triangles for it. A tessellated rounded
+    /// rectangle costs vertices proportional to how round it is and has hard
+    /// edges unless the whole pass is multisampled; this is two triangles
+    /// whatever the radius, and antialiases itself from the distance field it
+    /// already computes.
+    ///
+    /// The geometry is in the shape's own space, with `to_local` mapping a
+    /// clip-space position into it -- the same pairing the gradients use, and
+    /// for the same reason: clip space is anisotropic on a target that is not
+    /// square, and a distance measured there would round the corners by
+    /// different amounts on each axis.
+    RoundedRect {
+        color: [f32; 4],
+        /// Where the fragment stage locates the shape, in clip space.
+        center: [f32; 2],
+        /// Half the width and height, in the shape's own space.
+        half_size: [f32; 2],
+        to_local: ToLocal,
+        /// Corner radius, in the shape's own space.
+        radius: f32,
+    },
     /// One axis of a separable Gaussian blur of a sampled texture.
     ///
     /// Separable because a two-dimensional Gaussian is the product of two
@@ -240,6 +265,9 @@ impl Material {
             // A blur of nothing is nothing, but the pass still has to run: what
             // it samples is not knowable from here.
             Self::Blur { .. } => false,
+            Self::RoundedRect {
+                color, half_size, ..
+            } => color[3] <= 0.0 || half_size[0] <= 0.0 || half_size[1] <= 0.0,
             Self::Glyph { color, .. } => color[3] <= 0.0,
         }
     }
@@ -258,14 +286,19 @@ impl Material {
             Self::Solid(_)
             | Self::LinearGradient { .. }
             | Self::RadialGradient { .. }
-            | Self::SweepGradient { .. } => None,
+            | Self::SweepGradient { .. }
+            | Self::RoundedRect { .. } => None,
         }
     }
 
     /// The stops, for any material that has them.
     fn stops(&self) -> &[Stop] {
         match self {
-            Self::Solid(_) | Self::Image { .. } | Self::Glyph { .. } | Self::Blur { .. } => &[],
+            Self::Solid(_)
+            | Self::Image { .. }
+            | Self::Glyph { .. }
+            | Self::Blur { .. }
+            | Self::RoundedRect { .. } => &[],
             Self::LinearGradient { stops, .. }
             | Self::RadialGradient { stops, .. }
             | Self::SweepGradient { stops, .. } => stops,
@@ -298,6 +331,26 @@ impl Material {
 
         // An image carries no stops and no count, and must be packed before
         // the gradient path below decides it has too few to interpolate.
+        if let Self::RoundedRect {
+            color,
+            center,
+            half_size,
+            to_local,
+            radius,
+        } = self
+        {
+            out[layout::STOPS..layout::STOPS + 4].copy_from_slice(color);
+            out[layout::GEOMETRY] = center[0];
+            out[layout::GEOMETRY + 1] = center[1];
+            out[layout::GEOMETRY + 2] = half_size[0];
+            out[layout::GEOMETRY + 3] = half_size[1];
+            out[layout::TO_LOCAL..layout::TO_LOCAL + 4].copy_from_slice(to_local);
+            out[layout::PARAMS] = 1.0;
+            out[layout::PARAMS + 1] = kind::ROUNDED_RECT;
+            out[layout::PARAMS + 2] = *radius;
+            return out;
+        }
+
         if let Self::Blur {
             origin,
             to_local,
@@ -356,7 +409,11 @@ impl Material {
         }
 
         match self {
-            Self::Solid(_) | Self::Image { .. } | Self::Glyph { .. } | Self::Blur { .. } => {
+            Self::Solid(_)
+            | Self::Image { .. }
+            | Self::Glyph { .. }
+            | Self::Blur { .. }
+            | Self::RoundedRect { .. } => {
                 unreachable!("handled above")
             }
             Self::LinearGradient {

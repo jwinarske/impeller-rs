@@ -1199,6 +1199,16 @@ permitted some error and compilers may fuse operations differently. Deriving it
 means a new scene inherits the right rule instead of acquiring a hand-set
 number, and a genuine divergence cannot be waved through by loosening one entry.
 
+Coverage computed from a distance field gets a third, bounded the opposite way:
+a few units everywhere and no outliers. The width of such an edge comes from a
+screen-space derivative, which both specifications leave to the implementation —
+it may be evaluated once per two-by-two quad or by differencing neighbours —
+so two devices differ by a unit or two along the whole edge rather than by a
+sample's worth at a few pixels. Bounding it by magnitude keeps it able to tell
+that from a defect, since a shape in the wrong place moves edge pixels by far
+more. The two backends on one device agree exactly, which is what says this is
+device arithmetic rather than logic.
+
 Multisampling gets a budget of a different shape, still derived. Neither
 specification says which samples an edge covers when it passes near a sample
 point, so two rasterizers may include a different one — and the resolve then
