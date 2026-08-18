@@ -163,7 +163,15 @@ fn parse(text: &str, broke: bool) -> Outcome {
             }
         }
         if let Some(rest) = line.trim().strip_prefix("thread '") {
-            if let Some((thread, location)) = rest.split_once("' panicked at ") {
+            // `thread 'name' panicked at ...` through Rust 1.88, and
+            // `thread 'name' (11615) panicked at ...` by 1.97. Splitting on the
+            // closing quote and then on the words handles both; matching the
+            // older form alone found nothing on the newer toolchain, and found
+            // it silently, since a failure with no message looks the same as a
+            // failure that printed none.
+            if let Some((thread, rest)) = rest.split_once('\'') {
+                let location = rest.split_once(" panicked at ").map(|(_, at)| at);
+                let Some(location) = location else { continue };
                 if !panics.iter().any(|(name, _)| name == thread) {
                     let mut detail = vec![format!("at {location}")];
                     // The message sits under the location, one line or
@@ -171,7 +179,16 @@ fn parse(text: &str, broke: bool) -> Outcome {
                     // RUST_BACKTRACE begins.
                     for next in lines.iter().skip(i + 1) {
                         let next = next.trim();
-                        if next.is_empty() || next.starts_with("note: ") {
+                        // The message ends at a blank line, at the harness's
+                        // note about RUST_BACKTRACE, or at the next line the
+                        // harness itself wrote. Relying on the note alone means
+                        // relying on a line the harness prints for its own
+                        // reasons and could stop printing.
+                        if next.is_empty()
+                            || next.starts_with("note: ")
+                            || next.starts_with("test ")
+                            || next.starts_with("failures:")
+                        {
                             break;
                         }
                         detail.push(next.to_string());
@@ -287,7 +304,7 @@ mod tests {
     const OUTPUT: &str = "\
 running 3 tests
 skipping: no card node on this machine
-thread 'the_broken_one' panicked at crates/x/tests/y.rs:12:5:
+thread 'the_broken_one' (11615) panicked at crates/x/tests/y.rs:12:5:
 all 2 acquisitions returned the same image,
 so nothing is double buffered
 note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
@@ -317,6 +334,27 @@ test result: FAILED. 1 passed; 1 failed; 0 ignored; 0 measured; 1 filtered out;
             ],
             "the location and the whole message, stopping before the note"
         );
+    }
+
+    #[test]
+    fn the_panic_header_is_read_with_or_without_a_thread_id() {
+        // Rust 1.88 writes the first form and 1.97 the second. This repository
+        // is built on both -- the workstation on one, CI on the other -- and
+        // reading only one of them fails by finding nothing, which is
+        // indistinguishable from a failure that printed no message.
+        for header in [
+            "thread 'the_broken_one' panicked at src/x.rs:1:1:",
+            "thread 'the_broken_one' (11615) panicked at src/x.rs:1:1:",
+        ] {
+            let text = format!("{header}\nthe message\ntest the_broken_one ... FAILED\n");
+            let outcome = parse(&text, true);
+            assert_eq!(outcome.failures.len(), 1, "{header}");
+            assert_eq!(
+                outcome.failures[0].detail,
+                vec!["at src/x.rs:1:1:".to_string(), "the message".to_string()],
+                "{header}"
+            );
+        }
     }
 
     #[test]

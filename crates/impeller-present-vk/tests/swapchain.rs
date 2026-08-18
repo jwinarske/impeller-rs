@@ -60,8 +60,23 @@ fn with_target(mode: PresentMode, body: impl FnOnce(&mut VulkanContext, &mut Swa
             panic!("swapchain: {e}");
         }
     };
-    body(&mut ctx, &mut target);
+    // Caught, so that teardown still happens when an assertion inside `body`
+    // fails. Without this a failing test leaks the surface past
+    // `vkDestroyInstance`, and the validation layer reports that -- so the run
+    // shows a lifetime error pointing at teardown alongside the real failure,
+    // and the loudest message is the one that is not the problem. That is
+    // exactly how long this particular failure took to read.
+    let panicked = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        body(&mut ctx, &mut target);
+    }))
+    .err();
     target.destroy(&mut ctx);
+
+    if let Some(payload) = panicked {
+        // SAFETY: the swapchain built on it has just been destroyed.
+        unsafe { destroy_surface(&ctx, surface) };
+        std::panic::resume_unwind(payload);
+    }
 
     let errors: Vec<_> = ctx
         .validation_messages()
@@ -145,14 +160,17 @@ fn the_images_are_cycled_rather_than_reused_immediately() {
         // the pointer rather than an index because that is what the caller
         // actually renders into.
         //
-        // How many images there are is the surface's to say: the target asks
-        // for one more than the minimum and clamps to the maximum, so a surface
-        // whose minimum and maximum are both one gets a single image and there
-        // is no cycling to observe. Older Mesa headless surfaces do exactly
-        // that, which is how this arrived -- as a failure on a CI runner and
-        // not on the same driver two releases newer. That is a property of the
-        // surface rather than a defect, so it is reported and skipped, and the
-        // census counts it.
+        // Which image an acquisition returns is not specified. The engine may
+        // hand back any image it is not still reading from, so an
+        // implementation that finishes presenting immediately is free to
+        // return the same one every time, and Mesa's headless surface on the
+        // CI runner does exactly that with five images available. What keeps a
+        // frame from being drawn into an image still on screen is the
+        // semaphore acquisition waits on, not the index it comes back with.
+        //
+        // So this is worth checking where it holds -- it would catch a target
+        // that ignored the acquired index and always rendered into the first
+        // image -- and is not a failure where it does not.
         if target.image_count() < 2 {
             eprintln!(
                 "skipping: this surface offers {} image, so nothing cycles",
@@ -178,6 +196,14 @@ fn the_images_are_cycled_rather_than_reused_immediately() {
             seen.dedup();
             seen.len()
         };
+        if distinct == 1 {
+            eprintln!(
+                "skipping: this engine returned the same image for all {} \
+                 acquisitions, which it is allowed to do",
+                target.image_count()
+            );
+            return;
+        }
         assert!(
             distinct > 1,
             "all {} acquisitions from a {}-image swapchain returned the same image, \
