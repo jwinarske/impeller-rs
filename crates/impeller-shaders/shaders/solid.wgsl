@@ -96,6 +96,30 @@ fn sample_stops(t: f32, count: i32) -> vec4<f32> {
     return result;
 }
 
+/// Fold a gradient parameter into the ramp according to a tile mode.
+///
+/// Returns the parameter to sample with in `x`, and in `y` whether the sample
+/// counts at all: decal draws nothing outside the ramp, and carrying that as a
+/// multiplier keeps a second branch out of every caller.
+///
+/// The same three codes an image tiles by, because a caller sets both with one
+/// `TileMode` and two meanings for one word would be worse than either.
+fn tile_gradient(t: f32, tile: f32) -> vec2<f32> {
+    if (tile > 0.5 && tile < 1.5) {
+        // Repeat. `t - floor(t)` rather than `fract`, which is the same thing
+        // for a finite input and says plainly what happens to a negative one:
+        // -0.25 lands at 0.75 and the ramp runs on backwards without a seam.
+        return vec2<f32>(t - floor(t), 1.0);
+    }
+    if (tile > 1.5) {
+        // Decal. Tested against the parameter as given, since the clamped one
+        // is inside by construction.
+        let inside = select(0.0, 1.0, t >= 0.0 && t <= 1.0);
+        return vec2<f32>(clamp(t, 0.0, 1.0), inside);
+    }
+    return vec2<f32>(clamp(t, 0.0, 1.0), 1.0);
+}
+
 /// Map a clip-space position into the gradient's own space.
 fn to_gradient_space(clip: vec2<f32>) -> vec2<f32> {
     let delta = clip - paint.geometry.xy;
@@ -343,16 +367,17 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         // there weights the two axes by the target's shape and runs a diagonal
         // gradient in the wrong direction on anything that is not square.
         //
-        // Clamped so the ends extend rather than repeat; tile modes arrive with
-        // the paint.
+        // The parameter is taken unclamped and folded afterwards, because what
+        // happens past either end is the paint's to say.
         let axis = paint.geometry.zw;
         let length_squared = max(dot(axis, axis), 1e-6);
-        let t = clamp(dot(to_gradient_space(in.clip), axis) / length_squared, 0.0, 1.0);
-        color = sample_stops(t, count);
+        let t = dot(to_gradient_space(in.clip), axis) / length_squared;
+        let tiled = tile_gradient(t, paint.params.z);
+        color = sample_stops(tiled.x, count) * tiled.y;
     } else if (kind > 1.5 && kind < 2.5) {
         // Radial: distance in gradient space, where the radius is one.
-        let t = clamp(length(to_gradient_space(in.clip)), 0.0, 1.0);
-        color = sample_stops(t, count);
+        let tiled = tile_gradient(length(to_gradient_space(in.clip)), paint.params.z);
+        color = sample_stops(tiled.x, count) * tiled.y;
     } else if (kind > 2.5 && kind < 3.5) {
         // Sweep: angle about the center, measured in gradient space so an
         // anisotropic target does not bunch the stops on two sides.
@@ -360,11 +385,22 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         let angle = atan2(local.y, local.x);
         let start_angle = paint.geometry.z;
         let sweep = max(paint.geometry.w - start_angle, 1e-6);
-        // Wrapped into a single turn so a sweep starting at any angle runs
-        // forward from there rather than clipping at the atan2 discontinuity.
-        var turns = (angle - start_angle) / sweep;
-        turns = turns - floor(turns);
-        color = sample_stops(clamp(turns, 0.0, 1.0), count);
+        // The angle is brought into one turn ahead of the start, which removes
+        // the atan2 branch cut: that discontinuity is a property of how the
+        // angle was computed and not of the gradient, so a sweep beginning at
+        // any angle runs forward from there without a seam.
+        //
+        // Dividing by a full turn rather than by the sweep is the distinction
+        // that makes a tile mode possible at all. Folding by the sweep would
+        // send every direction back inside the arc, which *is* repeating, and
+        // would leave clamp and decal with nothing outside to act on. Past the
+        // end of a partial sweep the parameter now exceeds one, and what
+        // happens there is the paint's to say.
+        let delta = angle - start_angle;
+        let turn = 6.28318530717958647692;
+        let ahead = delta - turn * floor(delta / turn);
+        let tiled = tile_gradient(ahead / sweep, paint.params.z);
+        color = sample_stops(tiled.x, count) * tiled.y;
     }
     // Checked after the gradient chain rather than inside it, because the
     // sweep arm tests only a lower bound and would otherwise claim this kind

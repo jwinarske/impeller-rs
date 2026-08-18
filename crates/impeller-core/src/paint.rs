@@ -33,6 +33,14 @@ pub enum Shader {
         start: Vec2,
         end: Vec2,
         stops: Vec<GradientStop>,
+        /// What fills the shape beyond the two endpoints.
+        ///
+        /// A gradient is defined by two points and a shape is rarely exactly
+        /// that long, so this is not an edge case: clamping holds the end
+        /// colors, repeating tiles the ramp, and decal leaves the outside
+        /// empty. Set with [`Paint::with_tile_mode`], the same call an image
+        /// uses.
+        tile: TileMode,
     },
     /// A gradient outward from a center **in user space**, reaching its last
     /// stop at `radius`.
@@ -40,6 +48,8 @@ pub enum Shader {
         center: Vec2,
         radius: f32,
         stops: Vec<GradientStop>,
+        /// What fills the shape beyond `radius`. See [`Shader::LinearGradient`].
+        tile: TileMode,
     },
     /// A gradient around a center **in user space**, running between two angles
     /// in radians, measured counter-clockwise from the positive X axis.
@@ -67,6 +77,11 @@ pub enum Shader {
         start_angle: f32,
         end_angle: f32,
         stops: Vec<GradientStop>,
+        /// What fills the directions the arc does not cover.
+        ///
+        /// A sweep of a full turn covers every direction and this changes
+        /// nothing; it is a partial sweep that has an outside.
+        tile: TileMode,
     },
 }
 
@@ -135,7 +150,12 @@ impl Paint {
     /// A fill that runs between colors along a line in user space.
     pub fn linear_gradient(start: Vec2, end: Vec2, stops: Vec<GradientStop>) -> Self {
         Self {
-            shader: Shader::LinearGradient { start, end, stops },
+            shader: Shader::LinearGradient {
+                start,
+                end,
+                stops,
+                tile: TileMode::default(),
+            },
             ..Default::default()
         }
     }
@@ -147,6 +167,7 @@ impl Paint {
                 center,
                 radius,
                 stops,
+                tile: TileMode::default(),
             },
             ..Default::default()
         }
@@ -167,6 +188,7 @@ impl Paint {
                 start_angle,
                 end_angle,
                 stops,
+                tile: TileMode::default(),
             },
             ..Default::default()
         }
@@ -191,10 +213,19 @@ impl Paint {
         }
     }
 
-    /// What happens outside the image's own rectangle. Ignored by other paints.
+    /// What happens outside the paint's own extent.
+    ///
+    /// Means the same thing for a gradient as for an image, which is why it is
+    /// one call rather than two: past the end of the ramp, past the radius, or
+    /// outside the swept arc, the color either holds, or repeats, or stops.
+    /// Ignored by a solid paint, which has no outside.
     pub fn with_tile_mode(mut self, tile: TileMode) -> Self {
-        if let Shader::Image { tile: current, .. } = &mut self.shader {
-            *current = tile;
+        match &mut self.shader {
+            Shader::Image { tile: current, .. }
+            | Shader::LinearGradient { tile: current, .. }
+            | Shader::RadialGradient { tile: current, .. }
+            | Shader::SweepGradient { tile: current, .. } => *current = tile,
+            Shader::Solid(_) => {}
         }
         self
     }

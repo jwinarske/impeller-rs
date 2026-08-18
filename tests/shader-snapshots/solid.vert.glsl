@@ -20,10 +20,21 @@ layout(location = 1) in vec2 _p2vs_location1;
 smooth out vec2 _vs2fs_location0;
 smooth out vec2 _vs2fs_location1;
 
+vec2 tile_gradient(float t_1, float tile) {
+    if (((tile > 0.5) && (tile < 1.5))) {
+        return vec2((t_1 - floor(t_1)), 1.0);
+    }
+    if ((tile > 1.5)) {
+        float inside = (((t_1 >= 0.0) && (t_1 <= 1.0)) ? 1.0 : 0.0);
+        return vec2(clamp(t_1, 0.0, 1.0), inside);
+    }
+    return vec2(clamp(t_1, 0.0, 1.0), 1.0);
+}
+
 float coverage_of(float distance_, float per_pixel, float width) {
-    float inside = clamp((0.5 - (distance_ / per_pixel)), 0.0, 1.0);
+    float inside_1 = clamp((0.5 - (distance_ / per_pixel)), 0.0, 1.0);
     if ((width <= 0.0)) {
-        return inside;
+        return inside_1;
     }
     float outer = clamp((0.5 - ((distance_ - (width * 0.5)) / per_pixel)), 0.0, 1.0);
     float inner = clamp((0.5 - ((distance_ + (width * 0.5)) / per_pixel)), 0.0, 1.0);

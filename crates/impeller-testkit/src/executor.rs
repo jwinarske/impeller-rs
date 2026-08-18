@@ -40,30 +40,40 @@ fn stops_of(stops: &[crate::scene::Stop]) -> Vec<GradientStop> {
 fn paint_for(item: &Item, anti_alias: bool) -> Paint {
     let shader = match &item.fill {
         Fill::Solid(color) => Shader::Solid(color_of(*color)),
-        Fill::LinearGradient { start, end, stops } => Shader::LinearGradient {
+        Fill::LinearGradient {
+            start,
+            end,
+            stops,
+            tile,
+        } => Shader::LinearGradient {
             start: Vec2::from(*start),
             end: Vec2::from(*end),
             stops: stops_of(stops),
+            tile: *tile,
         },
         Fill::RadialGradient {
             center,
             radius,
             stops,
+            tile,
         } => Shader::RadialGradient {
             center: Vec2::from(*center),
             radius: *radius,
             stops: stops_of(stops),
+            tile: *tile,
         },
         Fill::SweepGradient {
             center,
             start_angle,
             end_angle,
             stops,
+            tile,
         } => Shader::SweepGradient {
             center: Vec2::from(*center),
             start_angle: *start_angle,
             end_angle: *end_angle,
             stops: stops_of(stops),
+            tile: *tile,
         },
     };
     Paint {

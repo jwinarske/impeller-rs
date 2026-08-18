@@ -73,6 +73,7 @@ impl Paint {
                 // the gradient's direction.
                 to_local: invert_or_identity(to_clip.matrix2),
                 stops,
+                tile: Default::default(),
             },
             blend: BlendMode::default(),
             clip: None,

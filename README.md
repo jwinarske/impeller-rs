@@ -12,7 +12,8 @@ through KMS with no compositor present.
 > reported as unavailable elsewhere rather than approximated. Clipping works on both
 > backends for rectangles and arbitrary paths, nests, and antialiases with the
 > shapes it confines. Images can be uploaded and drawn as a paint, with clamp,
-> repeat and decal tiling. Save layers give a subtree its own target, so group
+> repeat and decal tiling, and gradients tile the same three ways past their own
+> extent. Save layers give a subtree its own target, so group
 > opacity and layer-wide blend modes work and nest. A glyph atlas packs
 > caller-supplied single-channel coverage, evicts what a frame stops using,
 > grows when it has nothing to evict, and draws a run of any length as one

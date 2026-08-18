@@ -52,6 +52,18 @@ pub mod layout {
     pub const PARAMS: usize = 28;
 }
 
+/// The number the shader reads for a tile mode.
+///
+/// Written once rather than at each call site: an image and a gradient must
+/// agree about what `1.0` means, and two copies of a mapping eventually do not.
+fn tile_code(tile: TileMode) -> f32 {
+    match tile {
+        TileMode::Clamp => tile::CLAMP,
+        TileMode::Repeat => tile::REPEAT,
+        TileMode::Decal => tile::DECAL,
+    }
+}
+
 /// Kind selector shared with the shader.
 pub mod kind {
     pub const SOLID: f32 = 0.0;
@@ -120,6 +132,15 @@ pub enum Material {
         axis: [f32; 2],
         to_local: ToLocal,
         stops: Vec<Stop>,
+        /// What happens beyond the two endpoints.
+        ///
+        /// The parameter a gradient is sampled by runs from zero at one end to
+        /// one at the other and is defined everywhere else too, so a shape
+        /// larger than its gradient asks a question the stops do not answer.
+        /// Clamping holds the end colors, which is the usual choice; repeating
+        /// tiles the ramp, which is what a stripe pattern is; decal draws
+        /// nothing outside, the same meaning it has for an image.
+        tile: TileMode,
     },
     /// A gradient outward from a center, **in clip space**, where `to_local`
     /// carries the radius: it maps the clip-space offset so that the gradient's
@@ -128,6 +149,8 @@ pub enum Material {
         center: [f32; 2],
         to_local: ToLocal,
         stops: Vec<Stop>,
+        /// What happens beyond the radius. See [`Material::LinearGradient`].
+        tile: TileMode,
     },
     /// A gradient around a center, **in clip space**, running from `start_angle`
     /// to `end_angle` in radians.
@@ -137,6 +160,11 @@ pub enum Material {
         start_angle: f32,
         end_angle: f32,
         stops: Vec<Stop>,
+        /// What happens outside the swept arc.
+        ///
+        /// Unlike the other two this can be a no-op: a sweep covering the whole
+        /// turn has no outside, and every direction lands within it.
+        tile: TileMode,
     },
     /// A texture, sampled through a mapping from clip space.
     ///
@@ -436,11 +464,7 @@ impl Material {
             out[layout::GEOMETRY] = origin[0];
             out[layout::GEOMETRY + 1] = origin[1];
             out[layout::GEOMETRY + 2] = *alpha;
-            out[layout::GEOMETRY + 3] = match tile {
-                TileMode::Clamp => tile::CLAMP,
-                TileMode::Repeat => tile::REPEAT,
-                TileMode::Decal => tile::DECAL,
-            };
+            out[layout::GEOMETRY + 3] = tile_code(*tile);
             out[layout::TO_LOCAL..layout::TO_LOCAL + 4].copy_from_slice(to_local);
             out[layout::PARAMS] = 1.0;
             out[layout::PARAMS + 1] = kind::IMAGE;
@@ -476,8 +500,10 @@ impl Material {
                 start,
                 axis,
                 to_local,
+                tile,
                 ..
             } => {
+                out[layout::PARAMS + 2] = tile_code(*tile);
                 out[layout::GEOMETRY] = start[0];
                 out[layout::GEOMETRY + 1] = start[1];
                 out[layout::GEOMETRY + 2] = axis[0];
@@ -486,8 +512,12 @@ impl Material {
                 out[layout::PARAMS + 1] = kind::LINEAR;
             }
             Self::RadialGradient {
-                center, to_local, ..
+                center,
+                to_local,
+                tile,
+                ..
             } => {
+                out[layout::PARAMS + 2] = tile_code(*tile);
                 out[layout::GEOMETRY] = center[0];
                 out[layout::GEOMETRY + 1] = center[1];
                 out[layout::TO_LOCAL..layout::TO_LOCAL + 4].copy_from_slice(to_local);
@@ -498,8 +528,10 @@ impl Material {
                 to_local,
                 start_angle,
                 end_angle,
+                tile,
                 ..
             } => {
+                out[layout::PARAMS + 2] = tile_code(*tile);
                 out[layout::GEOMETRY] = center[0];
                 out[layout::GEOMETRY + 1] = center[1];
                 out[layout::GEOMETRY + 2] = *start_angle;
@@ -556,6 +588,7 @@ mod tests {
             axis: [2.0, 0.0],
             to_local: [1.0, 0.0, 0.0, 1.0],
             stops: two_stops(),
+            tile: TileMode::Clamp,
         }
         .to_push_constants();
 
@@ -581,6 +614,7 @@ mod tests {
             center: [0.25, -0.5],
             to_local: [2.0, 0.0, 0.0, 4.0],
             stops: two_stops(),
+            tile: TileMode::Clamp,
         }
         .to_push_constants();
 
@@ -605,6 +639,7 @@ mod tests {
             start_angle: 0.5,
             end_angle: 2.5,
             stops: two_stops(),
+            tile: TileMode::Clamp,
         }
         .to_push_constants();
 
@@ -628,11 +663,13 @@ mod tests {
                 axis: [1.0 - 0.0, 0.0 - 0.0],
                 to_local: [1.0, 0.0, 0.0, 1.0],
                 stops: one.clone(),
+                tile: TileMode::Clamp,
             },
             Material::RadialGradient {
                 center: [0.0, 0.0],
                 to_local: [1.0, 0.0, 0.0, 1.0],
                 stops: one.clone(),
+                tile: TileMode::Clamp,
             },
             Material::SweepGradient {
                 center: [0.0, 0.0],
@@ -640,6 +677,7 @@ mod tests {
                 start_angle: 0.0,
                 end_angle: 1.0,
                 stops: one,
+                tile: TileMode::Clamp,
             },
         ];
         for material in materials {
@@ -659,6 +697,7 @@ mod tests {
             axis: [1.0 - 0.0, 0.0 - 0.0],
             to_local: [1.0, 0.0, 0.0, 1.0],
             stops,
+            tile: TileMode::Clamp,
         }
         .to_push_constants();
         // The count is what stops the shader reading past what was written.
@@ -678,6 +717,7 @@ mod tests {
             center: [0.0, 0.0],
             to_local: [1.0, 0.0, 0.0, 1.0],
             stops: clear,
+            tile: TileMode::Clamp,
         }
         .is_invisible());
 
@@ -692,6 +732,7 @@ mod tests {
                 start_angle: 0.0,
                 end_angle: 1.0,
                 stops: partly,
+                tile: TileMode::Clamp,
             }
             .is_invisible(),
             "one visible stop is enough"
@@ -709,11 +750,13 @@ mod tests {
                 axis: [1.0, 0.0],
                 to_local: [1.0, 0.0, 0.0, 1.0],
                 stops: two_stops(),
+                tile: TileMode::Clamp,
             },
             Material::RadialGradient {
                 center: [0.0; 2],
                 to_local: [1.0, 0.0, 0.0, 1.0],
                 stops: two_stops(),
+                tile: TileMode::Clamp,
             },
         ] {
             assert_eq!(material.variant(), MaterialVariant::Gradient);

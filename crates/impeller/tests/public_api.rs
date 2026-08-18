@@ -9,7 +9,7 @@
 use impeller::{
     Atlas, BackendPreference, BlendMode, Canvas, Color, Context, Coverage, Extent2D, GlyphKey,
     GradientStop, Layer, Paint, Path, PathBuilder, PixelFormat, PositionedGlyph, Rect, Result,
-    Vec2,
+    TileMode, Vec2,
 };
 
 const SIZE: Extent2D = Extent2D {
@@ -1797,6 +1797,147 @@ fn a_radial_gradient_stays_circular_on_a_non_square_target() {
             "stretched by the aspect ratio: right {right:?}, below {below:?}"
         );
     }
+}
+
+/// Render a 128-wide band filled by a gradient spanning only its first quarter.
+///
+/// The ramp is red at x=0 and blue at x=32, so everything from 32 on is outside
+/// it -- three quarters of the picture rather than a strip at the edge, which
+/// is what makes the three modes tell themselves apart at a glance and in
+/// arithmetic.
+fn tiled_ramp(ctx: &mut Context, tile: TileMode) -> Vec<u8> {
+    let mut canvas = Canvas::new(SIZE);
+    canvas.clear(Color::BLACK);
+    // A white ground, so decal's "nothing" is visible as something rather than
+    // as the clear color it would be indistinguishable from.
+    canvas
+        .draw_rect(
+            Rect::from_size(128.0, 128.0),
+            &Paint::fill(Color::WHITE).with_anti_alias(false),
+        )
+        .expect("ground");
+    canvas
+        .draw_rect(
+            Rect::from_size(128.0, 128.0),
+            &Paint::linear_gradient(
+                Vec2::new(0.0, 0.0),
+                Vec2::new(32.0, 0.0),
+                vec![
+                    GradientStop::new(Color::linear(1.0, 0.0, 0.0, 1.0), 0.0),
+                    GradientStop::new(Color::linear(0.0, 0.0, 1.0, 1.0), 1.0),
+                ],
+            )
+            .with_tile_mode(tile)
+            .with_blend(BlendMode::SrcOver)
+            .with_anti_alias(false),
+        )
+        .expect("gradient");
+    render(ctx, canvas)
+}
+
+#[test]
+fn a_gradient_tiles_beyond_its_own_extent() {
+    let Some(mut ctx) = context() else { return };
+    // Inside the ramp every mode agrees, which is the control: a difference
+    // found outside it is about tiling and not about the gradient.
+    let inside = 16;
+    let modes = [TileMode::Clamp, TileMode::Repeat, TileMode::Decal];
+    let images: Vec<Vec<u8>> = modes.iter().map(|t| tiled_ramp(&mut ctx, *t)).collect();
+    for image in &images[1..] {
+        for channel in 0..4 {
+            assert!(
+                (images[0][(inside * 4 + channel) as usize] as i32
+                    - image[(inside * 4 + channel) as usize] as i32)
+                    .abs()
+                    <= 2,
+                "the modes disagree inside the ramp, where they should not"
+            );
+        }
+    }
+
+    // Clamp holds the last stop. At x=100 the parameter is past three, and the
+    // color there must be the blue the ramp ended on.
+    let clamped = pixel(&images[0], 100, 64);
+    assert!(
+        clamped[2] > 240 && clamped[0] < 16,
+        "clamp should hold the end color, got {clamped:?}"
+    );
+
+    // Repeat starts the ramp again. x=64 is exactly two ramps along, so it is
+    // the red the gradient began with rather than the blue it ended on.
+    let repeated = pixel(&images[1], 64, 64);
+    assert!(
+        repeated[0] > 240 && repeated[2] < 16,
+        "repeat should begin the ramp again, got {repeated:?}"
+    );
+    // And it must still be periodic further out, not merely different once.
+    let next_period = pixel(&images[1], 96, 64);
+    for channel in 0..4 {
+        assert!(
+            (repeated[channel] as i32 - next_period[channel] as i32).abs() <= 2,
+            "repeat is not periodic: {repeated:?} against {next_period:?}"
+        );
+    }
+
+    // Decal draws nothing outside, so the white ground shows through.
+    let decaled = pixel(&images[2], 100, 64);
+    assert!(
+        decaled.iter().take(3).all(|c| *c > 240),
+        "decal should leave the ground alone, got {decaled:?}"
+    );
+}
+
+#[test]
+fn a_partial_sweep_holds_its_end_color_around_the_rest_of_the_turn() {
+    let Some(mut ctx) = context() else { return };
+    // The only case where a sweep has an outside at all. A full turn covers
+    // every direction, so tiling it changes nothing and would make a test that
+    // passes whatever the code does.
+    let mut canvas = Canvas::new(SIZE);
+    canvas.clear(Color::BLACK);
+    canvas
+        .draw_rect(
+            Rect::from_size(128.0, 128.0),
+            &Paint::sweep_gradient(
+                Vec2::new(64.0, 64.0),
+                0.0,
+                std::f32::consts::PI,
+                vec![
+                    GradientStop::new(Color::linear(1.0, 0.0, 0.0, 1.0), 0.0),
+                    GradientStop::new(Color::linear(0.0, 0.0, 1.0, 1.0), 1.0),
+                ],
+            )
+            .with_anti_alias(false),
+        )
+        .expect("sweep");
+    let pixels = render(&mut ctx, canvas);
+
+    // The arc runs from the positive X axis through the bottom of the image to
+    // the negative X axis: the renderer's Y points down, so increasing angle
+    // goes that way. Measured rather than assumed -- the first version of this
+    // test probed a direction it took to be outside, which was inside, and
+    // passed against an implementation that had no clamping at all.
+    let start = pixel(&pixels, 64 + 40, 64);
+    assert!(
+        start[0] > 240 && start[2] < 16,
+        "the arc should begin at the first stop, got {start:?}"
+    );
+    let middle = pixel(&pixels, 64, 64 + 40);
+    assert!(
+        middle[0] > 100 && middle[0] < 160 && middle[2] > 100 && middle[2] < 160,
+        "half way round the arc should be half way along the ramp, got {middle:?}"
+    );
+
+    // Straight up is outside the arc, and is the direction that tells the two
+    // possible implementations apart. Clamping holds the last stop, so it is
+    // pure blue. Folding the angle by the sweep instead of by a whole turn --
+    // which is what this did before -- runs the ramp a second time around the
+    // circle and puts the halfway color here instead.
+    let outside = pixel(&pixels, 64, 64 - 40);
+    assert!(
+        outside[2] > 240 && outside[0] < 16,
+        "outside the arc should hold the end color, got {outside:?}"
+    );
 }
 
 #[test]

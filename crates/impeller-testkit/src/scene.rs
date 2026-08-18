@@ -9,7 +9,7 @@ use crate::shape::Shape;
 use glam::{Affine2, Vec2};
 use impeller_geometry::stroke::{LineCap, LineJoin, StrokeStyle};
 use impeller_geometry::FillRule;
-use impeller_hal::{BlendMode, Extent2D};
+use impeller_hal::{BlendMode, Extent2D, TileMode};
 
 /// An affine transform, as data.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -110,12 +110,16 @@ pub enum Fill {
         start: [f32; 2],
         end: [f32; 2],
         stops: Vec<Stop>,
+        /// What fills the shape past the endpoints.
+        tile: TileMode,
     },
     /// A gradient outward from a center, reaching its last stop at `radius`.
     RadialGradient {
         center: [f32; 2],
         radius: f32,
         stops: Vec<Stop>,
+        /// What fills the shape past the radius.
+        tile: TileMode,
     },
     /// A gradient around a center, between two angles in radians.
     SweepGradient {
@@ -123,7 +127,36 @@ pub enum Fill {
         start_angle: f32,
         end_angle: f32,
         stops: Vec<Stop>,
+        /// What fills the directions the arc does not cover.
+        tile: TileMode,
     },
+}
+
+/// A rectangle filled by a gradient that spans only a quarter of it.
+///
+/// Shared by the tiling scenes so the three differ in exactly one field, which
+/// is what makes a difference between their images mean what it says.
+fn tiled_gradient_item(tile: TileMode) -> Item {
+    Item::filled(
+        Shape::Rect {
+            min: [4.0, 4.0],
+            max: [124.0, 124.0],
+        },
+        Fill::LinearGradient {
+            start: [4.0, 0.0],
+            end: [34.0, 0.0],
+            stops: vec![Stop::new(RED, 0.0), Stop::new(BLUE, 1.0)],
+            tile,
+        },
+    )
+    // Composited rather than the corpus default of `Src`, which replaces. A
+    // decal draws nothing outside the ramp, and "nothing" written by a mode
+    // that replaces is a transparent hole punched through the background --
+    // correct for `Src` and not what a decal means. The other two modes are
+    // opaque everywhere and would not care, but they use the same blend so the
+    // three scenes differ in exactly one field and a difference between their
+    // images says what it looks like it says.
+    .with_blend(BlendMode::SrcOver)
 }
 
 /// One thing to draw.
@@ -162,7 +195,15 @@ impl Item {
 
     /// A shape filled with a gradient between two points in its own space.
     pub fn gradient(shape: Shape, start: [f32; 2], end: [f32; 2], stops: Vec<Stop>) -> Self {
-        Self::filled(shape, Fill::LinearGradient { start, end, stops })
+        Self::filled(
+            shape,
+            Fill::LinearGradient {
+                start,
+                end,
+                stops,
+                tile: TileMode::Clamp,
+            },
+        )
     }
 
     /// A shape filled with any fill.
@@ -560,6 +601,7 @@ fn advanced_blend_items(modes: &[BlendMode; 3]) -> Vec<Item> {
                 Stop::new([0.6, 0.55, 0.2, 1.0], 0.5),
                 Stop::new([0.95, 0.9, 0.85, 1.0], 1.0),
             ],
+            tile: TileMode::Clamp,
         },
     )];
     let placements = [
@@ -994,6 +1036,7 @@ pub fn corpus() -> Vec<Scene> {
                     center: [64.0, 64.0],
                     radius: 56.0,
                     stops: vec![Stop::new(WHITE, 0.0), Stop::new(BLUE, 1.0)],
+                    tile: TileMode::Clamp,
                 },
             )],
         ),
@@ -1013,6 +1056,51 @@ pub fn corpus() -> Vec<Scene> {
                         Stop::new(GREEN, 0.5),
                         Stop::new(BLUE, 1.0),
                     ],
+                    tile: TileMode::Clamp,
+                },
+            )],
+        ),
+        // A gradient shorter than the shape it fills, once per tile mode. The
+        // ramp spans a quarter of the width, so what happens outside it is most
+        // of the picture rather than a strip at the edge: clamping shows two
+        // flat bands, repeating shows four ramps, and decal leaves the rest
+        // empty over whatever the scene put behind it.
+        Scene::new(
+            "gradient-tiled-clamp",
+            vec![tiled_gradient_item(TileMode::Clamp)],
+        ),
+        Scene::new(
+            "gradient-tiled-repeat",
+            vec![tiled_gradient_item(TileMode::Repeat)],
+        ),
+        Scene::new(
+            "gradient-tiled-decal",
+            vec![
+                Item::filled(
+                    Shape::Rect {
+                        min: [4.0, 4.0],
+                        max: [124.0, 124.0],
+                    },
+                    Fill::Solid(WHITE),
+                ),
+                tiled_gradient_item(TileMode::Decal),
+            ],
+        ),
+        // A partial sweep, which is the only case where a sweep has an outside
+        // at all: a full turn covers every direction and tiles to itself.
+        Scene::new(
+            "gradient-sweep-partial",
+            vec![Item::filled(
+                Shape::Circle {
+                    center: [64.0, 64.0],
+                    radius: 56.0,
+                },
+                Fill::SweepGradient {
+                    center: [64.0, 64.0],
+                    start_angle: 0.0,
+                    end_angle: std::f32::consts::PI,
+                    stops: vec![Stop::new(RED, 0.0), Stop::new(BLUE, 1.0)],
+                    tile: TileMode::Clamp,
                 },
             )],
         ),
@@ -1374,6 +1462,7 @@ pub fn corpus() -> Vec<Scene> {
                             Stop::new([0.05, 0.1, 0.35, 1.0], 0.0),
                             Stop::new([0.9, 0.85, 0.4, 1.0], 1.0),
                         ],
+                        tile: TileMode::Clamp,
                     },
                 )
                 .into(),
@@ -1410,6 +1499,7 @@ pub fn corpus() -> Vec<Scene> {
                             start: [24.0, 40.0],
                             end: [96.0, 104.0],
                             stops: vec![Stop::new(RED, 0.0), Stop::new(BLUE, 1.0)],
+                            tile: TileMode::Clamp,
                         },
                     )
                     .into(),
@@ -1448,6 +1538,7 @@ pub fn corpus() -> Vec<Scene> {
                                 Stop::new([1.0, 0.25, 0.0, 1.0], 0.0),
                                 Stop::new(BLUE, 1.0),
                             ],
+                            tile: TileMode::Clamp,
                         },
                     )
                     .with_clip([30.0, 46.0, 90.0, 98.0])

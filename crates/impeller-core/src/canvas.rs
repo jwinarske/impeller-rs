@@ -801,7 +801,12 @@ impl Canvas {
                     tile: *tile,
                 }
             }
-            Shader::LinearGradient { start, end, stops } => {
+            Shader::LinearGradient {
+                start,
+                end,
+                stops,
+                tile,
+            } => {
                 let axis = *end - *start;
                 let start = to_clip.transform_point2(*start);
                 Material::LinearGradient {
@@ -812,12 +817,14 @@ impl Canvas {
                     // aspect ratio leaks into the gradient's direction.
                     to_local: invert_or_identity(to_clip.matrix2),
                     stops: stops_of(stops),
+                    tile: *tile,
                 }
             }
             Shader::RadialGradient {
                 center,
                 radius,
                 stops,
+                tile,
             } => {
                 let center_clip = to_clip.transform_point2(*center);
                 // Folding the radius into the mapping means the shader measures
@@ -827,6 +834,7 @@ impl Canvas {
                     center: [center_clip.x, center_clip.y],
                     to_local: invert_or_identity(scaled),
                     stops: stops_of(stops),
+                    tile: *tile,
                 }
             }
             Shader::SweepGradient {
@@ -834,6 +842,7 @@ impl Canvas {
                 start_angle,
                 end_angle,
                 stops,
+                tile,
             } => {
                 let center_clip = to_clip.transform_point2(*center);
                 Material::SweepGradient {
@@ -842,6 +851,7 @@ impl Canvas {
                     start_angle: *start_angle,
                     end_angle: *end_angle,
                     stops: stops_of(stops),
+                    tile: *tile,
                 }
             }
         }
