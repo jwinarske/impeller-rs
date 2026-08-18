@@ -21,4 +21,7 @@ pub mod shape;
 pub use executor::{record_scene, render_corpus, render_scene};
 pub use image::{accepts, compare, Difference, Image, Tolerance};
 pub use scene::{corpus, Fill, Item, LayerSpec, Node, Scene, Stop, StrokeSpec, Transform};
+// The stroke settings a scene states, so a test can vary one without reaching
+// past this crate for the type that names it.
+pub use impeller_geometry::stroke::{LineCap, LineJoin};
 pub use shape::Shape;

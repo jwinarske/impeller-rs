@@ -21,6 +21,13 @@ pub enum Shape {
     },
     /// A closed polygon through the given points.
     Polygon(Vec<[f32; 2]>),
+    /// An open run of line segments.
+    ///
+    /// Distinct from [`Self::Polygon`] in the one way that matters to a
+    /// stroke: an open path has two ends, so it has caps. A closed one has a
+    /// join everywhere instead, which is why a corpus of closed shapes could
+    /// not exercise a cap however many strokes it contained.
+    Polyline(Vec<[f32; 2]>),
     /// A closed polygon filled by a stated rule.
     ///
     /// Separate from [`Self::Polygon`] rather than a field on it, because the
@@ -57,11 +64,16 @@ impl Shape {
                     .close();
             }
             Self::Polygon(points) => {
-                close_polygon(&mut b, points);
+                trace(&mut b, points);
+                b.close();
+            }
+            Self::Polyline(points) => {
+                trace(&mut b, points);
             }
             Self::RuledPolygon { points, rule } => {
                 b = b.with_fill_rule(*rule);
-                close_polygon(&mut b, points);
+                trace(&mut b, points);
+                b.close();
             }
             Self::Circle { center, radius } => {
                 let (cx, cy) = (center[0], center[1]);
@@ -102,14 +114,13 @@ impl Shape {
     }
 }
 
-/// Trace a closed polygon through the given points.
-fn close_polygon(b: &mut PathBuilder, points: &[[f32; 2]]) {
+/// Run a line through the given points, leaving the path open.
+fn trace(b: &mut PathBuilder, points: &[[f32; 2]]) {
     if let Some((first, rest)) = points.split_first() {
         b.move_to(Vec2::from(*first));
         for p in rest {
             b.line_to(Vec2::from(*p));
         }
-        b.close();
     }
 }
 

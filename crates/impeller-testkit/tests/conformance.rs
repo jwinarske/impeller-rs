@@ -18,7 +18,7 @@
 
 use impeller_hal::HalContext;
 use impeller_hal_vulkan::{DevicePreference, VulkanContext, VulkanHal};
-use impeller_testkit::{accepts, compare, corpus, render_scene};
+use impeller_testkit::{accepts, compare, corpus, render_scene, LineCap, LineJoin};
 
 fn devices() -> Option<(VulkanContext, VulkanContext)> {
     let default = VulkanContext::new(DevicePreference::Auto).ok()?;
@@ -323,4 +323,148 @@ fn the_fill_rules_disagree_on_a_path_that_crosses_itself() {
     // the rules differ where they should and agree where they should.
     assert!(at(&a, 64, 22) > 200, "non-zero lost an arm");
     assert!(at(&b, 64, 22) > 200, "even-odd lost an arm");
+}
+
+#[test]
+fn every_stroke_join_and_cap_renders_differently() {
+    // The same reasoning as the fill rules: agreement between implementations
+    // says they match, not that either honored the setting, and two that both
+    // ignore it agree perfectly. So each value is rendered against the others
+    // and required to differ. Both settings had no coverage at all before
+    // this -- the corpus stated one join and no cap, under a scene name that
+    // claimed both.
+    let mut devices = available_devices();
+    if devices.is_empty() {
+        eprintln!("skipping: no device");
+        return;
+    }
+    let by_name = |name: &str| {
+        corpus()
+            .into_iter()
+            .find(|s| s.name == name)
+            .unwrap_or_else(|| panic!("the corpus has no scene named {name}"))
+    };
+
+    // Every item forced to one value, which is what makes the comparison about
+    // the value rather than about the scene's arrangement.
+    let with_join = |join| {
+        let mut scene = by_name("stroke-joins");
+        for item in scene.items_mut() {
+            if let Some(spec) = &mut item.stroke {
+                spec.join = join;
+            }
+        }
+        scene
+    };
+    let with_cap = |cap| {
+        let mut scene = by_name("stroke-caps");
+        for item in scene.items_mut() {
+            if let Some(spec) = &mut item.stroke {
+                spec.cap = cap;
+            }
+        }
+        scene
+    };
+
+    let Some(index) = first_device_for(&devices, &by_name("stroke-joins")) else {
+        eprintln!("skipping: no device renders it");
+        return;
+    };
+    let ctx = &mut devices[index];
+    let mut render =
+        |scene: &impeller_testkit::Scene| render_scene::<VulkanHal>(ctx, scene).expect("render");
+
+    let joins = [LineJoin::Miter, LineJoin::Round, LineJoin::Bevel];
+    let rendered: Vec<_> = joins.iter().map(|j| render(&with_join(*j))).collect();
+    for (i, a) in joins.iter().enumerate() {
+        for (j, b) in joins.iter().enumerate().skip(i + 1) {
+            let difference = compare(&rendered[i], &rendered[j]).expect("same size");
+            assert!(
+                difference.max_delta > 0,
+                "{a:?} and {b:?} joins render identically"
+            );
+        }
+    }
+    // Ordered by how far each reaches past the corner, which is what a join
+    // is: a miter runs out to where the edges would meet, a bevel cuts across
+    // the corner, and a round arcs between the two. A renderer that drew all
+    // three as something else would still satisfy the pairwise check above.
+    let ink = |image: &impeller_testkit::Image| {
+        image
+            .pixels
+            .chunks_exact(4)
+            .filter(|p| p[3] > 0 && p[..3].iter().any(|c| *c > 32))
+            .count()
+    };
+    let (miter, round, bevel) = (ink(&rendered[0]), ink(&rendered[1]), ink(&rendered[2]));
+    assert!(
+        miter > round && round > bevel,
+        "a miter should cover more than a round and a round more than a bevel, got {miter}, {round}, {bevel}"
+    );
+
+    let caps = [LineCap::Butt, LineCap::Square, LineCap::Round];
+    let capped: Vec<_> = caps.iter().map(|c| render(&with_cap(*c))).collect();
+    for (i, a) in caps.iter().enumerate() {
+        for (j, b) in caps.iter().enumerate().skip(i + 1) {
+            let difference = compare(&capped[i], &capped[j]).expect("same size");
+            assert!(
+                difference.max_delta > 0,
+                "{a:?} and {b:?} caps render identically"
+            );
+        }
+    }
+    // A butt cap stops at the end point and the other two run past it, so both
+    // cover more. Square covers the most, being the whole half-square a round
+    // cap inscribes its arc in.
+    let (butt, square, round_cap) = (ink(&capped[0]), ink(&capped[1]), ink(&capped[2]));
+    assert!(
+        square > round_cap && round_cap > butt,
+        "expected square to cover most and butt least, got {square}, {round_cap}, {butt}"
+    );
+}
+
+#[test]
+fn a_miter_limit_falls_back_to_a_bevel() {
+    // The limit is what keeps a nearly-straight-back corner from shooting a
+    // spike across the image: past it, a miter becomes a bevel. That makes the
+    // check exact rather than approximate -- a tightly limited miter is not
+    // merely closer to a bevel, it is one.
+    let mut devices = available_devices();
+    if devices.is_empty() {
+        eprintln!("skipping: no device");
+        return;
+    }
+    let scene = corpus()
+        .into_iter()
+        .find(|s| s.name == "stroke-joins")
+        .expect("stroke-joins");
+    let variant = |join, miter_limit| {
+        let mut scene = scene.clone();
+        for item in scene.items_mut() {
+            if let Some(spec) = &mut item.stroke {
+                spec.join = join;
+                spec.miter_limit = miter_limit;
+            }
+        }
+        scene
+    };
+    let Some(index) = first_device_for(&devices, &scene) else {
+        eprintln!("skipping: no device renders it");
+        return;
+    };
+    let ctx = &mut devices[index];
+
+    let generous = render_scene::<VulkanHal>(ctx, &variant(LineJoin::Miter, 8.0)).expect("render");
+    let tight = render_scene::<VulkanHal>(ctx, &variant(LineJoin::Miter, 1.0)).expect("render");
+    let bevel = render_scene::<VulkanHal>(ctx, &variant(LineJoin::Bevel, 8.0)).expect("render");
+
+    assert!(
+        compare(&generous, &tight).expect("same size").max_delta > 0,
+        "the miter limit changed nothing, so it is not being applied"
+    );
+    assert_eq!(
+        compare(&tight, &bevel).expect("same size").max_delta,
+        0,
+        "a miter past its limit should be exactly a bevel"
+    );
 }

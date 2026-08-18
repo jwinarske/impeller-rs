@@ -528,6 +528,20 @@ fn advanced_blend_items(modes: &[BlendMode; 3]) -> Vec<Item> {
     items
 }
 
+/// Three sharp elbows side by side, for a scene that varies the join.
+///
+/// Open, so the ends carry caps and the corner carries a join, and sharp,
+/// because the three joins differ by how they fill the outside of a corner and
+/// a shallow one leaves almost nothing to differ over.
+fn elbows() -> Vec<Vec<[f32; 2]>> {
+    (0..3)
+        .map(|i| {
+            let x = 22.0 + i as f32 * 42.0;
+            vec![[x - 14.0, 96.0], [x, 40.0], [x + 14.0, 96.0]]
+        })
+        .collect()
+}
+
 /// A five-pointed star as one closed path, which crosses itself five times.
 fn pentagram() -> Vec<[f32; 2]> {
     (0..5)
@@ -798,7 +812,7 @@ pub fn corpus() -> Vec<Scene> {
             })],
         ),
         Scene::new(
-            "stroke-caps-and-joins",
+            "stroke-polygon-and-curve",
             vec![
                 Item::stroke(
                     Shape::Polygon(vec![[24.0, 32.0], [64.0, 96.0], [104.0, 32.0]]),
@@ -996,6 +1010,63 @@ pub fn corpus() -> Vec<Scene> {
                 },
                 Fill::Solid(WHITE),
             )],
+        ),
+        // The stroke joins, one elbow each. A join is what fills the outside
+        // of a corner, and the three fill it differently: a miter runs out to
+        // the point where the two edges would meet, a bevel cuts straight
+        // across, and a round arcs between. Nothing else in the corpus varies
+        // this -- the scene that used to be named for it states one value.
+        Scene::new(
+            "stroke-joins",
+            vec![
+                (LineJoin::Miter, RED),
+                (LineJoin::Round, GREEN),
+                (LineJoin::Bevel, BLUE),
+            ]
+            .into_iter()
+            .zip(elbows())
+            .map(|((join, color), points)| {
+                Item::stroke(
+                    Shape::Polyline(points),
+                    StrokeSpec {
+                        width: 14.0,
+                        // Butt, so the ends contribute nothing and the only
+                        // difference between these is the corner.
+                        cap: LineCap::Butt,
+                        join,
+                        miter_limit: 8.0,
+                    },
+                    color,
+                )
+            })
+            .collect(),
+        ),
+        // The stroke caps, one segment each. A cap is what closes an open
+        // end, so a corpus of closed shapes cannot exercise one however many
+        // strokes it has -- which is what the corpus was.
+        Scene::new(
+            "stroke-caps",
+            vec![
+                (LineCap::Butt, RED),
+                (LineCap::Square, GREEN),
+                (LineCap::Round, BLUE),
+            ]
+            .into_iter()
+            .enumerate()
+            .map(|(i, (cap, color))| {
+                let y = 32.0 + i as f32 * 32.0;
+                Item::stroke(
+                    Shape::Polyline(vec![[32.0, y], [96.0, y]]),
+                    StrokeSpec {
+                        width: 16.0,
+                        cap,
+                        join: LineJoin::Miter,
+                        miter_limit: 4.0,
+                    },
+                    color,
+                )
+            })
+            .collect(),
         ),
         // Layers. Everything below here needs the scene to be a tree, and none
         // of it could be said at all while a scene was a flat list of items --
