@@ -8,6 +8,9 @@
 //!   need. Everything it reads is readable without privilege.
 //! - `verify` -- run the suite and report the skips, which a plain `cargo test`
 //!   discards along with the rest of a passing test's output.
+//! - `gallery` -- render every corpus scene onto one sheet, because no
+//!   comparison in the suite can see a scene both implementations get wrong the
+//!   same way.
 //!
 //! Planned:
 //!
@@ -28,6 +31,7 @@
 //! desktop must survive a failed test run.
 
 mod drm;
+mod gallery;
 mod report;
 mod verify;
 
@@ -40,6 +44,8 @@ Commands:
   drm               Whether this machine can run the direct-scanout lane.
   verify            Run the suite and report what did not run. Extra arguments
                     are passed to cargo test.
+  gallery [path]    Render every corpus scene onto one sheet to look at.
+                    Defaults to corpus.ppm.
   help              This text.
 ";
 
@@ -77,6 +83,37 @@ fn main() {
                 &std::path::Path::new("/lib/modules").join(kernel_release()),
             );
             print!("{}", drm::text(&survey));
+        }
+        Some("gallery") => {
+            let path = rest
+                .iter()
+                .find(|a| !a.starts_with('-'))
+                .cloned()
+                .unwrap_or_else(|| "corpus.ppm".to_string());
+            match gallery::render(6) {
+                Ok(sheet) => {
+                    if let Err(e) = gallery::write_ppm(&path, &sheet) {
+                        eprintln!("writing {path}: {e}");
+                        std::process::exit(1);
+                    }
+                    println!(
+                        "{} scene(s) drawn onto {path} ({}x{})",
+                        sheet.drawn, sheet.width, sheet.height
+                    );
+                    print!("{}", gallery::map(&sheet));
+                    if !sheet.skipped.is_empty() {
+                        println!(
+                            "{} not rendered by this device: {}",
+                            sheet.skipped.len(),
+                            sheet.skipped.join(", ")
+                        );
+                    }
+                }
+                Err(e) => {
+                    eprintln!("{e}");
+                    std::process::exit(1);
+                }
+            }
         }
         Some("verify") => {
             let outcome = verify::run(&rest);

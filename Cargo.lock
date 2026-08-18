@@ -1074,6 +1074,7 @@ dependencies = [
  "impeller-hal-gles",
  "impeller-hal-vulkan",
  "impeller-present-drm",
+ "impeller-testkit",
 ]
 
 [[package]]

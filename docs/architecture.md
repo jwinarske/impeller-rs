@@ -1344,6 +1344,20 @@ correct pixels, and fails six of them once the layer is read. The class of bug
 it catches was invisible to the part of the suite that renders the most, and
 costs about eight percent of that suite's run time to see.
 
+**No comparison here can see a scene both implementations get wrong the same
+way.** Backend against backend, device against device, a scene against a
+mutation of itself — all of it is relative, and a gradient banded identically
+everywhere, a shape consistently in the wrong place, or a colour that is
+arithmetically correct and far too dark passes every one. The bundled example
+wrote linear bytes into a file every viewer reads as sRGB for a long time, and
+nothing in the suite could have said so.
+
+`cargo xtask gallery` renders every corpus scene onto one sheet, with the grid
+printed alongside so a tile can be found by counting. It answers a different
+question from everything else here, and only a person can read the answer. It
+suits gross wrongness rather than fine judgement: the first two things that
+looked wrong on it were not, and measurement said so both times.
+
 **A skipped test passes, and `cargo test` hides which.** A test that finds it
 cannot run — no device, no second backend, a capability the hardware lacks —
 prints why and returns, because the alternative is a suite that cannot be run
