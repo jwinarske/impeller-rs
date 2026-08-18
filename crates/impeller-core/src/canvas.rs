@@ -15,7 +15,7 @@ use impeller_geometry::transform::{
 use impeller_geometry::{Path, PathBuilder};
 use impeller_hal::{
     Batch, BlendMode, ClipState, Error, Extent2D, Material, PassDescriptor, Result, Scissor, Stop,
-    TileMode, Vertex,
+    TileMode, Vertex, MAX_STOPS,
 };
 use impeller_renderer::{Paint as RenderPaint, Renderer, TOLERANCE};
 use impeller_text::{Atlas, PositionedGlyph};
@@ -364,6 +364,38 @@ pub struct Canvas {
     samples: u32,
 }
 
+/// Refuse a gradient carrying more stops than the pipeline can place.
+///
+/// The material packs a fixed number and used to take the first of them, which
+/// draws a gradient that is right up to a point and flat after it -- visibly
+/// wrong, plausibly a design decision, and impossible to tell from a correct
+/// gradient without counting. That is the shape of mistake this renderer
+/// refuses elsewhere: a device without the advanced blend modes reports them
+/// unavailable rather than substituting the nearest, and a glyph run given a
+/// gradient is refused rather than tinted with its first stop.
+///
+/// Lifting the limit means baking the stops into a ramp texture and sampling
+/// it, which is now possible -- the pipeline samples textures for images,
+/// glyphs and blurs -- and is a feature rather than a fix. Until then a caller
+/// reads the limit from [`MAX_STOPS`] and resamples its own ramp, which is what
+/// this would have to do for it anyway.
+///
+/// Called from `draw_path` alone, which is every road a gradient can take: the
+/// analytic shapes carry a solid color by construction and fall back to
+/// tessellation for anything else, so a rounded rectangle filled by a gradient
+/// arrives here like any other shape. A second call on that road looked like
+/// prudence and was unreachable, which a mutation test showed by deleting it
+/// and changing nothing.
+fn check_stops(paint: &Paint) -> Result<()> {
+    if paint.shader.stop_count() > MAX_STOPS {
+        return Err(Error::Unsupported(
+            "a gradient carries more color stops than this pipeline can place; \
+             see MAX_STOPS",
+        ));
+    }
+    Ok(())
+}
+
 impl Canvas {
     /// Start recording for a target of the given size.
     pub fn new(extent: Extent2D) -> Self {
@@ -696,6 +728,7 @@ impl Canvas {
     }
 
     pub fn draw_path(&mut self, path: &Path, paint: &Paint) -> Result<&mut Self> {
+        check_stops(paint)?;
         if !paint.is_visible() || path.is_empty() {
             return Ok(self);
         }

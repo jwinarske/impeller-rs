@@ -9,7 +9,7 @@
 use impeller::{
     Atlas, BackendPreference, BlendMode, Canvas, Color, Context, Coverage, Extent2D, GlyphKey,
     GradientStop, Layer, Paint, Path, PathBuilder, PixelFormat, PositionedGlyph, Rect, Result,
-    TileMode, Vec2,
+    TileMode, Vec2, MAX_STOPS,
 };
 
 const SIZE: Extent2D = Extent2D {
@@ -2149,6 +2149,59 @@ fn a_draw_placed_at_nan_contributes_nothing() {
         wrong.is_empty(),
         "a draw at NaN should contribute nothing:\n  {}",
         wrong.join("\n  ")
+    );
+}
+
+#[test]
+fn a_gradient_with_more_stops_than_fit_is_refused_rather_than_truncated() {
+    // The limit is public, and used here rather than written as a number: a
+    // test that hard-coded four would keep passing while saying nothing if the
+    // limit moved.
+    let ramp = |n: usize| -> Vec<GradientStop> {
+        (0..n)
+            .map(|i| {
+                let t = i as f32 / (n - 1) as f32;
+                GradientStop::new(Color::linear(t, 0.0, 1.0 - t, 1.0), t)
+            })
+            .collect()
+    };
+
+    let mut canvas = Canvas::new(SIZE);
+    canvas.clear(Color::BLACK);
+    // At the limit, every shape and every road into a draw accepts it.
+    let fits = Paint::linear_gradient(Vec2::ZERO, Vec2::new(128.0, 0.0), ramp(MAX_STOPS));
+    canvas
+        .draw_rect(Rect::from_size(64.0, 64.0), &fits)
+        .expect("a gradient at the limit");
+    canvas
+        .draw_rrect(Rect::from_size(64.0, 64.0), 8.0, &fits)
+        .expect("a rounded rectangle at the limit");
+
+    // One past it, every shape refuses. The rounded rectangle and the circle
+    // are here because they have a second, analytic road -- but only for a
+    // solid color, so a gradient falls back to tessellation and is caught with
+    // everything else. That is worth asserting rather than assuming: it is the
+    // reason one guard suffices, and if the analytic path ever learns
+    // gradients these are the cases that will notice.
+    let too_many = Paint::linear_gradient(Vec2::ZERO, Vec2::new(128.0, 0.0), ramp(MAX_STOPS + 1));
+    assert_eq!(too_many.shader.stop_count(), MAX_STOPS + 1);
+    assert!(
+        canvas
+            .draw_rect(Rect::from_size(64.0, 64.0), &too_many)
+            .is_err(),
+        "a tessellated draw truncated the stops instead of refusing"
+    );
+    assert!(
+        canvas
+            .draw_rrect(Rect::from_size(64.0, 64.0), 8.0, &too_many)
+            .is_err(),
+        "an analytic draw truncated the stops instead of refusing"
+    );
+    assert!(
+        canvas
+            .draw_circle(Vec2::new(32.0, 32.0), 16.0, &too_many)
+            .is_err(),
+        "a circle truncated the stops instead of refusing"
     );
 }
 

@@ -86,6 +86,20 @@ pub enum Shader {
 }
 
 impl Shader {
+    /// How many color stops this paint carries, or zero where it carries none.
+    ///
+    /// Public because the limit is, and a caller building a gradient from data
+    /// -- a theme file, a design token, an SVG -- wants to know before it draws
+    /// rather than to handle an error afterwards.
+    pub fn stop_count(&self) -> usize {
+        match self {
+            Self::Solid(_) | Self::Image { .. } => 0,
+            Self::LinearGradient { stops, .. }
+            | Self::RadialGradient { stops, .. }
+            | Self::SweepGradient { stops, .. } => stops.len(),
+        }
+    }
+
     /// Whether this would draw anything at all.
     pub fn is_visible(&self) -> bool {
         match self {
@@ -148,6 +162,12 @@ impl Paint {
     }
 
     /// A fill that runs between colors along a line in user space.
+    ///
+    /// At most [`MAX_STOPS`] of them. Drawing with more is refused rather than
+    /// truncated, because a gradient correct up to its fourth stop and flat
+    /// afterwards is indistinguishable from one somebody meant.
+    ///
+    /// [`MAX_STOPS`]: impeller_hal::MAX_STOPS
     pub fn linear_gradient(start: Vec2, end: Vec2, stops: Vec<GradientStop>) -> Self {
         Self {
             shader: Shader::LinearGradient {
@@ -161,6 +181,10 @@ impl Paint {
     }
 
     /// A fill that runs outward from a center in user space.
+    ///
+    /// At most [`MAX_STOPS`] stops; see [`Paint::linear_gradient`].
+    ///
+    /// [`MAX_STOPS`]: impeller_hal::MAX_STOPS
     pub fn radial_gradient(center: Vec2, radius: f32, stops: Vec<GradientStop>) -> Self {
         Self {
             shader: Shader::RadialGradient {
@@ -175,7 +199,10 @@ impl Paint {
 
     /// A fill that runs around a center in user space.
     ///
-    /// Angles are in radians, counter-clockwise from the positive X axis.
+    /// Angles are in radians, counter-clockwise from the positive X axis. At
+    /// most [`MAX_STOPS`] stops; see [`Paint::linear_gradient`].
+    ///
+    /// [`MAX_STOPS`]: impeller_hal::MAX_STOPS
     pub fn sweep_gradient(
         center: Vec2,
         start_angle: f32,
