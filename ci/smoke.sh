@@ -42,6 +42,15 @@ else
     fail=1
 fi
 
+# The example and the gallery are code that runs, and neither is covered by the
+# suite: a change that breaks one compiles, passes every test, and is found by
+# whoever next runs it. The gallery is also the only thing here that can see a
+# scene both backends get wrong the same way, so a broken one is a check
+# quietly lost rather than an inconvenience.
+echo "artifacts"
+step "example" cargo run -q -p impeller --example frame -- "$(mktemp -u).ppm"
+step "gallery" cargo run -q -p xtask -- gallery "$(mktemp -u).ppm"
+
 echo "feature matrix"
 for features in vulkan gles vulkan,gles,drm; do
     step "$features" cargo check -p impeller --no-default-features --features "$features"

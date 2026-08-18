@@ -917,6 +917,84 @@ fn an_outline_costs_the_distance_field_nothing() {
 }
 
 #[test]
+fn an_analytic_stroke_deforms_with_the_transform() {
+    let Some(mut ctx) = context() else { return };
+    // A stroke width is stated in the space the shape is, so a transform that
+    // scales the axes differently should stretch the pen with everything else
+    // -- a ring drawn twice as wide is twice as thick at its sides and no
+    // thicker at its top. That is what a tessellated stroke does, because it
+    // offsets the outline in path space and transforms the result, and the
+    // field has to agree: converting the width to device space anywhere would
+    // give a pen that stayed round while its shape stretched.
+    let extent = Extent2D::new(220, 160);
+    let mut ring = |analytic: bool, sx: f32, sy: f32| {
+        let mut canvas = Canvas::new(extent).with_samples(4);
+        canvas.clear(Color::BLACK);
+        canvas.save();
+        canvas.translate(110.0, 80.0);
+        canvas.scale(sx, sy);
+        canvas.translate(-110.0, -80.0);
+        canvas
+            .draw_circle(
+                Vec2::new(110.0, 80.0),
+                50.0,
+                &Paint::stroke(Color::WHITE, 12.0).with_anti_alias(analytic),
+            )
+            .expect("ring");
+        canvas.restore();
+        let mut surface = ctx
+            .create_surface(extent, PixelFormat::Rgba8Unorm)
+            .expect("surface");
+        ctx.draw(&mut surface, &canvas.finish()).expect("draw");
+        let pixels = ctx.read(&mut surface).expect("read");
+        ctx.destroy_surface(surface);
+        pixels
+    };
+    // How many lit pixels a horizontal line through the centre crosses, which
+    // is both walls of the ring and so twice its thickness there.
+    let across = |pixels: &[u8]| {
+        (0..extent.width)
+            .filter(|x| pixels[((80 * extent.width + x) * 4) as usize] > 128)
+            .count()
+    };
+    let coverage = |pixels: &[u8]| {
+        pixels
+            .chunks_exact(4)
+            .map(|texel| texel[0] as u64)
+            .sum::<u64>() as f64
+    };
+
+    let (round, round_tessellated) = (ring(true, 1.0, 1.0), ring(false, 1.0, 1.0));
+    let (wide, wide_tessellated) = (ring(true, 2.0, 1.0), ring(false, 2.0, 1.0));
+
+    // The pen stretched: twice as wide a ring is twice as thick at its sides.
+    assert!(
+        across(&wide) > across(&round) + 12,
+        "the stroke did not stretch: {} against {}",
+        across(&wide),
+        across(&round)
+    );
+    // And matches what tessellating the same thing gives, which is the only
+    // definition of right available here.
+    for (name, analytic, tessellated) in [
+        ("unscaled", &round, &round_tessellated),
+        ("stretched", &wide, &wide_tessellated),
+    ] {
+        assert_eq!(
+            across(analytic),
+            across(tessellated),
+            "{name}: the two strokes differ in thickness"
+        );
+        let apart = (coverage(analytic) - coverage(tessellated)).abs() / coverage(tessellated);
+        assert!(
+            apart < 0.01,
+            "{name}: the two strokes cover different amounts, {:.2}% apart",
+            apart * 100.0
+        );
+    }
+}
+
+#[test]
 fn an_oval_is_an_ellipse_rather_than_a_stadium() {
     let Some(mut ctx) = context() else { return };
     // The shape a rounded rectangle cannot become. Past half its shorter side a

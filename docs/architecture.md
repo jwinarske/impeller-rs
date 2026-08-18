@@ -1378,6 +1378,13 @@ arithmetically correct and far too dark passes every one. The bundled example
 wrote linear bytes into a file every viewer reads as sRGB for a long time, and
 nothing in the suite could have said so.
 
+Both the example and the gallery are run by `ci/smoke.sh`, which is otherwise
+the suite plus the feature matrix. Neither is covered by a test: they are code
+that runs, so a change breaking one compiles, passes everything, and is found
+by whoever next runs it. For the gallery that would be worse than an
+inconvenience, since it is the only check here that can see a scene both
+backends get wrong the same way — a broken one is a check quietly lost.
+
 `cargo xtask gallery` renders every corpus scene onto one sheet, with the grid
 printed alongside so a tile can be found by counting. It answers a different
 question from everything else here, and only a person can read the answer. It
