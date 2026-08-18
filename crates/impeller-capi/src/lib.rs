@@ -1,10 +1,12 @@
 //! Impeller C API: an ABI-compatible implementation of upstream's
 //! `impeller.h`.
 //!
-//! This crate builds `libimpeller`, so a consumer that links against the
-//! upstream C API can link against this instead without recompiling. The
-//! target is binary compatibility with the header, not a Rust-flavored
-//! approximation of it.
+//! **One entry point exists so far.** The goal is that a consumer linking
+//! against the upstream C API can link against this instead without
+//! recompiling, and the goal governs how everything here is built — binary
+//! compatibility with the header rather than a Rust-flavored approximation of
+//! it. Nothing about that goal is reached yet, and the surface a consumer
+//! would need is almost entirely absent.
 //!
 //! # What this is not
 //!
@@ -26,20 +28,31 @@
 //!
 //! # Verifying parity
 //!
-//! Symbol-level parity is checked against a pinned copy of the upstream
-//! header rather than maintained by hand: CI diffs our exported symbols
-//! against the header's declarations, so an upstream addition shows up as a
-//! failure naming the missing entry points. Semantic parity — blend mode
-//! values, fill rules, color handling, stroke geometry — is checked by running
-//! the upstream C API samples against this library and comparing output
-//! through the usual golden comparators.
+//! Two checks are intended, and neither exists. Symbol-level parity is to be
+//! checked against a pinned copy of the upstream header rather than maintained
+//! by hand, so that an upstream addition shows up as a failure naming the
+//! missing entry points; the header is not vendored, so that check cannot be
+//! written yet. Semantic parity — blend mode values, fill rules, color
+//! handling, stroke geometry — is to be checked by running the upstream C API
+//! samples against this library and comparing output through the usual golden
+//! comparators.
+//!
+//! What does exist is narrower and worth not confusing with either: a test
+//! that the exported symbols are exactly the ones written down beside it. That
+//! catches an accidental export and keeps the status below from drifting away
+//! from the code. It says nothing about whether the surface matches upstream's,
+//! which is the question the two checks above are for.
 //!
 //! # Status
 //!
-//! Only version negotiation is implemented. The rest of the surface waits on
-//! the renderer; stubbing entry points that return NULL would be worse than
-//! their absence, because a consumer would link successfully and then fail at
-//! runtime with no diagnostic.
+//! Only version negotiation is implemented, and `ImpellerGetVersion` is the
+//! only exported symbol. The rest of the surface waits on a vendored header:
+//! guessing an enum value or a struct layout would produce a library that
+//! links and then corrupts memory, which is worse than one that does not link.
+//! Stubbing entry points to return NULL is worse than their absence for the
+//! same shape of reason — a consumer links successfully and fails at run time
+//! with no diagnostic, where a missing symbol fails at link time and names
+//! itself.
 
 #![allow(non_snake_case)]
 

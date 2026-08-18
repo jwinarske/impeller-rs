@@ -125,9 +125,12 @@ docs/                   architecture
 
 ## Impeller C API
 
-`impeller-capi` builds `libimpeller`, an ABI-compatible implementation of
-upstream Impeller's C API, so a consumer linking that API can link this instead
-without recompiling.
+`impeller-capi` builds `libimpeller`, intended as an ABI-compatible
+implementation of upstream Impeller's C API so that a consumer linking that API
+could link this instead without recompiling. **It is barely started**: version
+negotiation is the only entry point, and the rest waits on a vendored copy of
+the upstream header — guessing an enum value or a struct layout would produce a
+library that links and then corrupts memory.
 
 It is **not** a drop-in for Impeller inside the Flutter Engine build: the
 engine compiles Impeller's C++ sources directly rather than consuming them

@@ -1038,11 +1038,18 @@ that re-baselines tolerances under review, never ambient drift.
 
 ## Impeller C API compatibility
 
-`impeller-capi` builds `libimpeller`, an ABI-compatible implementation of
-upstream Impeller's C API (`impeller/toolkit/interop/impeller.h`). The goal is
-binary compatibility: a consumer linking the upstream C API can link this
-instead without recompiling. The shared BSD 3-Clause license is what makes
-vendoring the header and upstream's test assets clean.
+`impeller-capi` builds `libimpeller`, intended as an ABI-compatible
+implementation of upstream Impeller's C API
+(`impeller/toolkit/interop/impeller.h`). The goal is binary compatibility: a
+consumer linking the upstream C API could link this instead without
+recompiling. The shared BSD 3-Clause license is what makes vendoring the header
+and upstream's test assets clean.
+
+**Almost none of it exists.** Version negotiation is implemented and
+`ImpellerGetVersion` is the only exported symbol. The rest waits on the header
+being vendored, and not merely for tidiness: guessing an enum value or a struct
+layout produces a library that links and then corrupts memory, which is a worse
+outcome than one that does not link.
 
 **This is not a drop-in for Impeller inside the Flutter Engine build.** The
 engine does not consume Impeller across this boundary — it compiles the C++
@@ -1094,13 +1101,19 @@ remains reachable only through the Rust API.
 
 ### Verifying parity
 
-Symbol-level parity is checked mechanically rather than maintained by hand: CI
-diffs exported symbols against a pinned copy of the upstream header, so an
-upstream addition surfaces as a failure naming the missing entry points.
-Semantic parity — blend mode values, fill rules, color handling, stroke
-geometry — is checked by running upstream's C API samples against this library
-and comparing output through the usual golden comparators. Semantics, not
-symbols, are the hard half.
+Two checks are intended and neither exists yet. Symbol-level parity is to be
+checked mechanically rather than maintained by hand, by diffing exported
+symbols against a pinned copy of the upstream header, so that an upstream
+addition surfaces as a failure naming the missing entry points; that waits on
+the header being vendored. Semantic parity — blend mode values, fill rules,
+color handling, stroke geometry — is to be checked by running upstream's C API
+samples against this library and comparing output through the usual golden
+comparators. Semantics, not symbols, are the hard half.
+
+What exists is narrower, and worth not mistaking for either: a test that the
+exported symbols are exactly the ones written down beside it. That catches an
+accidental export and keeps the status claim from drifting away from the code.
+It says nothing about whether the surface matches upstream's.
 
 ## Future backends
 
