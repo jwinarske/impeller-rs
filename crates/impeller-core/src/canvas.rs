@@ -1366,6 +1366,14 @@ fn analytic_stroke(paint: &Paint) -> Option<f32> {
     if !paint.anti_alias {
         return None;
     }
+    // The shape is drawn on a quad larger than itself and emits a fragment
+    // everywhere on it, so a mode that discards the destination where the
+    // source is transparent would erase what is behind it in the gap between
+    // the two -- and in the corner of a rounded rectangle that gap is most of
+    // the corner. Tessellating covers only the shape and has no such gap.
+    if !paint.blend.respects_coverage() {
+        return None;
+    }
     match &paint.style {
         Style::Fill => Some(0.0),
         Style::Stroke(stroke) => {

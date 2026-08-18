@@ -286,6 +286,38 @@ impl BlendMode {
         }
     }
 
+    /// Whether a source scaled by coverage composites as though the shape were
+    /// partly there.
+    ///
+    /// This is what decides whether a shape may be antialiased by computing
+    /// coverage in the fragment stage rather than by multisampling. Such a
+    /// shape is drawn on a quad larger than itself and emits a fragment
+    /// everywhere on it, including where coverage is nothing — so the mode has
+    /// to leave the destination alone for a fully transparent source, or the
+    /// quad erases what is behind it in the gap between the two.
+    ///
+    /// Which is exactly the destination factor being `One` or
+    /// `OneMinusSrcAlpha`: the source term vanishes with the alpha whatever its
+    /// own factor is, so only the destination's own weight is left. Every
+    /// advanced mode qualifies as well — their equations carry a
+    /// `(1 - source alpha)` on the destination by construction, and reduce to
+    /// it when the source contributes nothing.
+    ///
+    /// The same condition happens to be what makes the partly covered edge
+    /// correct rather than merely harmless. Weighting a premultiplied source by
+    /// coverage and compositing gives the same answer as mixing the unweighted
+    /// result into the destination by coverage, which is what multisampling
+    /// would have produced.
+    pub const fn respects_coverage(self) -> bool {
+        match self.factors() {
+            Some(factors) => matches!(
+                factors.dst,
+                BlendFactor::One | BlendFactor::OneMinusSrcAlpha
+            ),
+            None => true,
+        }
+    }
+
     /// Whether this simply writes the source, so blending can be switched off.
     pub const fn is_plain_write(self) -> bool {
         matches!(self, Self::Src)
@@ -546,6 +578,53 @@ pub fn blend_advanced(mode: BlendMode, source: [f32; 4], backdrop: [f32; 4]) -> 
             + (1.0 - a_s) * a_b * cb[channel];
     }
     Some(out)
+}
+
+#[cfg(test)]
+mod coverage_tests {
+    use super::*;
+
+    #[test]
+    fn a_mode_respects_coverage_when_a_transparent_source_changes_nothing() {
+        // Worked out from the factors rather than listed, so a mode added later
+        // is classified rather than forgotten. These are the answers that
+        // classification has to produce.
+        for mode in [
+            BlendMode::SrcOver,
+            BlendMode::DstOver,
+            BlendMode::Dst,
+            BlendMode::Plus,
+            BlendMode::Xor,
+            BlendMode::SrcATop,
+            BlendMode::DstOut,
+        ] {
+            assert!(mode.respects_coverage(), "{} should", mode.name());
+        }
+        // These discard the destination where the source is transparent, so a
+        // quad larger than its shape would erase what is behind it.
+        for mode in [
+            BlendMode::Clear,
+            BlendMode::Src,
+            BlendMode::SrcIn,
+            BlendMode::DstIn,
+            BlendMode::SrcOut,
+            BlendMode::DstATop,
+            BlendMode::Modulate,
+        ] {
+            assert!(!mode.respects_coverage(), "{} should not", mode.name());
+        }
+    }
+
+    #[test]
+    fn every_advanced_mode_respects_coverage() {
+        // Their equations carry a (1 - source alpha) on the destination by
+        // construction, so a transparent source leaves it whole.
+        for mode in BlendMode::ALL {
+            if mode.is_advanced() {
+                assert!(mode.respects_coverage(), "{} should", mode.name());
+            }
+        }
+    }
 }
 
 #[cfg(test)]

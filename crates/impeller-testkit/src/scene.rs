@@ -230,7 +230,13 @@ impl Item {
         // A stroke of these shapes is evaluated the same way, so it earns the
         // same budget: the outline is the field narrowed to a band, not a
         // different kind of drawing.
-        shaped && matches!(self.fill, Fill::Solid(_))
+        //
+        // The blend is part of the condition because it is part of the one the
+        // canvas applies: a mode that discards the destination where the source
+        // is transparent cannot be drawn on a quad larger than its shape, and
+        // falls back. Leaving it out here would give the distance field's
+        // budget to a scene drawn from triangles.
+        shaped && matches!(self.fill, Fill::Solid(_)) && self.blend.respects_coverage()
     }
 }
 
@@ -1129,7 +1135,8 @@ pub fn corpus() -> Vec<Scene> {
                         max: [120.0, 76.0],
                     },
                     RED,
-                ),
+                )
+                .with_blend(BlendMode::SrcOver),
                 Item::fill(
                     Shape::Oval {
                         min: [44.0, 4.0],
@@ -1156,7 +1163,8 @@ pub fn corpus() -> Vec<Scene> {
                     },
                     StrokeSpec::new(7.0),
                     RED,
-                ),
+                )
+                .with_blend(BlendMode::SrcOver),
                 Item::stroke(
                     Shape::Circle {
                         center: [34.0, 92.0],
@@ -1164,7 +1172,8 @@ pub fn corpus() -> Vec<Scene> {
                     },
                     StrokeSpec::new(7.0),
                     GREEN,
-                ),
+                )
+                .with_blend(BlendMode::SrcOver),
                 Item::stroke(
                     Shape::Oval {
                         min: [68.0, 70.0],
@@ -1172,7 +1181,8 @@ pub fn corpus() -> Vec<Scene> {
                     },
                     StrokeSpec::new(7.0),
                     BLUE,
-                ),
+                )
+                .with_blend(BlendMode::SrcOver),
             ],
         )
         .with_samples(4),
@@ -1217,7 +1227,11 @@ pub fn corpus() -> Vec<Scene> {
                     radius: 22.0,
                 },
                 GREEN,
-            )],
+            )
+            // Composited rather than replaced, which is what lets the shape be
+            // evaluated per fragment at all: the quad it is drawn on is larger
+            // than the shape, and replacing would erase the gap between them.
+            .with_blend(BlendMode::SrcOver)],
         )
         .with_samples(4),
         Scene::new(
@@ -1505,18 +1519,34 @@ mod tolerance_tests {
         let aliased = Scene::new("aliased", vec![Item::fill(rounded(12.0), WHITE)]);
         assert_eq!(aliased.tolerance(), Tolerance::EXACT);
 
-        let antialiased =
-            Scene::new("antialiased", vec![Item::fill(rounded(12.0), WHITE)]).with_samples(4);
+        // Composited rather than replaced, which these have to say: the
+        // constructors default to replacing, and a shape drawn on a quad
+        // larger than itself cannot replace what is behind the gap.
+        let antialiased = Scene::new(
+            "antialiased",
+            vec![Item::fill(rounded(12.0), WHITE).with_blend(BlendMode::SrcOver)],
+        )
+        .with_samples(4);
         assert_eq!(antialiased.tolerance(), Tolerance::ANALYTIC);
 
         // A stroke of the same shape is the same field narrowed to a band, so
         // it earns the same budget rather than the multisample one.
         let stroked = Scene::new(
             "stroked",
-            vec![Item::stroke(rounded(12.0), StrokeSpec::new(4.0), WHITE)],
+            vec![Item::stroke(rounded(12.0), StrokeSpec::new(4.0), WHITE)
+                .with_blend(BlendMode::SrcOver)],
         )
         .with_samples(4);
         assert_eq!(stroked.tolerance(), Tolerance::ANALYTIC);
+
+        // And replacing disqualifies it, because the canvas will tessellate it
+        // instead -- so the budget has to describe the route actually taken.
+        let replaced = Scene::new(
+            "replaced",
+            vec![Item::fill(rounded(12.0), WHITE).with_blend(BlendMode::Src)],
+        )
+        .with_samples(4);
+        assert_eq!(replaced.tolerance(), Tolerance::MULTISAMPLED);
 
         // A radius of zero is a plain rectangle, with no distance field.
         let square = Scene::new("square", vec![Item::fill(rounded(0.0), WHITE)]).with_samples(4);

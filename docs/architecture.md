@@ -1000,6 +1000,18 @@ permutations on GLES.
   at one sample, which is four times less fill and bandwidth for an edge it
   was already going to get right.
 
+  Only where the blend composites, though. The shape is drawn on a quad larger
+  than itself and emits a fragment everywhere on it, including where coverage is
+  nothing — so a mode that discards the destination for a transparent source
+  erases what is behind it in the gap between the two, and in a rounded corner
+  that gap is most of the corner. Tessellating covers only the shape and has no
+  such gap. The condition falls out of the blend factors rather than being a
+  list: the destination's factor has to be `One` or `OneMinusSrcAlpha`, since
+  the source term vanishes with its alpha whatever weight it carries. The same
+  condition is what makes a partly covered edge correct rather than merely
+  harmless, because weighting a premultiplied source by coverage then
+  compositing gives what multisampling would have produced.
+
   A stroke of any of them takes it too. A field already says how far every
   fragment is from the edge, so an outline is the band where that is small: one
   more subtraction and no vertices, against a tessellated outline which is a

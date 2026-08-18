@@ -995,6 +995,91 @@ fn an_analytic_stroke_deforms_with_the_transform() {
 }
 
 #[test]
+fn an_analytic_shape_does_not_erase_what_is_behind_it() {
+    let Some(mut ctx) = context() else { return };
+    // A shape evaluated per fragment is drawn on a quad larger than itself and
+    // emits a fragment everywhere on it, including where coverage is nothing.
+    // Under a mode that discards the destination where the source is
+    // transparent, those fragments erase what is behind them -- in the ring
+    // between the shape and its quad, and in a rounded corner that gap is most
+    // of the corner. Tessellating covers only the shape and has no such gap, so
+    // the two routes would disagree about a region neither is drawing into.
+    //
+    // The modes that cannot take this path are refused it rather than fixed,
+    // because there is nothing to fix: the quad is what makes the edge smooth.
+    let extent = Extent2D::new(128, 128);
+    let shape = Rect::new(40.0, 40.0, 88.0, 88.0);
+    let mut over_a_backdrop = |blend: BlendMode, anti_alias: bool| {
+        let mut canvas = Canvas::new(extent);
+        canvas.clear(Color::BLACK);
+        canvas
+            .draw_rect(
+                Rect::new(0.0, 0.0, 128.0, 128.0),
+                &Paint::fill(Color::linear(0.0, 0.4, 0.0, 1.0)).with_anti_alias(false),
+            )
+            .expect("backdrop");
+        canvas
+            .draw_rrect(
+                shape,
+                10.0,
+                &Paint::fill(Color::linear(1.0, 0.0, 0.0, 1.0))
+                    .with_blend(blend)
+                    .with_anti_alias(anti_alias),
+            )
+            .expect("shape");
+        let recording = canvas.finish();
+        let vertices: usize = recording
+            .passes
+            .iter()
+            .map(|pass| pass.batch.vertices().len())
+            .sum();
+        let pixels = render_recording(&mut ctx, &recording);
+        (pixels, vertices)
+    };
+
+    let at = |pixels: &[u8], x: u32, y: u32| {
+        let i = ((y * extent.width + x) * 4) as usize;
+        [pixels[i], pixels[i + 1], pixels[i + 2], pixels[i + 3]]
+    };
+    // Inside the quad and outside the shape: the corner of a rounded rectangle
+    // whose arc has left this point behind, and the ring along a straight edge.
+    let gaps = [(41, 41), (39, 64)];
+
+    let (replaced, replaced_vertices) = over_a_backdrop(BlendMode::Src, true);
+    let (tessellated, _) = over_a_backdrop(BlendMode::Src, false);
+    // Refused the fast path, so it drew the outline it actually covers. Counted
+    // against the mode that keeps it rather than against a bare number, since
+    // the backdrop contributes vertices of its own to both.
+    let (_, composited_vertices) = over_a_backdrop(BlendMode::SrcOver, true);
+    assert!(
+        replaced_vertices > composited_vertices,
+        "a destination-discarding mode should have fallen back to tessellation:          {replaced_vertices} against {composited_vertices}"
+    );
+    for (x, y) in gaps {
+        assert_eq!(
+            at(&replaced, x, y),
+            at(&tessellated, x, y),
+            "({x}, {y}) differs between the two routes"
+        );
+        assert_ne!(
+            at(&replaced, x, y),
+            [0, 0, 0, 0],
+            "({x}, {y}) was erased rather than left alone"
+        );
+    }
+
+    // And the modes that can take it still do, still smoothly.
+    let (composited, _) = over_a_backdrop(BlendMode::SrcOver, true);
+    for (x, y) in gaps {
+        assert_ne!(
+            at(&composited, x, y),
+            [0, 0, 0, 0],
+            "({x}, {y}) was erased by a mode that composites"
+        );
+    }
+}
+
+#[test]
 fn an_oval_is_an_ellipse_rather_than_a_stadium() {
     let Some(mut ctx) = context() else { return };
     // The shape a rounded rectangle cannot become. Past half its shorter side a
