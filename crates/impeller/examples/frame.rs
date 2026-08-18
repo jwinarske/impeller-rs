@@ -70,8 +70,11 @@ fn main() {
         .expect("atlas image");
     ctx.write_image(&mut image, atlas.texels()).expect("upload");
 
+    // sRGB, because these bytes were picked by eye and that is the space an eye
+    // picks in -- as is every image file. The format is what decodes them on
+    // sample; read as linear they come out pale, which is what this did.
     let mut swatch = ctx
-        .create_image(Extent2D::new(2, 2), PixelFormat::Rgba8Unorm)
+        .create_image(Extent2D::new(2, 2), PixelFormat::Rgba8UnormSrgb)
         .expect("swatch image");
     // Premultiplied, which is what a texture holds. These are opaque, so the
     // two conventions agree — the distinction only shows once alpha is

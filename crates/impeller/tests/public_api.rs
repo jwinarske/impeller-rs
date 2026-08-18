@@ -237,6 +237,75 @@ fn flat_fill(ctx: &mut Context, format: PixelFormat, color: Color) -> [u8; 4] {
 }
 
 #[test]
+fn an_srgb_image_decodes_when_it_is_sampled() {
+    let Some(mut ctx) = context() else { return };
+    // The other direction across the same boundary. A surface encodes on write;
+    // an image decodes on sample. A caller uploading a picture has
+    // sRGB-encoded bytes, because that is what every image file holds, and the
+    // format is what says so -- read as linear they are too bright by exactly
+    // the transfer function, which looks like a washed-out picture rather than
+    // like a mistake.
+    //
+    // Neither choice fails, which is why this is worth pinning: both produce an
+    // image, and only one produces the right one.
+    let extent = Extent2D::new(32, 32);
+    let encoded = 188u8; // mid grey, encoded
+    let mut sampled = |format: PixelFormat| {
+        let mut image = ctx
+            .create_image(Extent2D::new(4, 4), format)
+            .expect("image");
+        ctx.write_image(&mut image, &[encoded; 4 * 4 * 4])
+            .expect("upload");
+        let mut canvas = Canvas::new(extent);
+        canvas.clear(Color::BLACK);
+        canvas
+            .draw_rect(
+                Rect::from_size(32.0, 32.0),
+                &Paint::image(0, Rect::from_size(32.0, 32.0)).with_anti_alias(false),
+            )
+            .expect("image paint");
+        // Into a linear surface, so what comes back is the linear value the
+        // shader sampled rather than a re-encoding of it.
+        let mut surface = ctx
+            .create_surface(extent, PixelFormat::Rgba8Unorm)
+            .expect("surface");
+        ctx.draw_with_images(&mut surface, &canvas.finish(), &[&image])
+            .expect("draw");
+        let pixels = ctx.read(&mut surface).expect("read");
+        ctx.destroy_surface(surface);
+        ctx.destroy_image(image);
+        pixels[0]
+    };
+
+    // Read as linear, the byte passes through unchanged -- which is right for
+    // coverage or a lookup table, and wrong for a picture.
+    assert!(
+        sampled(PixelFormat::Rgba8Unorm).abs_diff(encoded) <= 1,
+        "a linear image should sample the byte it was given"
+    );
+    // Read as sRGB, it decodes. The reference is the library's own conversion
+    // rather than a constant, so this compares the device against the code
+    // beside it.
+    let want = (Color::srgb(
+        encoded as f32 / 255.0,
+        encoded as f32 / 255.0,
+        encoded as f32 / 255.0,
+        1.0,
+    )
+    .r * 255.0)
+        .round() as u8;
+    let got = sampled(PixelFormat::Rgba8UnormSrgb);
+    assert!(
+        got.abs_diff(want) <= 1,
+        "an sRGB image sampled as {got} where decoding {encoded} gives {want}"
+    );
+    assert!(
+        got < encoded,
+        "decoding should darken an encoded byte, got {got} from {encoded}"
+    );
+}
+
+#[test]
 fn an_srgb_surface_returns_the_color_that_was_authored() {
     // The round trip is the reason both halves exist. A caller states a color
     // the way a designer picked it, in sRGB; the renderer converts to linear so
