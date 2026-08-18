@@ -91,13 +91,13 @@ fn a_rectangle_lands_where_it_was_asked_to() {
 fn colours_are_specified_in_srgb_and_stored_linearly() {
     let Some(mut ctx) = context() else { return };
     let mut canvas = Canvas::new(SIZE);
-    // A mid grey as a design tool would give it.
+    // A mid gray as a design tool would give it.
     canvas.clear(Color::rgba8(128, 128, 128, 255));
     let pixels = render(&mut ctx, canvas);
 
     // The target holds linear values, so sRGB 128 lands near 55, not 128.
     // Storing 128 would mean the conversion never happened, and every blend
-    // against this colour would then be wrong.
+    // against this color would then be wrong.
     let stored = pixel(&pixels, 4, 4)[0];
     assert!(
         (50..=60).contains(&stored),
@@ -249,7 +249,7 @@ fn an_srgb_image_decodes_when_it_is_sampled() {
     // Neither choice fails, which is why this is worth pinning: both produce an
     // image, and only one produces the right one.
     let extent = Extent2D::new(32, 32);
-    let encoded = 188u8; // mid grey, encoded
+    let encoded = 188u8; // mid gray, encoded
     let mut sampled = |format: PixelFormat| {
         let mut image = ctx
             .create_image(Extent2D::new(4, 4), format)
@@ -1019,7 +1019,7 @@ fn an_analytic_stroke_deforms_with_the_transform() {
         ctx.destroy_surface(surface);
         pixels
     };
-    // How many lit pixels a horizontal line through the centre crosses, which
+    // How many lit pixels a horizontal line through the center crosses, which
     // is both walls of the ring and so twice its thickness there.
     let across = |pixels: &[u8]| {
         (0..extent.width)
@@ -1205,7 +1205,7 @@ fn an_oval_is_an_ellipse_rather_than_a_stadium() {
         );
         assert_eq!(at(pixels, 140, 98), 255, "{name}: inside the curve");
         // And the extremes of both axes are reached.
-        assert_eq!(at(pixels, 100, 70), 255, "{name}: centre");
+        assert_eq!(at(pixels, 100, 70), 255, "{name}: center");
         assert_eq!(at(pixels, 22, 70), 255, "{name}: the end of the major axis");
         assert_eq!(
             at(pixels, 100, 36),
@@ -1245,7 +1245,7 @@ fn an_antialiased_circle_uses_the_same_distance_field() {
     let Some(mut ctx) = context() else { return };
     // A circle is a rounded rectangle: a square whose corner radius is half its
     // side has no straight edge left, and the field reduces exactly to the
-    // distance from the centre less the radius. So it costs two triangles and
+    // distance from the center less the radius. So it costs two triangles and
     // needs no shader of its own.
     let extent = Extent2D::new(160, 120);
     let radius = 40.0f32;
@@ -1533,7 +1533,7 @@ fn a_linear_gradient_runs_between_its_stops() {
     let right = pixel(&pixels, 126, 64);
 
     // Red at the start, blue at the end, and a genuine mix between: a gradient
-    // that failed to evaluate would come back as one flat colour.
+    // that failed to evaluate would come back as one flat color.
     assert!(left[0] > 240 && left[2] < 16, "left end: {left:?}");
     assert!(right[2] > 240 && right[0] < 16, "right end: {right:?}");
     assert!(
@@ -1583,7 +1583,7 @@ fn a_linear_gradient_runs_the_same_way_on_a_target_that_is_not_square() {
     let at = |x: u32, y: u32| pixels[((y * extent.width + x) * 4) as usize];
 
     // (32, 0), (0, 32) and (16, 16) all project to the same point on a (1, 1)
-    // axis, so they are the same colour or the gradient is not running along
+    // axis, so they are the same color or the gradient is not running along
     // that axis. Before the fix these read 27, 104 and 66.
     let (a, b, c) = (at(32, 0), at(0, 32), at(16, 16));
     let spread = a.abs_diff(b).max(b.abs_diff(c)).max(a.abs_diff(c));
@@ -1621,7 +1621,7 @@ fn a_gradient_runs_along_the_axis_it_was_given() {
         .expect("gradient");
 
     let pixels = render(&mut ctx, canvas);
-    // User space runs downward, so the start colour belongs at the top.
+    // User space runs downward, so the start color belongs at the top.
     assert!(
         pixel(&pixels, 64, 1)[0] > 240,
         "top should be the first stop"
@@ -1644,7 +1644,7 @@ fn a_gradient_travels_with_the_canvas_transform() {
         let mut canvas = Canvas::new(SIZE);
         canvas.clear(Color::BLACK);
         if rotate {
-            // Rotate about the centre by a quarter turn.
+            // Rotate about the center by a quarter turn.
             canvas.translate(64.0, 64.0);
             canvas.rotate(std::f32::consts::FRAC_PI_2);
             canvas.translate(-64.0, -64.0);
@@ -1735,8 +1735,8 @@ fn a_radial_gradient_runs_outward_from_its_centre() {
         .expect("radial");
 
     let pixels = render(&mut ctx, canvas);
-    let centre = pixel(&pixels, 64, 64);
-    assert!(centre[0] > 240 && centre[2] < 16, "centre: {centre:?}");
+    let center = pixel(&pixels, 64, 64);
+    assert!(center[0] > 240 && center[2] < 16, "center: {center:?}");
 
     // Equidistant points must match. A radial gradient measured in clip space
     // without mapping back would be an ellipse, and these would differ.
@@ -1749,7 +1749,7 @@ fn a_radial_gradient_runs_outward_from_its_centre() {
         );
     }
     // And it must actually vary with distance.
-    assert!(right[2] > centre[2] + 40, "no falloff toward the edge");
+    assert!(right[2] > center[2] + 40, "no falloff toward the edge");
 }
 
 #[test]
@@ -1787,8 +1787,8 @@ fn a_radial_gradient_stays_circular_on_a_non_square_target() {
         let i = ((y * extent.width + x) * 4) as usize;
         [pixels[i], pixels[i + 1], pixels[i + 2], pixels[i + 3]]
     };
-    // Thirty pixels right and thirty pixels down from the centre are the same
-    // distance away, so they must be the same colour.
+    // Thirty pixels right and thirty pixels down from the center are the same
+    // distance away, so they must be the same color.
     let right = at(96 + 30, 48);
     let below = at(96, 48 + 30);
     for channel in 0..4 {
@@ -1832,7 +1832,7 @@ fn a_sweep_gradient_runs_around_its_centre() {
         );
     }
 
-    // Clip Y runs up, so a point below the centre in the image is at a negative
+    // Clip Y runs up, so a point below the center in the image is at a negative
     // angle and lands late in the sweep.
     let above = pixel(&pixels, 64, 64 - 40);
     assert_ne!(near, above, "a sweep should vary with angle");

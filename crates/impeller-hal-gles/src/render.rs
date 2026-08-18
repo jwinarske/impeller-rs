@@ -13,7 +13,7 @@ use impeller_hal::{
     Scissor, TextureDescriptor,
 };
 
-/// A colour texture and the framebuffer that renders into it.
+/// A color texture and the framebuffer that renders into it.
 pub struct GlesTexture {
     pub(crate) texture: glow::Texture,
     pub(crate) framebuffer: glow::Framebuffer,
@@ -40,7 +40,7 @@ impl GlesTexture {
     }
 }
 
-/// The compiled solid-colour program and the vertex state it draws with.
+/// The compiled solid-color program and the vertex state it draws with.
 pub(crate) struct SolidProgram {
     pub(crate) program: glow::Program,
     /// Locations of the paint uniform's members, which the shader translator
@@ -768,7 +768,7 @@ fn apply_blend(gl: &glow::Context, blend: BlendMode) {
         }
         // Factors come from the shared table rather than being restated here,
         // so the two backends cannot disagree about what a mode means. It
-        // assumes premultiplied colour, which is what the shader emits.
+        // assumes premultiplied color, which is what the shader emits.
         //
         // An advanced mode has no factors at all, and submission has already
         // refused the batch by the time this runs, since this backend reports
@@ -782,7 +782,7 @@ fn apply_blend(gl: &glow::Context, blend: BlendMode) {
         let src = gl_blend_factor(factors.src);
         let dst = gl_blend_factor(factors.dst);
         gl.enable(glow::BLEND);
-        // The same factors for alpha as for colour: with premultiplied colour
+        // The same factors for alpha as for color: with premultiplied color
         // the alpha channel is not a special case, and giving it different
         // factors breaks compositing a layer onto something else.
         gl.blend_func_separate(src, dst, src, dst);

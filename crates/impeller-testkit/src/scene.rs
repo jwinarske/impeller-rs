@@ -83,10 +83,10 @@ impl StrokeSpec {
     }
 }
 
-/// A colour stop, as data.
+/// A color stop, as data.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Stop {
-    /// Linear colour with straight alpha.
+    /// Linear color with straight alpha.
     pub color: [f32; 4],
     pub offset: f32,
 }
@@ -111,13 +111,13 @@ pub enum Fill {
         end: [f32; 2],
         stops: Vec<Stop>,
     },
-    /// A gradient outward from a centre, reaching its last stop at `radius`.
+    /// A gradient outward from a center, reaching its last stop at `radius`.
     RadialGradient {
         center: [f32; 2],
         radius: f32,
         stops: Vec<Stop>,
     },
-    /// A gradient around a centre, between two angles in radians.
+    /// A gradient around a center, between two angles in radians.
     SweepGradient {
         center: [f32; 2],
         start_angle: f32,
@@ -463,7 +463,7 @@ impl Scene {
     ///
     /// The rule is where the value came from, not what the picture looks like:
     /// **exact where a value is transported, tolerant where it is computed per
-    /// fragment.** A solid fill copies a colour through the pipeline, and any
+    /// fragment.** A solid fill copies a color through the pipeline, and any
     /// difference there is a defect. A gradient evaluates one, a blend converts
     /// an intermediate result to fixed point, and a multisample resolve
     /// averages — none of which the specification requires to be bit-identical
@@ -473,7 +473,7 @@ impl Scene {
     /// Assigning this per scene by hand would drift as the corpus grows, and
     /// would let a genuine divergence be waved through by loosening one entry.
     pub fn tolerance(&self) -> crate::image::Tolerance {
-        // Any fill that is not a plain colour is evaluated per fragment, so
+        // Any fill that is not a plain color is evaluated per fragment, so
         // this asks what the fill is not rather than listing the kinds that
         // are. Enumerating them meant a new gradient kind silently inherited
         // the exact rule and failed the moment it was added.
@@ -1128,7 +1128,7 @@ pub fn corpus() -> Vec<Scene> {
         // statement about alpha was trivially true of it.
         //
         // Deliberately full of partial alpha, since that is the only place a
-        // colour that was never premultiplied shows: at full alpha the two
+        // color that was never premultiplied shows: at full alpha the two
         // conventions agree exactly. And deliberately mixed, because the two
         // routes premultiply in different lines -- a polygon goes through the
         // one shared by solids and gradients, and the other two are evaluated
@@ -1191,7 +1191,7 @@ pub fn corpus() -> Vec<Scene> {
         // The three fragment-evaluated shapes, traced rather than filled. An
         // outline is the band where the field is small, so it costs one
         // subtraction and no vertices -- and the three have to agree on what a
-        // width means, which is the whole width centred on the edge.
+        // width means, which is the whole width centered on the edge.
         Scene::new(
             "analytic-outlines",
             vec![

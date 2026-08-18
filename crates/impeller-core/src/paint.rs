@@ -6,7 +6,7 @@ use glam::Vec2;
 use impeller_geometry::stroke::StrokeStyle;
 use impeller_hal::{BlendMode, TileMode};
 
-/// A colour stop in a gradient.
+/// A color stop in a gradient.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct GradientStop {
     pub color: Color,
@@ -34,14 +34,14 @@ pub enum Shader {
         end: Vec2,
         stops: Vec<GradientStop>,
     },
-    /// A gradient outward from a centre **in user space**, reaching its last
+    /// A gradient outward from a center **in user space**, reaching its last
     /// stop at `radius`.
     RadialGradient {
         center: Vec2,
         radius: f32,
         stops: Vec<GradientStop>,
     },
-    /// A gradient around a centre **in user space**, running between two angles
+    /// A gradient around a center **in user space**, running between two angles
     /// in radians, measured counter-clockwise from the positive X axis.
     /// A texture, mapped onto a rectangle **in user space**.
     ///
@@ -137,7 +137,7 @@ impl Paint {
         }
     }
 
-    /// A fill that runs between colours along a line in user space.
+    /// A fill that runs between colors along a line in user space.
     pub fn linear_gradient(start: Vec2, end: Vec2, stops: Vec<GradientStop>) -> Self {
         Self {
             shader: Shader::LinearGradient { start, end, stops },
@@ -145,7 +145,7 @@ impl Paint {
         }
     }
 
-    /// A fill that runs outward from a centre in user space.
+    /// A fill that runs outward from a center in user space.
     pub fn radial_gradient(center: Vec2, radius: f32, stops: Vec<GradientStop>) -> Self {
         Self {
             shader: Shader::RadialGradient {
@@ -157,7 +157,7 @@ impl Paint {
         }
     }
 
-    /// A fill that runs around a centre in user space.
+    /// A fill that runs around a center in user space.
     ///
     /// Angles are in radians, counter-clockwise from the positive X axis.
     pub fn sweep_gradient(

@@ -8,8 +8,8 @@
 //! before any of it reaches the GPU is what lets draws share a single pass, and
 //! it keeps the API free of the question of when work is flushed.
 //!
-//! Colour is linear throughout, converted at this boundary. Blending,
-//! filtering, and antialiasing all average colours, and averaging sRGB-encoded
+//! Color is linear throughout, converted at this boundary. Blending,
+//! filtering, and antialiasing all average colors, and averaging sRGB-encoded
 //! values is visibly wrong — see [`Color`].
 
 pub mod canvas;

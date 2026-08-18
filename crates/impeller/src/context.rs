@@ -142,11 +142,11 @@ impl Context {
     /// Allocate an image this context can sample.
     ///
     /// The format decides how the bytes written into it are read, and the
-    /// choice is not cosmetic. Colour inside the renderer is linear, and an
+    /// choice is not cosmetic. Color inside the renderer is linear, and an
     /// sRGB format decodes on sample -- so a picture, whose bytes are
     /// sRGB-encoded because that is what every image file holds, wants
     /// [`PixelFormat::Rgba8UnormSrgb`] and comes out washed pale without it.
-    /// A linear format is right for data that is not colour: coverage, a mask,
+    /// A linear format is right for data that is not color: coverage, a mask,
     /// a lookup table, anything whose numbers mean themselves.
     ///
     /// Neither choice is detectable afterwards, which is why it is stated here.

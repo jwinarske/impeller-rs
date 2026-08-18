@@ -78,7 +78,7 @@ pub fn surface_extensions() -> &'static [&'static str] {
 /// Vulkan?" would be.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct FrameSync<'a> {
-    /// Waited on before the colour attachment is written.
+    /// Waited on before the color attachment is written.
     pub wait: &'a [vk::Semaphore],
     /// Signalled when the submission completes.
     pub signal: &'a [vk::Semaphore],
@@ -678,7 +678,7 @@ impl VulkanContext {
             .into_iter()
             .chain(sync.signal.iter().copied())
             .collect();
-        // Colour output is the only stage that touches the attachment, so
+        // Color output is the only stage that touches the attachment, so
         // earlier stages may run before the wait is satisfied. Waiting at the
         // top of the pipe instead would serialise vertex work behind an image
         // the vertex stage never reads.

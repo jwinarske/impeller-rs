@@ -95,7 +95,7 @@ fn a_swapchain_reports_a_usable_configuration() {
         // renderer's colors are linear and the presentation engine is told the
         // image holds sRGB, so the attachment is what encodes between them. A
         // linear format is accepted as a fallback and is a little over a third
-        // too dark at mid grey, which is why it is not the preference.
+        // too dark at mid gray, which is why it is not the preference.
         assert!(
             matches!(
                 target.format(),

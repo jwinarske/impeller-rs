@@ -479,7 +479,7 @@ fn a_scene_on_an_opaque_background_stays_opaque() {
     // This is not hypothetical. A shape evaluated per fragment is drawn on a
     // quad larger than itself, and under a mode that replaces rather than
     // composites it erased the corners of its own bounding box -- for as long
-    // as it took somebody to notice grey notches on a contact sheet.
+    // as it took somebody to notice gray notches on a contact sheet.
     let mut devices = available_devices();
     if devices.is_empty() {
         eprintln!("skipping: no device");
@@ -515,10 +515,10 @@ fn a_scene_on_an_opaque_background_stays_opaque() {
 
 #[test]
 fn colour_never_exceeds_the_alpha_it_is_multiplied_by() {
-    // Everything here stores premultiplied colour: a render target holds it,
+    // Everything here stores premultiplied color: a render target holds it,
     // an uploaded image is required to, and the blend equations assume it. The
     // property that follows is that no channel can exceed the alpha it was
-    // multiplied by, and a shader that emitted straight colour instead would
+    // multiplied by, and a shader that emitted straight color instead would
     // break it -- at partial alpha, and only there. At full alpha the two
     // conventions agree exactly, which is why a mistake of this kind is
     // invisible until something translucent is drawn into something else.
@@ -549,7 +549,7 @@ fn colour_never_exceeds_the_alpha_it_is_multiplied_by() {
                 assert!(
                     texel[channel] <= alpha,
                     "{}: at texel {at} the {name} channel is {} against an alpha of {alpha}, \
-                     which is not premultiplied colour",
+                     which is not premultiplied color",
                     scene.name,
                     texel[channel],
                 );

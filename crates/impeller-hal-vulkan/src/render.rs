@@ -434,7 +434,7 @@ impl VulkanContext {
         outcome
     }
 
-    /// Allocate a transient multisample colour buffer matching `target`.
+    /// Allocate a transient multisample color buffer matching `target`.
     /// The stencil format this submission needs, or `None` if it needs none.
     ///
     /// Resolved once per submission rather than per draw so that every key
@@ -1106,7 +1106,7 @@ fn build_pipeline(
         .rasterization_samples(sample_flags(key.samples));
 
     // Factors come from the shared table rather than being restated here, so
-    // the two backends cannot disagree about what a mode means. Colour arrives
+    // the two backends cannot disagree about what a mode means. Color arrives
     // premultiplied from the shader, which is what that table assumes: source-
     // over is ONE rather than SRC_ALPHA, since using SRC_ALPHA against an
     // already-scaled source applies alpha twice and darkens every translucent
@@ -1135,8 +1135,8 @@ fn build_pipeline(
                 .src_color_blend_factor(src)
                 .dst_color_blend_factor(dst)
                 .color_blend_op(vk::BlendOp::ADD)
-                // The same factors for alpha as for colour: with premultiplied
-                // colour the alpha channel is not a special case, and giving it
+                // The same factors for alpha as for color: with premultiplied
+                // color the alpha channel is not a special case, and giving it
                 // different factors is what breaks compositing a layer onto
                 // something else.
                 .src_alpha_blend_factor(src)

@@ -1,16 +1,16 @@
-//! Colour.
+//! Color.
 //!
 //! Linear throughout, with conversion at the API boundary. That split is not
 //! cosmetic: blending, filtering, and antialiasing are all averaging
 //! operations, and averaging sRGB-encoded values produces results that are
-//! visibly too dark — the classic symptom being a grey fringe around
+//! visibly too dark — the classic symptom being a gray fringe around
 //! antialiased edges on a light background.
 //!
 //! Callers usually have sRGB values, because that is what design tools and CSS
 //! produce, so [`Color::srgb`] converts on the way in and [`Color::to_srgb`]
 //! converts back.
 
-/// A linear, straight-alpha colour.
+/// A linear, straight-alpha color.
 ///
 /// Straight rather than premultiplied at this level because it is what a caller
 /// writes; premultiplication happens on the way to the target.
@@ -27,12 +27,12 @@ impl Color {
     pub const BLACK: Self = Self::linear(0.0, 0.0, 0.0, 1.0);
     pub const WHITE: Self = Self::linear(1.0, 1.0, 1.0, 1.0);
 
-    /// A colour whose components are already linear.
+    /// A color whose components are already linear.
     pub const fn linear(r: f32, g: f32, b: f32, a: f32) -> Self {
         Self { r, g, b, a }
     }
 
-    /// A colour given in sRGB, converted to linear.
+    /// A color given in sRGB, converted to linear.
     ///
     /// Alpha is not transformed: it is a coverage fraction rather than a
     /// perceptual quantity, and applying a transfer function to it is a
@@ -46,7 +46,7 @@ impl Color {
         }
     }
 
-    /// A colour from the eight-bit sRGB values a design tool produces.
+    /// A color from the eight-bit sRGB values a design tool produces.
     pub fn rgba8(r: u8, g: u8, b: u8, a: u8) -> Self {
         Self::srgb(
             r as f32 / 255.0,
@@ -66,7 +66,7 @@ impl Color {
         ]
     }
 
-    /// Scale alpha, leaving the colour itself alone.
+    /// Scale alpha, leaving the color itself alone.
     pub fn with_alpha(mut self, alpha: f32) -> Self {
         self.a = alpha;
         self
@@ -76,7 +76,7 @@ impl Color {
         self.a >= 1.0
     }
 
-    /// Whether this colour would draw nothing.
+    /// Whether this color would draw nothing.
     pub fn is_invisible(self) -> bool {
         self.a <= 0.0
     }
@@ -171,9 +171,9 @@ mod tests {
         let black = Color::rgba8(0, 0, 0, 255);
         assert!(close(black.r, 0.0));
 
-        // A mid grey from a design tool is not half linear.
-        let grey = Color::rgba8(128, 128, 128, 255);
-        assert!(grey.r < 0.25, "sRGB 128 became {} linear", grey.r);
+        // A mid gray from a design tool is not half linear.
+        let gray = Color::rgba8(128, 128, 128, 255);
+        assert!(gray.r < 0.25, "sRGB 128 became {} linear", gray.r);
     }
 
     #[test]

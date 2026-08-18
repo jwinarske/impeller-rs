@@ -715,7 +715,7 @@ fn choose_format(
     // the image already holds sRGB-encoded values. An sRGB format is what
     // encodes them on write; a linear one hands the display linear light to
     // read as though it were encoded, which is every window a little over a
-    // third too dark at mid grey and wrong nowhere it announces itself.
+    // third too dark at mid gray and wrong nowhere it announces itself.
     //
     // The linear formats stay as a fallback, since a surface offering only
     // those is better served darkly than not at all.

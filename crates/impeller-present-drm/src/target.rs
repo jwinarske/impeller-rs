@@ -498,14 +498,14 @@ where
 ///
 /// The eight-bit codes map to their sRGB variants. A format code describes how
 /// bytes are laid out and says nothing about what they mean, and a display
-/// controller scanning out eight-bit colour reads them as sRGB-encoded -- so
+/// controller scanning out eight-bit color reads them as sRGB-encoded -- so
 /// the renderer's linear output has to be encoded on the way in, which is what
 /// an sRGB image view does and costs nothing. Rendering into a linear view and
 /// scanning that out puts linear light in front of a display expecting encoded,
-/// which is a picture a little over a third too dark at mid grey.
+/// which is a picture a little over a third too dark at mid gray.
 ///
 /// The ten-bit code has no sRGB variant to map to and is left alone. Deep
-/// colour scanout generally carries its transfer function out of band, so
+/// color scanout generally carries its transfer function out of band, so
 /// guessing one here would be the same mistake in the other direction.
 fn pixel_format_for(fourcc: impeller_hal::Fourcc) -> Result<PixelFormat> {
     use impeller_hal::Fourcc;
@@ -532,7 +532,7 @@ mod format_tests {
         // renderer's colors are linear, so the encode has to happen somewhere.
         // An sRGB image view does it on write for nothing; a linear one leaves
         // the display reading linear light as though it were encoded, which is
-        // a picture a little over a third too dark at mid grey and wrong in a
+        // a picture a little over a third too dark at mid gray and wrong in a
         // way that never announces itself.
         //
         // The format code is unchanged by this. It describes how bytes sit in
@@ -554,7 +554,7 @@ mod format_tests {
 
     #[test]
     fn ten_bit_scanout_is_left_linear() {
-        // There is no sRGB variant of it to choose, and deep colour scanout
+        // There is no sRGB variant of it to choose, and deep color scanout
         // generally carries its transfer function out of band -- so assuming
         // one here would be the same mistake pointing the other way.
         for fourcc in [Fourcc::XRGB2101010, Fourcc::ARGB2101010] {

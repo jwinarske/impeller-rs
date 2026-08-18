@@ -26,7 +26,7 @@ fn directory() -> PathBuf {
         .join("tests/shader-snapshots")
 }
 
-/// SPIR-V as words is not reviewable, so it is summarised rather than stored.
+/// SPIR-V as words is not reviewable, so it is summarized rather than stored.
 ///
 /// A hash and a length: enough to notice a change, and honest about not being
 /// a diff anybody can read. The GLSL beside it is text and is stored whole,

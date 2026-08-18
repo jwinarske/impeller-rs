@@ -22,7 +22,7 @@
 //! against what they are named for rather than against values: whether hue kept
 //! the backdrop's luminosity, whether saturation took the source's.
 //!
-//! Every mode assumes **premultiplied** colour, which is what the render target
+//! Every mode assumes **premultiplied** color, which is what the render target
 //! holds. The factors differ from the straight-alpha forms: source-over is
 //! `ONE` rather than `SRC_ALPHA`, because the source has already been scaled.
 
@@ -102,7 +102,7 @@ pub enum BlendMode {
 
     // Everything below mixes the two sides arithmetically and requires
     // advanced blending. The formulas are the separable ones from the
-    // compositing specification, applied per channel to unpremultiplied colour.
+    // compositing specification, applied per channel to unpremultiplied color.
     /// Multiply the two, which always darkens.
     Multiply,
     /// The inverse of multiplying the inverses, which always lightens.
@@ -239,7 +239,7 @@ impl BlendMode {
         )
     }
 
-    /// The factors this mode blends with, assuming premultiplied colour.
+    /// The factors this mode blends with, assuming premultiplied color.
     ///
     /// `None` for an advanced mode: those are not expressible as factors at
     /// all, which is exactly why they need an extension. Returning an
@@ -911,20 +911,20 @@ mod tests {
 
     #[test]
     fn a_flat_backdrop_has_no_saturation_to_take() {
-        // A grey has no hue and no saturation, so a mode asking for either gets
-        // a grey back. The guard that makes this work is also the one that
+        // A gray has no hue and no saturation, so a mode asking for either gets
+        // a gray back. The guard that makes this work is also the one that
         // stops a division by zero, which is why it is worth pinning.
-        let grey = [0.4, 0.4, 0.4];
+        let gray = [0.4, 0.4, 0.4];
         let colorful = [0.9, 0.2, 0.5];
-        let hue = nonseparable_blend(BlendMode::Hue, grey, colorful).unwrap();
+        let hue = nonseparable_blend(BlendMode::Hue, gray, colorful).unwrap();
         assert!(
             hue.iter().all(|c| (c - hue[0]).abs() < 1e-5),
-            "hue from a grey backdrop came back colored: {hue:?}"
+            "hue from a gray backdrop came back colored: {hue:?}"
         );
-        let saturation = nonseparable_blend(BlendMode::Saturation, grey, colorful).unwrap();
+        let saturation = nonseparable_blend(BlendMode::Saturation, gray, colorful).unwrap();
         assert!(
             saturation.iter().all(|c| (c - saturation[0]).abs() < 1e-5),
-            "saturating a grey produced color from nothing: {saturation:?}"
+            "saturating a gray produced color from nothing: {saturation:?}"
         );
     }
 

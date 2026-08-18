@@ -10,7 +10,7 @@
 //!
 //! # Status
 //!
-//! Offscreen rendering of solid-colour geometry, with blending and
+//! Offscreen rendering of solid-color geometry, with blending and
 //! multisampling. Rendering to a window or to a GBM surface for direct scanout
 //! is not implemented yet.
 

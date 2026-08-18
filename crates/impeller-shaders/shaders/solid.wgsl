@@ -1,4 +1,4 @@
-// Solid colour and gradients.
+// Solid color and gradients.
 //
 // Positions arrive in normalized device coordinates, in the WGSL convention:
 // Y increases upward. Translation to a backend whose framebuffer runs the
@@ -31,10 +31,10 @@ struct Paint {
     stops: array<vec4<f32>, 4>,
     // Position of each stop along the gradient, in order.
     offsets: vec4<f32>,
-    // Linear: start.xy then end.xy. Radial and sweep: centre.xy, then two
+    // Linear: start.xy then end.xy. Radial and sweep: center.xy, then two
     // spare components a sweep uses for its angles.
     geometry: vec4<f32>,
-    // Maps a clip-space offset from the centre into the gradient's own space,
+    // Maps a clip-space offset from the center into the gradient's own space,
     // as a two by two matrix in column order.
     //
     // Clip space is anisotropic whenever the target is not square, and a
@@ -76,7 +76,7 @@ fn vs_main(
     return out;
 }
 
-/// Colour at `t` along the stop list, with `count` stops in use.
+/// Color at `t` along the stop list, with `count` stops in use.
 fn sample_stops(t: f32, count: i32) -> vec4<f32> {
     var result: vec4<f32> = paint.stops[0];
     // Walk the stops rather than searching: at most four, and a loop with a
@@ -153,7 +153,7 @@ fn sample_image(clip: vec2<f32>) -> vec4<f32> {
 /// resolved -- which is where a stroked path gets its vertices and its joins.
 ///
 /// Shared by every shape here so the three cannot drift apart on what a width
-/// means: it is the full width, centred on the edge, in the shape's own space.
+/// means: it is the full width, centered on the edge, in the shape's own space.
 /// Narrow a field to its own outline, where the paint asked for one.
 ///
 /// An outline is the band where the distance is small, so tracing one costs a
@@ -229,7 +229,7 @@ fn rounded_rect_coverage(clip: vec2<f32>) -> vec4<f32> {
     // shape rather than an antialiased one.
     let gradient = vec2<f32>(dpdx(distance), dpdy(distance));
     let width = length(gradient);
-    // Half a pixel each way. A pixel whose centre sits on the edge is half
+    // Half a pixel each way. A pixel whose center sits on the edge is half
     // covered, which is what the linear ramp says at distance zero.
     let coverage = coverage_of(distance, max(width, 1e-6), paint.params.w);
 
@@ -333,7 +333,7 @@ fn blur_along_axis(clip: vec2<f32>) -> vec4<f32> {
 
 @fragment
 fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
-    var colour: vec4<f32> = paint.stops[0];
+    var color: vec4<f32> = paint.stops[0];
     let kind = paint.params.y;
     let count = i32(paint.params.x);
 
@@ -348,13 +348,13 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         let axis = paint.geometry.zw;
         let length_squared = max(dot(axis, axis), 1e-6);
         let t = clamp(dot(to_gradient_space(in.clip), axis) / length_squared, 0.0, 1.0);
-        colour = sample_stops(t, count);
+        color = sample_stops(t, count);
     } else if (kind > 1.5 && kind < 2.5) {
         // Radial: distance in gradient space, where the radius is one.
         let t = clamp(length(to_gradient_space(in.clip)), 0.0, 1.0);
-        colour = sample_stops(t, count);
+        color = sample_stops(t, count);
     } else if (kind > 2.5 && kind < 3.5) {
-        // Sweep: angle about the centre, measured in gradient space so an
+        // Sweep: angle about the center, measured in gradient space so an
         // anisotropic target does not bunch the stops on two sides.
         let local = to_gradient_space(in.clip);
         let angle = atan2(local.y, local.x);
@@ -364,7 +364,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         // forward from there rather than clipping at the atan2 discontinuity.
         var turns = (angle - start_angle) / sweep;
         turns = turns - floor(turns);
-        colour = sample_stops(clamp(turns, 0.0, 1.0), count);
+        color = sample_stops(clamp(turns, 0.0, 1.0), count);
     }
     // Checked after the gradient chain rather than inside it, because the
     // sweep arm tests only a lower bound and would otherwise claim this kind
@@ -398,8 +398,8 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         return vec4<f32>(tint.rgb * alpha, alpha);
     }
 
-    // Colours are linear here. Conversion to the target's transfer function is
+    // Colors are linear here. Conversion to the target's transfer function is
     // the attachment format's job, not this shader's. Premultiplying is this
     // shader's job, because the blend equations expect it.
-    return vec4<f32>(colour.rgb * colour.a, colour.a);
+    return vec4<f32>(color.rgb * color.a, color.a);
 }

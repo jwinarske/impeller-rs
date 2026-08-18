@@ -43,7 +43,7 @@ pub trait PresentTarget<H: Hal> {
 ///
 /// A first-class citizen rather than a test affordance: the entire golden and
 /// conformance apparatus runs on this, so it is the target most exercised and
-/// the one whose behaviour every other target is compared against.
+/// the one whose behavior every other target is compared against.
 pub struct OffscreenTarget<H: Hal> {
     texture: Option<H::Texture>,
     extent: Extent2D,

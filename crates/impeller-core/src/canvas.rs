@@ -358,7 +358,7 @@ pub struct Canvas {
     ///
     /// Multisampling is a property of the pass, so it cannot vary per shape.
     /// Turning it on for the whole frame when any shape wants it is the
-    /// behaviour that surprises least; the alternative silently ignores the
+    /// behavior that surprises least; the alternative silently ignores the
     /// request on some shapes.
     anti_alias: bool,
     samples: u32,
@@ -924,7 +924,7 @@ impl Canvas {
             color: color.to_array(),
             center: [center_clip.x, center_clip.y],
             half_size: [rect.width() / 2.0, rect.height() / 2.0],
-            // Maps a clip-space offset from the centre back into the shape's
+            // Maps a clip-space offset from the center back into the shape's
             // own space, so the distance is measured where the radius means
             // what the caller said. Measuring in clip space would round the
             // corners by different amounts on each axis of a target that is
@@ -978,7 +978,7 @@ impl Canvas {
     /// An antialiased solid fill goes through the same distance field a rounded
     /// rectangle does, because it is one: a square whose corner radius is half
     /// its side has no straight edge left, and the field reduces exactly to the
-    /// distance from the centre less the radius. So a circle costs two
+    /// distance from the center less the radius. So a circle costs two
     /// triangles and needs no shader of its own, where four cubics flattened to
     /// a tolerance cost vertices in proportion to how large it is drawn.
     pub fn draw_circle(&mut self, center: Vec2, radius: f32, paint: &Paint) -> Result<&mut Self> {

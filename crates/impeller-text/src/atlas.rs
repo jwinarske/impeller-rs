@@ -680,7 +680,7 @@ mod tests {
         );
     }
 
-    /// An atlas that cannot grow, for the behaviours that only appear at the
+    /// An atlas that cannot grow, for the behaviors that only appear at the
     /// limit: compaction, and being genuinely full.
     fn fixed(size: u32) -> Atlas {
         Atlas::with_limit(size, size)

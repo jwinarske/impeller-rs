@@ -40,11 +40,11 @@ pub const MAX_STOPS: usize = 4;
 /// separately, and naming the offsets here keeps it from repeating the layout
 /// as bare indices that quietly go stale when the layout grows.
 pub mod layout {
-    /// Four stop colours.
+    /// Four stop colors.
     pub const STOPS: usize = 0;
     /// Stop positions.
     pub const OFFSETS: usize = 16;
-    /// Endpoints, or centre plus angles.
+    /// Endpoints, or center plus angles.
     pub const GEOMETRY: usize = 20;
     /// Clip-space to gradient-space matrix, in column order.
     pub const TO_LOCAL: usize = 24;
@@ -72,10 +72,10 @@ pub mod tile {
     pub const DECAL: f32 = 2.0;
 }
 
-/// A colour stop.
+/// A color stop.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Stop {
-    /// Linear colour with straight alpha.
+    /// Linear color with straight alpha.
     pub color: [f32; 4],
     /// Position along the gradient, from zero to one.
     pub offset: f32,
@@ -121,7 +121,7 @@ pub enum Material {
         to_local: ToLocal,
         stops: Vec<Stop>,
     },
-    /// A gradient outward from a centre, **in clip space**, where `to_local`
+    /// A gradient outward from a center, **in clip space**, where `to_local`
     /// carries the radius: it maps the clip-space offset so that the gradient's
     /// edge lands at unit distance.
     RadialGradient {
@@ -129,7 +129,7 @@ pub enum Material {
         to_local: ToLocal,
         stops: Vec<Stop>,
     },
-    /// A gradient around a centre, **in clip space**, running from `start_angle`
+    /// A gradient around a center, **in clip space**, running from `start_angle`
     /// to `end_angle` in radians.
     SweepGradient {
         center: [f32; 2],
@@ -456,7 +456,7 @@ impl Material {
         out[layout::PARAMS] = count.max(1) as f32;
 
         // A gradient with fewer than two stops has nothing to interpolate
-        // between, so it renders as its first colour rather than sending the
+        // between, so it renders as its first color rather than sending the
         // shader down a path that would read an entry nothing wrote.
         if count < 2 {
             out[layout::PARAMS + 1] = kind::SOLID;
@@ -608,7 +608,7 @@ mod tests {
         }
         .to_push_constants();
 
-        // Angles share the geometry slot with the centre, which is why a linear
+        // Angles share the geometry slot with the center, which is why a linear
         // gradient's endpoints and a sweep's angles cannot both be present.
         assert_eq!(
             &packed[layout::GEOMETRY..layout::GEOMETRY + 4],

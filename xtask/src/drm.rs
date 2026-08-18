@@ -135,7 +135,7 @@ fn scanout_formats(path: &str) -> String {
     let mut out = String::new();
     for set in &formats {
         // The fourcc as its four characters, which is how anyone reading a
-        // modifier table or a driver source will recognise it.
+        // modifier table or a driver source will recognize it.
         let code = set.fourcc.0.to_le_bytes();
         let name: String = code
             .iter()

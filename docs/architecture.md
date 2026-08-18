@@ -218,8 +218,8 @@ symmetric top-to-bottom, since a symmetric one proves nothing.
 is expressible with fixed-function factors, so it works on every device with no
 extension and no capability gate — which is why it comes first. Each backend
 translates portable factors rather than restating the table, so the two cannot
-disagree about what a mode means. All of them assume premultiplied colour, and
-alpha uses the same factors as colour: with premultiplied colour the alpha
+disagree about what a mode means. All of them assume premultiplied color, and
+alpha uses the same factors as color: with premultiplied color the alpha
 channel is not a special case, and giving it different factors is what breaks
 compositing a layer onto something else.
 
@@ -646,18 +646,18 @@ holds encoded values. An sRGB attachment is what encodes them on write.
 This was the other way round, on reasoning that inverted itself: that an sRGB
 format would apply the transfer to values already carrying it. Linear values do
 not carry it, which is what makes them linear. Presented through a linear
-format, mid grey reached the display as 128 where 188 is what it should be —
+format, mid gray reached the display as 128 where 188 is what it should be —
 every window a little over a third too dark, and nowhere announcing itself. The
 same mistake had been made in the bundled example, found by looking at its
 output; this one had a unit test holding it in place.
 
 Scanout had it too, and the same fix applies for the same reason. A format code
 describes how bytes sit in memory and says nothing about what they mean, and a
-controller scanning out eight-bit colour reads them as encoded — so those codes
+controller scanning out eight-bit color reads them as encoded — so those codes
 map to sRGB image views while the code negotiated with the display is unchanged.
 Real hardware accepts the exported buffer either way, which is what says the two
 are independent. The ten-bit code is left linear: it has no sRGB variant, and
-deep colour generally carries its transfer function out of band, so assuming one
+deep color generally carries its transfer function out of band, so assuming one
 would be the same mistake pointing the other way. Present mode falls back rather than
 failing: FIFO is required of every implementation and mailbox is a latency
 preference, not a correctness requirement.
@@ -1020,7 +1020,7 @@ every fragment walks, which is the cost specialization would remove.
 
   A circle takes the same field, because it is the same shape: a square whose
   corner radius is half its side has no straight edge left, and the expression
-  reduces exactly to the distance from the centre less the radius. So a circle
+  reduces exactly to the distance from the center less the radius. So a circle
   costs two triangles and needed no shader of its own — and comes out nearer a
   real circle than the tessellated one does, which is a polygon approximation
   with its coverage quantized to however many samples the pass has.
@@ -1188,7 +1188,7 @@ every fragment walks, which is the cost specialization would remove.
   exactly the transfer — which is what says the pipeline carried light the
   whole way and only the final write encoded, rather than converting early or
   twice.
-- **Materials**: a paint resolved for a backend — colour or gradient, already
+- **Materials**: a paint resolved for a backend — color or gradient, already
   in clip space — packed into 112 bytes, inside the 128 of push constants every
   device is required to offer. Staying within the guaranteed minimum is
   deliberate: a part that provides only the minimum is exactly the embedded
@@ -1319,7 +1319,7 @@ identically by CI and by a shell on a board.
 
 Tolerance is derived from what a scene does rather than assigned per scene:
 **exact where a value is transported, tolerant where it is computed per
-fragment.** A solid fill copies a colour through the pipeline, and any
+fragment.** A solid fill copies a color through the pipeline, and any
 difference there is a defect. A gradient evaluates one, a blend converts an
 intermediate to fixed point, and a multisample resolve averages — none of which
 the specification requires to be bit-identical, since shader arithmetic is
@@ -1413,7 +1413,7 @@ correct pixels, and fails six of them once the layer is read. The class of bug
 it catches was invisible to the part of the suite that renders the most, and
 costs about eight percent of that suite's run time to see.
 
-Colour is premultiplied everywhere — a render target holds it that way, an
+Color is premultiplied everywhere — a render target holds it that way, an
 uploaded image is required to, and the blend equations assume it — so no channel
 can exceed the alpha it was multiplied by. That is asserted over the corpus, and
 it needs a scene that clears to transparent in order to mean anything: at full
@@ -1432,7 +1432,7 @@ invisible to a count of pixels below opaque.
 **No comparison here can see a scene both implementations get wrong the same
 way.** Backend against backend, device against device, a scene against a
 mutation of itself — all of it is relative, and a gradient banded identically
-everywhere, a shape consistently in the wrong place, or a colour that is
+everywhere, a shape consistently in the wrong place, or a color that is
 arithmetically correct and far too dark passes every one. The bundled example
 wrote linear bytes into a file every viewer reads as sRGB for a long time, and
 nothing in the suite could have said so.

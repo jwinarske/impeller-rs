@@ -202,10 +202,10 @@ vec4 blur_along_axis(vec2 clip_4) {
 
 void main() {
     VertexOutput in_ = VertexOutput(gl_FragCoord, _vs2fs_location0, _vs2fs_location1);
-    vec4 colour = vec4(0.0);
+    vec4 color = vec4(0.0);
     float turns = 0.0;
     vec4 _e4 = _push_constant_binding_fs.stops[0];
-    colour = _e4;
+    color = _e4;
     float kind = _push_constant_binding_fs.params.y;
     float _e13 = _push_constant_binding_fs.params.x;
     int count_1 = int(_e13);
@@ -216,13 +216,13 @@ void main() {
         vec2 _e28 = to_gradient_space(in_.clip);
         float t_1 = clamp((dot(_e28, axis) / length_squared), 0.0, 1.0);
         vec4 _e34 = sample_stops(t_1, count_1);
-        colour = _e34;
+        color = _e34;
     } else {
         if (((kind > 1.5) && (kind < 2.5))) {
             vec2 _e41 = to_gradient_space(in_.clip);
             float t_2 = clamp(length(_e41), 0.0, 1.0);
             vec4 _e46 = sample_stops(t_2, count_1);
-            colour = _e46;
+            color = _e46;
         } else {
             if (((kind > 2.5) && (kind < 3.5))) {
                 vec2 _e53 = to_gradient_space(in_.clip);
@@ -236,7 +236,7 @@ void main() {
                 turns = (_e71 - floor(_e72));
                 float _e75 = turns;
                 vec4 _e79 = sample_stops(clamp(_e75, 0.0, 1.0), count_1);
-                colour = _e79;
+                color = _e79;
             }
         }
     }
@@ -268,9 +268,9 @@ void main() {
         _fs2p_location0 = vec4((tint_2.xyz * alpha_2), alpha_2);
         return;
     }
-    vec4 _e116 = colour;
-    float _e119 = colour.w;
-    float _e122 = colour.w;
+    vec4 _e116 = color;
+    float _e119 = color.w;
+    float _e122 = color.w;
     _fs2p_location0 = vec4((_e116.xyz * _e119), _e122);
     return;
 }

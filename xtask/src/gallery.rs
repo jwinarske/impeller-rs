@@ -4,7 +4,7 @@
 //! device against device, each scene against a mutation of itself. None of that
 //! can see a scene that is wrong in a way both implementations agree on. A
 //! gradient banded the same way everywhere, a shape drawn in the wrong place, a
-//! colour that is arithmetically correct and far too dark -- every comparison
+//! color that is arithmetically correct and far too dark -- every comparison
 //! here passes on all of them.
 //!
 //! That last one is not hypothetical. The bundled example rendered into a
@@ -16,10 +16,10 @@
 //! alongside so a tile can be found by counting.
 //!
 //! What it is good for is gross wrongness: a blank tile, a shape in the wrong
-//! place, a colour inverted, a scene that is far too dark. It is not good for
+//! place, a color inverted, a scene that is far too dark. It is not good for
 //! fine judgement, and the first two things that looked wrong on it were not.
-//! One tile appeared to have a grey surround and did not -- black corners, and
-//! forty distinct colours along an antialiased edge. Another appeared to blur
+//! One tile appeared to have a gray surround and did not -- black corners, and
+//! forty distinct colors along an antialiased edge. Another appeared to blur
 //! one of its two shapes and not the other; both were blurred, and the larger
 //! one simply shows less of it. Measure before believing either.
 //!
@@ -30,7 +30,7 @@
 use impeller_hal_vulkan::{DevicePreference, VulkanContext, VulkanHal};
 use impeller_testkit::{corpus, render_scene, Image};
 
-/// Gap between tiles, in pixels, and the colour behind them.
+/// Gap between tiles, in pixels, and the color behind them.
 const GAP: u32 = 8;
 const BACKDROP: [u8; 3] = [32, 32, 36];
 /// Marks a scene this device could not render, so a hole in the sheet is
@@ -154,11 +154,11 @@ pub fn render(columns: u32) -> Result<Sheet, String> {
     })
 }
 
-fn fill(sheet: &mut [u8], stride: u32, left: u32, top: u32, w: u32, h: u32, colour: [u8; 3]) {
+fn fill(sheet: &mut [u8], stride: u32, left: u32, top: u32, w: u32, h: u32, color: [u8; 3]) {
     for y in 0..h {
         for x in 0..w {
             let at = (((top + y) * stride + left + x) * 3) as usize;
-            sheet[at..at + 3].copy_from_slice(&colour);
+            sheet[at..at + 3].copy_from_slice(&color);
         }
     }
 }
@@ -176,7 +176,7 @@ fn blit(sheet: &mut [u8], stride: u32, left: u32, top: u32, image: &Image) {
             let to = (((top + y) * stride + left + x) * 3) as usize;
             let alpha = image.pixels[from + 3] as u32;
             for channel in 0..3 {
-                // The scene's colour is premultiplied, so the backdrop is
+                // The scene's color is premultiplied, so the backdrop is
                 // scaled by what is left rather than the two being mixed.
                 let over = image.pixels[from + channel] as u32;
                 let under = sheet[to + channel] as u32;
