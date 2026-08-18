@@ -1680,6 +1680,119 @@ fn the_backends_agree_on_a_glyph_run() {
 }
 
 #[test]
+fn a_glyph_run_is_correct_after_the_atlas_has_grown() {
+    let Some(mut ctx) = context() else { return };
+
+    // Growth is the other answer to a full atlas, and it breaks more than
+    // compaction does. Compaction moves glyphs within a texture that stays the
+    // same size; growth doubles the texture, so every texture coordinate
+    // divides by a different number and the image the glyphs were uploaded
+    // into is the wrong shape to hold them. The test next to this one
+    // deliberately pins its atlas so it cannot grow, which left the doubling
+    // path with no end-to-end coverage at all.
+    //
+    // The property is that none of it is visible: a glyph drawn from a grown
+    // atlas lands exactly where the same glyph drawn from a small one did.
+    let marker = GlyphKey {
+        font: 1,
+        glyph: 1,
+        size: 16,
+    };
+    // Distinguishable from the filler below, so a run reading the wrong
+    // rectangle draws a visibly different gray rather than a similar one.
+    let coverage = Coverage {
+        width: 6,
+        height: 6,
+        texels: vec![255; 36],
+    };
+
+    let draw = |ctx: &mut Context, atlas: &Atlas| {
+        let image = upload_atlas(ctx, atlas);
+        let mut canvas = Canvas::new(SIZE);
+        canvas.clear(Color::BLACK);
+        canvas
+            .draw_glyphs(
+                &[PositionedGlyph::new(
+                    marker,
+                    [40.0, 40.0],
+                    atlas.get(marker).unwrap(),
+                )],
+                atlas,
+                0,
+                &Paint::fill(Color::WHITE),
+            )
+            .expect("glyphs");
+        let mut surface = ctx
+            .create_surface(SIZE, PixelFormat::Rgba8Unorm)
+            .expect("surface");
+        ctx.draw_with_images(&mut surface, &canvas.finish(), &[&image])
+            .expect("draw");
+        let pixels = ctx.read(&mut surface).expect("read");
+        ctx.destroy_surface(surface);
+        ctx.destroy_image(image);
+        pixels
+    };
+
+    // Before: a small atlas holding just the marker.
+    let mut small = Atlas::new(32);
+    small.insert(marker, &coverage).expect("marker");
+    let before = draw(&mut ctx, &small);
+
+    // After: the same marker in an atlas pushed past its starting size. Every
+    // glyph is wanted this frame, so there is nothing stale to evict and
+    // growing is the only way to fit them.
+    let mut grown = Atlas::new(32);
+    grown.insert(marker, &coverage).expect("marker");
+    let mut filler = 2u16;
+    while grown.growths() == 0 {
+        grown
+            .insert(
+                GlyphKey {
+                    font: 1,
+                    glyph: filler,
+                    size: 16,
+                },
+                &Coverage {
+                    width: 6,
+                    height: 6,
+                    texels: vec![64; 36],
+                },
+            )
+            .expect("should grow rather than refuse");
+        filler += 1;
+        assert!(filler < 400, "the atlas never grew");
+    }
+    assert!(grown.size() > small.size(), "the atlas did not get bigger");
+    assert!(grown.is_dirty(), "a grown atlas owes an upload");
+    assert_eq!(
+        grown.compactions(),
+        0,
+        "this is about growth, not repacking"
+    );
+
+    let after = draw(&mut ctx, &grown);
+
+    // Identical, not merely similar. The glyph is the same texels at the same
+    // place on screen, and everything that changed was the atlas's own
+    // business -- which is the whole claim.
+    let worst = before
+        .iter()
+        .zip(&after)
+        .map(|(a, b)| a.abs_diff(*b))
+        .max()
+        .unwrap_or(0);
+    assert_eq!(
+        worst, 0,
+        "growing the atlas moved or altered the glyph on screen"
+    );
+    // And the glyph was actually drawn, so this is not two black frames.
+    assert!(
+        before.iter().any(|&b| b > 128),
+        "the marker did not render at all"
+    );
+}
+
+#[test]
 fn a_glyph_run_is_correct_after_the_atlas_has_been_repacked() {
     let Some(mut ctx) = context() else { return };
 
