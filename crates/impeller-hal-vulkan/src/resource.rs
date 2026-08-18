@@ -483,6 +483,9 @@ pub(crate) fn transition(
     from: vk::ImageLayout,
     to: vk::ImageLayout,
 ) {
+    let (src_stage, src_access) = source_scope(from);
+    let (dst_stage, dst_access) = destination_scope(to);
+
     let barrier = vk::ImageMemoryBarrier::default()
         .old_layout(from)
         .new_layout(to)
@@ -495,19 +498,100 @@ pub(crate) fn transition(
                 .level_count(1)
                 .layer_count(1),
         )
-        .src_access_mask(vk::AccessFlags::MEMORY_WRITE)
-        .dst_access_mask(vk::AccessFlags::MEMORY_READ | vk::AccessFlags::MEMORY_WRITE);
+        .src_access_mask(src_access)
+        .dst_access_mask(dst_access);
 
     unsafe {
         device.cmd_pipeline_barrier(
             cmd,
-            vk::PipelineStageFlags::ALL_COMMANDS,
-            vk::PipelineStageFlags::ALL_COMMANDS,
+            src_stage,
+            dst_stage,
             vk::DependencyFlags::empty(),
             &[],
             &[],
             &[barrier],
         );
+    }
+}
+
+/// What the image was being used for, given the layout it is leaving.
+///
+/// A barrier names the work it waits for and the work that waits on it. Naming
+/// all of it -- every stage, every access -- is always correct and is what this
+/// did: a full pipeline drain and a full cache flush for every transition. On
+/// the tiled and bandwidth-limited parts this renderer targets that is not a
+/// small waste, and it is avoidable, because a layout says what the image was
+/// for.
+///
+/// Anything unrecognized falls back to naming everything, which is the
+/// conservative direction: a scope too wide costs speed, and one too narrow is
+/// a missing barrier that renders correctly here and wrongly elsewhere.
+fn source_scope(layout: vk::ImageLayout) -> (vk::PipelineStageFlags, vk::AccessFlags) {
+    match layout {
+        // Nothing was in it worth preserving, so there is nothing to wait for.
+        vk::ImageLayout::UNDEFINED | vk::ImageLayout::PREINITIALIZED => (
+            vk::PipelineStageFlags::TOP_OF_PIPE,
+            vk::AccessFlags::empty(),
+        ),
+        vk::ImageLayout::TRANSFER_DST_OPTIMAL => (
+            vk::PipelineStageFlags::TRANSFER,
+            vk::AccessFlags::TRANSFER_WRITE,
+        ),
+        vk::ImageLayout::TRANSFER_SRC_OPTIMAL => (
+            vk::PipelineStageFlags::TRANSFER,
+            vk::AccessFlags::TRANSFER_READ,
+        ),
+
+        vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL => (
+            vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT,
+            vk::AccessFlags::COLOR_ATTACHMENT_WRITE,
+        ),
+        vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL => (
+            vk::PipelineStageFlags::FRAGMENT_SHADER,
+            vk::AccessFlags::SHADER_READ,
+        ),
+        // Reading is the presentation engine's, which no stage here names and
+        // which the acquire semaphore orders instead.
+        vk::ImageLayout::PRESENT_SRC_KHR => (
+            vk::PipelineStageFlags::BOTTOM_OF_PIPE,
+            vk::AccessFlags::empty(),
+        ),
+        _ => (
+            vk::PipelineStageFlags::ALL_COMMANDS,
+            vk::AccessFlags::MEMORY_READ | vk::AccessFlags::MEMORY_WRITE,
+        ),
+    }
+}
+
+/// What the image is about to be used for, given the layout it is entering.
+fn destination_scope(layout: vk::ImageLayout) -> (vk::PipelineStageFlags, vk::AccessFlags) {
+    match layout {
+        vk::ImageLayout::TRANSFER_DST_OPTIMAL => (
+            vk::PipelineStageFlags::TRANSFER,
+            vk::AccessFlags::TRANSFER_WRITE,
+        ),
+        vk::ImageLayout::TRANSFER_SRC_OPTIMAL => (
+            vk::PipelineStageFlags::TRANSFER,
+            vk::AccessFlags::TRANSFER_READ,
+        ),
+        vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL => (
+            vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT,
+            vk::AccessFlags::COLOR_ATTACHMENT_WRITE | vk::AccessFlags::COLOR_ATTACHMENT_READ,
+        ),
+        vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL => (
+            vk::PipelineStageFlags::FRAGMENT_SHADER,
+            vk::AccessFlags::SHADER_READ,
+        ),
+        // Handed to the presentation engine, which the present semaphore
+        // orders. Naming a stage here would claim this device does the reading.
+        vk::ImageLayout::PRESENT_SRC_KHR => (
+            vk::PipelineStageFlags::BOTTOM_OF_PIPE,
+            vk::AccessFlags::empty(),
+        ),
+        _ => (
+            vk::PipelineStageFlags::ALL_COMMANDS,
+            vk::AccessFlags::MEMORY_READ | vk::AccessFlags::MEMORY_WRITE,
+        ),
     }
 }
 
@@ -539,5 +623,62 @@ impl WithDetail for Error {
             backend: "vulkan",
             detail: format!("{self}: {e}"),
         }
+    }
+}
+
+#[cfg(test)]
+mod barrier_tests {
+    use super::*;
+
+    /// Every layout this renderer actually uses, and the direction it is used in.
+    const USED: &[vk::ImageLayout] = &[
+        vk::ImageLayout::TRANSFER_DST_OPTIMAL,
+        vk::ImageLayout::TRANSFER_SRC_OPTIMAL,
+        vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL,
+        vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
+        vk::ImageLayout::PRESENT_SRC_KHR,
+    ];
+
+    #[test]
+    fn a_known_layout_names_less_than_everything() {
+        // The point of the table is that a transition waits for the work the
+        // image was actually in, not for the whole pipeline to drain. Falling
+        // back to `ALL_COMMANDS` for a layout this renderer uses every frame
+        // would be correct and would quietly cost what the table was written to
+        // save, with nothing failing to say so.
+        for layout in USED {
+            let (src_stage, _) = source_scope(*layout);
+            let (dst_stage, _) = destination_scope(*layout);
+            assert_ne!(
+                src_stage,
+                vk::PipelineStageFlags::ALL_COMMANDS,
+                "{layout:?} falls back to a full drain as a source"
+            );
+            assert_ne!(
+                dst_stage,
+                vk::PipelineStageFlags::ALL_COMMANDS,
+                "{layout:?} falls back to a full drain as a destination"
+            );
+        }
+    }
+
+    #[test]
+    fn an_unknown_layout_names_everything() {
+        // The fallback goes the safe way. A scope too wide costs speed; one too
+        // narrow is a missing barrier, which renders correctly on the device it
+        // was written on.
+        let (stage, access) = source_scope(vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL);
+        assert_eq!(stage, vk::PipelineStageFlags::ALL_COMMANDS);
+        assert!(access.contains(vk::AccessFlags::MEMORY_WRITE));
+    }
+
+    #[test]
+    fn leaving_undefined_waits_for_nothing() {
+        // Nothing in the image was worth preserving, so there is no prior work
+        // to order against -- and waiting for some anyway is the common way a
+        // first-use transition costs a frame's worth of drain.
+        let (stage, access) = source_scope(vk::ImageLayout::UNDEFINED);
+        assert_eq!(stage, vk::PipelineStageFlags::TOP_OF_PIPE);
+        assert!(access.is_empty());
     }
 }

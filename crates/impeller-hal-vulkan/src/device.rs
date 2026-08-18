@@ -303,6 +303,11 @@ impl VulkanContext {
         // machine where it is installed and working.
         let sync_validation_available = want_validation
             && layer_extension_available(&entry, VALIDATION_LAYER, "VK_EXT_validation_features");
+        // Synchronization only. Best-practices checking is worth running by
+        // hand and was -- it is what found the barrier scopes -- but it is not
+        // left on: much of its advice is vendor-specific, so a suite that
+        // failed on it would fail on somebody else's GPU for reasons that are
+        // not defects.
         let sync_validation = [vk::ValidationFeatureEnableEXT::SYNCHRONIZATION_VALIDATION];
         let mut validation_features =
             vk::ValidationFeaturesEXT::default().enabled_validation_features(&sync_validation);

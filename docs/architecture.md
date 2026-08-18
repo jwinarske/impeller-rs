@@ -1211,6 +1211,18 @@ declared, over every stage that touches an attachment rather than only the
 color one, since a stencil attachment is transitioned and then cleared by its
 load operation and those are two writes needing the same ordering.
 
+Best-practices checking is a third thing the layer offers, and is run by hand
+rather than left on. It is what found the image barriers: every layout
+transition named every pipeline stage and every kind of memory access, which is
+always correct and is a full pipeline drain and cache flush each time — on the
+tiled, bandwidth-limited parts this targets, not a small waste. A layout says
+what the image was being used for, so the scopes are derived from it, with
+anything unrecognized falling back to naming everything. That fallback is the
+safe direction: a scope too wide costs speed, and one too narrow is a missing
+barrier that renders correctly here and wrongly elsewhere. It is not left on
+because much of its advice is vendor-specific, so a suite failing on it would
+fail on somebody else's GPU for things that are not defects.
+
 **The Vulkan half of that runs with the validation layer on, and
 asserts what it reported.** Capturing the messenger is what makes that
 assertable; a guard that checks the log when a context drops is what makes it
