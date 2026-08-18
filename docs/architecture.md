@@ -1135,6 +1135,28 @@ The levels below are the plan. The right-hand column says where each runs, and
 **"CI" describes none of them: there is no CI**. What exists is `ci/smoke.sh`,
 run by hand, which does the whole of L0, L1 and L3 and part of L4.
 
+**A skipped test passes, and `cargo test` hides which.** A test that finds it
+cannot run — no device, no second backend, a capability the hardware lacks —
+prints why and returns, because the alternative is a suite that cannot be run
+on the machines the suite exists to cover. The harness then captures that
+output, since the test passed, and the reason is discarded. So a green run says
+nothing about how much of it ran, and the two ways it can be green look
+identical from outside.
+
+That is not hypothetical here. Three tests comparing the two backends had been
+skipping since they were written, because the crate they live in compiles one
+backend by default and asking for the other simply failed. A whole file of DRM
+tests skipped because modesetting master is exclusive per device and the
+harness runs one file's tests on several threads, so all but the first were
+refused the card. Both were found by looking, not by a failure.
+
+`cargo xtask verify` runs the suite with output uncaptured and reports the skip
+census alongside the counts. It does not treat a skip as a failure, because
+some are correct — a device without the advanced-blend extension genuinely
+cannot render those scenes, and the corpus reports that as coverage it did not
+get rather than as a pass. The point is that the number is visible and has to
+be looked at, since the incorrect ones look exactly the same from there.
+
 | Level | What | Where | State |
 |---|---|---|---|
 | L0 | Unit: math, path ops, atlas packing, negotiation logic | Every merge, no GPU | runs |

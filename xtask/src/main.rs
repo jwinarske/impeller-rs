@@ -6,6 +6,8 @@
 //!   terms the layers above the HAL actually branch on. `--json` for a machine.
 //! - `drm` -- whether the direct-scanout lane can run here, and what it would
 //!   need. Everything it reads is readable without privilege.
+//! - `verify` -- run the suite and report the skips, which a plain `cargo test`
+//!   discards along with the rest of a passing test's output.
 //!
 //! Planned:
 //!
@@ -27,6 +29,7 @@
 
 mod drm;
 mod report;
+mod verify;
 
 const USAGE: &str = "\
 cargo xtask <command>
@@ -35,6 +38,8 @@ Commands:
   report            What this machine's devices report they can do.
                     --json  emit the same report for a machine to read.
   drm               Whether this machine can run the direct-scanout lane.
+  verify            Run the suite and report what did not run. Extra arguments
+                    are passed to cargo test.
   help              This text.
 ";
 
@@ -72,6 +77,13 @@ fn main() {
                 &std::path::Path::new("/lib/modules").join(kernel_release()),
             );
             print!("{}", drm::text(&survey));
+        }
+        Some("verify") => {
+            let outcome = verify::run(&rest);
+            print!("{}", verify::text(&outcome));
+            if outcome.broke || outcome.failed > 0 {
+                std::process::exit(1);
+            }
         }
         Some("help") | Some("--help") | Some("-h") | None => print!("{USAGE}"),
         Some(other) => {

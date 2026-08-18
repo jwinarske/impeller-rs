@@ -17,6 +17,17 @@ gles = ["dep:impeller-hal-gles"]
 drm = ["dep:impeller-present-drm"]
 present-wsi = []
 
+[dev-dependencies]
+# This crate, on itself, to turn on the second backend its own tests compare.
+# The default feature set is one backend, which is right for a consumer on a
+# board that has one -- but three tests here need two contexts of different
+# kinds, and with only one compiled in they report themselves skipped and pass.
+# A skip that reports success is indistinguishable from a pass, so the tests
+# had been silently absent since they were written. Enabling the feature here
+# rather than asking for a flag is what makes them run under a plain
+# `cargo test`, which is the only kind that gets run.
+impeller = { path = ".", features = ["gles"] }
+
 [dependencies]
 impeller-core = { workspace = true }
 impeller-hal = { workspace = true }

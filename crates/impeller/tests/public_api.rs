@@ -205,8 +205,18 @@ fn an_empty_frame_still_clears() {
 
 #[test]
 fn a_surface_from_one_context_is_refused_by_another() {
-    let Some(mut first) = context() else { return };
-    let Some(mut second) = context() else { return };
+    // Two contexts of different kinds, asked for by name. Asking twice for
+    // whichever is preferred returns the same kind both times, and the check
+    // below cannot see a difference between two contexts of one backend --
+    // that needs a handle generation the backends do not carry. So the test
+    // used to notice it had nothing to compare and skip, which reads as a pass.
+    let (Ok(mut first), Ok(mut second)) = (
+        Context::new(BackendPreference::Vulkan),
+        Context::new(BackendPreference::Gles),
+    ) else {
+        eprintln!("skipping: both backends are needed");
+        return;
+    };
 
     let mut surface = first
         .create_surface(SIZE, PixelFormat::Rgba8Unorm)
@@ -215,14 +225,7 @@ fn a_surface_from_one_context_is_refused_by_another() {
     // another would pass a handle that device never issued, which is undefined
     // rather than merely wrong, so it has to be refused on the CPU.
     let canvas = Canvas::new(SIZE);
-    if first.backend() == second.backend() {
-        // Same backend means the enum arms match and the error cannot be
-        // detected here; that check belongs to a handle generation the backends
-        // do not carry yet.
-        eprintln!("skipping: both contexts chose the same backend");
-        first.destroy_surface(surface);
-        return;
-    }
+    assert_ne!(first.backend(), second.backend());
     assert!(second.draw(&mut surface, &canvas.finish()).is_err());
     first.destroy_surface(surface);
 }
