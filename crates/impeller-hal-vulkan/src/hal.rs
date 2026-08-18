@@ -94,13 +94,21 @@ impl HalContext for VulkanContext {
         VulkanContext::export_texture(self, texture)
     }
 
-    fn submit_batch_deferred(
+    fn submit_batch_deferred_textured(
         &mut self,
         target: &mut VulkanTexture,
         batch: &Batch,
         pass: PassDescriptor,
+        textures: &[&VulkanTexture],
     ) -> Result<VulkanFence> {
-        VulkanContext::submit_batch_deferred(self, target, batch, pass)
+        VulkanContext::submit_batch_deferred_synchronized(
+            self,
+            target,
+            batch,
+            pass,
+            textures,
+            Default::default(),
+        )
     }
 
     fn retire_fence(&mut self, fence: VulkanFence) {

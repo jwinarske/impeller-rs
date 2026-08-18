@@ -471,6 +471,29 @@ which requires a difference. It runs on every backend rather than on whichever
 comes first, because an offset that a full-size layer hides is exactly the kind
 of thing two backends could disagree about.
 
+**A recording is submitted, not just a batch.** A frame with layers is several
+passes, and for a while the presentation paths took a batch — so such a frame
+could be rendered offscreen and never displayed. The layer passes are
+prerequisites of the root rather than part of the frame's pacing: they go
+through the waiting submission, which is what orders them before the root
+without a semaphore each. Only the root goes through the synchronized path,
+which is the right split, because the acquire and present semaphores are about
+the pass that touches the image being displayed and that is exactly the root.
+
+The root samples the layer targets, so a deferred submission had to be able to
+sample at all — it could not, and the descriptor sets it needs now travel with
+the fence alongside the framebuffer, for the same reason. The targets
+themselves stay with the caller: a fence is handed to a page flip and so has to
+remain sendable, while a texture tracks its own image layout. Whoever owns the
+fence releases them when it retires.
+
+Pooling those targets was assumed to be worth doing and is not. Creating and
+destroying a 512×512 target measures 0.6 microseconds against 53 for the
+submission that draws into it, so a pool would save under two percent of what a
+pass costs and would owe an invalidation rule in exchange. Bounding the layer
+is the optimization that pays: on a four-layer frame it cut the time by 37%,
+because it attacks the fill and the clear rather than the allocation.
+
 A layer left open at `finish` is composited rather than discarded. An unbalanced
 `save_layer` is a caller mistake either way, and dropping everything drawn since
 it looks like a rendering fault rather than like the missing `restore` it is.

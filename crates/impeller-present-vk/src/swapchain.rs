@@ -91,6 +91,13 @@ struct FrameSlot {
     /// than in the target is what keeps the resources alive exactly as long as
     /// the GPU is reading them.
     in_flight: Option<VulkanFence>,
+    /// Layer targets the in-flight submission samples.
+    ///
+    /// Here rather than on the fence because a fence is handed to a page flip
+    /// and so has to stay `Send`, while a texture tracks its own image layout
+    /// in a cell. The lifetime rule is the same either way: released when the
+    /// submission that reads them retires.
+    layers: Vec<impeller_hal_vulkan::VulkanTexture>,
 }
 
 /// A swapchain, its images, and the frame in flight.
@@ -169,6 +176,7 @@ impl SwapchainTarget {
                 Ok(acquired) => slots.push(FrameSlot {
                     acquired,
                     in_flight: None,
+                    layers: Vec::new(),
                 }),
                 Err(e) => {
                     for slot in slots {
@@ -403,6 +411,10 @@ impl SwapchainTarget {
                 let _ = fence.wait(FRAME_WAIT_TIMEOUT);
                 ctx.retire_fence(fence);
             }
+            // After the fence, since the submission was sampling them.
+            for layer in std::mem::take(&mut self.slots[index].layers) {
+                ctx.destroy_texture(layer);
+            }
         }
         // SAFETY: no other thread submits to this queue.
         unsafe {
@@ -438,6 +450,65 @@ impl SwapchainTarget {
         batch: &impeller_hal::Batch,
         pass: impeller_hal::PassDescriptor,
     ) -> Result<()> {
+        self.submit_textured(ctx, batch, pass, &[])
+    }
+
+    /// Render a recording and submit its root pass for display.
+    ///
+    /// This is the call a frame loop wants, and until it existed a frame with
+    /// layers could not be presented at all: the swapchain took a batch, and a
+    /// recording with layers is several. The layer passes are rendered first,
+    /// each into a target of its own, through the waiting submission — they are
+    /// prerequisites of the root rather than part of the frame's pacing, and
+    /// waiting for them is what makes them ordered before it without a
+    /// semaphore per layer. Only the root goes through the synchronized path,
+    /// which is right: the acquire and present semaphores are about the pass
+    /// that touches the presentable image, and that is exactly the root.
+    ///
+    /// The layer targets stay with this slot until its fence retires, since the
+    /// submission is still sampling them.
+    pub fn submit_recording(
+        &mut self,
+        ctx: &mut VulkanContext,
+        recording: &impeller_core::Recording,
+        images: &[&impeller_hal_vulkan::VulkanTexture],
+    ) -> Result<()> {
+        let layers = impeller_core::execute_layers::<impeller_hal_vulkan::VulkanHal>(
+            ctx, recording, images,
+        )?;
+        let root = recording.root();
+        let outcome =
+            impeller_core::resolve_sources::<impeller_hal_vulkan::VulkanHal>(root, images, &layers)
+                .and_then(|table| self.submit_textured(ctx, &root.batch, root.descriptor, &table));
+
+        // Kept whichever way the submission went. On success the fence is
+        // reading them; on failure there is no fence, and dropping them here
+        // rather than leaking is what the slot's own release does anyway.
+        let slot = self.acquired.as_ref().map(|a| a.slot);
+        match slot {
+            Some(slot) if outcome.is_ok() => self.slots[slot].layers.extend(layers),
+            _ => {
+                for layer in layers {
+                    ctx.destroy_texture(layer);
+                }
+            }
+        }
+        outcome
+    }
+
+    /// The same, for a batch whose materials sample textures.
+    ///
+    /// What a frame with layers needs: the pass that lands in the presentable
+    /// image is the one that composites them, so it samples the targets they
+    /// were rendered into. Those must outlive this submission, and the caller
+    /// keeps them until the fence for this slot retires.
+    pub fn submit_textured(
+        &mut self,
+        ctx: &mut VulkanContext,
+        batch: &impeller_hal::Batch,
+        pass: impeller_hal::PassDescriptor,
+        textures: &[&impeller_hal_vulkan::VulkanTexture],
+    ) -> Result<()> {
         let Some(acquired) = self.acquired.as_ref() else {
             return Err(Error::Unsupported("submit without a matching acquire"));
         };
@@ -449,6 +520,7 @@ impl SwapchainTarget {
             &mut self.images[index],
             batch,
             pass,
+            textures,
             impeller_hal_vulkan::FrameSync {
                 wait: &wait,
                 signal: &signal,
@@ -495,6 +567,11 @@ impl PresentTarget<VulkanHal> for SwapchainTarget {
             self.cpu_waits += 1;
             fence.wait(FRAME_WAIT_TIMEOUT)?;
             ctx.retire_fence(fence);
+        }
+        // Whatever that frame composited is finished with, and this is the
+        // first moment it is safe to say so.
+        for layer in std::mem::take(&mut self.slots[slot].layers) {
+            ctx.destroy_texture(layer);
         }
 
         // Two attempts at most: the first may find the swapchain out of date,

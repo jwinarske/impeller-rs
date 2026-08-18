@@ -52,6 +52,18 @@ pub struct VulkanFence {
     /// one frame is in flight; with two, retiring the older fence frees the
     /// newer frame's buffers out from under the GPU.
     pub(crate) retained: Vec<crate::render::StagedBuffer>,
+    /// Descriptor sets and views for the textures the submission samples.
+    ///
+    /// Here for the same reason the framebuffer is: a descriptor pool cannot be
+    /// destroyed while a command buffer that reads sets from it is in flight,
+    /// and a deferred submission is in flight for as long as the caller likes.
+    /// Held as an option because a submission that samples nothing needs no
+    /// pool at all.
+    ///
+    /// The textures themselves stay with the caller rather than joining them
+    /// here: a fence is handed to a page flip and so has to stay `Send`, and a
+    /// texture tracks its own image layout in a cell.
+    pub(crate) bindings: Option<crate::sampling::Bindings>,
     retired: bool,
 }
 
@@ -77,6 +89,7 @@ impl VulkanFence {
             semaphore,
             export,
             retained: Vec::new(),
+            bindings: None,
             retired: false,
         }
     }

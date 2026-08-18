@@ -8,6 +8,7 @@ license.workspace = true
 
 [dependencies]
 ash = { workspace = true }
+impeller-core = { workspace = true }
 impeller-hal = { workspace = true }
 impeller-hal-vulkan = { workspace = true }
 impeller-present = { workspace = true }

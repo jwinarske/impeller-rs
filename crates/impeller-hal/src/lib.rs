@@ -224,9 +224,31 @@ pub trait HalContext {
     /// frame slot may be reused.
     fn submit_batch_deferred(
         &mut self,
+        target: &mut <Self::Hal as Hal>::Texture,
+        batch: &Batch,
+        pass: PassDescriptor,
+    ) -> Result<<Self::Hal as Hal>::Fence> {
+        self.submit_batch_deferred_textured(target, batch, pass, &[])
+    }
+
+    /// The same, for a batch whose materials sample textures.
+    ///
+    /// What a frame with layers needs. The pass that lands in the image being
+    /// presented is the one that composites the layers, so it samples the
+    /// targets they were rendered into — and a deferred submission that could
+    /// not sample anything meant such a frame could be rendered offscreen and
+    /// never displayed.
+    ///
+    /// The textures must outlive the submission, which the caller arranges:
+    /// they cannot travel with the fence, because a fence is handed to a
+    /// display commit and has to stay sendable while a texture tracks mutable
+    /// state of its own.
+    fn submit_batch_deferred_textured(
+        &mut self,
         _target: &mut <Self::Hal as Hal>::Texture,
         _batch: &Batch,
         _pass: PassDescriptor,
+        _textures: &[&<Self::Hal as Hal>::Texture],
     ) -> Result<<Self::Hal as Hal>::Fence> {
         Err(Error::Unsupported("deferred submission"))
     }

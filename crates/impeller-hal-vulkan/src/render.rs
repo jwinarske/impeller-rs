@@ -511,7 +511,7 @@ impl VulkanContext {
         batch: &Batch,
         pass: PassDescriptor,
     ) -> Result<crate::fence::VulkanFence> {
-        self.submit_batch_deferred_synchronized(target, batch, pass, Default::default())
+        self.submit_batch_deferred_synchronized(target, batch, pass, &[], Default::default())
     }
 
     /// Submit without waiting, gating the work on semaphores the caller owns.
@@ -521,11 +521,17 @@ impl VulkanContext {
     /// render has. Neither is expressible with a fence, because both are
     /// device-side orderings that no one should be blocking a thread to
     /// enforce.
+    /// `textures` is the table a [`Material::Image`] slot indexes, exactly as
+    /// the waiting form takes it. A frame that composites a layer needs it:
+    /// the pass that lands in a presentable image is the one that samples the
+    /// layer, so a deferred submission that could not sample anything meant a
+    /// frame with layers could be rendered offscreen and never presented.
     pub fn submit_batch_deferred_synchronized(
         &mut self,
         target: &mut VulkanTexture,
         batch: &Batch,
         pass: PassDescriptor,
+        textures: &[&VulkanTexture],
         sync: crate::device::FrameSync<'_>,
     ) -> Result<crate::fence::VulkanFence> {
         if pass.is_multisampled() {
@@ -583,6 +589,7 @@ impl VulkanContext {
             index_buffer.buffer,
             pass,
             stencil_format,
+            textures,
             sync,
         );
 
@@ -613,6 +620,10 @@ impl VulkanContext {
         for buffer in std::mem::take(&mut fence.retained) {
             self.release(buffer);
         }
+        // After the wait inside `retire`, so nothing is still reading the sets.
+        if let Some(bindings) = fence.bindings.take() {
+            bindings.destroy(self);
+        }
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -627,11 +638,14 @@ impl VulkanContext {
         index_buffer: vk::Buffer,
         pass: PassDescriptor,
         stencil_format: Option<vk::Format>,
+        textures: &[&VulkanTexture],
         sync: crate::device::FrameSync<'_>,
     ) -> Result<crate::fence::VulkanFence> {
-        // A deferred submission samples nothing yet, so the context's own
-        // placeholder set serves and no pool has to outlive the fence.
-        let bindings = crate::sampling::Bindings::placeholder_only(self.placeholder_set()?);
+        // The pool these sets come from cannot be destroyed while the command
+        // buffer reading them is in flight, and a deferred submission is in
+        // flight for as long as the caller likes -- so the bindings travel with
+        // the fence, alongside the framebuffer and view they sit next to here.
+        let bindings = crate::sampling::build(self, batch, textures)?;
         let layout = self.pipeline_cache().layout().expect("ensured above");
         let extent = target.extent();
 
@@ -688,6 +702,11 @@ impl VulkanContext {
         // SAFETY: every object below belongs to this device and the command
         // buffer is in the recording state.
         unsafe {
+            // Before the render pass begins, since a layout transition is not
+            // legal inside one. A layer target sits in the color-attachment
+            // layout its own pass left it in, which a shader cannot read.
+            crate::sampling::transition_for_sampling(device, cmd, textures);
+
             if pass.clear.is_none() {
                 transition(
                     device,
@@ -744,7 +763,8 @@ impl VulkanContext {
             device.cmd_end_render_pass(cmd);
         }
 
-        let fence = self.submit_exportable(cmd, framebuffer, view, sync)?;
+        let mut fence = self.submit_exportable(cmd, framebuffer, view, sync)?;
+        fence.bindings = Some(bindings);
         target.set_layout(if sync.presents {
             vk::ImageLayout::PRESENT_SRC_KHR
         } else {

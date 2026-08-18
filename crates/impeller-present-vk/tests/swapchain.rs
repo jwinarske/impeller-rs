@@ -12,7 +12,7 @@
 //! window would have to confirm.
 
 use impeller_hal::{Batch, BlendMode, Extent2D, Material, PassDescriptor, PixelFormat, Vertex};
-use impeller_hal_vulkan::{ContextConfig, DevicePreference, VulkanContext};
+use impeller_hal_vulkan::{ContextConfig, DevicePreference, VulkanContext, VulkanHal};
 use impeller_present::PresentTarget;
 use impeller_present_vk::{create_headless_surface, destroy_surface, PresentMode, SwapchainTarget};
 
@@ -402,5 +402,90 @@ fn presenting_a_frame_drawn_the_generic_way_is_refused() {
             .submit(ctx, &batch, PassDescriptor::clear([0.0; 4]))
             .expect("submit");
         target.present(ctx).expect("present");
+    });
+}
+
+#[test]
+fn a_frame_with_layers_can_be_presented() {
+    with_target(PresentMode::Fifo, |ctx, target| {
+        // Until `submit_recording` existed this was impossible rather than
+        // merely untested: the swapchain took a batch, a recording with layers
+        // is several passes, and the synchronized submission could not sample
+        // anything -- so the pass that composites a layer had no way to reach a
+        // presentable image. A frame with layers could be rendered offscreen
+        // and never displayed.
+        //
+        // What is checked is that presenting agrees with rendering offscreen.
+        // The layers have to be composited, in the right place, into the image
+        // the swapchain handed out; comparing against the offscreen path is
+        // what says so, and it is the same comparison the frame-loop test makes
+        // for a flat scene.
+        use impeller_core::{Canvas, Color, Layer, Paint, Rect, Vec2};
+
+        let extent = target.extent();
+        let scene = || {
+            let mut canvas = Canvas::new(extent);
+            canvas.clear(Color::linear(0.05, 0.05, 0.1, 1.0));
+            canvas.save_layer_bounds(
+                Layer::opacity(0.6),
+                Rect::new(
+                    8.0,
+                    8.0,
+                    extent.width as f32 - 8.0,
+                    extent.height as f32 - 8.0,
+                ),
+            );
+            for (dx, color) in [(-12.0, [0.9, 0.3, 0.2, 1.0]), (12.0, [0.2, 0.8, 0.9, 1.0])] {
+                canvas
+                    .draw_circle(
+                        Vec2::new(extent.width as f32 / 2.0 + dx, extent.height as f32 / 2.0),
+                        (extent.width.min(extent.height) as f32) / 4.0,
+                        &Paint::fill(Color::linear(color[0], color[1], color[2], color[3]))
+                            .with_anti_alias(false),
+                    )
+                    .expect("circle");
+            }
+            canvas.restore();
+            canvas.finish()
+        };
+        let recording = scene();
+        assert!(
+            recording.passes.len() > 1,
+            "the scene has no layer, so this proves nothing"
+        );
+
+        // Offscreen first, as the reference.
+        let expected =
+            impeller_core::render_offscreen::<VulkanHal>(ctx, &recording, &[]).expect("offscreen");
+
+        let _ = target.acquire(ctx).expect("acquire");
+        target
+            .submit_recording(ctx, &recording, &[])
+            .expect("submit recording");
+
+        let image = target.acquired_image().expect("acquired image");
+        let presented = ctx.read_texture(image).expect("readback");
+        target.present(ctx).expect("present");
+
+        // A swapchain surface may be BGRA where the offscreen target is RGBA,
+        // so the comparison is per pixel against both orderings rather than a
+        // memcmp that would fail on channel order alone.
+        assert_eq!(presented.len(), expected.len());
+        let mut worst = 0u8;
+        for (got, want) in presented.chunks_exact(4).zip(expected.chunks_exact(4)) {
+            let direct = (0..4).map(|i| got[i].abs_diff(want[i])).max().unwrap();
+            let swapped = [want[2], want[1], want[0], want[3]];
+            let reversed = (0..4).map(|i| got[i].abs_diff(swapped[i])).max().unwrap();
+            worst = worst.max(direct.min(reversed));
+        }
+        assert!(
+            worst <= 1,
+            "a presented layered frame differs from the offscreen render by {worst}"
+        );
+        // And it drew something, so the agreement is not between two clears.
+        assert!(
+            expected.iter().any(|&b| b > 48),
+            "the scene rendered nothing"
+        );
     });
 }
