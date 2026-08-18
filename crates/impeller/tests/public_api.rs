@@ -263,6 +263,61 @@ fn a_linear_gradient_runs_between_its_stops() {
 }
 
 #[test]
+fn a_linear_gradient_runs_the_same_way_on_a_target_that_is_not_square() {
+    let Some(mut ctx) = context() else { return };
+    // Twice as wide as it is tall, which is what makes this fail: the shader
+    // locates itself from clip position, and clip space is normalized to each
+    // axis independently. Projecting onto the axis there scales x and y by
+    // different amounts, so a diagonal gradient runs at the wrong angle — the
+    // steeper the target, the further off. It has to be projected in the space
+    // the caller stated the axis in.
+    let extent = Extent2D {
+        width: 128,
+        height: 64,
+    };
+    let mut canvas = Canvas::new(extent);
+    canvas.clear(Color::BLACK);
+    canvas
+        .draw_rect(
+            Rect::from_size(128.0, 64.0),
+            &Paint::linear_gradient(
+                Vec2::ZERO,
+                // Diagonal, and equal in both axes so that the two sample points
+                // below are the same distance along it.
+                Vec2::new(64.0, 64.0),
+                vec![
+                    GradientStop::new(Color::linear(0.0, 0.0, 0.0, 1.0), 0.0),
+                    GradientStop::new(Color::linear(1.0, 1.0, 1.0, 1.0), 1.0),
+                ],
+            )
+            .with_anti_alias(false),
+        )
+        .expect("gradient");
+
+    let mut surface = ctx
+        .create_surface(extent, PixelFormat::Rgba8Unorm)
+        .expect("surface");
+    ctx.draw(&mut surface, &canvas.finish()).expect("draw");
+    let pixels = ctx.read(&mut surface).expect("read");
+    ctx.destroy_surface(surface);
+    let at = |x: u32, y: u32| pixels[((y * extent.width + x) * 4) as usize];
+
+    // (32, 0), (0, 32) and (16, 16) all project to the same point on a (1, 1)
+    // axis, so they are the same colour or the gradient is not running along
+    // that axis. Before the fix these read 27, 104 and 66.
+    let (a, b, c) = (at(32, 0), at(0, 32), at(16, 16));
+    let spread = a.abs_diff(b).max(b.abs_diff(c)).max(a.abs_diff(c));
+    assert!(
+        spread <= 2,
+        "equidistant points along the axis differ: {a}, {b}, {c}"
+    );
+    // And it is a gradient rather than a flat fill: twice as far along is
+    // visibly brighter, and the near corner is dark.
+    assert!(at(32, 32) > a + 40, "{} should exceed {a}", at(32, 32));
+    assert!(at(1, 1) < 16, "the origin corner should be dark");
+}
+
+#[test]
 fn a_gradient_runs_along_the_axis_it_was_given() {
     let Some(mut ctx) = context() else { return };
     let mut canvas = Canvas::new(SIZE);

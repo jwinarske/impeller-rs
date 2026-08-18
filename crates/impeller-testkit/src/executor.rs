@@ -32,11 +32,16 @@ fn material_for(item: &Item, transform: Affine2, target: Extent2D) -> Material {
     match &item.fill {
         Fill::Solid(color) => Material::solid(*color),
         Fill::LinearGradient { start, end, stops } => {
+            let axis = Vec2::from(*end) - Vec2::from(*start);
             let start = to_clip.transform_point2(Vec2::from(*start));
-            let end = to_clip.transform_point2(Vec2::from(*end));
             Material::LinearGradient {
                 start: [start.x, start.y],
-                end: [end.x, end.y],
+                axis: [axis.x, axis.y],
+                // The axis is in the scene's own space, so the shader is told
+                // how to get back there from clip space. Taking the difference
+                // in clip space instead lets the target's aspect ratio into the
+                // gradient's direction, which is what it used to do.
+                to_local: invert_or_identity(to_clip.matrix2),
                 stops: convert(stops),
             }
         }

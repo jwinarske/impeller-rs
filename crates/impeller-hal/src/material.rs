@@ -98,15 +98,24 @@ pub type ToLocal = [f32; 4];
 #[derive(Debug, Clone, PartialEq)]
 pub enum Material {
     Solid([f32; 4]),
-    /// A gradient along the line between two points, **in clip space**.
+    /// A gradient along an axis, starting at a point **in clip space**.
     ///
-    /// Clip space rather than user space because the fragment stage locates
-    /// itself from an interpolated clip position: the alternative, the fragment
-    /// coordinate builtin, has a different origin in each graphics API and
-    /// would run the gradient in opposite directions on the two backends.
+    /// Clip space for the start, because the fragment stage locates itself from
+    /// an interpolated clip position: the alternative, the fragment coordinate
+    /// builtin, has a different origin in each graphics API and would run the
+    /// gradient in opposite directions on the two backends.
+    ///
+    /// The axis is in the gradient's own space, and `to_local` maps a clip-space
+    /// offset into it — the same pairing radial and sweep use, and for the same
+    /// reason. Clip space is anisotropic whenever the target is not square, so
+    /// projecting onto an axis *there* weights the two axes by the target's
+    /// shape: on a target twice as wide as it is tall, a diagonal gradient runs
+    /// in the wrong direction.
     LinearGradient {
         start: [f32; 2],
-        end: [f32; 2],
+        /// End minus start, in the gradient's own space.
+        axis: [f32; 2],
+        to_local: ToLocal,
         stops: Vec<Stop>,
     },
     /// A gradient outward from a centre, **in clip space**, where `to_local`
@@ -291,11 +300,17 @@ impl Material {
             Self::Solid(_) | Self::Image { .. } | Self::Glyph { .. } => {
                 unreachable!("handled above")
             }
-            Self::LinearGradient { start, end, .. } => {
+            Self::LinearGradient {
+                start,
+                axis,
+                to_local,
+                ..
+            } => {
                 out[layout::GEOMETRY] = start[0];
                 out[layout::GEOMETRY + 1] = start[1];
-                out[layout::GEOMETRY + 2] = end[0];
-                out[layout::GEOMETRY + 3] = end[1];
+                out[layout::GEOMETRY + 2] = axis[0];
+                out[layout::GEOMETRY + 3] = axis[1];
+                out[layout::TO_LOCAL..layout::TO_LOCAL + 4].copy_from_slice(to_local);
                 out[layout::PARAMS + 1] = kind::LINEAR;
             }
             Self::RadialGradient {
@@ -363,10 +378,11 @@ mod tests {
     }
 
     #[test]
-    fn a_linear_gradient_packs_its_stops_endpoints_and_count() {
+    fn a_linear_gradient_packs_its_stops_start_axis_and_count() {
         let packed = Material::LinearGradient {
             start: [-1.0, 0.0],
-            end: [1.0, 0.0],
+            axis: [2.0, 0.0],
+            to_local: [1.0, 0.0, 0.0, 1.0],
             stops: two_stops(),
         }
         .to_push_constants();
@@ -377,7 +393,12 @@ mod tests {
         assert_eq!(packed[layout::OFFSETS + 1], 1.0);
         assert_eq!(
             &packed[layout::GEOMETRY..layout::GEOMETRY + 4],
-            &[-1.0, 0.0, 1.0, 0.0]
+            &[-1.0, 0.0, 2.0, 0.0],
+            "the start, then the axis rather than the end point"
+        );
+        assert_eq!(
+            &packed[layout::TO_LOCAL..layout::TO_LOCAL + 4],
+            &[1.0, 0.0, 0.0, 1.0]
         );
         assert_eq!(packed[layout::PARAMS + 1], kind::LINEAR);
     }
@@ -432,7 +453,8 @@ mod tests {
         let materials = [
             Material::LinearGradient {
                 start: [0.0, 0.0],
-                end: [1.0, 0.0],
+                axis: [1.0 - 0.0, 0.0 - 0.0],
+                to_local: [1.0, 0.0, 0.0, 1.0],
                 stops: one.clone(),
             },
             Material::RadialGradient {
@@ -462,7 +484,8 @@ mod tests {
             .collect();
         let packed = Material::LinearGradient {
             start: [0.0, 0.0],
-            end: [1.0, 0.0],
+            axis: [1.0 - 0.0, 0.0 - 0.0],
+            to_local: [1.0, 0.0, 0.0, 1.0],
             stops,
         }
         .to_push_constants();
@@ -511,7 +534,8 @@ mod tests {
         for material in [
             Material::LinearGradient {
                 start: [0.0; 2],
-                end: [1.0, 0.0],
+                axis: [1.0, 0.0],
+                to_local: [1.0, 0.0, 0.0, 1.0],
                 stops: two_stops(),
             },
             Material::RadialGradient {

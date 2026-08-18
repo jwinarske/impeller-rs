@@ -152,12 +152,16 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     let count = i32(paint.params.x);
 
     if (kind > 0.5 && kind < 1.5) {
-        // Linear: project onto the axis between the endpoints. Clamped so the
-        // ends extend rather than repeat; tile modes arrive with the paint.
-        let start = paint.geometry.xy;
-        let axis = paint.geometry.zw - start;
+        // Linear: project onto the axis in the gradient's own space rather than
+        // in clip space. Clip space is normalized to the target, so projecting
+        // there weights the two axes by the target's shape and runs a diagonal
+        // gradient in the wrong direction on anything that is not square.
+        //
+        // Clamped so the ends extend rather than repeat; tile modes arrive with
+        // the paint.
+        let axis = paint.geometry.zw;
         let length_squared = max(dot(axis, axis), 1e-6);
-        let t = clamp(dot(in.clip - start, axis) / length_squared, 0.0, 1.0);
+        let t = clamp(dot(to_gradient_space(in.clip), axis) / length_squared, 0.0, 1.0);
         colour = sample_stops(t, count);
     } else if (kind > 1.5 && kind < 2.5) {
         // Radial: distance in gradient space, where the radius is one.

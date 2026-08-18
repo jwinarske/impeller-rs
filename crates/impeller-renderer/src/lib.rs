@@ -64,7 +64,8 @@ impl Paint {
         Self {
             material: Material::LinearGradient {
                 start: [start.x, start.y],
-                end: [end.x, end.y],
+                axis: [end.x - start.x, end.y - start.y],
+                to_local: [1.0, 0.0, 0.0, 1.0],
                 stops,
             },
             blend: BlendMode::default(),

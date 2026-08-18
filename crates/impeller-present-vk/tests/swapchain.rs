@@ -348,7 +348,8 @@ fn a_swapchain_image_carries_texture_coordinates_like_any_other_target() {
                 &QUAD,
                 Material::LinearGradient {
                     start: [-1.0, 0.0],
-                    end: [1.0, 0.0],
+                    axis: [1.0 - -1.0, 0.0 - 0.0],
+                    to_local: [1.0, 0.0, 0.0, 1.0],
                     stops: vec![
                         impeller_hal::Stop::new([1.0, 0.0, 0.0, 1.0], 0.0),
                         impeller_hal::Stop::new([0.0, 0.0, 1.0, 1.0], 1.0),

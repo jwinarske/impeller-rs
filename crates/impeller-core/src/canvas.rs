@@ -597,11 +597,15 @@ impl Canvas {
                 }
             }
             Shader::LinearGradient { start, end, stops } => {
+                let axis = *end - *start;
                 let start = to_clip.transform_point2(*start);
-                let end = to_clip.transform_point2(*end);
                 Material::LinearGradient {
                     start: [start.x, start.y],
-                    end: [end.x, end.y],
+                    axis: [axis.x, axis.y],
+                    // Maps a clip-space offset back into the space the axis is
+                    // stated in, which is the caller's. Without it the target's
+                    // aspect ratio leaks into the gradient's direction.
+                    to_local: inverse_or_identity(to_clip.matrix2),
                     stops: stops_of(stops),
                 }
             }
