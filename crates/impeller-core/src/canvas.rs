@@ -1101,10 +1101,17 @@ impl Canvas {
                 stencil: ClipState::UNCLIPPED,
             };
             let quad = target.path();
-            let mut renderer = Renderer::new();
-            renderer.begin_frame(self.extent, TOLERANCE);
-            renderer.set_viewport(target.origin, target.extent);
-            let _ = renderer.fill_into(&mut batch, &quad, Affine2::IDENTITY, &paint);
+            // The canvas's own renderer, aimed at the blur target for the one
+            // draw and put back afterward. A fresh `Renderer` here would build
+            // a pair of tessellators per pass per blurred layer per frame, for
+            // a quad -- and would be the kind of allocation that never shows up
+            // in a profile as itself.
+            self.renderer.set_viewport(target.origin, target.extent);
+            let _ = self
+                .renderer
+                .fill_into(&mut batch, &quad, Affine2::IDENTITY, &paint);
+            self.renderer
+                .set_viewport(self.target.origin, self.target.extent);
 
             self.finished.push(Pass {
                 batch,

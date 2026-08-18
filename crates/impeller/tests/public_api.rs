@@ -38,6 +38,17 @@ fn render(ctx: &mut Context, canvas: Canvas) -> Vec<u8> {
     pixels
 }
 
+/// Draw an already-finished recording, for a test that inspects it first.
+fn render_recording(ctx: &mut Context, recording: &impeller::Recording) -> Vec<u8> {
+    let mut surface = ctx
+        .create_surface(SIZE, PixelFormat::Rgba8Unorm)
+        .expect("surface");
+    ctx.draw(&mut surface, recording).expect("draw");
+    let pixels = ctx.read(&mut surface).expect("read");
+    ctx.destroy_surface(surface);
+    pixels
+}
+
 fn pixel(pixels: &[u8], x: u32, y: u32) -> [u8; 4] {
     let i = ((y * SIZE.width + x) * 4) as usize;
     [pixels[i], pixels[i + 1], pixels[i + 2], pixels[i + 3]]
@@ -2479,6 +2490,50 @@ fn a_blur_of_zero_records_no_extra_passes() {
             "a blur of {sigma} should record no extra passes"
         );
     }
+}
+
+#[test]
+fn blurred_layers_nest() {
+    let Some(mut ctx) = context() else { return };
+    // Each blurred layer files three passes and the composite has to name the
+    // last of its own, not the last filed. With two nested, an index that
+    // counted from the wrong end would composite the inner layer's contents
+    // where its blur belongs -- a sharper picture rather than an error.
+    let mut canvas = Canvas::new(SIZE);
+    canvas.clear(Color::BLACK);
+    canvas.save_layer(Layer::default().with_blur(4.0));
+    canvas.save_layer(Layer::opacity(0.8).with_blur(3.0));
+    canvas
+        .draw_rect(
+            BLUR_REGION,
+            &Paint::fill(Color::WHITE).with_anti_alias(false),
+        )
+        .expect("square");
+    canvas.restore();
+    canvas.restore();
+    let recording = canvas.finish();
+
+    // Three per blurred layer, plus the root.
+    assert_eq!(
+        recording.passes.len(),
+        7,
+        "two blurred layers and a root should be seven passes"
+    );
+
+    let nested = render_recording(&mut ctx, &recording);
+    let at = |pixels: &[u8], x: u32, y: u32| pixels[((y * SIZE.width + x) * 4) as usize] as i32;
+    // Blurred twice, so it reaches further than either alone would.
+    let once = blurred_square(&mut ctx, 4.0, None);
+    assert!(
+        at(&nested, 64, 28) > at(&once, 64, 28),
+        "two blurs should reach further than one"
+    );
+    // And the inner layer's alpha survived the composite rather than being
+    // lost when the extra passes were inserted.
+    assert!(
+        at(&nested, 64, 64) < 255,
+        "the inner layer's opacity should still apply"
+    );
 }
 
 #[test]
