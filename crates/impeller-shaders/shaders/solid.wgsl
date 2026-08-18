@@ -159,25 +159,38 @@ fn blur_along_axis(clip: vec2<f32>) -> vec4<f32> {
     let uv = to_gradient_space(clip);
     let step = paint.geometry.zw;
     let sigma = max(paint.params.z, 1e-4);
-    // Three deviations each way, which covers better than four nines of the
-    // curve -- past that a tap contributes less than the eight-bit target can
-    // represent. Bounded because a shader loop must be, and because a radius
-    // beyond this costs bandwidth for a difference nobody can see.
-    let radius = min(ceil(sigma * 3.0), 32.0);
+    // Three deviations each way covers better than four nines of the curve;
+    // past that a tap contributes less than an eight-bit target can represent.
+    let reach = sigma * 3.0;
+    // A shader loop must be bounded, and sixty-five taps is already a lot of
+    // bandwidth per pixel per pass.
+    let max_taps = 32.0;
+    // One tap per texel while that fits within the budget, and further apart
+    // once it does not. Spreading rather than truncating is what keeps a large
+    // blur soft: cut off at the budget, the taps stop covering the curve and
+    // the result stops getting softer however large sigma grows -- the shape
+    // creeps toward a box the wider it is asked to be. Spread, the taps still
+    // span three deviations and the sampler's bilinear filter averages the
+    // texels each one falls between, which is what makes the gaps cost quality
+    // rather than correctness.
+    let spread = max(reach / max_taps, 1.0);
+    let taps = min(ceil(reach / spread), max_taps);
 
-    // Two reciprocals hoisted out of the loop, which the compiler may or may
-    // not do for a divide by a uniform expression.
+    // Hoisted out of the loop, which the compiler may or may not do for a
+    // divide by a uniform expression.
     let denominator = -0.5 / (sigma * sigma);
     var total = vec4<f32>(0.0);
     var weight_sum = 0.0;
-    var i = -radius;
+    var i = -taps;
     loop {
-        if (i > radius) { break; }
-        let weight = exp(i * i * denominator);
+        if (i > taps) { break; }
+        // Weighted by where the tap actually lands, not by which tap it is.
+        let offset = i * spread;
+        let weight = exp(offset * offset * denominator);
         // Clamped, so the edge extends rather than the blur pulling in
         // transparent black from outside and darkening the border. The target
         // is sized to the content, so there is nothing outside worth reading.
-        let coord = clamp(uv + step * i, vec2<f32>(0.0), vec2<f32>(1.0));
+        let coord = clamp(uv + step * offset, vec2<f32>(0.0), vec2<f32>(1.0));
         total = total + textureSampleLevel(image_texture, image_sampler, coord, 0.0) * weight;
         weight_sum = weight_sum + weight;
         i = i + 1.0;

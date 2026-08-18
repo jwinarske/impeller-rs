@@ -2493,6 +2493,61 @@ fn a_blur_of_zero_records_no_extra_passes() {
 }
 
 #[test]
+fn a_blur_keeps_softening_past_the_tap_budget() {
+    let Some(mut ctx) = context() else { return };
+    // A shader loop is bounded, so past some sigma the taps stop covering
+    // three deviations. Truncated there, the blur stops getting softer however
+    // large sigma grows and the shape creeps toward a box -- which reads as a
+    // blur that has a maximum, and is the wrong answer at exactly the sizes a
+    // frosted panel or a large shadow asks for.
+    //
+    // The taps spread instead, so they still span the curve and the sampler's
+    // bilinear filter averages what falls between them. That trades quality
+    // for coverage, which is the right way round: a slightly under-sampled
+    // wide blur looks like a wide blur, and a truncated one does not.
+    let extent = Extent2D::new(256, 256);
+    let render = |ctx: &mut Context, sigma: f32| {
+        let mut canvas = Canvas::new(extent);
+        canvas.clear(Color::BLACK);
+        canvas.save_layer(Layer::default().with_blur(sigma));
+        canvas
+            .draw_rect(
+                Rect::new(96.0, 96.0, 160.0, 160.0),
+                &Paint::fill(Color::WHITE).with_anti_alias(false),
+            )
+            .expect("square");
+        canvas.restore();
+        let mut surface = ctx
+            .create_surface(extent, PixelFormat::Rgba8Unorm)
+            .expect("surface");
+        ctx.draw(&mut surface, &canvas.finish()).expect("draw");
+        let pixels = ctx.read(&mut surface).expect("read");
+        ctx.destroy_surface(surface);
+        pixels
+    };
+    let at = |pixels: &[u8], x: u32, y: u32| pixels[((y * 256 + x) * 4) as usize] as i32;
+
+    // Well past where three deviations stop fitting in the budget, which is a
+    // little under eleven at thirty-two taps each way.
+    let sigmas = [16.0f32, 32.0, 60.0];
+    let rendered: Vec<Vec<u8>> = sigmas.iter().map(|s| render(&mut ctx, *s)).collect();
+
+    for pair in rendered.windows(2) {
+        // Further out keeps getting brighter: the blur is still spreading.
+        assert!(
+            at(&pair[1], 128, 56) > at(&pair[0], 128, 56),
+            "a larger sigma stopped reaching further"
+        );
+        // And the middle keeps getting dimmer, so the light is being moved
+        // rather than added.
+        assert!(
+            at(&pair[1], 128, 128) < at(&pair[0], 128, 128),
+            "a larger sigma stopped dimming the middle"
+        );
+    }
+}
+
+#[test]
 fn blurred_layers_nest() {
     let Some(mut ctx) = context() else { return };
     // Each blurred layer files three passes and the composite has to name the

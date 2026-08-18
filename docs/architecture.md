@@ -1021,6 +1021,15 @@ permutations on GLES.
   blur passes free of alpha and blend means neither has to know about
   compositing.
 
+  A shader loop is bounded, so past a sigma of about eleven the taps no longer
+  cover three deviations. They spread rather than truncate: the same count,
+  further apart, still spanning the curve, with the sampler's bilinear filter
+  averaging what falls between them. That trades quality for coverage, which is
+  the right way round — a slightly under-sampled wide blur looks like a wide
+  blur, while a truncated one stops softening however large sigma grows and
+  creeps toward a box, which is the wrong answer at exactly the sizes a frosted
+  panel or a large shadow asks for.
+
   A blur reaches past what it is given, so a layer that is both bounded and
   blurred outsets its target by three deviations, matching where the shader
   stops taking taps. The caller states where the content is, which is the
