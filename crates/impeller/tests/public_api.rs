@@ -1835,6 +1835,152 @@ fn tiled_ramp(ctx: &mut Context, tile: TileMode) -> Vec<u8> {
     render(ctx, canvas)
 }
 
+#[test]
+fn no_number_a_caller_can_write_takes_the_process_down() {
+    let Some(mut ctx) = context() else { return };
+    // A wider sweep than the NaN one beside this, and a weaker claim. What a
+    // renderer draws for an infinite rectangle or a stroke a million units wide
+    // is a judgement call; that it must not abort the program holding it is
+    // not. Two of these were found aborting, inside a dependency's assertion,
+    // which is a failure a caller can neither catch nor prevent.
+    //
+    // Every value here is one a caller reaches by ordinary means: a subtraction
+    // that went negative, a division by an extent that turned out to be zero, a
+    // coordinate scaled once too often.
+    let poisons = [
+        ("nan", f32::NAN),
+        ("inf", f32::INFINITY),
+        ("-inf", f32::NEG_INFINITY),
+        ("huge", 1e30),
+        ("-huge", -1e30),
+        ("tiny", 1e-30),
+        ("zero", 0.0),
+        ("negative", -8.0),
+    ];
+
+    for (name, v) in poisons {
+        let mut canvas = Canvas::new(SIZE);
+        canvas.clear(Color::BLACK);
+        let white = Paint::fill(Color::WHITE);
+        let stroked = Paint::stroke(Color::WHITE, v);
+
+        // Shapes, sized and positioned by the value.
+        let _ = canvas.draw_rect(Rect::new(v, v, v + 32.0, v + 32.0), &white);
+        let _ = canvas.draw_rrect(Rect::from_size(64.0, 64.0), v, &white);
+        let _ = canvas.draw_circle(Vec2::new(64.0, 64.0), v, &white);
+        let _ = canvas.draw_oval(Rect::new(0.0, 0.0, v, v), &white);
+        let _ = canvas.draw_line(Vec2::ZERO, Vec2::new(v, v), &stroked);
+        let _ = canvas.draw_rect(Rect::from_size(32.0, 32.0), &stroked);
+
+        // Curves, where the value is a control point rather than an endpoint.
+        let mut builder = PathBuilder::new();
+        builder.move_to(Vec2::new(8.0, 8.0));
+        builder.quad_to(Vec2::new(v, 64.0), Vec2::new(96.0, 96.0));
+        builder.cubic_to(Vec2::new(v, v), Vec2::new(16.0, v), Vec2::new(8.0, 8.0));
+        builder.close();
+        let _ = canvas.draw_path(&builder.build(), &white);
+
+        // Paint parameters rather than geometry.
+        let _ = canvas.draw_rect(
+            Rect::from_size(64.0, 64.0),
+            &Paint::radial_gradient(
+                Vec2::new(64.0, 64.0),
+                v,
+                vec![
+                    GradientStop::new(Color::WHITE, v),
+                    GradientStop::new(Color::BLACK, 1.0),
+                ],
+            ),
+        );
+        let _ = canvas.draw_rect(
+            Rect::from_size(64.0, 64.0),
+            &Paint::sweep_gradient(
+                Vec2::new(64.0, 64.0),
+                v,
+                v,
+                vec![
+                    GradientStop::new(Color::WHITE, 0.0),
+                    GradientStop::new(Color::BLACK, 1.0),
+                ],
+            ),
+        );
+
+        // The state stack: a clip nothing can satisfy, a transform that
+        // collapses, a layer scaled by a value that is not a fraction.
+        canvas.save();
+        let _ = canvas.clip_rect(Rect::new(v, v, v, v));
+        canvas.translate(v, v);
+        canvas.scale(v, v);
+        canvas.rotate(v);
+        let _ = canvas.draw_rect(Rect::from_size(16.0, 16.0), &white);
+        canvas.restore();
+
+        canvas.save_layer(Layer::opacity(v).with_blur(v));
+        let _ = canvas.draw_rect(Rect::from_size(48.0, 48.0), &white);
+        canvas.restore();
+
+        // Rendered rather than only recorded: half of what could go wrong
+        // happens in the backend, and a recording nobody submits proves
+        // nothing about it.
+        let pixels = render(&mut ctx, canvas);
+        assert_eq!(
+            pixels.len(),
+            (SIZE.width * SIZE.height * 4) as usize,
+            "{name} did not produce a full frame"
+        );
+    }
+}
+
+#[test]
+fn a_glyph_placed_by_arithmetic_that_went_wrong_still_renders_a_frame() {
+    let Some(mut ctx) = context() else { return };
+    // Text layout is where a caller most easily produces one of these without
+    // noticing: a width divided by a zero advance, an origin accumulated across
+    // a run that began with a NaN. Separate from the sweep beside this because
+    // a glyph run samples the atlas, and a draw whose texture nobody supplied
+    // is refused before it can reach anything worth testing.
+    let (atlas, solid, _) = two_glyph_atlas();
+    let rect = atlas.get(solid).unwrap();
+
+    for (name, v) in [
+        ("nan", f32::NAN),
+        ("inf", f32::INFINITY),
+        ("-inf", f32::NEG_INFINITY),
+        ("huge", 1e30),
+    ] {
+        let image = upload_atlas(&mut ctx, &atlas);
+        let mut canvas = Canvas::new(SIZE);
+        canvas.clear(Color::BLACK);
+        // A well-placed glyph beside the poisoned ones, so this says the run
+        // survived rather than only that the call returned.
+        let _ = canvas.draw_glyphs(
+            &[
+                PositionedGlyph::new(solid, [16.0, 16.0], rect),
+                PositionedGlyph::new(solid, [v, 40.0], rect),
+                PositionedGlyph::new(solid, [40.0, v], rect),
+            ],
+            &atlas,
+            0,
+            &Paint::fill(Color::linear(1.0, 0.0, 0.0, 1.0)),
+        );
+
+        let mut surface = ctx
+            .create_surface(SIZE, PixelFormat::Rgba8Unorm)
+            .expect("surface");
+        ctx.draw_with_images(&mut surface, &canvas.finish(), &[&image])
+            .expect("draw");
+        let pixels = ctx.read(&mut surface).expect("read");
+        ctx.destroy_surface(surface);
+        ctx.destroy_image(image);
+
+        assert_eq!(
+            pixel(&pixels, 20, 20),
+            [255, 0, 0, 255],
+            "{name}: the well-placed glyph in the same run did not survive"
+        );
+    }
+}
+
 /// One call made with a value that is not a number, drawn onto a canvas.
 type PoisonedDraw = Box<dyn Fn(&mut Canvas)>;
 
