@@ -1011,9 +1011,23 @@ permutations on GLES.
   the caller clipped away is drawn, and nothing about that reads as an error.
   The check lives beside the depth it reads rather than in a backend, because
   it was in one backend and not the other and the same recording was therefore
-  an error on Vulkan and a wrong picture on GLES. Blur is **not implemented** — there is
-  no blur anywhere in the tree, and a multi-pass separable one is the intended
-  shape rather than something that exists.
+  an error on Vulkan and a wrong picture on GLES.
+
+  A blurred layer is multi-pass and separable: the contents into a target, then
+  one pass per axis, then the same composite an unblurred layer uses. Separable
+  because a two-dimensional Gaussian is the product of two one-dimensional ones,
+  so two passes give the same picture as a square of taps — at a radius of
+  sixteen, thirty-three taps against a thousand and eighty-nine. Keeping the
+  blur passes free of alpha and blend means neither has to know about
+  compositing.
+
+  A blur reaches past what it is given, so a layer that is both bounded and
+  blurred outsets its target by three deviations, matching where the shader
+  stops taking taps. The caller states where the content is, which is the
+  question they can answer; how far the blur carries it is arithmetic that
+  belongs here. Sized to the content alone, the halo is cut off square at the
+  bound — which looks like a shadow drawn with a straight edge rather than like
+  anything to do with bounds.
 - **Text** (`impeller-text`): shelf packing of caller-supplied coverage into
   one texture, with compaction and then doubling when it fills. Rasterization
   is out of scope and lives with the caller's font parser, which is what lets
