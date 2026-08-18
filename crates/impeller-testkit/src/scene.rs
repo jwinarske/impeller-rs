@@ -221,9 +221,12 @@ impl Item {
     /// rectangle, filled, antialiased" is saying "coverage from a distance
     /// field", whether or not it knows the name for it.
     fn is_analytic(&self) -> bool {
-        matches!(self.shape, crate::shape::Shape::RoundedRect { radius, .. } if radius > 0.0)
-            && self.stroke.is_none()
-            && matches!(self.fill, Fill::Solid(_))
+        let shaped = match self.shape {
+            crate::shape::Shape::RoundedRect { radius, .. } => radius > 0.0,
+            crate::shape::Shape::Circle { radius, .. } => radius > 0.0,
+            _ => false,
+        };
+        shaped && self.stroke.is_none() && matches!(self.fill, Fill::Solid(_))
     }
 }
 

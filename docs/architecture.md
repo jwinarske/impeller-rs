@@ -987,11 +987,22 @@ permutations on GLES.
   one at once, and an aliased fill is asking for the hard edge tessellation
   gives.
 
-  The same treatment for plain rects, circles and ellipses is **not
-  implemented**. A circle is still four cubics flattened like any other curve
-  and there is no ellipse at all. A tessellated rounded rectangle does at least
-  reach the fan fill, since its flattened outline is convex, so it skips the
-  sweep and the stencil.
+  A circle takes the same field, because it is the same shape: a square whose
+  corner radius is half its side has no straight edge left, and the expression
+  reduces exactly to the distance from the centre less the radius. So a circle
+  costs two triangles and needed no shader of its own — and comes out nearer a
+  real circle than the tessellated one does, which is a polygon approximation
+  with its coverage quantized to however many samples the pass has.
+
+  It also means such a shape does not multisample the pass. Antialiasing used
+  to be a property of the frame, since a request from any shape turned it on
+  for all of them; a shape that computes its own coverage now leaves the pass
+  at one sample, which is four times less fill and bandwidth for an edge it
+  was already going to get right.
+
+  Plain rects and ellipses are **not implemented** this way. A tessellated
+  rounded rectangle does at least reach the fan fill, since its flattened
+  outline is convex, so it skips the sweep and the stencil.
 
   Convexity is a correctness question, not only a speed one. A fan fill
   triangulates from one vertex and has no notion of a fill rule, so a polygon

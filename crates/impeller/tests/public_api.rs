@@ -611,6 +611,81 @@ fn only_an_antialiased_solid_fill_takes_the_analytic_path() {
 }
 
 #[test]
+fn an_antialiased_circle_uses_the_same_distance_field() {
+    let Some(mut ctx) = context() else { return };
+    // A circle is a rounded rectangle: a square whose corner radius is half its
+    // side has no straight edge left, and the field reduces exactly to the
+    // distance from the centre less the radius. So it costs two triangles and
+    // needs no shader of its own.
+    let extent = Extent2D::new(160, 120);
+    let radius = 40.0f32;
+    let mut draw = |analytic: bool| {
+        let mut canvas = Canvas::new(extent).with_samples(4);
+        canvas.clear(Color::BLACK);
+        if analytic {
+            canvas
+                .draw_circle(Vec2::new(80.0, 60.0), radius, &Paint::fill(Color::WHITE))
+                .expect("circle");
+        } else {
+            canvas
+                .draw_circle(
+                    Vec2::new(80.0, 60.0),
+                    radius,
+                    &Paint::fill(Color::WHITE).with_anti_alias(false),
+                )
+                .expect("circle");
+        }
+        let recording = canvas.finish();
+        let vertices: usize = recording
+            .passes
+            .iter()
+            .map(|pass| pass.batch.vertices().len())
+            .sum();
+        let mut surface = ctx
+            .create_surface(extent, PixelFormat::Rgba8Unorm)
+            .expect("surface");
+        ctx.draw(&mut surface, &recording).expect("draw");
+        let pixels = ctx.read(&mut surface).expect("read");
+        ctx.destroy_surface(surface);
+        let coverage: u64 = pixels.chunks_exact(4).map(|texel| texel[0] as u64).sum();
+        (vertices, coverage as f64)
+    };
+
+    let (analytic_vertices, analytic_coverage) = draw(true);
+    let (tessellated_vertices, tessellated_coverage) = draw(false);
+
+    assert_eq!(
+        analytic_vertices, 4,
+        "an antialiased circle should be a quad"
+    );
+    assert!(
+        tessellated_vertices > 16,
+        "the tessellated circle should cost many more vertices, got {tessellated_vertices}"
+    );
+
+    // Against the area of an actual circle, which is a thing both are trying to
+    // be and neither is measured against anywhere else. The analytic one is
+    // nearer, and by a wide margin: the other is a polygon approximation with
+    // its coverage quantized to four samples, where this is the curve itself
+    // with coverage taken from a distance.
+    let exact = std::f64::consts::PI * (radius as f64) * (radius as f64) * 255.0;
+    let analytic_error = (analytic_coverage - exact).abs() / exact;
+    let tessellated_error = (tessellated_coverage - exact).abs() / exact;
+    assert!(
+        analytic_error < 0.002,
+        "the analytic circle is {:.3}% off the exact area",
+        analytic_error * 100.0
+    );
+    assert!(
+        analytic_error < tessellated_error,
+        "the analytic circle should be nearer the exact area than the \
+         tessellated one: {:.3}% against {:.3}%",
+        analytic_error * 100.0,
+        tessellated_error * 100.0
+    );
+}
+
+#[test]
 fn the_analytic_shape_matches_the_tessellated_one() {
     let Some(mut ctx) = context() else { return };
     // Two quite different ways of deciding which pixels the shape covers, held

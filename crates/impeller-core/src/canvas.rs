@@ -872,7 +872,7 @@ impl Canvas {
             return Ok(self);
         }
         if let Some(material) = self.analytic_rrect(rect, radius, paint) {
-            return self.draw_analytic(rect, radius, material, paint);
+            return self.draw_analytic(rect, material, paint);
         }
         let path = rect.to_rounded_path(radius);
         self.draw_path(&path, paint)
@@ -886,6 +886,14 @@ impl Canvas {
     /// against — and an aliased fill is asking for hard edges, which the
     /// tessellated path gives and this one deliberately does not.
     fn analytic_rrect(&self, rect: Rect, radius: f32, paint: &Paint) -> Option<Material> {
+        // Invisible and fully-clipped shapes are rejected before the path is
+        // built, and this route has to reject them too. It bypasses
+        // `draw_path`, which is where those checks live -- so an alpha of zero
+        // went from recording nothing to recording a quad the fragment stage
+        // discards a pixel at a time.
+        if !paint.is_visible() || self.clip.is_some_and(Scissor::is_empty) {
+            return None;
+        }
         if !paint.anti_alias || !matches!(paint.style, Style::Fill) {
             return None;
         }
@@ -925,7 +933,6 @@ impl Canvas {
     fn draw_analytic(
         &mut self,
         rect: Rect,
-        _radius: f32,
         material: Material,
         paint: &Paint,
     ) -> Result<&mut Self> {
@@ -950,9 +957,28 @@ impl Canvas {
         Ok(self)
     }
 
+    /// Fill or stroke a circle.
+    ///
+    /// An antialiased solid fill goes through the same distance field a rounded
+    /// rectangle does, because it is one: a square whose corner radius is half
+    /// its side has no straight edge left, and the field reduces exactly to the
+    /// distance from the centre less the radius. So a circle costs two
+    /// triangles and needs no shader of its own, where four cubics flattened to
+    /// a tolerance cost vertices in proportion to how large it is drawn.
     pub fn draw_circle(&mut self, center: Vec2, radius: f32, paint: &Paint) -> Result<&mut Self> {
-        if radius <= 0.0 {
+        // NaN named rather than caught by a negated comparison, which reads as
+        // a typo and which clippy objects to on exactly those grounds.
+        if radius.is_nan() || radius <= 0.0 {
             return Ok(self);
+        }
+        let bounds = Rect::new(
+            center.x - radius,
+            center.y - radius,
+            center.x + radius,
+            center.y + radius,
+        );
+        if let Some(material) = self.analytic_rrect(bounds, radius, paint) {
+            return self.draw_analytic(bounds, material, paint);
         }
         let path = circle_path(center, radius);
         self.draw_path(&path, paint)
@@ -1418,13 +1444,47 @@ mod tests {
                 &Paint::fill(Color::WHITE).with_anti_alias(false),
             )
             .unwrap();
+        // A path, because it has to be tessellated. A circle or a rounded
+        // rectangle would antialias itself from a distance field and would
+        // rightly leave the pass alone -- which the test below is about.
+        let mut triangle = PathBuilder::new();
+        triangle
+            .move_to(Vec2::new(20.0, 20.0))
+            .line_to(Vec2::new(40.0, 20.0))
+            .line_to(Vec2::new(20.0, 40.0))
+            .close();
         canvas
-            .draw_circle(Vec2::splat(20.0), 8.0, &Paint::fill(Color::WHITE))
+            .draw_path(&triangle.build(), &Paint::fill(Color::WHITE))
             .unwrap();
 
         // Sampling is a property of the pass, so it cannot vary per shape.
         // Honouring the request for the frame beats silently ignoring it.
         assert!(canvas.finish().root().descriptor.samples > 1);
+    }
+
+    #[test]
+    fn a_shape_that_antialiases_itself_leaves_the_pass_alone() {
+        // The saving that comes with the distance field, and the reason it is
+        // worth having beyond the vertex count: a frame whose only antialiased
+        // shapes compute their own coverage does not have to multisample, which
+        // is four times the fill and four times the bandwidth for an edge it
+        // was already going to get right.
+        let mut canvas = canvas();
+        canvas
+            .draw_circle(Vec2::splat(20.0), 8.0, &Paint::fill(Color::WHITE))
+            .unwrap();
+        canvas
+            .draw_rrect(
+                Rect::new(30.0, 30.0, 60.0, 50.0),
+                6.0,
+                &Paint::fill(Color::WHITE),
+            )
+            .unwrap();
+        assert_eq!(
+            canvas.finish().root().descriptor.samples,
+            1,
+            "an analytic shape should not multisample the pass"
+        );
     }
 
     #[test]

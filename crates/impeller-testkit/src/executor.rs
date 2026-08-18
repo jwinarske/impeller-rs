@@ -105,6 +105,12 @@ fn record_node(canvas: &mut Canvas, node: &Node, anti_alias: bool) -> Result<()>
             // instead would pin the corpus to the tessellated one and leave the
             // choice untested by everything the corpus drives.
             match &item.shape {
+                // A circle goes through its own call for the same reason: that
+                // is where the choice between a distance field and four cubics
+                // is made, and handing over a path would decide it here.
+                Shape::Circle { center, radius } => {
+                    canvas.draw_circle(Vec2::from(*center), *radius, &paint)?;
+                }
                 Shape::RoundedRect { min, max, radius } => {
                     canvas.draw_rrect(
                         Rect::new(min[0], min[1], max[0], max[1]),
