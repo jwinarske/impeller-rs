@@ -976,6 +976,19 @@ permutations on GLES.
   coverage in the fragment shader instead of tessellating; convexity detection
   for a fan-fill fast path; Wang's-formula adaptive Bezier flattening with
   transform-aware scale.
+
+  Convexity is a correctness question, not only a speed one. A fan fill
+  triangulates from one vertex and has no notion of a fill rule, so a polygon
+  wrongly called convex is filled by a routine that cannot express what filling
+  it means, and the path's fill rule is silently discarded. Agreement of turn
+  directions does not settle it — a pentagram turns the same way at all five
+  points and crosses itself five times — so the total turning is counted too: a
+  simple closed polygon comes back to its start having turned once around, and
+  a self-crossing one turns twice or more. Counted by quadrant advances rather
+  than accumulated as an angle, which is exact, allocates nothing, and measured
+  four times faster than the `atan2` per vertex the definition suggests. Both
+  are in the tree and a test requires them to agree, so the cheap one has
+  something to be checked against.
 - **Entity layer** (`impeller-entity`): an entity carries transform, blend,
   clip depth, contents, and geometry, with a Contents implementation per
   material and coverage computation for culling.

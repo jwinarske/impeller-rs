@@ -282,3 +282,45 @@ fn clipped_scenes_differ_from_the_same_scenes_unclipped() {
         "no scene in the corpus carries a clip, so nothing here was checked"
     );
 }
+
+#[test]
+fn the_fill_rules_disagree_on_a_path_that_crosses_itself() {
+    // Comparing a scene between implementations proves they agree, not that
+    // either did anything: two backends that both ignore the fill rule agree
+    // perfectly, which is exactly the state this corpus was in. The rule is
+    // only observable on a path that crosses itself, so the check is that the
+    // two such scenes differ from each other -- and where, since a difference
+    // anywhere would also be satisfied by rendering one of them wrong.
+    let mut devices = available_devices();
+    if devices.is_empty() {
+        eprintln!("skipping: no device");
+        return;
+    }
+    let by_name = |name: &str| {
+        corpus()
+            .into_iter()
+            .find(|s| s.name == name)
+            .unwrap_or_else(|| panic!("the corpus has no scene named {name}"))
+    };
+    let nonzero = by_name("self-crossing-nonzero");
+    let evenodd = by_name("self-crossing-evenodd");
+    let Some(index) = first_device_for(&devices, &nonzero) else {
+        eprintln!("skipping: no device renders it");
+        return;
+    };
+    let ctx = &mut devices[index];
+    let a = render_scene::<VulkanHal>(ctx, &nonzero).expect("non-zero");
+    let b = render_scene::<VulkanHal>(ctx, &evenodd).expect("even-odd");
+
+    let at = |image: &impeller_testkit::Image, x: u32, y: u32| {
+        image.pixels[((y * image.width + x) * 4) as usize]
+    };
+    // The middle is enclosed twice by a pentagram's crossings, so non-zero
+    // fills it and even-odd does not.
+    assert!(at(&a, 64, 64) > 200, "non-zero left the middle empty");
+    assert!(at(&b, 64, 64) < 32, "even-odd filled the middle");
+    // A point on one of the arms is enclosed once and is filled either way, so
+    // the rules differ where they should and agree where they should.
+    assert!(at(&a, 64, 22) > 200, "non-zero lost an arm");
+    assert!(at(&b, 64, 22) > 200, "even-odd lost an arm");
+}

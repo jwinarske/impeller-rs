@@ -7,7 +7,7 @@
 //! Rust source.
 
 use glam::Vec2;
-use impeller_geometry::{Path, PathBuilder};
+use impeller_geometry::{FillRule, Path, PathBuilder};
 
 /// The magic constant for approximating a quarter circle with a cubic.
 const KAPPA: f32 = 0.552_284_8;
@@ -21,6 +21,17 @@ pub enum Shape {
     },
     /// A closed polygon through the given points.
     Polygon(Vec<[f32; 2]>),
+    /// A closed polygon filled by a stated rule.
+    ///
+    /// Separate from [`Self::Polygon`] rather than a field on it, because the
+    /// rule only ever differs from the default for a path that crosses itself
+    /// -- every other polygon fills the same either way -- and putting it on
+    /// the common variant would make each of the corpus's many polygons state
+    /// something that does not matter to it.
+    RuledPolygon {
+        points: Vec<[f32; 2]>,
+        rule: FillRule,
+    },
     Circle {
         center: [f32; 2],
         radius: f32,
@@ -46,13 +57,11 @@ impl Shape {
                     .close();
             }
             Self::Polygon(points) => {
-                if let Some((first, rest)) = points.split_first() {
-                    b.move_to(Vec2::from(*first));
-                    for p in rest {
-                        b.line_to(Vec2::from(*p));
-                    }
-                    b.close();
-                }
+                close_polygon(&mut b, points);
+            }
+            Self::RuledPolygon { points, rule } => {
+                b = b.with_fill_rule(*rule);
+                close_polygon(&mut b, points);
             }
             Self::Circle { center, radius } => {
                 let (cx, cy) = (center[0], center[1]);
@@ -90,6 +99,17 @@ impl Shape {
             }
         }
         b.build()
+    }
+}
+
+/// Trace a closed polygon through the given points.
+fn close_polygon(b: &mut PathBuilder, points: &[[f32; 2]]) {
+    if let Some((first, rest)) = points.split_first() {
+        b.move_to(Vec2::from(*first));
+        for p in rest {
+            b.line_to(Vec2::from(*p));
+        }
+        b.close();
     }
 }
 

@@ -8,6 +8,7 @@
 use crate::shape::Shape;
 use glam::{Affine2, Vec2};
 use impeller_geometry::stroke::{LineCap, LineJoin, StrokeStyle};
+use impeller_geometry::FillRule;
 use impeller_hal::{BlendMode, Extent2D};
 
 /// An affine transform, as data.
@@ -527,6 +528,16 @@ fn advanced_blend_items(modes: &[BlendMode; 3]) -> Vec<Item> {
     items
 }
 
+/// A five-pointed star as one closed path, which crosses itself five times.
+fn pentagram() -> Vec<[f32; 2]> {
+    (0..5)
+        .map(|k| {
+            let angle = (-90.0 + k as f32 * 144.0).to_radians();
+            [64.0 + 52.0 * angle.cos(), 64.0 + 52.0 * angle.sin()]
+        })
+        .collect()
+}
+
 /// The scene corpus.
 ///
 /// Deliberately small and varied rather than large: each scene is here because
@@ -956,6 +967,36 @@ pub fn corpus() -> Vec<Scene> {
             )],
         )
         .with_samples(4),
+        // A path that crosses itself, filled by each rule. The two differ only
+        // in the middle: a pentagram wound once has a center the crossings
+        // enclose twice, so non-zero fills it and even-odd leaves it hollow.
+        //
+        // One subpath rather than the two a corpus would otherwise reach for,
+        // because that is the case that was wrong. A path of several subpaths
+        // goes through the sweep, which has always honored the rule; a single
+        // subpath is offered to a convexity test first, and a self-crossing
+        // one whose turns all agree was called convex and fan-filled -- by a
+        // routine with no notion of a fill rule, which therefore discarded it.
+        Scene::new(
+            "self-crossing-nonzero",
+            vec![Item::filled(
+                Shape::RuledPolygon {
+                    points: pentagram(),
+                    rule: FillRule::NonZero,
+                },
+                Fill::Solid(WHITE),
+            )],
+        ),
+        Scene::new(
+            "self-crossing-evenodd",
+            vec![Item::filled(
+                Shape::RuledPolygon {
+                    points: pentagram(),
+                    rule: FillRule::EvenOdd,
+                },
+                Fill::Solid(WHITE),
+            )],
+        ),
         // Layers. Everything below here needs the scene to be a tree, and none
         // of it could be said at all while a scene was a flat list of items --
         // which is why layer compositing went uncompared across backends for as
