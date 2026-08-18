@@ -279,12 +279,48 @@ fn multisampling_produces_partial_coverage_along_the_edge() {
 }
 
 #[test]
+fn every_advertised_sample_count_is_one_the_driver_honors() {
+    let Some(mut ctx) = context() else { return };
+    // `RenderbufferStorageMultisample` rounds an unsupported request up to the
+    // next count the format supports and reports no error, so a capability mask
+    // that guesses is not caught by anything a rendered pixel could show: the
+    // image is correct and costs twice what was budgeted.
+    //
+    // The mask used to be built by taking every power of two up to
+    // `MAX_SAMPLES`. Both drivers available here contradict that -- llvmpipe
+    // has no 2x and radeonsi no 1x multisample -- so this asks the backend to
+    // actually allocate at every count it advertises. It fails on a mask that
+    // claims a count the driver would silently substitute.
+    let advertised: Vec<u32> = [1u32, 2, 4, 8, 16]
+        .into_iter()
+        .filter(|n| ctx.capabilities().sample_counts.supports(*n))
+        .collect();
+    assert!(
+        advertised.contains(&1),
+        "single-sampled should always be available, got {advertised:?}"
+    );
+    for samples in advertised {
+        let pixels = render_at(&mut ctx, samples);
+        assert_eq!(
+            pixels.len(),
+            (SIZE * SIZE * 4) as usize,
+            "{samples}x did not render a full target"
+        );
+    }
+}
+
+#[test]
 fn the_requested_sample_count_is_actually_used() {
     let Some(mut ctx) = context() else { return };
     // Resolving N samples yields at most N+1 distinct levels, so rendering at a
     // lower count than requested shows up as too few levels. The resolve here
     // is a blit rather than a render-pass attachment, so this checks a
     // genuinely different mechanism from the Vulkan side.
+    //
+    // The upper bound holds only because the backend refuses a pass whose
+    // realized sample count differs from the requested one. Without that it is
+    // not a property GLES offers: a driver may allocate more samples than it
+    // was asked for, and llvmpipe does, which made this fail there.
     let mut seen = Vec::new();
     for samples in [1u32, 2, 4] {
         if !ctx.capabilities().sample_counts.supports(samples) {

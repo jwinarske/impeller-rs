@@ -200,7 +200,7 @@ impl GlesContext {
         };
 
         let gl_extensions = gl_extension_set(&gl);
-        let capabilities = detect_capabilities(&gl, &egl_extensions);
+        let capabilities = detect_capabilities(&gl, &egl, &egl_extensions);
 
         // Asked for and available are separate questions, and a driver without
         // debug output still renders. `debug_active` reports which happened, so
@@ -457,7 +457,102 @@ fn gl_extension_set(gl: &glow::Context) -> HashSet<String> {
     }
 }
 
-fn detect_capabilities(gl: &glow::Context, egl_extensions: &HashSet<String>) -> Capabilities {
+/// `glGetInternalformativ`, which glow does not wrap.
+///
+/// Core since ES 3.0, so the entry point is present on every context this
+/// backend will run on; the fallback below exists because a null proc address
+/// is easier to handle than to prove impossible.
+type GetInternalformativ = unsafe extern "system" fn(u32, u32, u32, i32, *mut i32);
+
+/// The multisample counts a renderbuffer of `format` can actually be given.
+///
+/// Returns a mask whose set bits are the counts themselves, so 4 and 8 give
+/// `0b1100`. One is not included: a single-sampled attachment is allocated
+/// through `RenderbufferStorage` and is not a sample count this query answers.
+fn format_sample_mask(query: GetInternalformativ, format: u32) -> u32 {
+    let mut count = 0i32;
+    // SAFETY: the entry point was resolved from a current context, and each
+    // call is given a buffer of exactly the length it was told to write.
+    unsafe {
+        query(
+            glow::RENDERBUFFER,
+            format,
+            glow::NUM_SAMPLE_COUNTS,
+            1,
+            &mut count,
+        );
+    }
+    if count <= 0 {
+        return 0;
+    }
+    let mut counts = vec![0i32; count as usize];
+    unsafe {
+        query(
+            glow::RENDERBUFFER,
+            format,
+            glow::SAMPLES,
+            count,
+            counts.as_mut_ptr(),
+        );
+    }
+    counts
+        .into_iter()
+        .filter(|c| (2..=16).contains(c))
+        .map(|c| c as u32)
+        .filter(|c| c.is_power_of_two())
+        .fold(0, |mask, c| mask | c)
+}
+
+/// The sample counts a multisampled pass can use, asked rather than assumed.
+///
+/// This used to read `MAX_SAMPLES` and take every power of two up to it, on the
+/// stated grounds that the specification defines the limit that way and that
+/// every driver behaves accordingly. Both halves are wrong, and both of the
+/// drivers available here falsify them: Mesa's llvmpipe supports 4 and 8 for
+/// `RGBA8` and not 2, and radeonsi supports 2, 4 and 8 but not 1.
+///
+/// What makes it worth querying rather than tolerating is that asking for an
+/// unsupported count is not an error. `RenderbufferStorageMultisample` rounds
+/// the request up to the next count the format does support, so a caller who
+/// budgets for 2x gets 4x -- twice the memory and twice the resolve bandwidth
+/// -- while `Capabilities` reports that it got what it asked for. On the
+/// embedded targets this renderer exists to run on, that is not a rounding
+/// detail.
+///
+/// The counts reported are those a color attachment and the stencil beside it
+/// both support, because a multisampled pass allocates both and a framebuffer
+/// whose attachments disagree about sample count is incomplete rather than
+/// slow. Formats outside the eight-bit pair are not folded in: intersecting
+/// every renderable format would let a rarely-used one narrow the answer for
+/// the common case, so those are caught at allocation instead, where the
+/// realized count is checked against the requested one.
+fn multisample_mask(egl: &Egl, max_samples: u32) -> u32 {
+    let Some(proc) = egl.get_proc_address("glGetInternalformativ") else {
+        // No query, so the old assumption is all that is left. It is stated
+        // here as an assumption rather than presented as a limit.
+        let mut mask = 1u32;
+        let mut n = 2u32;
+        while n <= max_samples && n <= 16 {
+            mask |= n;
+            n <<= 1;
+        }
+        return mask;
+    };
+    // SAFETY: `glGetInternalformativ` has this signature in ES 3.0 and every
+    // later version, and the pointer came from the loader for a current
+    // context.
+    let query: GetInternalformativ = unsafe { std::mem::transmute(proc) };
+    let color =
+        format_sample_mask(query, glow::RGBA8) & format_sample_mask(query, glow::SRGB8_ALPHA8);
+    // Single-sampled is always available and is not a multisample count.
+    1 | (color & format_sample_mask(query, glow::STENCIL_INDEX8))
+}
+
+fn detect_capabilities(
+    gl: &glow::Context,
+    egl: &Egl,
+    egl_extensions: &HashSet<String>,
+) -> Capabilities {
     // SAFETY: a context is current on this thread.
     let (max_texture_size, max_samples, renderer, version) = unsafe {
         (
@@ -468,16 +563,7 @@ fn detect_capabilities(gl: &glow::Context, egl_extensions: &HashSet<String>) -> 
         )
     };
 
-    // GLES reports only a maximum rather than a mask, so every power of two up
-    // to it is assumed usable. That matches how the specification defines the
-    // limit and how every driver behaves; a device that rejected an
-    // intermediate count would be reporting its maximum wrongly.
-    let mut mask = 1u32;
-    let mut n = 2u32;
-    while n <= max_samples && n <= 16 {
-        mask |= n;
-        n <<= 1;
-    }
+    let mask = multisample_mask(egl, max_samples);
 
     // Import and export are separate extensions here, unlike Vulkan where one
     // handle type covers both. A driver offering only import still supports the
@@ -506,6 +592,14 @@ fn detect_capabilities(gl: &glow::Context, egl_extensions: &HashSet<String>) -> 
             import_sync_file: fence,
         },
         render_formats: Vec::new(),
+        // Recognized from the renderer string, because GLES offers nothing
+        // better: there is no device-type query, and the string is what every
+        // tool that needs this answer reads. Matching is on the rasterizer
+        // names rather than on a word like "software", which appears in plenty
+        // of hardware driver strings.
+        software: ["llvmpipe", "softpipe", "swiftshader", "swrast"]
+            .iter()
+            .any(|name| renderer.to_ascii_lowercase().contains(name)),
         device_name: renderer,
         driver_name: version,
     }

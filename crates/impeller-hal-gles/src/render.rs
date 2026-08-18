@@ -560,6 +560,18 @@ impl GlesContext {
             );
 
             let status = gl.check_framebuffer_status(glow::FRAMEBUFFER);
+            // Read while the framebuffer is still bound, because this is a
+            // property of the attachment rather than of the renderbuffer name.
+            //
+            // `RenderbufferStorageMultisample` is permitted to allocate more
+            // samples than it was asked for, rounding up to the next count the
+            // format supports, and it reports no error when it does. Silently
+            // paying for twice the memory and twice the resolve bandwidth is
+            // worse than being refused, and it is invisible in every rendered
+            // pixel, so it is caught here. Reaching this for one of the formats
+            // the capability mask covers would mean the mask is wrong; for any
+            // other format this is the check that stands in for it.
+            let realized = gl.get_parameter_i32(glow::SAMPLES).max(0) as u32;
             gl.bind_framebuffer(glow::FRAMEBUFFER, None);
             gl.bind_renderbuffer(glow::RENDERBUFFER, None);
             if status != glow::FRAMEBUFFER_COMPLETE {
@@ -568,6 +580,18 @@ impl GlesContext {
                 return Err(Error::Backend {
                     backend: "gles",
                     detail: format!("multisample framebuffer incomplete: {status:#x}"),
+                });
+            }
+            if realized != samples {
+                gl.delete_framebuffer(framebuffer);
+                gl.delete_renderbuffer(renderbuffer);
+                return Err(Error::Backend {
+                    backend: "gles",
+                    detail: format!(
+                        "{samples}x was requested for {format:?} and the driver \
+                         allocated {realized}x; it does not support {samples}x \
+                         for this format"
+                    ),
                 });
             }
 

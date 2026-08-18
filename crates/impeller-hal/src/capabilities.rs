@@ -115,6 +115,21 @@ pub struct Capabilities {
     /// fingerprints and bug reports.
     pub device_name: String,
     pub driver_name: String,
+    /// Whether rendering happens on the CPU rather than on a GPU.
+    ///
+    /// Not a performance hint. It marks the device properties that are
+    /// consequences of having no graphics hardware rather than defects: a CPU
+    /// rasterizer has no tiling to describe, so advertising only a linear
+    /// layout is the correct answer for it and a sign of a missing modifier
+    /// query on anything else. A test that cannot tell those apart has to
+    /// choose between failing on software and not checking hardware, and both
+    /// are worse than asking.
+    ///
+    /// Vulkan takes this from the device type, which is authoritative. GLES has
+    /// no equivalent query and it is recognized from the renderer string, which
+    /// is not; a software implementation this does not know the name of reports
+    /// false, so treat a true as reliable and a false as merely unremarkable.
+    pub software: bool,
 }
 
 impl Capabilities {

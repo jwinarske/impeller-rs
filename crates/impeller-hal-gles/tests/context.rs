@@ -51,17 +51,29 @@ fn the_context_is_at_least_gles_three() {
 }
 
 #[test]
-fn sample_counts_are_a_contiguous_run_of_powers_of_two() {
+fn sample_counts_are_powers_of_two_and_may_have_gaps() {
     let Some(ctx) = context() else { return };
     let counts = ctx.capabilities().sample_counts;
-    // GLES reports a maximum rather than a mask, so the mask is synthesized.
-    // Every power of two up to the maximum must be present, and nothing above
-    // it, or the synthesis is wrong.
+    // This used to require a contiguous run, on the belief that GLES reports
+    // only a maximum and that the mask below it is safe to synthesize. It is
+    // not: `GetInternalformativ` reports the counts a format actually supports,
+    // and llvmpipe answers 8 and 4 for `RGBA8` with no 2. So a gap is a real
+    // device answer rather than a broken query, and requiring contiguity meant
+    // requiring the wrong thing on a conformant driver.
+    //
+    // What remains true is the shape. Anything else -- which counts, how many
+    // -- is the device's to say, and pinning it here would only re-encode the
+    // assumption this replaced.
     let max = counts.max();
-    let mut n = 1;
-    while n <= max {
-        assert!(counts.supports(n), "{n}x missing below the maximum {max}");
-        n <<= 1;
+    assert!(
+        counts.supports(1),
+        "single-sampled is always available and was not reported"
+    );
+    assert!(max.is_power_of_two(), "maximum {max} is not a power of two");
+    for n in [1u32, 2, 4, 8, 16, 32] {
+        if counts.supports(n) {
+            assert!(n <= max, "{n}x is supported but above the maximum {max}");
+        }
     }
     assert!(!counts.supports(max * 2), "{}x above the maximum", max * 2);
 }

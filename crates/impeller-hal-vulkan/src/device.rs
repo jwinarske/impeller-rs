@@ -993,6 +993,7 @@ fn detect_capabilities(
         },
         device_name: device_name(&props),
         driver_name: format!("vulkan {}", api_version_string(props.api_version)),
+        software: props.device_type == vk::PhysicalDeviceType::CPU,
     }
 }
 

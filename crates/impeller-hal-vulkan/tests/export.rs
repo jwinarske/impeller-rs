@@ -51,11 +51,20 @@ fn the_device_advertises_layouts_it_can_render_into() {
         assert!(!set.modifiers.is_empty(), "{} has no layouts", set.fourcc);
     }
 
-    // A device that can only offer linear is possible but notable, since it
-    // means every shared buffer gives up whatever tiling would have saved.
+    // A device that can only offer linear means every shared buffer gives up
+    // whatever tiling would have saved, which on a GPU is a missing modifier
+    // query rather than a device that genuinely has one layout. On a CPU
+    // rasterizer it is the correct answer -- there is no tiling to describe --
+    // so this reports rather than fails, and the census counts it.
     let non_linear = formats
         .iter()
         .any(|s| s.modifiers.iter().any(|m| !m.is_linear()));
+    if ctx.capabilities().software {
+        if !non_linear {
+            eprintln!("skipping: a software rasterizer has only linear layouts to offer");
+        }
+        return;
+    }
     assert!(
         non_linear,
         "only linear layouts were advertised; sharing will cost full bandwidth"
