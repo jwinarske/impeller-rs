@@ -1008,6 +1008,26 @@ permutations on GLES.
   to antialias, and worth the most on a rotated or fractionally placed one,
   which is what needed four samples before.
 
+  Where the time actually goes was measured rather than assumed, and it is not
+  where the vertex counts suggest. At 1920×1080 with a hundred and sixty
+  rounded rectangles, on a desktop discrete part: the distance field at one
+  sample takes 0.26 ms, the same shapes tessellated at four samples take
+  0.64 ms, and tessellated at one sample they take 0.20 ms.
+
+  So the whole of the gain is in not multisampling. At equal sample count the
+  field is about thirty percent *slower* than the triangles it replaces — a
+  desktop part chews through those vertices nearly for free, and evaluating a
+  distance and its derivative is fragment work the triangles do not do. Seven
+  times fewer vertices is a real reduction and is not what pays here; being
+  able to leave the pass at one sample is.
+
+  That balance is hardware-dependent in the direction this project cares about.
+  On a tiler, multisampling resolves in tile memory and costs far less than it
+  does here, while vertex and binning work costs more — so the margin should be
+  expected to narrow and could invert. Nothing on this machine says which, and
+  it should be measured on a board before the field is assumed to be the faster
+  path everywhere.
+
   Ellipses are **not implemented** this way; there is no closed form for the
   distance to one, and the approximations trade accuracy for iteration in a way
   the shapes above do not. A tessellated rounded rectangle does at least reach
