@@ -10,14 +10,14 @@
 //! translation that diverged would show up here rather than as a report from
 //! whoever ran the other backend first.
 
-use impeller_hal::HalContext;
 use impeller_hal_gles::{DisplayTarget, GlesContext, GlesHal};
-use impeller_hal_vulkan::{DevicePreference, VulkanContext, VulkanHal};
+use impeller_hal_vulkan::Validated;
+use impeller_hal_vulkan::{DevicePreference, VulkanHal};
 use impeller_testkit::{accepts, compare, corpus, render_scene, Scene};
 
 #[test]
 fn the_corpus_matches_across_backends() {
-    let Ok(mut vulkan) = VulkanContext::new(DevicePreference::Auto) else {
+    let Ok(mut vulkan) = Validated::new(DevicePreference::Auto) else {
         eprintln!("skipping: no Vulkan device");
         return;
     };
@@ -27,8 +27,8 @@ fn the_corpus_matches_across_backends() {
     };
     eprintln!(
         "vulkan: {}\ngles:   {}",
-        HalContext::capabilities(&vulkan).device_name,
-        HalContext::capabilities(&gles).device_name
+        vulkan.capabilities().device_name,
+        gles.capabilities().device_name
     );
 
     let mut compared = 0;
@@ -42,8 +42,8 @@ fn the_corpus_matches_across_backends() {
         // that is the point. Deciding this from what the scene needs, rather
         // than from whether rendering happened to fail, is what keeps a genuine
         // regression from being absorbed as a gap.
-        let on_vulkan = scene.supported_by(HalContext::capabilities(&vulkan));
-        let on_gles = scene.supported_by(HalContext::capabilities(&gles));
+        let on_vulkan = scene.supported_by(vulkan.capabilities());
+        let on_gles = scene.supported_by(gles.capabilities());
         if !(on_vulkan && on_gles) {
             let which = match (on_vulkan, on_gles) {
                 (false, false) => "either backend",
@@ -110,7 +110,7 @@ fn the_corpus_matches_across_backends() {
 
 #[test]
 fn both_backends_agree_on_orientation() {
-    let Ok(mut vulkan) = VulkanContext::new(DevicePreference::Auto) else {
+    let Ok(mut vulkan) = Validated::new(DevicePreference::Auto) else {
         return;
     };
     let Ok(mut gles) = GlesContext::new(DisplayTarget::Surfaceless) else {
@@ -155,7 +155,7 @@ fn a_bounded_layer_renders_like_a_full_size_one_on_every_backend() {
     // layer hides is exactly the kind of thing the two could differ on, since
     // one encodes a pass into a command buffer and the other rebinds a
     // framebuffer on a global state machine.
-    let mut vulkan = VulkanContext::new(DevicePreference::Auto).ok();
+    let mut vulkan = Validated::new(DevicePreference::Auto).ok();
     let mut gles = GlesContext::new(DisplayTarget::Surfaceless).ok();
     if vulkan.is_none() && gles.is_none() {
         eprintln!("skipping: no backend available");

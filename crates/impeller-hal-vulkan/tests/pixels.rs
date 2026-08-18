@@ -7,10 +7,11 @@
 //! this path.
 
 use impeller_hal::{Extent2D, PixelFormat, TextureDescriptor};
-use impeller_hal_vulkan::{DevicePreference, VulkanContext};
+use impeller_hal_vulkan::DevicePreference;
+use impeller_hal_vulkan::Validated;
 
-fn context() -> Option<VulkanContext> {
-    match VulkanContext::new(DevicePreference::Auto) {
+fn context() -> Option<Validated> {
+    match Validated::new(DevicePreference::Auto) {
         Ok(ctx) => Some(ctx),
         Err(e) => {
             eprintln!("skipping: no usable Vulkan device ({e})");
@@ -21,7 +22,7 @@ fn context() -> Option<VulkanContext> {
 
 /// Clear a texture to `color` and read it back as bytes.
 fn clear_and_read(
-    ctx: &mut VulkanContext,
+    ctx: &mut Validated,
     extent: Extent2D,
     format: PixelFormat,
     color: [f32; 4],
@@ -159,7 +160,7 @@ fn the_software_reference_produces_the_same_pixels_as_the_default_device() {
     let Some(mut default_ctx) = context() else {
         return;
     };
-    let Ok(mut sw_ctx) = VulkanContext::new(DevicePreference::Software) else {
+    let Ok(mut sw_ctx) = Validated::new(DevicePreference::Software) else {
         eprintln!("skipping: no software rasterizer");
         return;
     };

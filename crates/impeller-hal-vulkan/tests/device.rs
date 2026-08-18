@@ -5,11 +5,12 @@
 //! still get a green `cargo test`, and the lanes that must have Vulkan enforce
 //! it by running on images that provide it.
 
-use impeller_hal_vulkan::{DevicePreference, VulkanContext};
+use impeller_hal_vulkan::DevicePreference;
+use impeller_hal_vulkan::Validated;
 
 /// Create a context, or `None` if this machine has no usable Vulkan.
-fn context(preference: DevicePreference) -> Option<VulkanContext> {
-    match VulkanContext::new(preference) {
+fn context(preference: DevicePreference) -> Option<Validated> {
+    match Validated::new(preference) {
         Ok(ctx) => Some(ctx),
         Err(e) => {
             eprintln!("skipping: no usable Vulkan device ({e})");
@@ -101,7 +102,7 @@ fn scanout_and_explicit_sync_are_reported_independently() {
 
 #[test]
 fn the_software_rasterizer_is_selectable_as_the_reference_device() {
-    match VulkanContext::new(DevicePreference::Software) {
+    match Validated::new(DevicePreference::Software) {
         Ok(ctx) => {
             let caps = ctx.capabilities();
             eprintln!("software device: {}", caps.device_name);
@@ -118,7 +119,7 @@ fn the_software_rasterizer_is_selectable_as_the_reference_device() {
 fn an_out_of_range_device_index_is_an_error_rather_than_a_panic() {
     // Device indices come from configuration and command lines, so an invalid
     // one must surface as an error the caller can report.
-    let result = VulkanContext::new(DevicePreference::Index(9999));
+    let result = Validated::new(DevicePreference::Index(9999));
     assert!(result.is_err());
 }
 
@@ -130,7 +131,7 @@ fn contexts_can_be_created_and_dropped_repeatedly() {
     // Teardown order is instance-after-device; getting it wrong tends to show
     // up as a crash on the second cycle rather than the first.
     for _ in 0..3 {
-        let ctx = VulkanContext::new(DevicePreference::Auto).expect("device was available");
+        let ctx = Validated::new(DevicePreference::Auto).expect("device was available");
         assert!(!ctx.capabilities().device_name.is_empty());
     }
 }

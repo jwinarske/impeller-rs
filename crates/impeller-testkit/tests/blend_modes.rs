@@ -14,6 +14,7 @@ use impeller_hal::{
     Material, PassDescriptor, PixelFormat, TextureDescriptor,
 };
 use impeller_hal_gles::{DisplayTarget, GlesContext, GlesHal};
+use impeller_hal_vulkan::Validated;
 use impeller_hal_vulkan::{DevicePreference, VulkanContext, VulkanHal};
 
 const SIZE: Extent2D = Extent2D {
@@ -211,7 +212,7 @@ fn every_mode_matches_its_equation_on_vulkan() {
         (DevicePreference::Auto, "vulkan/auto"),
         (DevicePreference::Software, "vulkan/software"),
     ] {
-        let Ok(mut ctx) = VulkanContext::new(preference) else {
+        let Ok(mut ctx) = Validated::new(preference) else {
             continue;
         };
         check_against_equation::<VulkanHal>(&mut ctx, label);
@@ -240,7 +241,7 @@ fn a_mode_the_device_cannot_do_is_refused_rather_than_approximated() {
     // exercises it.
     let mut ran_on = Vec::new();
 
-    if let Ok(mut ctx) = VulkanContext::new(DevicePreference::Auto) {
+    if let Ok(mut ctx) = Validated::new(DevicePreference::Auto) {
         if !ctx.capabilities().advanced_blend {
             for mode in BlendMode::ADVANCED {
                 assert!(
@@ -279,7 +280,7 @@ fn a_mode_the_device_cannot_do_is_refused_rather_than_approximated() {
 
 #[test]
 fn the_porter_duff_modes_agree_between_the_backends() {
-    let Ok(mut vulkan) = VulkanContext::new(DevicePreference::Auto) else {
+    let Ok(mut vulkan) = Validated::new(DevicePreference::Auto) else {
         return;
     };
     let Ok(mut gles) = GlesContext::new(DisplayTarget::Surfaceless) else {
@@ -308,14 +309,14 @@ fn the_porter_duff_modes_agree_between_the_backends() {
 #[test]
 fn the_modes_are_actually_distinct() {
     for preference in [DevicePreference::Auto, DevicePreference::Software] {
-        let Ok(ctx) = VulkanContext::new(preference) else {
+        let Ok(ctx) = Validated::new(preference) else {
             continue;
         };
         check_distinctness(ctx);
     }
 }
 
-fn check_distinctness(mut ctx: VulkanContext) {
+fn check_distinctness(mut ctx: Validated) {
     // A table where two entries collapsed onto the same factors — or two modes
     // onto the same blend op — would pass every equation check above, because
     // the equation would then be wrong in the same way as the implementation.
@@ -415,7 +416,7 @@ fn overlapping_draws_two_ways(ctx: &mut VulkanContext, mode: BlendMode) -> (Vec<
 fn advanced_blending_is_coherent_within_a_batch() {
     let mut ran = false;
     for preference in [DevicePreference::Auto, DevicePreference::Software] {
-        let Ok(mut ctx) = VulkanContext::new(preference) else {
+        let Ok(mut ctx) = Validated::new(preference) else {
             continue;
         };
         if !ctx.capabilities().advanced_blend {
@@ -449,7 +450,7 @@ fn overlapping_advanced_draws_actually_blend_with_each_other() {
     // backdrop, or the scene proves nothing about ordering.
     let Some(mut ctx) = [DevicePreference::Auto, DevicePreference::Software]
         .into_iter()
-        .filter_map(|p| VulkanContext::new(p).ok())
+        .filter_map(|p| Validated::new(p).ok())
         .find(|ctx| ctx.capabilities().advanced_blend)
     else {
         eprintln!("skipping: no device reports advanced blending");

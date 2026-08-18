@@ -10,8 +10,8 @@
 //! behind it. `cargo xtask drm` says whether a machine has one; where it does
 //! not, these skip and say so rather than passing quietly.
 
-use impeller_hal::{Batch, BlendMode, HalContext, Material, PassDescriptor, PixelFormat};
-use impeller_hal_vulkan::{ContextConfig, DevicePreference, VulkanContext};
+use impeller_hal::{Batch, BlendMode, Material, PassDescriptor, PixelFormat};
+use impeller_hal_vulkan::{DevicePreference, Validated};
 use impeller_present::negotiate::negotiate;
 use impeller_present_drm::output::{CommitRequest, DmaBufPlanes, OutputEvent, ScanoutOutput};
 use impeller_present_drm::KmsOutput;
@@ -57,8 +57,8 @@ fn output() -> Option<(KmsOutput, std::sync::MutexGuard<'static, ()>)> {
     None
 }
 
-fn context() -> Option<VulkanContext> {
-    match VulkanContext::new(DevicePreference::Auto) {
+fn context() -> Option<Validated> {
+    match Validated::new(DevicePreference::Auto) {
         Ok(ctx) => Some(ctx),
         Err(e) => {
             eprintln!("skipping: no Vulkan device ({e})");
@@ -83,7 +83,7 @@ fn a_rendered_frame_reaches_a_real_display_controller() {
     // Negotiation against what this plane advertises, rather than a layout
     // chosen in advance. Linear is a valid answer here: vkms accepts nothing
     // else, and that being reported rather than assumed is the point.
-    let render = HalContext::capabilities(&ctx).render_formats.clone();
+    let render = ctx.capabilities().render_formats.clone();
     let agreed = negotiate(
         &render,
         output.supported_formats(),
@@ -159,7 +159,7 @@ fn several_frames_flip_in_turn() {
     };
     let mode = output.mode();
     let agreed = negotiate(
-        &HalContext::capabilities(&ctx).render_formats.clone(),
+        &ctx.capabilities().render_formats.clone(),
         output.supported_formats(),
         &[
             impeller_hal::Fourcc::ARGB8888,
@@ -308,20 +308,6 @@ fn the_scanout_target_drives_a_real_display_controller() {
     target.destroy(&mut ctx);
 }
 
-/// A context with the validation layers on, where they are available.
-fn validating_context() -> Option<VulkanContext> {
-    match VulkanContext::with_config(ContextConfig {
-        device: DevicePreference::Auto,
-        validation: true,
-    }) {
-        Ok(ctx) => Some(ctx),
-        Err(e) => {
-            eprintln!("skipping: no Vulkan device ({e})");
-            None
-        }
-    }
-}
-
 #[test]
 fn a_frame_with_layers_reaches_a_real_display_controller() {
     // The same whole-stack check as above, for a frame that composites a layer.
@@ -343,7 +329,7 @@ fn a_frame_with_layers_reaches_a_real_display_controller() {
     let Some((output, _card)) = output() else {
         return;
     };
-    let Some(mut ctx) = validating_context() else {
+    let Some(mut ctx) = context() else {
         return;
     };
     let mut target = match DrmScanoutTarget::<VulkanHal, _>::new(&mut ctx, output, 3) {

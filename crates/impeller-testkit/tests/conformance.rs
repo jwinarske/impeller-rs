@@ -16,22 +16,20 @@
 //! must not become is a corpus quietly running fewer scenes than it holds, so a
 //! test below asserts every scene is exercised by *some* available device.
 
-use impeller_hal::HalContext;
-use impeller_hal_vulkan::{DevicePreference, VulkanContext, VulkanHal};
+use impeller_hal_vulkan::Validated;
+use impeller_hal_vulkan::{DevicePreference, VulkanHal};
 use impeller_testkit::{accepts, compare, corpus, render_scene, LineCap, LineJoin};
 
-fn devices() -> Option<(VulkanContext, VulkanContext)> {
-    let default = VulkanContext::new(DevicePreference::Auto).ok()?;
-    let software = match VulkanContext::new(DevicePreference::Software) {
+fn devices() -> Option<(Validated, Validated)> {
+    let default = Validated::new(DevicePreference::Auto).ok()?;
+    let software = match Validated::new(DevicePreference::Software) {
         Ok(ctx) => ctx,
         Err(e) => {
             eprintln!("skipping: no software reference ({e})");
             return None;
         }
     };
-    if HalContext::capabilities(&default).device_name
-        == HalContext::capabilities(&software).device_name
-    {
+    if default.capabilities().device_name == software.capabilities().device_name {
         eprintln!("skipping: the default device is the software reference");
         return None;
     }
@@ -45,8 +43,8 @@ fn every_scene_agrees_across_devices() {
     };
     eprintln!(
         "comparing {} against {}",
-        HalContext::capabilities(&default).device_name,
-        HalContext::capabilities(&software).device_name
+        default.capabilities().device_name,
+        software.capabilities().device_name
     );
 
     let mut failures = Vec::new();
@@ -54,8 +52,8 @@ fn every_scene_agrees_across_devices() {
         // Comparing two devices needs both to be able to render it. Where only
         // one can, there is no comparison to make and saying so is better than
         // asserting against a single implementation of its own output.
-        if !(scene.supported_by(HalContext::capabilities(&default))
-            && scene.supported_by(HalContext::capabilities(&software)))
+        if !(scene.supported_by(default.capabilities())
+            && scene.supported_by(software.capabilities()))
         {
             eprintln!(
                 "  {:<26} not comparable: one device cannot render it",
@@ -88,15 +86,12 @@ fn every_scene_agrees_across_devices() {
 ///
 /// Scenes are run on the first one that can render them, so a scene needing an
 /// extension the preferred device lacks is still exercised rather than skipped.
-fn available_devices() -> Vec<VulkanContext> {
-    let mut devices = Vec::new();
+fn available_devices() -> Vec<Validated> {
+    let mut devices: Vec<Validated> = Vec::new();
     for preference in [DevicePreference::Auto, DevicePreference::Software] {
-        if let Ok(ctx) = VulkanContext::new(preference) {
-            let name = HalContext::capabilities(&ctx).device_name.clone();
-            if devices
-                .iter()
-                .any(|d| HalContext::capabilities(d).device_name == name)
-            {
+        if let Ok(ctx) = Validated::new(preference) {
+            let name = ctx.capabilities().device_name.clone();
+            if devices.iter().any(|d| d.capabilities().device_name == name) {
                 continue;
             }
             devices.push(ctx);
@@ -106,10 +101,10 @@ fn available_devices() -> Vec<VulkanContext> {
 }
 
 /// The index of the first device that can render this scene.
-fn first_device_for(devices: &[VulkanContext], scene: &impeller_testkit::Scene) -> Option<usize> {
+fn first_device_for(devices: &[Validated], scene: &impeller_testkit::Scene) -> Option<usize> {
     devices
         .iter()
-        .position(|ctx| scene.supported_by(HalContext::capabilities(ctx)))
+        .position(|ctx| scene.supported_by(ctx.capabilities()))
 }
 
 #[test]
@@ -194,10 +189,10 @@ fn the_corpus_actually_draws_something_in_every_scene() {
 
 #[test]
 fn antialiased_scenes_differ_from_their_aliased_counterparts() {
-    let Some(mut ctx) = VulkanContext::new(DevicePreference::Auto).ok() else {
+    let Some(mut ctx) = Validated::new(DevicePreference::Auto).ok() else {
         return;
     };
-    if !HalContext::capabilities(&ctx).sample_counts.supports(4) {
+    if !ctx.capabilities().sample_counts.supports(4) {
         eprintln!("skipping: 4x not supported");
         return;
     }

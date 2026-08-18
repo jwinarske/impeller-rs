@@ -1181,6 +1181,22 @@ The levels below are the plan. The right-hand column says where each runs, and
 **"CI" describes none of them: there is no CI**. What exists is `ci/smoke.sh`,
 run by hand, which does the whole of L0, L1 and L3 and part of L4.
 
+**Every Vulkan context in the suite runs with the validation layer on, and
+asserts what it reported.** Capturing the messenger is what makes that
+assertable; a guard that checks the log when a context drops is what makes it
+asserted, which is not the same thing. A test that turns the layer on and never
+reads what it said is indistinguishable from one that left it off, and a check
+written out in each test is one some test will be missing.
+
+That was not hypothetical: the layer was on for the Vulkan backend's own tests
+and off for the whole shared harness — the scene corpus, the cross-backend
+comparison, the conformance run, clipping, blending, sampling — which is the
+largest body of rendering here. Removing a layout transition that a sampled
+texture needs leaves every one of those tests passing on this driver, with
+correct pixels, and fails six of them once the layer is read. The class of bug
+it catches was invisible to the part of the suite that renders the most, and
+costs about eight percent of that suite's run time to see.
+
 **A skipped test passes, and `cargo test` hides which.** A test that finds it
 cannot run — no device, no second backend, a capability the hardware lacks —
 prints why and returns, because the alternative is a suite that cannot be run

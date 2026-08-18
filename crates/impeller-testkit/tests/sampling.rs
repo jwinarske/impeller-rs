@@ -12,7 +12,8 @@ use impeller_hal::{
     TextureDescriptor, TileMode,
 };
 use impeller_hal_gles::{DisplayTarget, GlesContext, GlesHal};
-use impeller_hal_vulkan::{DevicePreference, VulkanContext, VulkanHal};
+use impeller_hal_vulkan::Validated;
+use impeller_hal_vulkan::{DevicePreference, VulkanHal};
 
 const SIZE: Extent2D = Extent2D {
     width: 32,
@@ -113,7 +114,7 @@ fn an_upload_survives_a_round_trip_through_readback() {
     let want = source_pixels();
     let mut ran = 0;
 
-    if let Ok(mut ctx) = VulkanContext::new(DevicePreference::Auto) {
+    if let Ok(mut ctx) = Validated::new(DevicePreference::Auto) {
         let mut texture = ctx
             .create_texture(&TextureDescriptor::offscreen(
                 SOURCE,
@@ -163,7 +164,7 @@ fn assert_quadrants(pixels: &[u8], backend: &str) {
 #[test]
 fn an_image_lands_the_right_way_up_on_both_backends() {
     let mut ran = 0;
-    if let Ok(mut ctx) = VulkanContext::new(DevicePreference::Auto) {
+    if let Ok(mut ctx) = Validated::new(DevicePreference::Auto) {
         let pixels = render::<VulkanHal>(&mut ctx, full_target_mapping());
         assert_quadrants(&pixels, "vulkan");
         ran += 1;
@@ -178,7 +179,7 @@ fn an_image_lands_the_right_way_up_on_both_backends() {
 
 #[test]
 fn the_backends_agree_on_a_sampled_image() {
-    let Ok(mut vulkan) = VulkanContext::new(DevicePreference::Auto) else {
+    let Ok(mut vulkan) = Validated::new(DevicePreference::Auto) else {
         return;
     };
     let Ok(mut gles) = GlesContext::new(DisplayTarget::Surfaceless) else {
@@ -208,7 +209,7 @@ fn alpha_scales_the_sampled_color() {
             *alpha = 0.5;
         }
         let pixels = match backend {
-            "vulkan" => match VulkanContext::new(DevicePreference::Auto) {
+            "vulkan" => match Validated::new(DevicePreference::Auto) {
                 Ok(mut ctx) => render::<VulkanHal>(&mut ctx, material),
                 Err(_) => continue,
             },
@@ -233,7 +234,7 @@ fn alpha_scales_the_sampled_color() {
 
 #[test]
 fn the_tile_modes_differ_outside_the_image() {
-    let Ok(mut ctx) = VulkanContext::new(DevicePreference::Auto) else {
+    let Ok(mut ctx) = Validated::new(DevicePreference::Auto) else {
         return;
     };
     // Map the image to the top-left quarter of the target, so three quarters of
@@ -302,7 +303,7 @@ fn a_batch_naming_a_texture_nobody_supplied_is_refused() {
 
     // Reading whatever happens to be bound would draw a plausible picture from
     // a previous frame's texture, which is worse than failing.
-    if let Ok(mut ctx) = VulkanContext::new(DevicePreference::Auto) {
+    if let Ok(mut ctx) = Validated::new(DevicePreference::Auto) {
         let mut target = ctx
             .create_texture(&TextureDescriptor::offscreen(SIZE, PixelFormat::Rgba8Unorm))
             .expect("target");
@@ -332,7 +333,7 @@ fn a_rendered_target_can_be_sampled_by_a_later_pass() {
     // texture somewhere else. It exercises the layout transition a sampled
     // render target needs, which an uploaded texture does not, since the two
     // arrive in different layouts.
-    let Ok(mut ctx) = VulkanContext::new(DevicePreference::Auto) else {
+    let Ok(mut ctx) = Validated::new(DevicePreference::Auto) else {
         return;
     };
     let mut layer = ctx
@@ -405,7 +406,7 @@ fn a_single_channel_texture_round_trips_on_both_backends() {
     let want = coverage_pixels();
     let mut ran = 0;
 
-    if let Ok(mut ctx) = VulkanContext::new(DevicePreference::Auto) {
+    if let Ok(mut ctx) = Validated::new(DevicePreference::Auto) {
         let mut texture = ctx
             .create_texture(&TextureDescriptor::offscreen(SOURCE, PixelFormat::R8Unorm))
             .expect("texture");
@@ -449,7 +450,7 @@ fn a_single_channel_texture_samples_as_coverage() {
     }
 
     let mut ran = 0;
-    if let Ok(mut ctx) = VulkanContext::new(DevicePreference::Auto) {
+    if let Ok(mut ctx) = Validated::new(DevicePreference::Auto) {
         assert_coverage(&render_coverage::<VulkanHal>(&mut ctx, &texels), "vulkan");
         ran += 1;
     }

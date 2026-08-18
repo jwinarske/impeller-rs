@@ -6,6 +6,7 @@
 //! blend factor — produces output that looks plausible and is simply too dark.
 
 use impeller_hal::{BlendMode, Extent2D, Material, PixelFormat, TextureDescriptor};
+use impeller_hal_vulkan::Validated;
 use impeller_hal_vulkan::{ContextConfig, DevicePreference, VulkanContext};
 
 const SIZE: u32 = 16;
@@ -189,7 +190,7 @@ fn blend_modes_are_cached_as_separate_pipelines() {
 #[test]
 fn the_software_reference_blends_identically() {
     let Some(mut ctx) = context() else { return };
-    let Ok(mut sw) = VulkanContext::new(DevicePreference::Software) else {
+    let Ok(mut sw) = Validated::new(DevicePreference::Software) else {
         eprintln!("skipping: no software rasterizer");
         return;
     };

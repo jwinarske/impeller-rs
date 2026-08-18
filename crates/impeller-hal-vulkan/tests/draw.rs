@@ -6,6 +6,7 @@
 //! errors cannot pass.
 
 use impeller_hal::{BlendMode, Extent2D, Material, PixelFormat, TextureDescriptor};
+use impeller_hal_vulkan::Validated;
 use impeller_hal_vulkan::{ContextConfig, DevicePreference, VulkanContext};
 
 const SIZE: u32 = 64;
@@ -251,7 +252,7 @@ fn the_software_reference_rasterizes_identically() {
     let Some(mut default_ctx) = context() else {
         return;
     };
-    let Ok(mut sw) = VulkanContext::new(DevicePreference::Software) else {
+    let Ok(mut sw) = Validated::new(DevicePreference::Software) else {
         eprintln!("skipping: no software rasterizer");
         return;
     };

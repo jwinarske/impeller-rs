@@ -128,6 +128,71 @@ pub(crate) fn messenger_create_info<'a>() -> vk::DebugUtilsMessengerCreateInfoEX
         .pfn_user_callback(Some(debug_callback))
 }
 
+/// A context that asserts the layer reported nothing when it goes out of scope.
+///
+/// The other half of what this module is for. Capturing the messenger makes
+/// validation assertable; this makes it asserted, which is not the same thing:
+/// a test that turns the layer on and never reads what it said is
+/// indistinguishable from one that left it off, and a check written out in
+/// every test is one some test will be missing. That is not hypothetical --
+/// the layer was on for this crate's own tests and off for the whole shared
+/// harness, which is the largest body of rendering in the suite.
+///
+/// Dropping is the one moment that happens exactly once per context however
+/// the test around it is written, so that is where the check goes.
+///
+/// Derefs to the context, so code that takes a [`VulkanContext`] is unchanged.
+pub struct Validated(crate::VulkanContext);
+
+impl Validated {
+    /// A context with the layer requested, or whatever went wrong instead.
+    pub fn new(device: crate::DevicePreference) -> impeller_hal::Result<Self> {
+        crate::VulkanContext::with_config(crate::ContextConfig {
+            device,
+            validation: true,
+        })
+        .map(Self)
+    }
+}
+
+impl std::ops::Deref for Validated {
+    type Target = crate::VulkanContext;
+
+    fn deref(&self) -> &crate::VulkanContext {
+        &self.0
+    }
+}
+
+impl std::ops::DerefMut for Validated {
+    fn deref_mut(&mut self) -> &mut crate::VulkanContext {
+        &mut self.0
+    }
+}
+
+impl Drop for Validated {
+    fn drop(&mut self) {
+        // A test that is already failing keeps its own message: panicking here
+        // while the first panic unwinds aborts the process and loses it.
+        if std::thread::panicking() {
+            return;
+        }
+        if !self.0.validation_active() {
+            // Said rather than passed over. The layer being absent means the
+            // work ran with nothing checking its API use, which is a gap in
+            // what the run covered even where every pixel matched.
+            eprintln!("skipping: the validation layer is unavailable, so API use went unchecked");
+            return;
+        }
+        let errors: Vec<_> = self
+            .0
+            .validation_messages()
+            .into_iter()
+            .filter(|message| message.severity == ValidationSeverity::Error)
+            .collect();
+        assert!(errors.is_empty(), "validation errors: {errors:?}");
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

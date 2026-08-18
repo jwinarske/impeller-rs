@@ -19,7 +19,8 @@ use impeller_hal::{
     Scissor, TextureDescriptor,
 };
 use impeller_hal_gles::{DisplayTarget, GlesContext, GlesHal};
-use impeller_hal_vulkan::{DevicePreference, VulkanContext, VulkanHal};
+use impeller_hal_vulkan::Validated;
+use impeller_hal_vulkan::{DevicePreference, VulkanHal};
 
 const SIZE: Extent2D = Extent2D {
     width: 32,
@@ -128,7 +129,7 @@ where
 
 #[test]
 fn a_clip_confines_a_draw_on_vulkan() {
-    let Ok(mut ctx) = VulkanContext::new(DevicePreference::Auto) else {
+    let Ok(mut ctx) = Validated::new(DevicePreference::Auto) else {
         eprintln!("skipping: no Vulkan device");
         return;
     };
@@ -146,7 +147,7 @@ fn a_clip_confines_a_draw_on_gles() {
 
 #[test]
 fn the_backends_place_a_clip_in_the_same_half_of_the_target() {
-    let Ok(mut vulkan) = VulkanContext::new(DevicePreference::Auto) else {
+    let Ok(mut vulkan) = Validated::new(DevicePreference::Auto) else {
         return;
     };
     let Ok(mut gles) = GlesContext::new(DisplayTarget::Surfaceless) else {
@@ -172,7 +173,7 @@ fn the_backends_place_a_clip_in_the_same_half_of_the_target() {
 fn an_unclipped_draw_covers_the_whole_target() {
     for name in ["vulkan", "gles"] {
         let pixels = match name {
-            "vulkan" => match VulkanContext::new(DevicePreference::Auto) {
+            "vulkan" => match Validated::new(DevicePreference::Auto) {
                 Ok(mut ctx) => render::<VulkanHal>(&mut ctx, None),
                 Err(_) => continue,
             },
@@ -199,7 +200,7 @@ fn a_clip_does_not_restrict_the_clear() {
     let mut checked = 0;
     let corner = Scissor::new(20, 24, 6, 5);
 
-    if let Ok(mut ctx) = VulkanContext::new(DevicePreference::Auto) {
+    if let Ok(mut ctx) = Validated::new(DevicePreference::Auto) {
         let pixels = render::<VulkanHal>(&mut ctx, Some(corner));
         assert_background_outside(&pixels, corner, "vulkan");
         checked += 1;
@@ -231,7 +232,7 @@ fn assert_background_outside(pixels: &[u8], clip: Scissor, backend: &str) {
 
 #[test]
 fn clips_change_between_draws_within_one_batch() {
-    let Ok(mut ctx) = VulkanContext::new(DevicePreference::Auto) else {
+    let Ok(mut ctx) = Validated::new(DevicePreference::Auto) else {
         return;
     };
     // Two draws with different clips, and one with none between them. Scissor
@@ -272,7 +273,7 @@ fn clips_change_between_draws_within_one_batch() {
 
 #[test]
 fn an_empty_clip_draws_nothing() {
-    let Ok(mut ctx) = VulkanContext::new(DevicePreference::Auto) else {
+    let Ok(mut ctx) = Validated::new(DevicePreference::Auto) else {
         return;
     };
     // A clip narrowed to nothing is a normal state for a subtree scrolled out
@@ -385,7 +386,7 @@ fn a_stencil_clip_confines_a_draw_on_both_backends() {
     let want = Some(Scissor::new(5, 3, 16, 23));
     let mut ran = 0;
 
-    if let Ok(mut ctx) = VulkanContext::new(DevicePreference::Auto) {
+    if let Ok(mut ctx) = Validated::new(DevicePreference::Auto) {
         let pixels = render_batch::<VulkanHal>(&mut ctx, &batch, 1);
         assert_eq!(covered_bounds(&pixels), want, "vulkan");
         ran += 1;
@@ -400,7 +401,7 @@ fn a_stencil_clip_confines_a_draw_on_both_backends() {
 
 #[test]
 fn the_backends_agree_pixel_for_pixel_on_a_nested_stencil_clip() {
-    let Ok(mut vulkan) = VulkanContext::new(DevicePreference::Auto) else {
+    let Ok(mut vulkan) = Validated::new(DevicePreference::Auto) else {
         return;
     };
     let Ok(mut gles) = GlesContext::new(DisplayTarget::Surfaceless) else {
@@ -442,7 +443,7 @@ fn a_stencil_clip_leaves_no_trace_on_a_later_pass() {
         );
         ran += 1;
     }
-    if let Ok(mut ctx) = VulkanContext::new(DevicePreference::Auto) {
+    if let Ok(mut ctx) = Validated::new(DevicePreference::Auto) {
         let _ = render_batch::<VulkanHal>(&mut ctx, &stencil_clipped_batch(true), 1);
         let mut plain = Batch::new();
         plain
@@ -461,14 +462,14 @@ fn a_stencil_clip_leaves_no_trace_on_a_later_pass() {
 
 #[test]
 fn a_multisampled_stencil_clip_agrees_between_the_backends() {
-    let Ok(mut vulkan) = VulkanContext::new(DevicePreference::Auto) else {
+    let Ok(mut vulkan) = Validated::new(DevicePreference::Auto) else {
         return;
     };
     let Ok(mut gles) = GlesContext::new(DisplayTarget::Surfaceless) else {
         return;
     };
-    if !(HalContext::capabilities(&vulkan).sample_counts.supports(4)
-        && HalContext::capabilities(&gles).sample_counts.supports(4))
+    if !(vulkan.capabilities().sample_counts.supports(4)
+        && gles.capabilities().sample_counts.supports(4))
     {
         eprintln!("skipping: 4x not supported on both backends");
         return;

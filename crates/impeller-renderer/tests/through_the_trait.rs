@@ -81,8 +81,8 @@ where
     (pixels, extent)
 }
 
-fn context() -> Option<VulkanContext> {
-    match VulkanContext::new(impeller_hal_vulkan::DevicePreference::Auto) {
+fn context() -> Option<impeller_hal_vulkan::Validated> {
+    match impeller_hal_vulkan::Validated::new(impeller_hal_vulkan::DevicePreference::Auto) {
         Ok(ctx) => Some(ctx),
         Err(e) => {
             eprintln!("skipping: no usable Vulkan device ({e})");
@@ -130,7 +130,7 @@ fn capabilities_are_reachable_through_the_trait() {
     let Some(mut ctx) = context() else { return };
     // Branching on capabilities is the rule everywhere above the HAL, which
     // only works if the trait exposes them.
-    let caps = HalContext::capabilities(&ctx).clone();
+    let caps = ctx.capabilities().clone();
     assert!(caps.max_texture_size >= 4096);
     assert!(caps.sample_counts.supports(1));
 
@@ -140,7 +140,7 @@ fn capabilities_are_reachable_through_the_trait() {
         Extent2D::new(caps.max_texture_size + 1, 16),
         PixelFormat::Rgba8Unorm,
     );
-    assert!(HalContext::create_texture(&mut ctx, &too_big).is_err());
+    assert!(HalContext::create_texture(&mut *ctx, &too_big).is_err());
 }
 
 #[test]
@@ -172,7 +172,7 @@ fn translucent_shapes_compose_through_the_trait() {
 #[test]
 fn a_scene_can_be_rendered_antialiased_through_the_trait() {
     let Some(mut ctx) = context() else { return };
-    if !HalContext::capabilities(&ctx).sample_counts.supports(4) {
+    if !ctx.capabilities().sample_counts.supports(4) {
         eprintln!("skipping: 4x not supported");
         return;
     }
