@@ -963,11 +963,23 @@ onto clip space belongs to the renderer's transform stack. A test pins this,
 because disabling the adjustment mirrors every shader on Vulkan while leaving
 other backends untouched.
 
-naga output for every shader and target is snapshotted in the repository and
-diffed in CI, so a naga upgrade that changes codegen is a reviewed event rather
-than a silent behavior change. Specialization maps from one set of declarations
-in the WGSL source: spec constants on Vulkan, bounded build-time macro
-permutations on GLES.
+naga output is snapshotted in the repository, so a naga upgrade that changes
+codegen is a reviewed event rather than a silent behavior change. Not diffed in
+CI, since there is no CI — the snapshot is a test, which is what makes it run.
+The GLSL is stored whole because it is text somebody can read a diff of; the
+SPIR-V is stored as a word count and a hash, which notices a change and is
+honest about not being reviewable.
+
+That check is for the case nothing else here covers. Every other comparison in
+this workspace holds the pixels against another implementation of the same
+translator, so codegen that changed in the same way on both targets passes all
+of them.
+
+**Specialization is not implemented.** The intent is one set of declarations in
+the WGSL source mapping to spec constants on Vulkan and bounded build-time macro
+permutations on GLES; there are no spec constants anywhere yet, and the fragment
+stage dispatches on a material kind at runtime instead — a chain of comparisons
+every fragment walks, which is the cost specialization would remove.
 
 ## Renderer internals
 

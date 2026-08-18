@@ -1,0 +1,98 @@
+//! The translated shaders, pinned.
+//!
+//! One WGSL source produces the code both backends actually run, and naga
+//! produces it. A naga upgrade that changes its output changes what every
+//! fragment executes, and nothing else here would say so: the pixels are
+//! compared against another implementation of the same translator, so a
+//! codegen change that is wrong in the same way on both targets passes every
+//! comparison in this workspace. That is the case a snapshot is for.
+//!
+//! It is not a golden image and makes no claim about correctness. It says the
+//! generated code is what it was, so a change to it is something somebody
+//! decided rather than something that arrived with a dependency bump.
+//!
+//! Set `UPDATE_SHADER_SNAPSHOTS=1` to rewrite them, which is the reviewed
+//! event: the diff is the thing to look at.
+
+use std::path::PathBuf;
+
+/// Where the snapshots live, which is outside this crate on purpose.
+///
+/// A workspace-level directory, because the question they answer is about the
+/// dependency the whole workspace shares rather than about this crate.
+fn directory() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../..")
+        .join("tests/shader-snapshots")
+}
+
+/// SPIR-V as words is not reviewable, so it is summarised rather than stored.
+///
+/// A hash and a length: enough to notice a change, and honest about not being
+/// a diff anybody can read. The GLSL beside it is text and is stored whole,
+/// which is where an actual review of a codegen change would happen.
+fn digest(words: &[u32]) -> String {
+    let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
+    for word in words {
+        for byte in word.to_le_bytes() {
+            hash ^= byte as u64;
+            hash = hash.wrapping_mul(0x100_0000_01b3);
+        }
+    }
+    format!("{} words, fnv1a {hash:016x}\n", words.len())
+}
+
+fn check(name: &str, contents: &str) {
+    let path = directory().join(name);
+    if std::env::var_os("UPDATE_SHADER_SNAPSHOTS").is_some() {
+        std::fs::create_dir_all(directory()).expect("snapshot directory");
+        std::fs::write(&path, contents).expect("write snapshot");
+        return;
+    }
+    let Ok(expected) = std::fs::read_to_string(&path) else {
+        panic!(
+            "{} has no snapshot. Run with UPDATE_SHADER_SNAPSHOTS=1 to write one, \
+             and review what it contains.",
+            path.display()
+        );
+    };
+    if expected != contents {
+        // The first differing line rather than the whole file, since a codegen
+        // change moves everything after the first insertion and printing all of
+        // it buries the part that matters.
+        let at = expected
+            .lines()
+            .zip(contents.lines())
+            .position(|(a, b)| a != b);
+        let detail = match at {
+            Some(line) => format!(
+                "first difference at line {}:\n  was: {}\n  now: {}",
+                line + 1,
+                expected.lines().nth(line).unwrap_or(""),
+                contents.lines().nth(line).unwrap_or("")
+            ),
+            None => format!(
+                "the same up to line {}, then one is longer ({} against {} lines)",
+                expected.lines().count().min(contents.lines().count()),
+                expected.lines().count(),
+                contents.lines().count()
+            ),
+        };
+        panic!(
+            "{} changed.\n{detail}\n\nIf this is a naga upgrade or a shader edit, \
+             rerun with UPDATE_SHADER_SNAPSHOTS=1 and review the diff.",
+            path.display()
+        );
+    }
+}
+
+#[test]
+fn the_translated_glsl_is_what_it_was() {
+    check("solid.vert.glsl", impeller_shaders::SOLID_VS_GLSL);
+    check("solid.frag.glsl", impeller_shaders::SOLID_FS_GLSL);
+}
+
+#[test]
+fn the_translated_spirv_is_what_it_was() {
+    check("solid.spv.txt", &digest(impeller_shaders::SOLID_SPV));
+}
