@@ -1382,6 +1382,14 @@ correct pixels, and fails six of them once the layer is read. The class of bug
 it catches was invisible to the part of the suite that renders the most, and
 costs about eight percent of that suite's run time to see.
 
+Some of what a comparison cannot see is still arithmetic, and arithmetic can be
+asserted. A scene that clears to an opaque background has no way to become
+transparent unless a draw took the alpha away, and none of them mean to — so
+every such scene is required to render fully opaque. A hole is invisible to
+every comparison here, because it is the same hole on both sides of each of
+them, and invisible to a person too while the background is black. It is not
+invisible to a count of pixels below opaque.
+
 **No comparison here can see a scene both implementations get wrong the same
 way.** Backend against backend, device against device, a scene against a
 mutation of itself — all of it is relative, and a gradient banded identically

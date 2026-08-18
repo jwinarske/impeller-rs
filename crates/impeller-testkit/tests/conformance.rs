@@ -463,3 +463,52 @@ fn a_miter_limit_falls_back_to_a_bevel() {
         "a miter past its limit should be exactly a bevel"
     );
 }
+
+#[test]
+fn a_scene_on_an_opaque_background_stays_opaque() {
+    // A hole in a scene is invisible to everything else here. Two backends
+    // agree on it, two devices agree on it, and a comparison against a
+    // mutation of the scene agrees on it -- because it is the same hole in
+    // both. On a black background it is not even visible to a person: erased
+    // and cleared look identical until something is drawn behind them.
+    //
+    // But it is arithmetic, and it is checkable. A scene that clears to an
+    // opaque background has no way to become transparent unless a draw took
+    // the alpha away, and none of them mean to.
+    //
+    // This is not hypothetical. A shape evaluated per fragment is drawn on a
+    // quad larger than itself, and under a mode that replaces rather than
+    // composites it erased the corners of its own bounding box -- for as long
+    // as it took somebody to notice grey notches on a contact sheet.
+    let mut devices = available_devices();
+    if devices.is_empty() {
+        eprintln!("skipping: no device");
+        return;
+    }
+
+    let mut checked = 0;
+    for scene in corpus() {
+        if scene.background[3] < 1.0 {
+            continue;
+        }
+        let Some(index) = first_device_for(&devices, &scene) else {
+            continue;
+        };
+        let image = render_scene::<VulkanHal>(&mut devices[index], &scene).expect("render");
+        let holes = image
+            .pixels
+            .chunks_exact(4)
+            .filter(|texel| texel[3] < 255)
+            .count();
+        assert_eq!(
+            holes, 0,
+            "{} left {holes} pixel(s) less than opaque over an opaque background",
+            scene.name
+        );
+        checked += 1;
+    }
+    assert!(
+        checked > 0,
+        "no scene has an opaque background, so nothing here was checked"
+    );
+}
