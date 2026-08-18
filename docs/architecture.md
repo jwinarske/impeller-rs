@@ -462,12 +462,14 @@ Placing a target inside the frame means two mappings have to agree about where
 it is: geometry is tessellated in the frame's device pixels and projected onto
 the target's clip space, and a paint states its geometry in user space and
 carries the inverse mapping back. They are derived from one description of the
-target for that reason. A test renders each scene twice, with bounds and
-without, and requires the results to match; that is the whole guarantee, since
-bounds are an optimization and nothing about the output may depend on them. It
-runs on every backend compiled in rather than on whichever comes first, because
-an offset that a full-size layer hides is exactly the kind of thing two
-backends could disagree about.
+target for that reason. The guarantee is that bounds are invisible, and it is
+stated as a corpus mutation: every scene with a bounded layer is rendered again
+with its bounds stripped, and the two must match exactly. Stripping the
+original rather than writing the scene out twice is what keeps the pair from
+drifting; requiring a match is the mirror of the clip mutation next to it,
+which requires a difference. It runs on every backend rather than on whichever
+comes first, because an offset that a full-size layer hides is exactly the kind
+of thing two backends could disagree about.
 
 A layer left open at `finish` is composited rather than discarded. An unbalanced
 `save_layer` is a caller mistake either way, and dropping everything drawn since
@@ -1066,15 +1068,20 @@ two comparators: per-channel tolerance with an outlier budget, and the
 derivation below that chooses between exact and tolerant. The executions it
 drives are the cross-backend comparison and the cross-device conformance run.
 
-The corpus is stated at the batch level — one target, one flat list of items —
-so everything the canvas adds above that is outside what a scene can say:
-layers and the passes they become, targets smaller than the frame, glyph runs.
-Those are compared across backends by a separate suite that builds a recording
-through the public API instead, which is a duplication of the harness rather
-than of the scenes. Lifting the corpus from a batch to a recording would fold
-the two together and is the right eventual shape; the reason it has not
-happened is that the scene format would have to grow nesting, which is a change
-worth making once the format is serialized rather than twice.
+A scene becomes a recording by driving the canvas, not by building a batch.
+That is what lets a scene say anything the public API can, and it is a
+correction: the executor used to resolve gradient endpoints, convert clips to
+scissors and step the stencil itself, which was a second implementation of the
+canvas that drifted from the first as soon as the scene format grew — and which
+could not express a layer at all, layers being the canvas's own idea. So layer
+compositing went uncompared across backends for as long as that lasted, and a
+separate harness had to be written to cover it before this was folded back.
+
+A scene is therefore a tree rather than a list, since a layer contains things.
+Nothing else about the format nested, and the flat constructor is unchanged, so
+a scene with no groups reads exactly as it did. The derivations that ask what a
+scene contains — its tolerance, the capabilities it needs — walk the tree
+through one iterator rather than each learning its shape.
 
 Not yet built, and named here rather than described in the present tense: WSI
 and DRM executors, a perceptual comparator for cases where cross-driver float

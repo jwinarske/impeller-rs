@@ -14,10 +14,12 @@
 
 pub mod canvas;
 pub mod color;
+pub mod execute;
 pub mod paint;
 
 pub use canvas::{Canvas, Layer, Pass, Recording, Rect, TextureSource};
 pub use color::Color;
+pub use execute::{execute, render_offscreen};
 pub use impeller_text::{Atlas, AtlasError, AtlasRect, Coverage, GlyphKey, PositionedGlyph};
 pub use paint::{GradientStop, Paint, Shader, Style};
 

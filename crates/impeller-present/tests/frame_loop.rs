@@ -55,23 +55,22 @@ fn present_scene<H: Hal, T: PresentTarget<H>>(
 where
     H::Context: HalContext<Hal = H>,
 {
-    use impeller_hal::Batch;
-    use impeller_renderer::{Renderer, TOLERANCE};
-    use impeller_testkit::{pass_for, record_scene};
+    use impeller_testkit::record_scene;
 
     // Recording goes through the testkit rather than being repeated here.
-    // Turning scene data into paint has real content — gradient endpoints go
-    // through two transforms — and a second copy of it silently stopped
-    // matching the first as soon as the scene format grew.
-    let mut renderer = Renderer::new();
-    renderer.begin_frame(target.extent(), TOLERANCE);
-    let mut batch = Batch::new();
-    record_scene(&mut renderer, &mut batch, scene).expect("record");
+    // Turning scene data into drawing has real content — a gradient's endpoints
+    // travel through two transforms, a layer becomes a pass of its own — and a
+    // second copy of it silently stopped matching the first as soon as the
+    // scene format grew.
+    let recording = record_scene(scene).expect("record");
 
-    // The loop the architecture promises is the same everywhere.
+    // The loop the architecture promises is the same everywhere. Presenting a
+    // recording rather than a batch is what lets a scene with a layer through:
+    // the layer passes render into targets of their own and the root lands in
+    // the acquired image, which is the same shape of work an offscreen render
+    // does and the reason this comparison is worth making.
     let image = target.acquire(ctx).expect("acquire");
-    ctx.submit_batch(image, &batch, pass_for(scene))
-        .expect("submit");
+    impeller_core::execute::<H>(ctx, image, &recording, &[]).expect("submit");
     target.present(ctx).expect("present");
 
     let image = target.acquire(ctx).expect("re-acquire for readback");

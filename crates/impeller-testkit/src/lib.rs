@@ -18,7 +18,7 @@ pub mod image;
 pub mod scene;
 pub mod shape;
 
-pub use executor::{pass_for, record_scene, render_corpus, render_scene};
+pub use executor::{record_scene, render_corpus, render_scene};
 pub use image::{accepts, compare, Difference, Image, Tolerance};
-pub use scene::{corpus, Fill, Item, Scene, Stop, StrokeSpec, Transform};
+pub use scene::{corpus, Fill, Item, LayerSpec, Node, Scene, Stop, StrokeSpec, Transform};
 pub use shape::Shape;

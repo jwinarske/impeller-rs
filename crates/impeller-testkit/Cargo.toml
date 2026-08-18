@@ -8,6 +8,7 @@ license.workspace = true
 
 [dependencies]
 glam = { workspace = true }
+impeller-core = { workspace = true }
 impeller-geometry = { workspace = true }
 impeller-hal = { workspace = true }
 impeller-renderer = { workspace = true }

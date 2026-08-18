@@ -212,6 +212,143 @@ impl Item {
     }
 }
 
+/// How a group is composited back onto what is underneath it.
+///
+/// The two parts of a layer that mean anything: there is no shape to fill and
+/// no geometry to stroke, so a paint would mostly be fields that do nothing.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct LayerSpec {
+    pub alpha: f32,
+    pub blend: BlendMode,
+}
+
+impl Default for LayerSpec {
+    fn default() -> Self {
+        Self {
+            alpha: 1.0,
+            blend: BlendMode::SrcOver,
+        }
+    }
+}
+
+impl LayerSpec {
+    pub fn opacity(alpha: f32) -> Self {
+        Self {
+            alpha,
+            ..Self::default()
+        }
+    }
+
+    pub fn with_blend(mut self, blend: BlendMode) -> Self {
+        self.blend = blend;
+        self
+    }
+}
+
+/// One entry in a scene: something to draw, or a group to draw and composite.
+///
+/// A scene is a tree rather than a list because a layer contains things. That
+/// is the only reason — everything else about a scene stayed flat, and the flat
+/// constructors below are unchanged, so a scene that has no layers reads
+/// exactly as it did.
+#[derive(Debug, Clone, PartialEq)]
+pub enum Node {
+    Draw(Item),
+    /// A group rendered into a target of its own and composited back.
+    ///
+    /// `bounds` is the region the group promises to stay inside, in the space
+    /// the layer opens in, and is what lets the target be smaller than the
+    /// frame. `None` asks for a full-size target, which is what a caller who
+    /// does not know gets.
+    Layer {
+        layer: LayerSpec,
+        bounds: Option<[f32; 4]>,
+        /// Applied before the layer opens, so it moves the bounds along with
+        /// the contents rather than only the contents.
+        transform: Transform,
+        children: Vec<Node>,
+    },
+}
+
+impl From<Item> for Node {
+    fn from(item: Item) -> Self {
+        Self::Draw(item)
+    }
+}
+
+impl Node {
+    /// A group with a full-size target, which is what a caller states when it
+    /// does not know what the group covers.
+    pub fn layer(layer: LayerSpec, children: Vec<Node>) -> Self {
+        Self::Layer {
+            layer,
+            bounds: None,
+            transform: Transform::default(),
+            children,
+        }
+    }
+
+    /// A group that promises to stay inside `[left, top, right, bottom]`.
+    pub fn bounded_layer(layer: LayerSpec, bounds: [f32; 4], children: Vec<Node>) -> Self {
+        Self::Layer {
+            layer,
+            bounds: Some(bounds),
+            transform: Transform::default(),
+            children,
+        }
+    }
+
+    pub fn with_transform(mut self, applied: Transform) -> Self {
+        if let Self::Layer { transform, .. } = &mut self {
+            *transform = applied;
+        }
+        self
+    }
+
+    /// Every item in this subtree, for the derivations that ask what a scene
+    /// contains without caring how it is grouped.
+    fn items(&self) -> Box<dyn Iterator<Item = &Item> + '_> {
+        match self {
+            Self::Draw(item) => Box::new(std::iter::once(item)),
+            Self::Layer { children, .. } => Box::new(children.iter().flat_map(Node::items)),
+        }
+    }
+
+    fn items_mut(&mut self) -> Box<dyn Iterator<Item = &mut Item> + '_> {
+        match self {
+            Self::Draw(item) => Box::new(std::iter::once(item)),
+            Self::Layer { children, .. } => Box::new(children.iter_mut().flat_map(Node::items_mut)),
+        }
+    }
+
+    /// Whether this subtree composites a group at all.
+    fn has_layer(&self) -> bool {
+        match self {
+            Self::Draw(_) => false,
+            Self::Layer { .. } => true,
+        }
+    }
+
+    fn has_bounded_layer(&self) -> bool {
+        match self {
+            Self::Draw(_) => false,
+            Self::Layer {
+                bounds, children, ..
+            } => bounds.is_some() || children.iter().any(Node::has_bounded_layer),
+        }
+    }
+
+    fn unbound(&mut self) {
+        if let Self::Layer {
+            bounds, children, ..
+        } = self
+        {
+            *bounds = None;
+            children.iter_mut().for_each(Node::unbound);
+        }
+    }
+}
+
 /// A named scene: everything needed to render one comparable image.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Scene {
@@ -220,11 +357,21 @@ pub struct Scene {
     pub background: [f32; 4],
     /// MSAA sample count. 1 renders aliased.
     pub samples: u32,
-    pub items: Vec<Item>,
+    pub items: Vec<Node>,
 }
 
 impl Scene {
+    /// A scene that draws a flat list of items.
+    ///
+    /// Kept alongside [`Self::tree`] rather than replaced by it because most
+    /// scenes have no groups, and making every one of them say so would be
+    /// noise in the place a reader looks to see what a scene draws.
     pub fn new(name: &'static str, items: Vec<Item>) -> Self {
+        Self::tree(name, items.into_iter().map(Node::Draw).collect())
+    }
+
+    /// A scene whose entries may be groups.
+    pub fn tree(name: &'static str, items: Vec<Node>) -> Self {
         Self {
             name,
             size: Extent2D::new(128, 128),
@@ -232,6 +379,37 @@ impl Scene {
             samples: 1,
             items,
         }
+    }
+
+    /// Every item the scene draws, whatever it is grouped inside.
+    ///
+    /// Grouping is what a layer is for, and every derivation below asks what a
+    /// scene contains rather than how it is arranged, so they all walk the tree
+    /// through this rather than each learning its shape.
+    pub fn items(&self) -> impl Iterator<Item = &Item> {
+        self.items.iter().flat_map(Node::items)
+    }
+
+    /// The same, for a caller that alters a scene to check a test can fail.
+    pub fn items_mut(&mut self) -> impl Iterator<Item = &mut Item> {
+        self.items.iter_mut().flat_map(Node::items_mut)
+    }
+
+    /// Whether any group in this scene was told the region it covers.
+    pub fn has_bounded_layer(&self) -> bool {
+        self.items.iter().any(Node::has_bounded_layer)
+    }
+
+    /// The same scene with every layer asking for a full-size target.
+    ///
+    /// Bounds are an optimization: the same drawing, into a target that happens
+    /// to be smaller. So this is the scene that must render identically, and
+    /// producing it by stripping the original rather than by writing it out
+    /// twice is what keeps the two from drifting apart.
+    pub fn unbounded(&self) -> Self {
+        let mut stripped = self.clone();
+        stripped.items.iter_mut().for_each(Node::unbound);
+        stripped
     }
 
     pub fn with_samples(mut self, samples: u32) -> Self {
@@ -262,8 +440,12 @@ impl Scene {
         // this asks what the fill is not rather than listing the kinds that
         // are. Enumerating them meant a new gradient kind silently inherited
         // the exact rule and failed the moment it was added.
+        // A layer is composited back with a blend and an alpha, which is the
+        // same per-fragment arithmetic a translucent draw does, so a scene that
+        // groups anything is computed whatever its items are.
         let computed = self.samples > 1
-            || self.items.iter().any(|item| {
+            || self.items.iter().any(Node::has_layer)
+            || self.items().any(|item| {
                 item.blend == BlendMode::SrcOver || !matches!(item.fill, Fill::Solid(_))
             });
         if computed {
@@ -289,7 +471,7 @@ impl Scene {
         if !capabilities.sample_counts.supports(self.samples) {
             return false;
         }
-        if !capabilities.advanced_blend && self.items.iter().any(|item| item.blend.is_advanced()) {
+        if !capabilities.advanced_blend && self.items().any(|item| item.blend.is_advanced()) {
             return false;
         }
         true
@@ -774,6 +956,162 @@ pub fn corpus() -> Vec<Scene> {
             )],
         )
         .with_samples(4),
+        // Layers. Everything below here needs the scene to be a tree, and none
+        // of it could be said at all while a scene was a flat list of items --
+        // which is why layer compositing went uncompared across backends for as
+        // long as it did.
+        //
+        // Group opacity is the reason layers exist. Two translucent circles
+        // drawn directly show where they cross; the same pair made first and
+        // faded once does not. A backend that composited per shape rather than
+        // per group would differ exactly on the overlap.
+        Scene::tree(
+            "layer-group-opacity",
+            vec![Node::layer(
+                LayerSpec::opacity(0.55),
+                vec![
+                    Item::fill(
+                        Shape::Circle {
+                            center: [52.0, 64.0],
+                            radius: 32.0,
+                        },
+                        RED,
+                    )
+                    .into(),
+                    Item::fill(
+                        Shape::Circle {
+                            center: [80.0, 64.0],
+                            radius: 32.0,
+                        },
+                        GREEN,
+                    )
+                    .into(),
+                ],
+            )],
+        ),
+        // A layer that meets what is underneath through a blend rather than
+        // through the default. The composite is one draw of the whole group, so
+        // this is the mode applied once to a finished image -- a different
+        // thing from the same mode on each shape, and the pair above is what
+        // makes the difference visible.
+        Scene::tree(
+            "layer-blended-composite",
+            vec![
+                Item::filled(
+                    Shape::Rect {
+                        min: [0.0, 0.0],
+                        max: [128.0, 128.0],
+                    },
+                    Fill::LinearGradient {
+                        start: [0.0, 0.0],
+                        end: [128.0, 128.0],
+                        stops: vec![
+                            Stop::new([0.05, 0.1, 0.35, 1.0], 0.0),
+                            Stop::new([0.9, 0.85, 0.4, 1.0], 1.0),
+                        ],
+                    },
+                )
+                .into(),
+                Node::layer(
+                    LayerSpec::opacity(0.8).with_blend(BlendMode::SrcOver),
+                    vec![Item::fill(
+                        Shape::Circle {
+                            center: [64.0, 64.0],
+                            radius: 36.0,
+                        },
+                        [0.2, 0.9, 0.7, 1.0],
+                    )
+                    .into()],
+                ),
+            ],
+        ),
+        // A layer given the region it covers, so its target is smaller than the
+        // frame and sits at an offset inside it. Everything that maps between
+        // spaces has to agree about where that target is: the gradient states
+        // its endpoints in the scene's space and the geometry is tessellated in
+        // device pixels, and the two are projected separately.
+        Scene::tree(
+            "layer-bounded",
+            vec![Node::bounded_layer(
+                LayerSpec::opacity(0.7),
+                [24.0, 40.0, 96.0, 104.0],
+                vec![
+                    Item::filled(
+                        Shape::Rect {
+                            min: [24.0, 40.0],
+                            max: [96.0, 104.0],
+                        },
+                        Fill::LinearGradient {
+                            start: [24.0, 40.0],
+                            end: [96.0, 104.0],
+                            stops: vec![Stop::new(RED, 0.0), Stop::new(BLUE, 1.0)],
+                        },
+                    )
+                    .into(),
+                    Item::fill(
+                        Shape::Circle {
+                            center: [60.0, 72.0],
+                            radius: 26.0,
+                        },
+                        [1.0, 1.0, 1.0, 0.7],
+                    )
+                    .with_blend(BlendMode::SrcOver)
+                    .into(),
+                ],
+            )],
+        ),
+        // Layers nested, the inner one bounded and opened under a transform and
+        // inside both kinds of clip. An inner target is placed within its
+        // parent's rather than within the frame, so compositing it as though
+        // the parent filled the frame puts it off by the parent's own offset --
+        // which a single layer cannot catch and this does.
+        Scene::tree(
+            "layer-nested-clipped",
+            vec![Node::bounded_layer(
+                LayerSpec::opacity(0.75),
+                [24.0, 40.0, 96.0, 104.0],
+                vec![
+                    Item::filled(
+                        Shape::Rect {
+                            min: [24.0, 40.0],
+                            max: [96.0, 104.0],
+                        },
+                        Fill::LinearGradient {
+                            start: [24.0, 40.0],
+                            end: [96.0, 104.0],
+                            stops: vec![
+                                Stop::new([1.0, 0.25, 0.0, 1.0], 0.0),
+                                Stop::new(BLUE, 1.0),
+                            ],
+                        },
+                    )
+                    .with_clip([30.0, 46.0, 90.0, 98.0])
+                    .with_clip_shape(Shape::Polygon(vec![
+                        [60.0, 44.0],
+                        [92.0, 100.0],
+                        [28.0, 100.0],
+                    ]))
+                    .into(),
+                    Node::bounded_layer(
+                        LayerSpec::opacity(0.5),
+                        [38.0, 52.0, 82.0, 96.0],
+                        vec![Item::fill(
+                            Shape::Circle {
+                                center: [60.0, 74.0],
+                                radius: 22.0,
+                            },
+                            GREEN,
+                        )
+                        .into()],
+                    )
+                    .with_transform(Transform {
+                        scale: [1.0, 1.0],
+                        rotate: 0.0,
+                        translate: [4.0, 6.0],
+                    }),
+                ],
+            )],
+        ),
     ]
 }
 
@@ -806,21 +1144,19 @@ mod tests {
         let scenes = corpus();
         assert!(scenes.iter().any(|s| s.samples > 1), "no antialiased scene");
         assert!(
-            scenes
-                .iter()
-                .any(|s| s.items.iter().any(|i| i.stroke.is_some())),
+            scenes.iter().any(|s| s.items().any(|i| i.stroke.is_some())),
             "no stroked scene"
         );
         assert!(
             scenes
                 .iter()
-                .any(|s| s.items.iter().any(|i| i.blend == BlendMode::SrcOver)),
+                .any(|s| s.items().any(|i| i.blend == BlendMode::SrcOver)),
             "no blended scene"
         );
         assert!(
             scenes
                 .iter()
-                .any(|s| s.items.iter().any(|i| i.transform != Transform::default())),
+                .any(|s| s.items().any(|i| i.transform != Transform::default())),
             "no transformed scene"
         );
     }

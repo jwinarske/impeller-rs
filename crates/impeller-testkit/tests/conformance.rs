@@ -252,8 +252,7 @@ fn clipped_scenes_differ_from_the_same_scenes_unclipped() {
     let mut checked = 0;
     for scene in corpus() {
         if !scene
-            .items
-            .iter()
+            .items()
             .any(|item| item.clip.is_some() || item.clip_shape.is_some())
         {
             continue;
@@ -262,7 +261,7 @@ fn clipped_scenes_differ_from_the_same_scenes_unclipped() {
             continue;
         };
         let mut unclipped = scene.clone();
-        for item in &mut unclipped.items {
+        for item in unclipped.items_mut() {
             item.clip = None;
             item.clip_shape = None;
         }

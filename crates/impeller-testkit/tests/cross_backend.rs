@@ -13,7 +13,7 @@
 use impeller_hal::HalContext;
 use impeller_hal_gles::{DisplayTarget, GlesContext, GlesHal};
 use impeller_hal_vulkan::{DevicePreference, VulkanContext, VulkanHal};
-use impeller_testkit::{accepts, compare, corpus, render_scene};
+use impeller_testkit::{accepts, compare, corpus, render_scene, Scene};
 
 #[test]
 fn the_corpus_matches_across_backends() {
@@ -141,4 +141,63 @@ fn both_backends_agree_on_orientation() {
 
     assert_eq!(a, b, "backends disagree on orientation");
     assert_ne!(a, mirrored, "the scene is symmetric and proves nothing");
+}
+
+#[test]
+fn a_bounded_layer_renders_like_a_full_size_one_on_every_backend() {
+    // Bounds tell a layer the region it covers so its target can be smaller
+    // than the frame and sit at an offset inside it. That is an optimization,
+    // so the pixels must not move -- and this is the whole guarantee, checked
+    // against the same scene with its bounds stripped rather than against
+    // stored values, so it keeps holding as both change.
+    //
+    // Per backend rather than only on the first. An offset that a full-size
+    // layer hides is exactly the kind of thing the two could differ on, since
+    // one encodes a pass into a command buffer and the other rebinds a
+    // framebuffer on a global state machine.
+    let mut vulkan = VulkanContext::new(DevicePreference::Auto).ok();
+    let mut gles = GlesContext::new(DisplayTarget::Surfaceless).ok();
+    if vulkan.is_none() && gles.is_none() {
+        eprintln!("skipping: no backend available");
+        return;
+    }
+
+    let mut checked = 0;
+    for scene in corpus().into_iter().filter(Scene::has_bounded_layer) {
+        let unbounded = scene.unbounded();
+        // Stripping has to have done something, or the two renders are the
+        // same recording and the comparison below is vacuous.
+        assert!(
+            !unbounded.has_bounded_layer(),
+            "{} kept its bounds after stripping",
+            scene.name
+        );
+
+        if let Some(ctx) = vulkan.as_mut() {
+            let with = render_scene::<VulkanHal>(ctx, &scene).expect("bounded");
+            let without = render_scene::<VulkanHal>(ctx, &unbounded).expect("unbounded");
+            let difference = compare(&without, &with).expect("same size");
+            assert_eq!(
+                difference.max_delta, 0,
+                "vulkan moved pixels on {} when the layer was given bounds: {difference:?}",
+                scene.name
+            );
+            checked += 1;
+        }
+        if let Some(ctx) = gles.as_mut() {
+            let with = render_scene::<GlesHal>(ctx, &scene).expect("bounded");
+            let without = render_scene::<GlesHal>(ctx, &unbounded).expect("unbounded");
+            let difference = compare(&without, &with).expect("same size");
+            assert_eq!(
+                difference.max_delta, 0,
+                "gles moved pixels on {} when the layer was given bounds: {difference:?}",
+                scene.name
+            );
+            checked += 1;
+        }
+    }
+    assert!(
+        checked > 0,
+        "no scene in the corpus has a bounded layer, so nothing here was checked"
+    );
 }
