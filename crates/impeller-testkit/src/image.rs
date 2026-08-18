@@ -96,10 +96,17 @@ impl Tolerance {
     ///
     /// Bounded by magnitude rather than by count, which is the opposite of the
     /// multisample budget and matches the opposite failure: a shape in the
-    /// wrong place or the wrong size moves edge pixels by far more than four,
-    /// so this stays able to tell arithmetic from a defect.
+    /// wrong place or the wrong size moves edge pixels by the whole range, so
+    /// this stays able to tell arithmetic from a defect.
+    ///
+    /// Eight rather than four because an outline is a band, and a band's
+    /// coverage is the difference of two edges' -- so it inherits both their
+    /// errors. Measured on one pair of devices with the same three shapes: a
+    /// single edge differs by three, a band around it by seven, and a band with
+    /// gentle curvature by one. Four was derived from filled shapes alone and
+    /// only ever fitted them.
     pub const ANALYTIC: Self = Self {
-        per_channel: 4,
+        per_channel: 8,
         outlier_fraction: 0.0,
     };
 

@@ -188,6 +188,15 @@ pub enum Material {
         to_local: ToLocal,
         /// Corner radius, in the shape's own space.
         radius: f32,
+        /// Trace the outline at this width rather than filling, in the shape's
+        /// own space. Zero fills.
+        ///
+        /// Costs a distance field nothing: the field already says how far every
+        /// fragment is from the edge, so an outline is the band where that is
+        /// small. Tessellating one instead means building a second shape --
+        /// offset inward and outward, with the corners resolved -- which is
+        /// where a stroked outline gets its vertex count and its joins.
+        stroke: f32,
     },
     /// An ellipse evaluated per fragment.
     ///
@@ -204,6 +213,8 @@ pub enum Material {
         /// The two semi-axes, in the shape's own space.
         half_size: [f32; 2],
         to_local: ToLocal,
+        /// Trace the outline at this width rather than filling. Zero fills.
+        stroke: f32,
     },
     /// One axis of a separable Gaussian blur of a sampled texture.
     ///
@@ -358,6 +369,7 @@ impl Material {
             center,
             half_size,
             to_local,
+            stroke,
         } = self
         {
             out[layout::STOPS..layout::STOPS + 4].copy_from_slice(color);
@@ -368,6 +380,7 @@ impl Material {
             out[layout::TO_LOCAL..layout::TO_LOCAL + 4].copy_from_slice(to_local);
             out[layout::PARAMS] = 1.0;
             out[layout::PARAMS + 1] = kind::ELLIPSE;
+            out[layout::PARAMS + 3] = *stroke;
             return out;
         }
 
@@ -377,6 +390,7 @@ impl Material {
             half_size,
             to_local,
             radius,
+            stroke,
         } = self
         {
             out[layout::STOPS..layout::STOPS + 4].copy_from_slice(color);
@@ -388,6 +402,7 @@ impl Material {
             out[layout::PARAMS] = 1.0;
             out[layout::PARAMS + 1] = kind::ROUNDED_RECT;
             out[layout::PARAMS + 2] = *radius;
+            out[layout::PARAMS + 3] = *stroke;
             return out;
         }
 

@@ -227,7 +227,10 @@ impl Item {
             crate::shape::Shape::Oval { min, max } => max[0] > min[0] && max[1] > min[1],
             _ => false,
         };
-        shaped && self.stroke.is_none() && matches!(self.fill, Fill::Solid(_))
+        // A stroke of these shapes is evaluated the same way, so it earns the
+        // same budget: the outline is the field narrowed to a band, not a
+        // different kind of drawing.
+        shaped && matches!(self.fill, Fill::Solid(_))
     }
 }
 
@@ -1138,6 +1141,41 @@ pub fn corpus() -> Vec<Scene> {
             ],
         )
         .with_samples(4),
+        // The three fragment-evaluated shapes, traced rather than filled. An
+        // outline is the band where the field is small, so it costs one
+        // subtraction and no vertices -- and the three have to agree on what a
+        // width means, which is the whole width centred on the edge.
+        Scene::new(
+            "analytic-outlines",
+            vec![
+                Item::stroke(
+                    Shape::RoundedRect {
+                        min: [8.0, 8.0],
+                        max: [120.0, 56.0],
+                        radius: 16.0,
+                    },
+                    StrokeSpec::new(7.0),
+                    RED,
+                ),
+                Item::stroke(
+                    Shape::Circle {
+                        center: [34.0, 92.0],
+                        radius: 26.0,
+                    },
+                    StrokeSpec::new(7.0),
+                    GREEN,
+                ),
+                Item::stroke(
+                    Shape::Oval {
+                        min: [68.0, 70.0],
+                        max: [122.0, 114.0],
+                    },
+                    StrokeSpec::new(7.0),
+                    BLUE,
+                ),
+            ],
+        )
+        .with_samples(4),
         // Rounded rectangles, which an interface is mostly made of and which
         // nothing else here draws. Two radii and a stroke: a modest one where
         // the straight edges still dominate, one large enough to be clamped to
@@ -1471,13 +1509,14 @@ mod tolerance_tests {
             Scene::new("antialiased", vec![Item::fill(rounded(12.0), WHITE)]).with_samples(4);
         assert_eq!(antialiased.tolerance(), Tolerance::ANALYTIC);
 
-        // A stroke is a different shape and is tessellated either way.
+        // A stroke of the same shape is the same field narrowed to a band, so
+        // it earns the same budget rather than the multisample one.
         let stroked = Scene::new(
             "stroked",
             vec![Item::stroke(rounded(12.0), StrokeSpec::new(4.0), WHITE)],
         )
         .with_samples(4);
-        assert_eq!(stroked.tolerance(), Tolerance::MULTISAMPLED);
+        assert_eq!(stroked.tolerance(), Tolerance::ANALYTIC);
 
         // A radius of zero is a plain rectangle, with no distance field.
         let square = Scene::new("square", vec![Item::fill(rounded(0.0), WHITE)]).with_samples(4);

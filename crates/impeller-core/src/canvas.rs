@@ -904,9 +904,7 @@ impl Canvas {
         if !paint.is_visible() || self.clip.is_some_and(Scissor::is_empty) {
             return None;
         }
-        if !paint.anti_alias || !matches!(paint.style, Style::Fill) {
-            return None;
-        }
+        let stroke = analytic_stroke(paint)?;
         let Shader::Solid(color) = &paint.shader else {
             return None;
         };
@@ -933,6 +931,7 @@ impl Canvas {
             // not square.
             to_local: invert_or_identity(to_clip.matrix2),
             radius: radius.min(rect.width() / 2.0).min(rect.height() / 2.0),
+            stroke,
         })
     }
 
@@ -949,11 +948,15 @@ impl Canvas {
         material: Material,
         paint: &Paint,
     ) -> Result<&mut Self> {
+        // A pixel for the coverage ramp, plus half the stroke where one is
+        // traced: an outline straddles the edge, so it reaches outward by half
+        // its width beyond the shape it belongs to.
+        let reach = 1.0 + analytic_stroke(paint).unwrap_or(0.0) / 2.0;
         let outset = Rect::new(
-            rect.left - 1.0,
-            rect.top - 1.0,
-            rect.right + 1.0,
-            rect.bottom + 1.0,
+            rect.left - reach,
+            rect.top - reach,
+            rect.right + reach,
+            rect.bottom + reach,
         );
         let render_paint = RenderPaint {
             material,
@@ -1026,9 +1029,7 @@ impl Canvas {
         if !paint.is_visible() || self.clip.is_some_and(Scissor::is_empty) {
             return None;
         }
-        if !paint.anti_alias || !matches!(paint.style, Style::Fill) {
-            return None;
-        }
+        let stroke = analytic_stroke(paint)?;
         let Shader::Solid(color) = &paint.shader else {
             return None;
         };
@@ -1043,6 +1044,7 @@ impl Canvas {
             center: [center_clip.x, center_clip.y],
             half_size: [bounds.width() / 2.0, bounds.height() / 2.0],
             to_local: invert_or_identity(to_clip.matrix2),
+            stroke,
         })
     }
 
@@ -1347,6 +1349,31 @@ impl Canvas {
 
 /// The constant that makes four cubics approximate a circle.
 const KAPPA: f32 = 0.552_284_8;
+
+/// The stroke width a paint implies for a fragment-evaluated shape, if one can
+/// be drawn that way at all.
+///
+/// `Some(0.0)` fills, `Some(w)` traces an outline, and `None` means this paint
+/// has to be tessellated: without antialiasing there is nothing a distance
+/// field offers that triangles do not, and a width that is not finite and
+/// positive is not a stroke.
+///
+/// The joins and caps a stroke style also carries are ignored rather than
+/// refused. These shapes are closed curves with no corners to join and no ends
+/// to cap, so every setting produces the same outline -- which is why a stroked
+/// one can take this path at all.
+fn analytic_stroke(paint: &Paint) -> Option<f32> {
+    if !paint.anti_alias {
+        return None;
+    }
+    match &paint.style {
+        Style::Fill => Some(0.0),
+        Style::Stroke(stroke) => {
+            let width = stroke.width;
+            (width.is_finite() && width > 0.0).then_some(width)
+        }
+    }
+}
 
 /// An ellipse inscribed in a rectangle, as four cubics.
 ///

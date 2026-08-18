@@ -557,12 +557,15 @@ fn an_antialiased_rounded_rectangle_is_two_triangles() {
 }
 
 #[test]
-fn only_an_antialiased_solid_fill_takes_the_analytic_path() {
-    // Everything else falls back to tessellation, and should: a stroke is a
-    // different shape, a gradient or an image would need its own mapping and
-    // this one at once -- which is the case the push-constant budget was sized
-    // against -- and an aliased fill is asking for the hard edges the
-    // tessellated path gives.
+fn only_an_antialiased_solid_paint_takes_the_analytic_path() {
+    // Everything else falls back to tessellation, and should: a gradient or an
+    // image would need its own mapping and this one at once, which is the case
+    // the push-constant budget was sized against, and an aliased paint is
+    // asking for the hard edges the tessellated path gives.
+    //
+    // A stroke is not on that list. An outline is the same field narrowed to a
+    // band, so it takes the same path -- which is what the outline test above
+    // is about.
     let region = Rect::new(16.0, 32.0, 112.0, 96.0);
     let vertices = |paint: &Paint, radius: f32| {
         let mut canvas = Canvas::new(SIZE);
@@ -589,7 +592,6 @@ fn only_an_antialiased_solid_fill_takes_the_analytic_path() {
             Paint::fill(Color::WHITE).with_anti_alias(false),
             16.0,
         ),
-        ("stroked", Paint::stroke(Color::WHITE, 4.0), 16.0),
         (
             "gradient",
             Paint::linear_gradient(
@@ -809,6 +811,108 @@ fn a_clip_confines_an_analytic_shape_exactly() {
     assert!(
         inside > 0 && outside > 0,
         "the clip removed nothing: {inside} in, {outside} out"
+    );
+}
+
+#[test]
+fn an_outline_costs_the_distance_field_nothing() {
+    let Some(mut ctx) = context() else { return };
+    // A field already says how far every fragment is from the edge, so an
+    // outline is the band where that is small -- the same two triangles and one
+    // more subtraction. Tessellating one means building a second shape, offset
+    // inward and outward with the corners resolved, which is where a stroked
+    // path gets its vertices.
+    let extent = Extent2D::new(200, 160);
+    let mut stroked = |analytic: bool, kind: &str| {
+        let mut canvas = Canvas::new(extent).with_samples(4);
+        canvas.clear(Color::BLACK);
+        let paint = Paint::stroke(Color::WHITE, 10.0).with_anti_alias(analytic);
+        match kind {
+            "rrect" => canvas
+                .draw_rrect(Rect::new(30.0, 30.0, 170.0, 130.0), 24.0, &paint)
+                .expect("rrect"),
+            "circle" => canvas
+                .draw_circle(Vec2::new(100.0, 80.0), 55.0, &paint)
+                .expect("circle"),
+            _ => canvas
+                .draw_oval(Rect::new(20.0, 45.0, 180.0, 115.0), &paint)
+                .expect("oval"),
+        };
+        let recording = canvas.finish();
+        let vertices: usize = recording
+            .passes
+            .iter()
+            .map(|pass| pass.batch.vertices().len())
+            .sum();
+        let mut surface = ctx
+            .create_surface(extent, PixelFormat::Rgba8Unorm)
+            .expect("surface");
+        ctx.draw(&mut surface, &recording).expect("draw");
+        let pixels = ctx.read(&mut surface).expect("read");
+        ctx.destroy_surface(surface);
+        (pixels, vertices)
+    };
+
+    for kind in ["rrect", "circle", "oval"] {
+        let (analytic, analytic_vertices) = stroked(true, kind);
+        let (tessellated, tessellated_vertices) = stroked(false, kind);
+        assert_eq!(analytic_vertices, 4, "{kind}: an outline should be a quad");
+        assert!(
+            tessellated_vertices > 32,
+            "{kind}: the tessellated outline should cost far more, got {tessellated_vertices}"
+        );
+
+        let area = |pixels: &[u8]| {
+            pixels
+                .chunks_exact(4)
+                .map(|texel| texel[0] as u64)
+                .sum::<u64>() as f64
+        };
+        let difference = (area(&analytic) - area(&tessellated)).abs() / area(&tessellated);
+        assert!(
+            difference < 0.01,
+            "{kind}: the two outlines cover different amounts, {:.2}% apart",
+            difference * 100.0
+        );
+        // An outline, not a fill: the middle of a shape far larger than the
+        // width is untouched by either.
+        let at = |pixels: &[u8], x: u32, y: u32| pixels[((y * extent.width + x) * 4) as usize];
+        assert_eq!(
+            at(&analytic, 100, 80),
+            0,
+            "{kind}: the middle should be empty"
+        );
+        assert_eq!(
+            at(&tessellated, 100, 80),
+            0,
+            "{kind}: the middle should be empty"
+        );
+    }
+
+    // A stroked circle is an annulus, whose area is arithmetic rather than an
+    // approximation of one -- so this is measured against the shape itself
+    // rather than against the other way of drawing it.
+    let (analytic, _) = stroked(true, "circle");
+    let (tessellated, _) = stroked(false, "circle");
+    let area = |pixels: &[u8]| {
+        pixels
+            .chunks_exact(4)
+            .map(|texel| texel[0] as u64)
+            .sum::<u64>() as f64
+    };
+    let exact = std::f64::consts::PI * (60.0f64 * 60.0 - 50.0 * 50.0) * 255.0;
+    let analytic_error = (area(&analytic) - exact).abs() / exact;
+    let tessellated_error = (area(&tessellated) - exact).abs() / exact;
+    assert!(
+        analytic_error < 0.001,
+        "the analytic ring is {:.3}% off the exact annulus",
+        analytic_error * 100.0
+    );
+    assert!(
+        analytic_error < tessellated_error,
+        "the analytic ring should be nearer the exact annulus: {:.3}% against {:.3}%",
+        analytic_error * 100.0,
+        tessellated_error * 100.0
     );
 }
 

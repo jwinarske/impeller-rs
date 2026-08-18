@@ -145,6 +145,54 @@ fn sample_image(clip: vec2<f32>) -> vec4<f32> {
     return texel * paint.geometry.z;
 }
 
+/// Narrow a field to its own outline, where the paint asked for one.
+///
+/// An outline is the band where the distance is small, so tracing one costs a
+/// field nothing that it had not already computed. Tessellating an outline
+/// means building a second shape -- offset inward and outward with the corners
+/// resolved -- which is where a stroked path gets its vertices and its joins.
+///
+/// Shared by every shape here so the three cannot drift apart on what a width
+/// means: it is the full width, centred on the edge, in the shape's own space.
+/// Narrow a field to its own outline, where the paint asked for one.
+///
+/// An outline is the band where the distance is small, so tracing one costs a
+/// field nothing it had not already computed. Tessellating one means building a
+/// second shape -- offset inward and outward with the corners resolved -- which
+/// is where a stroked path gets its vertices and its joins.
+///
+/// Both arguments are in the shape's own space, which is where a width is
+/// stated. Taking the absolute value here rather than after normalising is
+/// deliberate: the gradient is taken of the field before this, because `abs`
+/// puts a crease exactly on the curve and a derivative across it would be the
+/// one place the edge is measured wrongly.
+fn coverage_of(distance: f32, per_pixel: f32, width: f32) -> f32 {
+    // Everything inside the edge, which is the whole answer for a fill.
+    let inside = clamp(0.5 - distance / per_pixel, 0.0, 1.0);
+    if (width <= 0.0) {
+        return inside;
+    }
+    // An outline is a band, and a band is the difference of two half-planes:
+    // what is inside its outer edge, less what is inside its inner one. Taking
+    // the absolute value of the distance and subtracting half the width says
+    // the same thing for a wide band and the wrong thing for a narrow one --
+    // once the two ramps overlap, `abs` folds them into a plateau where this
+    // subtracts them into the partial coverage they actually make. It also
+    // avoids a crease exactly on the curve, which is where two devices'
+    // derivative estimates diverge most.
+    let outer = clamp(0.5 - (distance - width * 0.5) / per_pixel, 0.0, 1.0);
+    let inner = clamp(0.5 - (distance + width * 0.5) / per_pixel, 0.0, 1.0);
+    return outer - inner;
+}
+
+fn outline_if_asked(distance: f32) -> f32 {
+    let width = paint.params.w;
+    if (width <= 0.0) {
+        return distance;
+    }
+    return abs(distance) - width * 0.5;
+}
+
 /// Signed distance from a rounded rectangle, negative inside.
 ///
 /// The standard formulation: fold into one quadrant by symmetry, measure to
@@ -183,7 +231,7 @@ fn rounded_rect_coverage(clip: vec2<f32>) -> vec4<f32> {
     let width = length(gradient);
     // Half a pixel each way. A pixel whose centre sits on the edge is half
     // covered, which is what the linear ramp says at distance zero.
-    let coverage = clamp(0.5 - distance / max(width, 1e-6), 0.0, 1.0);
+    let coverage = coverage_of(distance, max(width, 1e-6), paint.params.w);
 
     let tint = paint.stops[0];
     let alpha = tint.a * coverage;
@@ -204,16 +252,25 @@ fn ellipse_coverage(clip: vec2<f32>) -> vec4<f32> {
     let point = to_gradient_space(clip);
     let axes = max(paint.geometry.zw, vec2<f32>(1e-6));
 
-    // The implicit function itself, which is zero on the curve, negative
-    // inside and positive outside -- but in no particular units.
+    // The implicit function itself: zero on the curve, negative inside and
+    // positive outside, in no particular units.
     let implicit = length(point / axes) - 1.0;
-    // Divided by how fast it changes across a pixel, which converts it to
-    // pixels without ever forming a distance. Normalising twice -- once into
-    // local units by the field's own gradient, then again by the screen
-    // derivative -- is what the longer formulation does, and each step is an
-    // approximation whose error two devices need not share.
+    // How fast it changes across a pixel, which is what turns it into pixels
+    // without ever forming a distance. Taken before the outline, since `abs`
+    // creases on the curve.
     let gradient = vec2<f32>(dpdx(implicit), dpdy(implicit));
-    let coverage = clamp(0.5 - implicit / max(length(gradient), 1e-6), 0.0, 1.0);
+    let per_pixel = max(length(gradient), 1e-6);
+
+    var stroke = paint.params.w;
+    if (stroke > 0.0) {
+        // A width is stated in the shape's own space and this function is in
+        // none, so it is converted by how fast the function changes per unit
+        // there -- which for this one is the ratio of the two lengths below.
+        let k1 = max(length(point / axes), 1e-6);
+        let k2 = length(point / (axes * axes));
+        stroke = stroke * k2 / k1;
+    }
+    let coverage = coverage_of(implicit, per_pixel, stroke);
     let tint = paint.stops[0];
     let alpha = tint.a * coverage;
     return vec4<f32>(tint.rgb * alpha, alpha);

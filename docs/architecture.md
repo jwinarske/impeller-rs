@@ -1000,6 +1000,22 @@ permutations on GLES.
   at one sample, which is four times less fill and bandwidth for an edge it
   was already going to get right.
 
+  A stroke of any of them takes it too. A field already says how far every
+  fragment is from the edge, so an outline is the band where that is small: one
+  more subtraction and no vertices, against a tessellated outline which is a
+  second shape built offset inward and outward with its corners resolved. The
+  joins and caps a stroke style carries are ignored rather than refused, since
+  these are closed curves with no corners to join and no ends to cap, which is
+  what lets a stroked one take this path at all.
+
+  A band's coverage is the difference of two edges', so it inherits both their
+  errors — measured, on one pair of devices with the same three shapes: a
+  single edge differs by three, a band around it by seven, and a band with
+  gentle curvature by one. That is what the distance-field budget is set from,
+  and it governs only whether two devices agree. A shape that is the wrong
+  shape is wrong on both of them equally, and is caught instead by holding it
+  against the tessellated route and against the exact area it approximates.
+
   A plain rectangle is the same field with no corner to round, and takes it for
   the second reason rather than the first: four vertices is four vertices
   either way, but the pass no longer multisamples for it. That is the shape a
