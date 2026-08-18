@@ -1360,12 +1360,17 @@ That workflow runs on a machine with no GPU, which is worth explaining, since
 the obvious reading is that it therefore verifies nothing. Mesa ships
 conformant CPU implementations of both APIs targeted here — lavapipe for
 Vulkan, llvmpipe for GLES — and the suite runs on them whole, not in a reduced
-mode. lavapipe offers advanced blending, which the discrete part this was
-developed against does not, so the hosted runner covers scenes the workstation
-reports as unavailable. Pointing the suite at it the first time found two
-failures, and neither was the software device's fault: the GLES sample-count
-mask was synthesized from `MAX_SAMPLES` rather than queried, and a test
-required a tiled buffer layout from a rasterizer that has no tiling.
+mode. Pointing the suite at it the first time found two failures, and neither
+was the software device's fault: the GLES sample-count mask was synthesized
+from `MAX_SAMPLES` rather than queried, and a test required a tiled buffer
+layout from a rasterizer that has no tiling.
+
+How much a software device covers depends on which one. A recent lavapipe
+offers advanced blending, which the discrete part this was developed against
+does not, so it reaches scenes the workstation reports as unavailable; the
+older Mesa on the hosted runner does not, and reports those scenes as skipped
+in the same census everything else appears in. Neither is a property to assume
+from the word "software" — read the run.
 
 What a hosted runner cannot do is KMS, since there is no display controller to
 become master of, and it cannot speak to real hardware. Those are the levels

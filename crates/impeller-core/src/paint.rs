@@ -86,8 +86,9 @@ impl Shader {
 }
 
 /// Fill the shape, or trace its outline.
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub enum Style {
+    #[default]
     Fill,
     /// Stroke with the given width and joinery.
     ///
@@ -95,12 +96,6 @@ pub enum Style {
     /// with the canvas transform. A caller wanting a hairline that stays one
     /// pixel wide under zoom divides by the current scale.
     Stroke(StrokeStyle),
-}
-
-impl Default for Style {
-    fn default() -> Self {
-        Self::Fill
-    }
 }
 
 /// Everything about how a shape is painted.

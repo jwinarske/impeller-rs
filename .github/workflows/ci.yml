@@ -51,6 +51,7 @@ jobs:
           # EGL initializes and reports no usable config.
           sudo apt-get install -y --no-install-recommends \
             libvulkan1 mesa-vulkan-drivers vulkan-tools \
+            vulkan-validationlayers \
             libegl1 libgles2 libgbm1 libdrm2 libgl1-mesa-dri
 
       - name: Cache cargo
@@ -95,6 +96,12 @@ jobs:
           cargo xtask report | tee devices.txt
           grep -q '^vulkan:' devices.txt || { echo "no Vulkan device"; exit 1; }
           grep -q '^gles'    devices.txt || { echo "no GLES device"; exit 1; }
+          # The validation layer is the other thing whose absence is invisible.
+          # The first run of this workflow skipped eighty tests for want of it
+          # and still reported every one of them as passing, which is the same
+          # trap as a missing driver one level down.
+          test -f /usr/share/vulkan/explicit_layer.d/VkLayer_khronos_validation.json \
+            || { echo "validation layer missing; 80 tests would skip silently"; exit 1; }
 
       - name: Smoke
         run: ./ci/smoke.sh

@@ -28,6 +28,13 @@ pub struct Skip {
 pub struct Outcome {
     pub passed: usize,
     pub failed: usize,
+    /// The names of the tests that failed, in the order the harness listed
+    /// them.
+    ///
+    /// A count on its own says something is wrong and not what, which on a
+    /// machine that is not this one -- a CI runner, somebody else's hardware --
+    /// is the difference between a fix and another push to find out.
+    pub failures: Vec<String>,
     pub skips: Vec<Skip>,
     /// True where the suite itself came back non-zero.
     pub broke: bool,
@@ -68,6 +75,7 @@ pub fn run(extra: &[String]) -> Outcome {
             return Outcome {
                 passed: 0,
                 failed: 0,
+                failures: Vec::new(),
                 skips: Vec::new(),
                 broke: true,
             };
@@ -84,8 +92,21 @@ pub fn run(extra: &[String]) -> Outcome {
 
     let mut passed = 0;
     let mut failed = 0;
+    let mut failures: Vec<String> = Vec::new();
     let mut reasons: Vec<(String, usize)> = Vec::new();
+    // The harness prints each failure twice: once as it happens and again in a
+    // trailing list. The first form is taken and the second ignored, because
+    // with `--no-fail-fast` the trailing lists arrive per target and a name
+    // would otherwise be counted once per binary that mentions it.
     for line in text.lines() {
+        if let Some(name) = line.trim().strip_prefix("test ") {
+            if let Some(name) = name.strip_suffix(" ... FAILED") {
+                let name = name.to_string();
+                if !failures.contains(&name) {
+                    failures.push(name);
+                }
+            }
+        }
         if let Some(rest) = line.trim().strip_prefix("test result: ") {
             // "ok. 12 passed; 0 failed; ..."
             let mut fields = rest.split_whitespace();
@@ -110,6 +131,7 @@ pub fn run(extra: &[String]) -> Outcome {
     Outcome {
         passed,
         failed,
+        failures,
         skips: reasons
             .into_iter()
             .map(|(reason, count)| Skip { reason, count })
@@ -124,6 +146,9 @@ pub fn text(outcome: &Outcome) -> String {
         "{} passed, {} failed\n",
         outcome.passed, outcome.failed
     ));
+    for name in &outcome.failures {
+        out.push_str(&format!("    FAILED  {name}\n"));
+    }
     let skipped: usize = outcome.skips.iter().map(|s| s.count).sum();
     if outcome.skips.is_empty() {
         out.push_str("nothing skipped\n");
