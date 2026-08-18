@@ -146,6 +146,31 @@ jobs:
           rustup run ${{ steps.msrv.outputs.version }} \
             cargo check --workspace --all-targets --locked
 
+  cross:
+    name: cross-compile (${{ matrix.target }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        target:
+          - aarch64-unknown-linux-gnu
+          - riscv64gc-unknown-linux-gnu
+    steps:
+      - uses: actions/checkout@v4
+      - name: Add the target
+        run: rustup target add ${{ matrix.target }}
+      # `check` rather than `build`, deliberately: linking would want a cross
+      # linker and C runtime for the target, and needing neither is the claim.
+      # If a dependency ever starts compiling C, this stops being about the
+      # linker and starts failing here, which is the point.
+      #
+      # All three axes at once, because that compiles the most code and is what
+      # a board actually enables.
+      - name: Check
+        run: |
+          cargo check -p impeller --no-default-features \
+            --features vulkan,gles,drm --target ${{ matrix.target }} --locked
+
   supply-chain:
     name: supply chain
     runs-on: ubuntu-latest

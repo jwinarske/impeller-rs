@@ -1242,7 +1242,10 @@ backend:
 **Build time: every dependency compiles from pure Rust source.** No C or C++
 toolchain, no pkg-config, no system headers. `cargo build` with any feature
 combination needs only a Rust toolchain, which is what keeps cross-compilation
-to aarch64 and riscv64 boards and containerized CI builds trivial. `deny.toml`
+to aarch64 and riscv64 boards and containerized CI builds trivial. CI checks
+both of those targets on every push, with `check` rather than `build`: linking
+would want a cross linker and a target C runtime, and needing neither is the
+claim being made. `deny.toml`
 describes this as a ban on `pkg-config`, `cmake` and `cc`, and describes it as
 automated enforcement, which it was not: nothing invoked cargo-deny. It is now
 enforced by a test that reads the workspace's dependency graph and fails on any
