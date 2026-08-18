@@ -1,8 +1,19 @@
-//! Glyph atlas and text rendering: swash rasterization into LRU atlas pages,
-//! subpixel positioning, SDF above a threshold size, and COLR/CPAL color
-//! glyphs as image quads.
+//! Packing rasterized glyph coverage into a texture, and placing the result.
 //!
-//! Text shaping and layout are out of scope -- bring cosmic-text or parley.
+//! This crate takes coverage bitmaps and answers where each one sits. It does
+//! not produce them: turning an outline into coverage needs a font parser, and
+//! that is out of scope here -- bring `swash` or `ttf-parser` and hand the
+//! coverage over. Shaping and layout are out of scope for the same reason;
+//! bring `cosmic-text` or `parley`. The boundary is what lets the atlas be
+//! tested with no font anywhere in the tree, against bitmaps whose contents
+//! are known exactly.
+//!
+//! Named here because this header claimed them and they would each change what
+//! a caller has to do: subpixel positioning, signed-distance-field coverage
+//! above a threshold size, and color glyphs drawn as image quads are **not
+//! implemented**. Nor is paging -- a full atlas is repacked and then doubled,
+//! which [`atlas`] explains and which was chosen over pages because a page
+//! boundary splits a glyph run into more than one draw.
 
 pub mod atlas;
 

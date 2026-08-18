@@ -972,10 +972,12 @@ permutations on GLES.
 ## Renderer internals
 
 - **Geometry** (`impeller-geometry`): lyon for general fills and strokes;
-  analytic fast paths for rect, rrect, circle, and ellipse that compute
-  coverage in the fragment shader instead of tessellating; convexity detection
-  for a fan-fill fast path; Wang's-formula adaptive Bezier flattening with
-  transform-aware scale.
+  convexity detection for a fan-fill fast path; Wang's-formula adaptive Bezier
+  flattening with transform-aware scale. Analytic coverage for rect, rrect,
+  circle and ellipse — computed in the fragment shader instead of tessellating,
+  which is where most of a real interface's draw calls land — is **not
+  implemented**: there is no rounded rect or ellipse in the tree, and a circle
+  is four cubics flattened like any other curve.
 
   Convexity is a correctness question, not only a speed one. A fan fill
   triangulates from one vertex and has no notion of a fill rule, so a polygon
@@ -989,17 +991,28 @@ permutations on GLES.
   four times faster than the `atan2` per vertex the definition suggests. Both
   are in the tree and a test requires them to agree, so the cheap one has
   something to be checked against.
-- **Entity layer** (`impeller-entity`): an entity carries transform, blend,
-  clip depth, contents, and geometry, with a Contents implementation per
-  material and coverage computation for culling.
+- **Entity layer** (`impeller-entity`): **not built.** The crate is two lines
+  of module comment. The design is that an entity carries transform, blend,
+  clip depth, contents, and geometry, with a `Contents` implementation per
+  material and coverage computation for culling — and nothing needs it yet,
+  because the canvas records into a batch directly and the layer would sit
+  between two things that already fit. Building it before there is a caller
+  would fix its shape around a guess.
 - **Passes** (`impeller-renderer`): draws are accumulated into a batch and
   submitted as one pass, in submission order rather than sorted by pipeline
   (see above). Save layers become offscreen
-  targets with a paint-composited restore; path clipping is stencil-based;
-  blur is multi-pass separable.
-- **Text** (`impeller-text`): swash rasterization into LRU atlas pages,
-  quarter-pixel subpixel quantization, SDF above a threshold size, and
-  COLR/CPAL color glyphs as image quads.
+  targets with a paint-composited restore, sized to the caller's bounds where
+  given; path clipping is stencil-based. Blur is **not implemented** — there is
+  no blur anywhere in the tree, and a multi-pass separable one is the intended
+  shape rather than something that exists.
+- **Text** (`impeller-text`): shelf packing of caller-supplied coverage into
+  one texture, with compaction and then doubling when it fills. Rasterization
+  is out of scope and lives with the caller's font parser, which is what lets
+  the atlas be tested against bitmaps whose contents are known exactly.
+  **Not implemented**, and named because this list claimed them: subpixel
+  quantization, SDF above a threshold size, COLR/CPAL color glyphs, and
+  paging — a page boundary would split a glyph run into more than one draw,
+  which is why growth was chosen over pages.
 - **Color**: linear f32 internally, with sRGB conversion at the API boundary
   and at target write.
 - **Materials**: a paint resolved for a backend — colour or gradient, already
@@ -1024,11 +1037,11 @@ rather than staying pinned to the screen.
 | Crate | Owns |
 |---|---|
 | `impeller` | Public facade; carries the feature flags |
-| `impeller-core` | Public API: Canvas, Paint, Path, Image, GlyphRun |
-| `impeller-entity` | Entity and Contents layer |
+| `impeller-core` | Public API: Canvas, Paint, Path, Recording, glyph runs |
+| `impeller-entity` | Entity and Contents layer — **a stub; nothing is built** |
 | `impeller-geometry` | Path types, tessellation, fast paths |
 | `impeller-renderer` | Render pass encoding, generic over the HAL |
-| `impeller-text` | Glyph atlas, rasterization, SDF |
+| `impeller-text` | Glyph atlas: packing, compaction, growth. Not rasterization |
 | `impeller-hal` | Rendering HAL trait |
 | `impeller-hal-vulkan` | Vulkan backend |
 | `impeller-hal-gles` | GLES 3.0 backend |
