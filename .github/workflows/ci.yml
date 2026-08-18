@@ -120,6 +120,32 @@ jobs:
             target/devices.txt
           if-no-files-found: warn
 
+  msrv:
+    name: minimum supported toolchain
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      # Read from the manifest rather than written twice. A job that pinned its
+      # own version would keep passing after somebody raised the declared one,
+      # which is the failure mode this job exists to prevent.
+      - name: Read the declared version
+        id: msrv
+        run: |
+          version=$(grep -m1 '^rust-version' Cargo.toml | cut -d'"' -f2)
+          test -n "$version" || { echo "no rust-version in Cargo.toml"; exit 1; }
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "declared MSRV is $version"
+      - name: Install it
+        run: rustup toolchain install ${{ steps.msrv.outputs.version }} --profile minimal
+      # `--locked`, because the claim is about this dependency set: a resolution
+      # that drifts to a newer crate is exactly how 1.82 stopped being true.
+      # No warning denial here -- an older compiler warns about different things,
+      # and this job is about whether the code compiles, not how tidily.
+      - name: Check
+        run: |
+          rustup run ${{ steps.msrv.outputs.version }} \
+            cargo check --workspace --all-targets --locked
+
   supply-chain:
     name: supply chain
     runs-on: ubuntu-latest

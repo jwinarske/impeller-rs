@@ -97,7 +97,10 @@ of scope, so converting to something friendlier is `magick frame.ppm frame.png`.
 
 ## Building
 
-Requires a Rust toolchain; no other build dependencies. MSRV is 1.82.
+Requires a Rust toolchain; no other build dependencies. MSRV is 1.85, which is
+where edition 2024 stabilized and is a floor the dependency graph sets rather
+than the code: naga translates the shaders at build time and reaches indexmap.
+CI builds the workspace on exactly that toolchain, so this figure is checked.
 
 ```sh
 cargo build                              # default: vulkan + WSI

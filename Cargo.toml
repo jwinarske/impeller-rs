@@ -5,7 +5,13 @@ members = ["crates/*", "xtask"]
 [workspace.package]
 version = "0.1.0"
 edition = "2021"
-rust-version = "1.82"
+# Checked rather than asserted: the `msrv` job in `.github/workflows/ci.yml`
+# builds the workspace on exactly this toolchain. It was 1.82 and untrue --
+# naga is a build dependency of the shader crate and reaches indexmap, which
+# moved to edition 2024 and with it to a 1.85 floor. Nothing noticed, because
+# a version declared here only fails a build when a *direct* dependency asks
+# for more than it.
+rust-version = "1.85"
 publish = false
 # Matches the Flutter Engine, where the C++ Impeller this project takes its
 # architecture from lives. Any code ported from there keeps its own copyright
