@@ -201,7 +201,9 @@ where
             if self.flip_pending && std::time::Instant::now() >= deadline {
                 // The display has stopped. Blocking forever would hide that,
                 // and committing anyway would be refused.
-                return Err(Error::Timeout);
+                return Err(Error::Timeout {
+                    what: "a committed flip to reach the display",
+                });
             }
         }
         Ok(())
@@ -261,11 +263,12 @@ where
         }
 
         let budget = self.output.mode().frame_nanos().max(1);
-        // Several frame times of patience, measured on the clock rather than in
-        // iterations, then give up. A slot that never frees means the display
-        // or the GPU has stopped, and blocking forever would hide that.
-        let deadline = std::time::Instant::now()
-            + std::time::Duration::from_nanos(budget.saturating_mul(8).max(1_000_000));
+        // One budget for the whole wait, the same one the flip wait uses. A
+        // slot that never frees means the display or the GPU has stopped, and
+        // blocking forever would hide that -- but the bound has to be loose
+        // enough that a working display never reaches it, or a stall is
+        // reported as a stopped device.
+        let deadline = std::time::Instant::now() + self.flip_timeout;
 
         loop {
             let events = self.output.poll_events();
@@ -277,7 +280,9 @@ where
                 return Ok(&mut self.slots[index].texture);
             }
             if std::time::Instant::now() >= deadline {
-                return Err(Error::Timeout);
+                return Err(Error::Timeout {
+                    what: "a frame slot to come free",
+                });
             }
 
             // What to wait on depends on what is holding the slot. A slot the
@@ -286,7 +291,16 @@ where
             // waits for something that is not coming.
             if let Some(index) = self.slot_awaiting_gpu() {
                 if let Some(fence) = &self.slots[index].fence {
-                    fence.wait(FRAME_WAIT_TIMEOUT)?;
+                    // Bounded by the same deadline rather than by a timeout of
+                    // its own, so the whole wait answers to one clock. Waiting
+                    // the full five seconds here and then reporting the slot
+                    // would blame the display for a GPU that stopped.
+                    let remaining = deadline.saturating_duration_since(std::time::Instant::now());
+                    if !fence.wait(remaining)? {
+                        return Err(Error::Timeout {
+                            what: "a fence to signal before its frame slot could be reused",
+                        });
+                    }
                     continue;
                 }
             }

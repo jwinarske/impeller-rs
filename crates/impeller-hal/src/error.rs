@@ -36,9 +36,16 @@ pub enum Error {
     #[error("device lost")]
     DeviceLost,
 
-    /// A wait exceeded its timeout without the fence signaling.
-    #[error("timed out waiting on fence")]
-    Timeout,
+    /// A wait exceeded its timeout without what it waited for happening.
+    ///
+    /// `what` names it, because a frame loop has more than one thing it can be
+    /// stuck on -- a fence that never signals, a flip that never lands, a slot
+    /// that never comes free -- and they have different causes. A single
+    /// message for all of them means reading the code and reasoning about
+    /// which timeout could have elapsed in the time the run took, which is what
+    /// this error made necessary once.
+    #[error("timed out waiting for {what}")]
+    Timeout { what: &'static str },
 
     /// Backend-specific failure that has no portable representation.
     #[error("{backend} error: {detail}")]

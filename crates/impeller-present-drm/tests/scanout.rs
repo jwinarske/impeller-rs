@@ -311,9 +311,16 @@ fn a_buffer_still_on_screen_is_never_handed_back() {
     // would be refused by a real controller, and reusing its buffer would
     // tear, so the loop must stall instead.
     let stalled = frame(&mut ctx, &mut target, &batch);
+    let error = stalled.expect_err("a second frame was committed while the first had not flipped");
+    // Named, not merely reported. A frame loop can stall on a fence that never
+    // signals, a flip that never lands, or a slot that never comes free, and
+    // one message for all three means working out which timeout could have
+    // elapsed in the time the run took -- which is what a flake in this file
+    // once cost.
+    let text = error.to_string();
     assert!(
-        stalled.is_err(),
-        "a second frame was committed while the first had not flipped"
+        text.contains("flip"),
+        "the error should say what it waited for, got: {text}"
     );
     assert!(
         log.lock().unwrap().waits > 0,

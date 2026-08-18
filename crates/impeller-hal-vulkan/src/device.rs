@@ -703,7 +703,9 @@ impl VulkanContext {
                 self.device
                     .wait_for_fences(&[fence], true, u64::MAX)
                     .map_err(|e| match e {
-                        vk::Result::TIMEOUT => Error::Timeout,
+                        vk::Result::TIMEOUT => Error::Timeout {
+                            what: "a fence to signal",
+                        },
                         vk::Result::ERROR_DEVICE_LOST => Error::DeviceLost,
                         other => backend_err("wait_for_fences", other),
                     })
