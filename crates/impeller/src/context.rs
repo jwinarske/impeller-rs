@@ -10,6 +10,12 @@ use impeller_hal::{Capabilities, Error, Extent2D, HalContext, PixelFormat, Resul
 /// [`Context::backend`]. Callers branch on [`Context::capabilities`] rather than
 /// on which backend it turned out to be: a device without fence export is the
 /// same problem whether it is Vulkan or GLES.
+// The variants differ in size by a couple of kilobytes, and boxing the larger
+// one would even them out. That trade is backwards here: a process creates one
+// context and keeps it for its lifetime, so the saving is a one-off couple of
+// kilobytes, while the cost is an indirection on the way to every backend call
+// in the frame loop.
+#[allow(clippy::large_enum_variant)]
 pub enum Context {
     #[cfg(feature = "vulkan")]
     Vulkan(impeller_hal_vulkan::VulkanContext),

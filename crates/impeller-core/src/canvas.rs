@@ -461,15 +461,19 @@ impl Canvas {
     /// The region is taken to device pixels and rounded outward to whole ones,
     /// so a fractional bound never costs coverage at the edge, and is narrowed
     /// to what the enclosing target can show, since a layer larger than that
-    /// renders pixels nothing can sample. A region that comes out empty, or one
-    /// under a transform that does not keep rectangles rectangular, falls back
-    /// to a full-size layer: both are cases where a smaller target would be a
-    /// guess, and guessing wrong here loses drawing.
+    /// renders pixels nothing can sample. A region that comes out empty falls
+    /// back to a full-size layer, that being a case where a smaller target
+    /// would be a guess and guessing wrong loses drawing.
+    ///
+    /// Under a rotation the region becomes a quadrilateral, and the target is
+    /// the box around it. That covers more than the caller promised, which is
+    /// the safe direction: a target is an allocation rather than a clip the
+    /// caller can observe, so over-covering costs a little memory where
+    /// under-covering would lose drawing. This is the opposite of what
+    /// [`Self::clip_rect`] does with the same box, and for the same reason —
+    /// there the box would admit pixels the caller asked to remove.
     pub fn save_layer_bounds(&mut self, layer: Layer, bounds: Rect) -> &mut Self {
         self.save_layer(layer);
-        if !preserves_axis_alignment(&self.transform) {
-            return self;
-        }
         let (min, max) = transformed_bounds(
             &self.transform,
             Vec2::new(bounds.left, bounds.top),

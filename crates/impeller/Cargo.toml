@@ -17,6 +17,19 @@ gles = ["dep:impeller-hal-gles"]
 drm = ["dep:impeller-present-drm"]
 present-wsi = []
 
+[dev-dependencies]
+# The image comparator, so that a canvas-level scene can be diffed across
+# backends the same way the scene corpus is. Not a dependency of the library:
+# nothing here ships in it.
+impeller-testkit = { workspace = true }
+# This crate, on itself, to turn on the backends its tests compare. The default
+# feature set is one backend, which is right for a consumer on a board that has
+# one -- but it would leave the cross-backend test with nothing to compare and
+# passing anyway, which is the failure mode worth the most trouble to avoid.
+# Enabling the feature here rather than asking for a flag means the comparison
+# runs under a plain `cargo test`, which is the only kind that gets run.
+impeller = { path = ".", features = ["gles"] }
+
 [dependencies]
 impeller-core = { workspace = true }
 impeller-hal = { workspace = true }

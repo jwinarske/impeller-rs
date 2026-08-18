@@ -450,9 +450,13 @@ The bounds are stated in user space and taken to device pixels through the
 transform in force, rounded outward to whole pixels so a fractional edge never
 loses coverage, and narrowed to the enclosing target. Whole pixels because the
 composite samples the layer one texel to one pixel, which only stays exact on an
-integer offset. A region that survives none of that — an empty one, or one under
-a transform that leaves it non-rectangular — falls back to a full-size layer,
-since a smaller target would be a guess and guessing wrong loses drawing.
+integer offset. An empty region falls back to a full-size layer, since a
+smaller target would be a guess and guessing wrong loses drawing. Under a
+rotation the region becomes a quadrilateral and the target is the box around
+it, which covers more than was promised — the safe direction, a target being an
+allocation rather than a clip the caller can observe. That is the opposite of
+what `clip_rect` does with the same box, and for the same reason: there the box
+would admit pixels the caller asked to remove.
 
 Placing a target inside the frame means two mappings have to agree about where
 it is: geometry is tessellated in the frame's device pixels and projected onto
@@ -460,7 +464,10 @@ the target's clip space, and a paint states its geometry in user space and
 carries the inverse mapping back. They are derived from one description of the
 target for that reason. A test renders each scene twice, with bounds and
 without, and requires the results to match; that is the whole guarantee, since
-bounds are an optimization and nothing about the output may depend on them.
+bounds are an optimization and nothing about the output may depend on them. It
+runs on every backend compiled in rather than on whichever comes first, because
+an offset that a full-size layer hides is exactly the kind of thing two
+backends could disagree about.
 
 A layer left open at `finish` is composited rather than discarded. An unbalanced
 `save_layer` is a caller mistake either way, and dropping everything drawn since
@@ -1058,6 +1065,16 @@ with upstream's assets, and nothing is serialized yet.
 two comparators: per-channel tolerance with an outlier budget, and the
 derivation below that chooses between exact and tolerant. The executions it
 drives are the cross-backend comparison and the cross-device conformance run.
+
+The corpus is stated at the batch level — one target, one flat list of items —
+so everything the canvas adds above that is outside what a scene can say:
+layers and the passes they become, targets smaller than the frame, glyph runs.
+Those are compared across backends by a separate suite that builds a recording
+through the public API instead, which is a duplication of the harness rather
+than of the scenes. Lifting the corpus from a batch to a recording would fold
+the two together and is the right eventual shape; the reason it has not
+happened is that the scene format would have to grow nesting, which is a change
+worth making once the format is serialized rather than twice.
 
 Not yet built, and named here rather than described in the present tense: WSI
 and DRM executors, a perceptual comparator for cases where cross-driver float

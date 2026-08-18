@@ -1901,6 +1901,24 @@ fn a_bounded_layer_renders_the_same_under_a_transform() {
 }
 
 #[test]
+fn a_bounded_layer_renders_the_same_under_a_rotation() {
+    let Some(mut ctx) = context() else { return };
+    // A rotation leaves the region a quadrilateral, and the target is the box
+    // around it. That is bigger than the region, which is the safe direction
+    // for an allocation and would be the wrong one for a clip.
+    bounds_are_invisible(&mut ctx, |canvas, bounds| {
+        canvas.save();
+        canvas.translate(64.0, 72.0);
+        canvas.rotate(0.4);
+        canvas.translate(-64.0, -72.0);
+        open_layer(canvas, bounds, Layer::opacity(0.6));
+        layer_contents(canvas);
+        canvas.restore();
+        canvas.restore();
+    });
+}
+
+#[test]
 fn bounded_layers_nest() {
     let Some(mut ctx) = context() else { return };
     // An inner layer's target is placed within its parent's, not within the
@@ -2034,6 +2052,40 @@ fn glyphs_and_images_in_a_bounded_layer_land_where_they_would_have() {
 }
 
 #[test]
+fn content_outside_a_layers_bounds_is_clipped_rather_than_trusted() {
+    let Some(mut ctx) = context() else { return };
+    // Bounds are the caller's promise about what the layer covers, and this is
+    // what happens when the promise is wrong. The target's own edges cut the
+    // drawing off, which is visible and points at the layer that understated
+    // itself. The alternative -- believing the caller and sampling a region
+    // the target does not have -- reads whatever the allocator last left
+    // there, which looks like a driver fault and is a different bug every run.
+    let mut canvas = Canvas::new(SIZE);
+    canvas.clear(Color::BLACK);
+    // Half as tall as the shape that gets drawn into it.
+    canvas.save_layer_bounds(Layer::default(), Rect::new(32.0, 32.0, 96.0, 64.0));
+    canvas
+        .draw_rect(
+            Rect::new(32.0, 32.0, 96.0, 96.0),
+            &Paint::fill(Color::WHITE).with_anti_alias(false),
+        )
+        .expect("rect");
+    canvas.restore();
+
+    let pixels = render(&mut ctx, canvas);
+    assert_eq!(
+        pixel(&pixels, 64, 48),
+        [255, 255, 255, 255],
+        "inside the bounds the shape is drawn"
+    );
+    assert_eq!(
+        pixel(&pixels, 64, 80),
+        [0, 0, 0, 255],
+        "outside the bounds it is cut off, not sampled from somewhere else"
+    );
+}
+
+#[test]
 fn a_layer_gets_a_target_the_size_of_its_bounds() {
     // The point of the feature, stated as the number it is meant to change.
     let mut canvas = Canvas::new(SIZE);
@@ -2082,14 +2134,6 @@ fn bounds_that_cannot_be_honored_fall_back_to_a_full_size_layer() {
         canvas.restore();
         canvas.finish().passes[0].extent
     }
-
-    // A rotation leaves the region a quadrilateral rather than a rectangle, so
-    // there is no rectangle of pixels that is exactly it.
-    let rotated = layer_extent(|canvas| {
-        canvas.rotate(0.4);
-        canvas.save_layer_bounds(Layer::default(), Rect::new(24.0, 40.0, 96.0, 104.0));
-    });
-    assert_eq!(rotated, SIZE, "rotated bounds");
 
     // A region with no area, and one entirely outside the frame, both leave
     // nothing to allocate.
