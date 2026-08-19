@@ -49,13 +49,24 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Install Mesa
+        # Bounded and retried, because the slow half of this step is the
+        # network and not the work. Twice now a mirror has stalled a
+        # twenty-second install into a fifteen-minute one, with apt content to
+        # wait on a connection indefinitely; a timeout turns that into a retry
+        # against whichever mirror answers next. The job's own cap is the
+        # backstop behind this, not the first line of defense.
+        env:
+          APT_OPTS: >-
+            -o Acquire::http::Timeout=20
+            -o Acquire::https::Timeout=20
+            -o Acquire::Retries=3
         run: |
-          sudo apt-get update
+          sudo apt-get $APT_OPTS update
           # libvulkan1 is the loader ash opens; mesa-vulkan-drivers carries the
           # lavapipe ICD it then finds. libegl1 is what khronos-egl dlopens,
           # and the DRI package is where llvmpipe itself lives -- without it
           # EGL initializes and reports no usable config.
-          sudo apt-get install -y --no-install-recommends \
+          sudo apt-get $APT_OPTS install -y --no-install-recommends \
             libvulkan1 mesa-vulkan-drivers vulkan-tools \
             vulkan-validationlayers \
             libegl1 libgles2 libgbm1 libdrm2 libgl1-mesa-dri
