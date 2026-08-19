@@ -10,6 +10,7 @@
 //! translation that diverged would show up here rather than as a report from
 //! whoever ran the other backend first.
 
+use impeller_hal::{Hal, HalContext};
 use impeller_hal_gles::Validated as GlesValidated;
 use impeller_hal_gles::{DisplayTarget, GlesHal};
 use impeller_hal_vulkan::Validated;
@@ -201,4 +202,116 @@ fn a_bounded_layer_renders_like_a_full_size_one_on_every_backend() {
         checked > 0,
         "no scene in the corpus has a bounded layer, so nothing here was checked"
     );
+}
+
+/// Scenes that leave the most state behind them, on either backend.
+///
+/// Clips set a scissor and write a stencil, layers bind a target and a texture
+/// and change which framebuffer is current, a multisampled pass allocates a
+/// transient buffer and resolves through a blit. Each of those is state that
+/// belongs to one frame, and each has to be put back.
+fn stateful() -> Vec<Scene> {
+    corpus()
+        .into_iter()
+        .filter(|scene| {
+            let name = scene.name;
+            name.starts_with("clip-") || name.starts_with("layer-") || name.contains("analytic")
+        })
+        .collect()
+}
+
+#[test]
+fn a_scene_renders_the_same_after_an_unrelated_frame() {
+    // Every device test here renders one scene into a fresh context, which is
+    // the one arrangement in which state left behind by a previous frame cannot
+    // be seen. A frame loop is the opposite: the same context renders scene
+    // after scene, and anything one frame leaves set is what the next one
+    // inherits.
+    //
+    // This is not hypothetical on either backend, and has already happened
+    // once: a clip left the scissor enabled, and the multisample resolve --
+    // which is a blit, and blits are scissored -- copied only the part of the
+    // frame the previous draw could touch. The pixels outside kept whatever
+    // they held before, which on a fresh context is a cleared target and in a
+    // loop is the last frame.
+    //
+    // So: render a scene, render something that sets as much state as the
+    // corpus can, then render the first scene again and require the two to be
+    // identical. Not similar -- identical, because the same recording on the
+    // same device has no licence to differ at all.
+    //
+    // What this guards is the property, not any one mechanism that provides
+    // it, and the difference matters. The GLES backend disables the scissor
+    // twice, once when a pass begins and once after every resolve, and either
+    // alone is enough: deleting one changes nothing here, and deleting both
+    // makes this fail by thousands of pixels. A reader who finds one of them
+    // apparently redundant and removes it will not be caught by this test --
+    // they will be caught by whoever removes the second.
+    //
+    // It also cannot see a fault that is deterministic within a single frame,
+    // since that spoils both renders equally. The scissored-resolve bug above
+    // was of exactly that kind, which is why it is guarded by the pixels a
+    // scene produces rather than by this.
+    let mut vulkan = Validated::new(DevicePreference::Auto).ok();
+    let mut gles = GlesValidated::new(DisplayTarget::Surfaceless).ok();
+    if vulkan.is_none() && gles.is_none() {
+        eprintln!("skipping: no device on either backend");
+        return;
+    }
+
+    let pollutants = stateful();
+    assert!(
+        pollutants.len() >= 3,
+        "the corpus should carry several state-heavy scenes, found {}",
+        pollutants.len()
+    );
+
+    let mut checked = 0;
+    for scene in corpus() {
+        if let Some(ctx) = vulkan.as_mut() {
+            if scene.supported_by(ctx.capabilities()) {
+                checked += check_repeat::<VulkanHal>(ctx, &scene, &pollutants, "vulkan");
+            }
+        }
+        if let Some(ctx) = gles.as_mut() {
+            if scene.supported_by(ctx.capabilities()) {
+                checked += check_repeat::<GlesHal>(ctx, &scene, &pollutants, "gles");
+            }
+        }
+    }
+    assert!(checked > 0, "nothing was checked");
+    eprintln!("{checked} scene renders compared against a repeat");
+}
+
+/// Render `scene`, then the pollutants, then `scene` again, and compare.
+fn check_repeat<H: Hal>(
+    ctx: &mut H::Context,
+    scene: &Scene,
+    pollutants: &[Scene],
+    backend: &str,
+) -> usize
+where
+    H::Context: HalContext<Hal = H>,
+{
+    let Ok(first) = render_scene::<H>(ctx, scene) else {
+        return 0;
+    };
+    for polluter in pollutants {
+        if polluter.supported_by(ctx.capabilities()) {
+            let _ = render_scene::<H>(ctx, polluter);
+        }
+    }
+    let again = render_scene::<H>(ctx, scene).expect("the same scene rendered twice");
+    let differing = first
+        .pixels
+        .chunks_exact(4)
+        .zip(again.pixels.chunks_exact(4))
+        .filter(|(a, b)| a != b)
+        .count();
+    assert_eq!(
+        differing, 0,
+        "{backend}: {} rendered differently after other frames, in {differing} pixel(s)",
+        scene.name
+    );
+    1
 }
