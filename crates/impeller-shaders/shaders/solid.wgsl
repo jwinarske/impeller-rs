@@ -190,6 +190,28 @@ fn sample_image(clip: vec2<f32>) -> vec4<f32> {
         coord = clamp(uv, vec2<f32>(0.0), vec2<f32>(1.0));
     }
 
+    // Into the piece of the texture this paint selected. Applied after the
+    // tiling above, so `coord` has already been wrapped within one repetition
+    // of the sprite and this maps that repetition onto the sprite's own texels.
+    // Mapping first and tiling afterwards would wrap across the whole sheet and
+    // draw the neighbors.
+    let source = paint.stops[0];
+    coord = source.xy + coord * (source.zw - source.xy);
+
+    // Held half a texel inside the selection, because the filter reads two
+    // texels and blends them. Without this a sprite shows a seam of whatever
+    // sits next to it on the sheet: the edge of a selection falls exactly on a
+    // texel boundary, and every sample within half a texel of it mixes in the
+    // neighbor. Clamping to texel centers is what makes a selection actually
+    // select.
+    //
+    // For the whole image this changes nothing, because the sampler already
+    // clamps to the edge and reading the border texel twice is what it does.
+    let half_texel = 0.5 / vec2<f32>(textureDimensions(image_texture));
+    let low = min(source.xy + half_texel, source.zw - half_texel);
+    let high = max(source.xy + half_texel, source.zw - half_texel);
+    coord = clamp(coord, low, high);
+
     var texel = textureSampleLevel(image_texture, image_sampler, coord, 0.0);
     if (tile > 1.5 && tile < 2.5) {
         // Decal: nothing outside the image's own bounds. Tested against the

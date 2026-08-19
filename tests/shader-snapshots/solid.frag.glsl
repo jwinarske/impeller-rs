@@ -111,18 +111,26 @@ vec4 sample_image(vec2 clip_1) {
             coord = clamp(_e1, vec2(0.0), vec2(1.0));
         }
     }
-    vec2 _e35 = coord;
-    vec4 _e37 = textureLod(_group_0_binding_0_fs, vec2(_e35), 0.0);
-    texel = _e37;
+    vec4 source = _push_constant_binding_fs.stops[0];
+    vec2 _e38 = coord;
+    coord = (source.xy + (_e38 * (source.zw - source.xy)));
+    vec2 half_texel = (vec2(0.5) / vec2(uvec2(textureSize(_group_0_binding_0_fs, 0).xy)));
+    vec2 low = min((source.xy + half_texel), (source.zw - half_texel));
+    vec2 high = max((source.xy + half_texel), (source.zw - half_texel));
+    vec2 _e60 = coord;
+    coord = clamp(_e60, low, high);
+    vec2 _e64 = coord;
+    vec4 _e66 = textureLod(_group_0_binding_0_fs, vec2(_e64), 0.0);
+    texel = _e66;
     if (((tile_1 > 1.5) && (tile_1 < 2.5))) {
         bool outside = (any(lessThan(_e1, vec2(0.0))) || any(greaterThan(_e1, vec2(1.0))));
         if (outside) {
             texel = vec4(0.0);
         }
     }
-    vec4 _e55 = texel;
-    float _e59 = _push_constant_binding_fs.geometry.z;
-    return (_e55 * _e59);
+    vec4 _e84 = texel;
+    float _e88 = _push_constant_binding_fs.geometry.z;
+    return (_e84 * _e88);
 }
 
 float coverage_of(float distance_, float per_pixel, float width) {

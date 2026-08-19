@@ -2232,6 +2232,96 @@ fn a_gradient_with_many_stops_agrees_with_one_that_fits() {
 }
 
 #[test]
+fn a_sprite_can_be_drawn_from_a_sheet_by_naming_its_texels() {
+    let Some(mut ctx) = context() else { return };
+    // What a sprite sheet is for, through the API a caller actually uses: they
+    // know the size they uploaded, so they state the piece in texels and hand
+    // that size over rather than converting by hand.
+    //
+    // Every texel a different color, and each selection is a single texel. That
+    // matters: with blocks of one color, selecting a block passes whether the
+    // coordinate is *mapped* into the selection or merely *clamped* to it, and
+    // the first version of this test could not tell those apart. Selecting one
+    // texel can -- mapping fills the destination with it, clamping shows it
+    // beside its neighbor.
+    let size = Extent2D::new(4, 4);
+    let color_of =
+        |x: usize, y: usize| -> [u8; 4] { [(x * 60 + 15) as u8, (y * 60 + 15) as u8, 200, 255] };
+    let mut sheet = vec![0u8; 4 * 4 * 4];
+    for y in 0..4usize {
+        for x in 0..4usize {
+            let at = (y * 4 + x) * 4;
+            sheet[at..at + 4].copy_from_slice(&color_of(x, y));
+        }
+    }
+    let mut image = ctx
+        .create_image(size, PixelFormat::Rgba8Unorm)
+        .expect("image");
+    ctx.write_image(&mut image, &sheet).expect("upload");
+
+    let draw = |ctx: &mut Context, image: &_, source: Rect| {
+        let mut canvas = Canvas::new(SIZE);
+        canvas.clear(Color::BLACK);
+        canvas
+            .draw_rect(
+                Rect::from_size(128.0, 128.0),
+                &Paint::image(0, Rect::from_size(128.0, 128.0))
+                    .with_source_pixels(source, size)
+                    .with_anti_alias(false),
+            )
+            .expect("sprite");
+        let mut surface = ctx
+            .create_surface(SIZE, PixelFormat::Rgba8Unorm)
+            .expect("surface");
+        ctx.draw_with_images(&mut surface, &canvas.finish(), &[image])
+            .expect("draw");
+        let pixels = ctx.read(&mut surface).expect("read");
+        ctx.destroy_surface(surface);
+        pixels
+    };
+
+    for (x, y) in [(0usize, 0usize), (1, 0), (3, 1), (2, 3)] {
+        let source = Rect::new(x as f32, y as f32, x as f32 + 1.0, y as f32 + 1.0);
+        let pixels = draw(&mut ctx, &image, source);
+        let want = color_of(x, y);
+        // Across the whole destination, corners included: one texel selected
+        // means one color everywhere, and a neighbor appearing anywhere is
+        // either a mapping that did not scale or a filter reading past the
+        // selection.
+        for (px, py) in [(64u32, 64u32), (2, 2), (125, 2), (2, 125), (125, 125)] {
+            let got = pixel(&pixels, px, py);
+            assert_eq!(
+                [got[0], got[1]],
+                [want[0], want[1]],
+                "texel ({x}, {y}) came back {got:?} at ({px}, {py}), wanted {want:?}"
+            );
+        }
+    }
+    // Selecting one texel is not enough on its own: it makes the sampling
+    // bounds degenerate, so the coordinate lands on that texel's center whether
+    // it was mapped into the selection or merely held inside it. A selection
+    // two texels wide separates them, because only a mapping rescales -- the
+    // boundary between the two belongs at the middle of the destination, and
+    // holding without mapping leaves it at a quarter.
+    let pixels = draw(&mut ctx, &image, Rect::new(0.0, 0.0, 2.0, 1.0));
+    let first = color_of(0, 0);
+    let at_first_center = pixel(&pixels, 32, 64);
+    assert_eq!(
+        [at_first_center[0], at_first_center[1]],
+        [first[0], first[1]],
+        "a two-texel selection is not being stretched across the destination"
+    );
+    let second = color_of(1, 0);
+    let at_second_center = pixel(&pixels, 96, 64);
+    assert_eq!(
+        [at_second_center[0], at_second_center[1]],
+        [second[0], second[1]],
+        "the second texel of the selection is not where it belongs"
+    );
+    ctx.destroy_image(image);
+}
+
+#[test]
 fn an_arc_leaves_the_part_of_the_circle_it_does_not_sweep() {
     let Some(mut ctx) = context() else { return };
     // The end-to-end check that a partial arc is partial. The geometry is

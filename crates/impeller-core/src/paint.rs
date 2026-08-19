@@ -5,7 +5,7 @@ use crate::color::Color;
 use glam::Vec2;
 use impeller_geometry::dash::Dash;
 use impeller_geometry::stroke::StrokeStyle;
-use impeller_hal::{BlendMode, TileMode};
+use impeller_hal::{BlendMode, Extent2D, TileMode};
 
 /// A color stop in a gradient.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -72,6 +72,12 @@ pub enum Shader {
         /// Scales the sampled color, for drawing an image translucently.
         alpha: f32,
         tile: TileMode,
+        /// Which part of the image to draw, from zero to one in each axis.
+        ///
+        /// The whole image by default. Set it with [`Paint::with_source`], or
+        /// with [`Paint::with_source_pixels`] if you would rather state it in
+        /// texels and hand over the size you uploaded.
+        source: Rect,
     },
     SweepGradient {
         center: Vec2,
@@ -261,6 +267,7 @@ impl Paint {
                 rect,
                 alpha: 1.0,
                 tile: TileMode::default(),
+                source: Rect::new(0.0, 0.0, 1.0, 1.0),
             },
             ..Default::default()
         }
@@ -281,6 +288,39 @@ impl Paint {
             Shader::Solid(_) => {}
         }
         self
+    }
+
+    /// Draw only part of the image, in coordinates from zero to one.
+    ///
+    /// What a sprite sheet needs, and a nine-patch border. Normalized rather
+    /// than in texels because a canvas records without touching a device and
+    /// has never seen the image: it holds a slot, not a texture, and cannot ask
+    /// how large it is. The caller who uploaded it can, which is what
+    /// [`Paint::with_source_pixels`] is for.
+    ///
+    /// Ignored by paints that are not images.
+    pub fn with_source(mut self, source: Rect) -> Self {
+        if let Shader::Image { source: at, .. } = &mut self.shader {
+            *at = source;
+        }
+        self
+    }
+
+    /// The same, stated in texels of an image of the given size.
+    ///
+    /// A degenerate size would divide by zero, so it leaves the paint alone --
+    /// drawing the whole image, which is what the paint already said.
+    pub fn with_source_pixels(self, source: Rect, size: Extent2D) -> Self {
+        if size.width == 0 || size.height == 0 {
+            return self;
+        }
+        let (w, h) = (size.width as f32, size.height as f32);
+        self.with_source(Rect::new(
+            source.left / w,
+            source.top / h,
+            source.right / w,
+            source.bottom / h,
+        ))
     }
 
     /// Scale an image paint's sampled color. Ignored by other paints.

@@ -12,7 +12,8 @@ through KMS with no compositor present.
 > reported as unavailable elsewhere rather than approximated. Clipping works on both
 > backends for rectangles and arbitrary paths, nests, and antialiases with the
 > shapes it confines. Images can be uploaded and drawn as a paint, with clamp,
-> repeat, mirror and decal tiling, and gradients tile the same four ways past
+> repeat, mirror and decal tiling, and with a source rectangle so a sprite
+> sheet or a nine-patch is one upload, and gradients tile the same four ways past
 > their own extent and take any number of color stops. Strokes dash, with the
 > pattern measured along the path so it follows a curve rather than its chord.
 > Paths take elliptical arcs, which is what a progress ring and a pie slice are

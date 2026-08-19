@@ -223,6 +223,18 @@ pub enum Material {
         /// and plain the moment one translucent image is drawn into another.
         alpha: f32,
         tile: TileMode,
+        /// The part of the texture to draw, as `[u0, v0, u1, v1]` from zero to
+        /// one.
+        ///
+        /// The whole texture is `[0, 0, 1, 1]`, which is what every caller
+        /// wanted until sprite sheets. Normalized rather than in texels because
+        /// a material is built by a recorder that has never seen the texture
+        /// and cannot know how large it is; the caller who uploaded it does.
+        ///
+        /// Applied after tiling rather than before, so a repeat repeats the
+        /// selected piece rather than the whole sheet -- which is the only
+        /// reading of "tile this sprite" that means anything.
+        source: [f32; 4],
     },
     /// A rounded rectangle evaluated per fragment rather than tessellated.
     ///
@@ -497,9 +509,13 @@ impl Material {
             to_local,
             alpha,
             tile,
+            source,
             ..
         } = self
         {
+            // Into the stop colors, which an image has none of. Four floats
+            // that would otherwise travel as zeros on every image draw.
+            out[layout::STOPS..layout::STOPS + 4].copy_from_slice(source);
             out[layout::GEOMETRY] = origin[0];
             out[layout::GEOMETRY + 1] = origin[1];
             out[layout::GEOMETRY + 2] = *alpha;

@@ -64,6 +64,7 @@ fn full_target_mapping() -> Material {
         slot: 0,
         alpha: 1.0,
         tile: TileMode::Clamp,
+        source: [0.0, 0.0, 1.0, 1.0],
     }
 }
 
@@ -234,6 +235,81 @@ fn alpha_scales_the_sampled_color() {
 }
 
 #[test]
+fn a_source_rectangle_draws_only_that_part_of_the_image() {
+    let Ok(mut ctx) = Validated::new(DevicePreference::Auto) else {
+        return;
+    };
+    // The source image is four colored quadrants, so selecting one and drawing
+    // it across the whole target should give one flat color -- and a different
+    // one per quadrant, which is what says the rectangle is being read rather
+    // than ignored.
+    let quadrant = |source: [f32; 4]| Material::Image {
+        origin: [-1.0, 1.0],
+        to_local: [1.0, 0.0, 0.0, -1.0],
+        slot: 0,
+        alpha: 1.0,
+        tile: TileMode::Clamp,
+        source,
+    };
+
+    for (name, source, want) in [
+        ("top left", [0.0, 0.0, 0.5, 0.5], [255u8, 0, 0, 255]),
+        ("top right", [0.5, 0.0, 1.0, 0.5], [0, 255, 0, 255]),
+        ("bottom left", [0.0, 0.5, 0.5, 1.0], [0, 0, 255, 255]),
+        ("bottom right", [0.5, 0.5, 1.0, 1.0], [255, 255, 0, 255]),
+    ] {
+        let pixels = render::<VulkanHal>(&mut ctx, quadrant(source));
+        // Away from the edges, where a linear filter would blend a neighbor.
+        for (x, y) in [(8, 8), (24, 8), (8, 24), (24, 24)] {
+            assert_eq!(
+                pixel(&pixels, x, y),
+                want,
+                "{name} at ({x}, {y}) is not the quadrant that was asked for"
+            );
+        }
+    }
+
+    // And the whole image is still the default, so nothing that never mentions
+    // a source rectangle changed.
+    let whole = render::<VulkanHal>(&mut ctx, quadrant([0.0, 0.0, 1.0, 1.0]));
+    assert_quadrants(&whole, "vulkan");
+}
+
+#[test]
+fn a_repeated_source_rectangle_tiles_the_piece_rather_than_the_sheet() {
+    let Ok(mut ctx) = Validated::new(DevicePreference::Auto) else {
+        return;
+    };
+    // The interaction worth pinning. Tiling happens in the destination's own
+    // space and the source rectangle maps what comes out of it, so a repeat
+    // repeats the selected piece. Mapping first and tiling afterwards would
+    // wrap across the whole sheet and draw the neighbors, which is the obvious
+    // way to write this and the wrong one.
+    //
+    // The image is mapped to a quarter of the target, so there are four
+    // repetitions across it, and the source is the top-left quadrant alone.
+    let pixels = render::<VulkanHal>(
+        &mut ctx,
+        Material::Image {
+            origin: [-1.0, 1.0],
+            to_local: [1.0, 0.0, 0.0, -1.0],
+            slot: 0,
+            alpha: 1.0,
+            tile: TileMode::Repeat,
+            source: [0.0, 0.0, 0.5, 0.5],
+        },
+    );
+    // Every repetition is that one quadrant, so the whole target is its color.
+    for (x, y) in [(4, 4), (20, 4), (4, 20), (20, 20), (28, 28)] {
+        assert_eq!(
+            pixel(&pixels, x, y),
+            [255, 0, 0, 255],
+            "({x}, {y}) is not the repeated quadrant, so the sheet was tiled"
+        );
+    }
+}
+
+#[test]
 fn the_tile_modes_differ_outside_the_image() {
     let Ok(mut ctx) = Validated::new(DevicePreference::Auto) else {
         return;
@@ -246,6 +322,7 @@ fn the_tile_modes_differ_outside_the_image() {
         slot: 0,
         alpha: 1.0,
         tile,
+        source: [0.0, 0.0, 1.0, 1.0],
     };
 
     let clamp = render::<VulkanHal>(&mut ctx, quarter(TileMode::Clamp));
@@ -389,6 +466,7 @@ fn a_rendered_target_can_be_sampled_by_a_later_pass() {
                 slot: 0,
                 alpha: 1.0,
                 tile: TileMode::Clamp,
+                source: [0.0, 0.0, 1.0, 1.0],
             },
             BlendMode::Src,
         )
