@@ -1,0 +1,230 @@
+//! A triangle mesh a caller supplies directly.
+//!
+//! Everything else this canvas draws is a shape it tessellates itself, which
+//! means the triangles are always well formed and the question of what a
+//! caller might hand over does not arise. Here it does, so the checking
+//! happens once at construction rather than at every draw: a mesh that exists
+//! is a mesh that can be drawn.
+
+use glam::Vec2;
+use impeller_hal::{Error, Result};
+
+/// How positions are grouped into triangles.
+///
+/// The two compact forms exist because a strip or a fan states a triangle in
+/// one vertex where a list states it in three, and a caller who has that shape
+/// already should not have to expand it. They are expanded here rather than
+/// carried to a backend, since the difference is an index buffer and both
+/// backends draw indexed triangles.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum VertexMode {
+    /// Every three positions are one triangle.
+    #[default]
+    Triangles,
+    /// Each position after the second closes a triangle with the two before
+    /// it, alternating winding so the strip is consistently wound.
+    TriangleStrip,
+    /// Each position after the second closes a triangle with the first and the
+    /// one before it.
+    TriangleFan,
+}
+
+/// A mesh of triangles in user space, with optional texture coordinates.
+///
+/// Texture coordinates run from zero to one across the image and are read per
+/// vertex, which is the point of supplying them: every other way of drawing an
+/// image here maps it by position, and a mesh that wanted that mapping would
+/// not need coordinates at all.
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct Vertices {
+    positions: Vec<Vec2>,
+    texture_coords: Vec<Vec2>,
+    indices: Vec<u32>,
+}
+
+impl Vertices {
+    /// A mesh from positions alone, filled by the paint.
+    ///
+    /// The paint is sampled by position, as it is for any shape: a gradient
+    /// runs across the mesh the way it would across a path covering the same
+    /// area.
+    pub fn new(mode: VertexMode, positions: Vec<Vec2>) -> Result<Self> {
+        Self::build(mode, positions, Vec::new(), None)
+    }
+
+    /// A mesh whose vertices name where in an image they read.
+    ///
+    /// Requires an image paint; anything else has no texture to read and the
+    /// draw is refused rather than quietly ignoring the coordinates.
+    pub fn textured(
+        mode: VertexMode,
+        positions: Vec<Vec2>,
+        texture_coords: Vec<Vec2>,
+    ) -> Result<Self> {
+        Self::build(mode, positions, texture_coords, None)
+    }
+
+    /// The same, with the triangles named by index rather than by order.
+    pub fn indexed(
+        mode: VertexMode,
+        positions: Vec<Vec2>,
+        texture_coords: Vec<Vec2>,
+        indices: Vec<u32>,
+    ) -> Result<Self> {
+        Self::build(mode, positions, texture_coords, Some(indices))
+    }
+
+    fn build(
+        mode: VertexMode,
+        positions: Vec<Vec2>,
+        texture_coords: Vec<Vec2>,
+        indices: Option<Vec<u32>>,
+    ) -> Result<Self> {
+        if !texture_coords.is_empty() && texture_coords.len() != positions.len() {
+            return Err(Error::Unsupported(
+                "a mesh with texture coordinates needs one per position",
+            ));
+        }
+        // Checked here rather than clamped at draw time. An index past the end
+        // reads whatever follows the buffer, which on one backend is a
+        // validation error and on the other is a triangle drawn from
+        // uninitialized floats -- so this is the difference between a refusal
+        // and a picture that differs between backends for no visible reason.
+        if let Some(indices) = &indices {
+            if let Some(bad) = indices.iter().find(|i| **i as usize >= positions.len()) {
+                let _ = bad;
+                return Err(Error::Unsupported(
+                    "a mesh index names a position the mesh does not have",
+                ));
+            }
+        }
+        if !positions.iter().all(|p| p.is_finite()) || !texture_coords.iter().all(|c| c.is_finite())
+        {
+            return Err(Error::Unsupported(
+                "a mesh position or texture coordinate is not a finite number",
+            ));
+        }
+
+        // The order the triangles are actually drawn in, which is where the
+        // mode stops mattering: a strip and a fan are two ways of writing an
+        // index buffer, and writing it here means nothing below this point has
+        // to know which was used.
+        let order: Vec<u32> = match indices {
+            Some(indices) => indices,
+            None => (0..positions.len() as u32).collect(),
+        };
+        let indices = expand(mode, &order);
+        Ok(Self {
+            positions,
+            texture_coords,
+            indices,
+        })
+    }
+
+    pub fn positions(&self) -> &[Vec2] {
+        &self.positions
+    }
+
+    /// Texture coordinates, or empty where the mesh carries none.
+    pub fn texture_coords(&self) -> &[Vec2] {
+        &self.texture_coords
+    }
+
+    /// Triangle indices, three per triangle, whatever mode built them.
+    pub fn indices(&self) -> &[u32] {
+        &self.indices
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.indices.is_empty()
+    }
+}
+
+/// Rewrite an order of vertices as a list of triangles.
+///
+/// A degenerate tail -- one or two vertices left over from a list, or fewer
+/// than three altogether -- produces no triangle rather than an error, which
+/// is what a mesh with nothing in it should do. An error would be a different
+/// claim: that the caller made a mistake, when a mesh built from a loop that
+/// found nothing is not one.
+fn expand(mode: VertexMode, order: &[u32]) -> Vec<u32> {
+    let mut out = Vec::new();
+    match mode {
+        VertexMode::Triangles => {
+            for triangle in order.chunks_exact(3) {
+                out.extend_from_slice(triangle);
+            }
+        }
+        VertexMode::TriangleStrip => {
+            for (i, window) in order.windows(3).enumerate() {
+                // Every other triangle has the opposite winding, so two of its
+                // vertices swap. Emitting them in strip order instead would
+                // alternate front and back faces, which matters the moment
+                // anything culls -- and a mesh whose triangles disagree about
+                // which side they face is wrong even where nothing does.
+                if i % 2 == 0 {
+                    out.extend_from_slice(&[window[0], window[1], window[2]]);
+                } else {
+                    out.extend_from_slice(&[window[1], window[0], window[2]]);
+                }
+            }
+        }
+        VertexMode::TriangleFan => {
+            for window in order.windows(2).skip(1) {
+                out.extend_from_slice(&[order[0], window[0], window[1]]);
+            }
+        }
+    }
+    out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn points(n: usize) -> Vec<Vec2> {
+        (0..n).map(|i| Vec2::new(i as f32, 0.0)).collect()
+    }
+
+    #[test]
+    fn a_strip_alternates_winding_so_every_triangle_faces_the_same_way() {
+        let mesh = Vertices::new(VertexMode::TriangleStrip, points(4)).expect("strip");
+        assert_eq!(mesh.indices(), &[0, 1, 2, 2, 1, 3]);
+    }
+
+    #[test]
+    fn a_fan_shares_its_first_vertex_with_every_triangle() {
+        let mesh = Vertices::new(VertexMode::TriangleFan, points(4)).expect("fan");
+        assert_eq!(mesh.indices(), &[0, 1, 2, 0, 2, 3]);
+    }
+
+    #[test]
+    fn a_list_drops_a_partial_triangle_rather_than_inventing_a_vertex() {
+        let mesh = Vertices::new(VertexMode::Triangles, points(5)).expect("list");
+        assert_eq!(mesh.indices(), &[0, 1, 2]);
+    }
+
+    #[test]
+    fn too_few_positions_for_any_triangle_is_an_empty_mesh_rather_than_an_error() {
+        for mode in [
+            VertexMode::Triangles,
+            VertexMode::TriangleStrip,
+            VertexMode::TriangleFan,
+        ] {
+            let mesh = Vertices::new(mode, points(2)).expect("two points");
+            assert!(mesh.is_empty(), "{mode:?} made a triangle from two points");
+        }
+    }
+
+    #[test]
+    fn an_index_past_the_end_is_refused_where_it_is_written() {
+        let error = Vertices::indexed(VertexMode::Triangles, points(3), Vec::new(), vec![0, 1, 3]);
+        assert!(error.is_err(), "an out-of-range index was accepted");
+    }
+
+    #[test]
+    fn texture_coordinates_have_to_match_the_positions_they_belong_to() {
+        let error = Vertices::textured(VertexMode::Triangles, points(3), points(2));
+        assert!(error.is_err(), "a short coordinate list was accepted");
+    }
+}

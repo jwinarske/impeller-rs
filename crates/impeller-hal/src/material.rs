@@ -107,6 +107,7 @@ pub mod kind {
     pub const ROUNDED_RECT: f32 = 7.0;
     pub const ELLIPSE: f32 = 8.0;
     pub const CONICAL: f32 = 9.0;
+    pub const MESH: f32 = 10.0;
 }
 
 /// Tile mode selector shared with the shader.
@@ -256,6 +257,30 @@ pub enum Material {
         ramp: Option<u32>,
         /// What happens where the parameter leaves the unit interval. See
         /// [`Material::LinearGradient`].
+        tile: TileMode,
+    },
+    /// A texture, sampled at coordinates the vertices carry.
+    ///
+    /// Deliberately not [`Material::Image`] with a switch on where its
+    /// coordinates come from. An image mapped from clip space needs an origin,
+    /// a matrix and a source rectangle to say which part of a sheet it draws;
+    /// a mesh needs none of them, because a caller stating a coordinate per
+    /// vertex has already answered all three. What is left is small enough to
+    /// be its own thing, and keeping it separate means neither carries a field
+    /// that means nothing for it.
+    ///
+    /// This is what makes a sprite batch one draw: a hundred quads reading a
+    /// hundred different parts of one sheet differ only in their vertices.
+    Mesh {
+        /// Index into the texture table given at submission.
+        slot: u32,
+        /// Scales the sampled color, applied to premultiplied color like
+        /// [`Material::Image`]'s.
+        alpha: f32,
+        /// Straight color the sampled texel is multiplied by; white changes
+        /// nothing.
+        tint: [f32; 4],
+        /// What happens where a vertex names a coordinate outside the texture.
         tile: TileMode,
     },
     /// A texture, sampled through a mapping from clip space.
@@ -444,7 +469,7 @@ impl Material {
             }
             // What the texture holds is unknown here, so only a zero alpha
             // makes an image provably invisible.
-            Self::Image { alpha, .. } => *alpha <= 0.0,
+            Self::Image { alpha, .. } | Self::Mesh { alpha, .. } => *alpha <= 0.0,
             // A blur of nothing is nothing, but the pass still has to run: what
             // it samples is not knowable from here.
             Self::Blur { .. } => false,
@@ -466,9 +491,10 @@ impl Material {
     /// picture rather than an error, and one nothing else would explain.
     pub fn texture_slot(&self) -> Option<u32> {
         match self {
-            Self::Image { slot, .. } | Self::Glyph { slot, .. } | Self::Blur { slot, .. } => {
-                Some(*slot)
-            }
+            Self::Image { slot, .. }
+            | Self::Mesh { slot, .. }
+            | Self::Glyph { slot, .. }
+            | Self::Blur { slot, .. } => Some(*slot),
             // A gradient names a texture only when its colors were too many to
             // carry, which is why this is an option rather than a slot.
             Self::LinearGradient { ramp, .. }
@@ -484,6 +510,7 @@ impl Material {
         match self {
             Self::Solid(_)
             | Self::Image { .. }
+            | Self::Mesh { .. }
             | Self::Glyph { .. }
             | Self::Blur { .. }
             | Self::RoundedRect { .. }
@@ -582,6 +609,18 @@ impl Material {
             return out;
         }
 
+        if let Self::Mesh {
+            alpha, tint, tile, ..
+        } = self
+        {
+            out[layout::STOPS..layout::STOPS + 4].copy_from_slice(tint);
+            out[layout::GEOMETRY] = *alpha;
+            out[layout::GEOMETRY + 1] = tile_code(*tile);
+            out[layout::PARAMS] = 1.0;
+            out[layout::PARAMS + 1] = kind::MESH;
+            return out;
+        }
+
         if let Self::Image {
             origin,
             to_local,
@@ -625,6 +664,7 @@ impl Material {
         match self {
             Self::Solid(_)
             | Self::Image { .. }
+            | Self::Mesh { .. }
             | Self::Glyph { .. }
             | Self::Blur { .. }
             | Self::RoundedRect { .. }

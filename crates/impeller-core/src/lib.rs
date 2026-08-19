@@ -17,12 +17,14 @@ pub mod color;
 pub mod execute;
 pub mod paint;
 pub mod ramp;
+pub mod vertices;
 
 pub use canvas::{Canvas, Layer, Pass, Recording, Rect, TextureSource};
 pub use color::Color;
 pub use execute::{execute, execute_deferred, execute_layers, render_offscreen, resolve_sources};
 pub use impeller_text::{Atlas, AtlasError, AtlasRect, Coverage, GlyphKey, PositionedGlyph};
 pub use paint::{GradientStop, Paint, Shader, Style};
+pub use vertices::{VertexMode, Vertices};
 
 // Geometry a caller builds paths with, re-exported so an application needs one
 // dependency rather than three.

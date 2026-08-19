@@ -8,8 +8,8 @@
 //! two rather than only checking each against an expectation.
 
 use impeller_hal::{
-    Batch, BlendMode, Extent2D, Hal, HalContext, Material, PassDescriptor, PixelFormat,
-    TextureDescriptor, TileMode,
+    Batch, BlendMode, ClipState, Extent2D, Hal, HalContext, Material, PassDescriptor, PixelFormat,
+    TextureDescriptor, TileMode, Vertex,
 };
 use impeller_hal_gles::Validated as GlesValidated;
 use impeller_hal_gles::{DisplayTarget, GlesHal};
@@ -147,6 +147,132 @@ fn an_upload_survives_a_round_trip_through_readback() {
 }
 
 /// Check the four quadrants land where the source put them.
+/// Texture coordinates for [`FULL`], in the same order.
+///
+/// Chosen to reproduce exactly what the image material's mapping produces, so
+/// a mesh and an image drawing the same picture is the assertion: the two take
+/// different routes to a coordinate -- one computed from the fragment's
+/// position, one interpolated from the vertices -- and a disagreement between
+/// them is the mistake worth catching.
+const FULL_UV: [[f32; 2]; 4] = [[0.0, 1.0], [1.0, 1.0], [1.0, 0.0], [0.0, 0.0]];
+
+fn render_mesh<H: Hal>(ctx: &mut H::Context, material: Material) -> Vec<u8>
+where
+    H::Context: HalContext<Hal = H>,
+{
+    let mut source = ctx
+        .create_texture(&TextureDescriptor::offscreen(
+            SOURCE,
+            PixelFormat::Rgba8Unorm,
+        ))
+        .expect("source texture");
+    ctx.write_texture(&mut source, &source_pixels())
+        .expect("upload");
+
+    let vertices: Vec<Vertex> = FULL
+        .iter()
+        .zip(FULL_UV.iter())
+        .map(|(p, uv)| Vertex::new(*p, *uv))
+        .collect();
+    let mut batch = Batch::new();
+    batch
+        .push_mesh(
+            &vertices,
+            &QUAD,
+            material,
+            BlendMode::Src,
+            None,
+            ClipState::default(),
+        )
+        .expect("push");
+
+    let mut target = ctx
+        .create_texture(&TextureDescriptor::offscreen(SIZE, PixelFormat::Rgba8Unorm))
+        .expect("target");
+    ctx.submit_batch_textured(
+        &mut target,
+        &batch,
+        PassDescriptor::clear([0.0, 0.0, 0.0, 1.0]),
+        &[&source],
+    )
+    .expect("submit");
+    let pixels = ctx.read_texture(&mut target).expect("readback");
+    ctx.destroy_texture(target);
+    ctx.destroy_texture(source);
+    pixels
+}
+
+#[test]
+fn a_mesh_reads_its_own_coordinates_the_same_way_on_both_backends() {
+    // The mesh material is the one path where a texture coordinate reaches the
+    // shader as a vertex attribute rather than as a computation, so it is the
+    // one that can differ between a backend that interpolates it through a
+    // descriptor-bound sampler and one that interpolates it through a texture
+    // unit. Both must land the image the same way up, and the same way up as
+    // the image material does -- which is what the shared assertion says.
+    let mesh = || Material::Mesh {
+        slot: 0,
+        alpha: 1.0,
+        tint: [1.0, 1.0, 1.0, 1.0],
+        tile: TileMode::Clamp,
+    };
+    let mut ran = 0;
+    if let Ok(mut ctx) = Validated::new(DevicePreference::Auto) {
+        let pixels = render_mesh::<VulkanHal>(&mut ctx, mesh());
+        assert_quadrants(&pixels, "vulkan");
+        ran += 1;
+    }
+    if let Ok(mut ctx) = GlesValidated::new(DisplayTarget::Surfaceless) {
+        let pixels = render_mesh::<GlesHal>(&mut ctx, mesh());
+        assert_quadrants(&pixels, "gles");
+        ran += 1;
+    }
+    if ran == 0 {
+        eprintln!("no backend available");
+    }
+}
+
+#[test]
+fn a_mesh_tint_scales_the_texel_it_read() {
+    // The mesh material carries a tint of its own rather than borrowing the
+    // image material's, so it needs its own check that the tint reaches the
+    // texel: a mesh drawing a sheet at half alpha is how a sprite batch fades.
+    let Ok(mut ctx) = Validated::new(DevicePreference::Auto) else {
+        return;
+    };
+    let plain = render_mesh::<VulkanHal>(
+        &mut ctx,
+        Material::Mesh {
+            slot: 0,
+            alpha: 1.0,
+            tint: [1.0, 1.0, 1.0, 1.0],
+            tile: TileMode::Clamp,
+        },
+    );
+    let halved = render_mesh::<VulkanHal>(
+        &mut ctx,
+        Material::Mesh {
+            slot: 0,
+            alpha: 0.5,
+            tint: [1.0, 1.0, 1.0, 1.0],
+            tile: TileMode::Clamp,
+        },
+    );
+    // Premultiplied, so alpha scales every channel and not only the fourth.
+    // Sampled where the source is opaque red, which makes both the scaled
+    // channel and the untouched one visible in the same pixel.
+    let full = pixel(&plain, 4, 4);
+    let half = pixel(&halved, 4, 4);
+    assert_eq!(full, [255, 0, 0, 255], "the plain draw is not the source");
+    for channel in 0..4 {
+        let want = (full[channel] as f32 * 0.5).round() as i32;
+        assert!(
+            (half[channel] as i32 - want).abs() <= 1,
+            "channel {channel} was not scaled by the alpha: {half:?} against {full:?}"
+        );
+    }
+}
+
 fn assert_quadrants(pixels: &[u8], backend: &str) {
     // Sampled well inside each quadrant, so a filter kernel at the boundary
     // does not blend two of them together.

@@ -8,6 +8,7 @@
 
 use crate::paint::{GradientStop, Paint, Shader, Style};
 use crate::ramp::Ramp;
+use crate::vertices::Vertices;
 use crate::Color;
 use glam::{Affine2, Mat2, Vec2};
 use impeller_geometry::transform::{
@@ -1485,6 +1486,109 @@ impl Canvas {
             ClipState::content(self.depth),
         )?;
         Ok(self)
+    }
+
+    /// Draw a mesh of triangles the caller supplied.
+    ///
+    /// The one drawing call whose geometry does not come from tessellating a
+    /// shape, which is why it is also the one that can produce triangles this
+    /// renderer would never have made: overlapping, degenerate, wound either
+    /// way. None of that is checked beyond what [`Vertices`] checks at
+    /// construction, because a mesh is a caller saying what to draw rather
+    /// than what to draw *around*, and second-guessing it would defeat the
+    /// point.
+    ///
+    /// Not antialiased. Coverage here comes from the rasterizer's own rule
+    /// rather than from a distance field or a tessellated feather, and the
+    /// interior edges of a mesh are seams between triangles that must not be
+    /// feathered at all -- a mesh whose triangles each faded at their borders
+    /// would show a lattice of its own construction.
+    ///
+    /// Texture coordinates, where the mesh carries them, require an image
+    /// paint: they say where in a texture each vertex reads, and a paint with
+    /// no texture leaves them meaning nothing. The reverse is allowed -- an
+    /// image paint with no coordinates maps by position, the same as on any
+    /// other shape.
+    pub fn draw_vertices(&mut self, mesh: &Vertices, paint: &Paint) -> Result<&mut Self> {
+        if mesh.is_empty() || !paint.is_visible() {
+            return Ok(self);
+        }
+        if self.clip.is_some_and(Scissor::is_empty) {
+            return Ok(self);
+        }
+
+        let textured = !mesh.texture_coords().is_empty();
+        let material = match (&paint.shader, textured) {
+            (Shader::Image { .. }, true) => self.mesh_material(&paint.shader)?,
+            (_, true) => {
+                return Err(Error::Unsupported(
+                    "a mesh with texture coordinates needs an image paint to read",
+                ))
+            }
+            (_, false) => self.material_for(&paint.shader),
+        };
+
+        let to_clip = self.target.projection() * self.transform;
+        let coords = mesh.texture_coords();
+        let vertices: Vec<Vertex> = mesh
+            .positions()
+            .iter()
+            .enumerate()
+            .map(|(i, position)| {
+                let clip = to_clip.transform_point2(*position);
+                let uv = coords.get(i).copied().unwrap_or(Vec2::ZERO);
+                Vertex::new([clip.x, clip.y], [uv.x, uv.y])
+            })
+            .collect();
+
+        self.batch.push_mesh(
+            &vertices,
+            mesh.indices(),
+            material,
+            paint.blend,
+            self.clip,
+            ClipState::content(self.depth),
+        )?;
+        Ok(self)
+    }
+
+    /// The material for a mesh reading a texture at its own coordinates.
+    ///
+    /// Separate from [`Self::material_for`] because an image drawn on a shape
+    /// and an image drawn on a mesh are different materials rather than one
+    /// material in two modes -- the mapping, and the source rectangle that
+    /// selects part of a sheet, are both things the vertices have already
+    /// said. A caller wanting one sprite from a sheet states its texels in the
+    /// coordinates.
+    fn mesh_material(&mut self, shader: &Shader) -> Result<Material> {
+        let Shader::Image {
+            slot,
+            alpha,
+            tile,
+            tint,
+            source,
+            ..
+        } = shader
+        else {
+            return Err(Error::Unsupported("a mesh material needs an image paint"));
+        };
+        // A source rectangle and a per-vertex coordinate are two answers to
+        // the same question, and applying one on top of the other would mean a
+        // coordinate of one landed at the rectangle's far edge rather than at
+        // the texture's. Refused rather than ignored: a caller who set it
+        // meant something by it, and the mesh is where they say it instead.
+        if *source != Rect::new(0.0, 0.0, 1.0, 1.0) {
+            return Err(Error::Unsupported(
+                "a textured mesh states its own coordinates; put the source rectangle in them",
+            ));
+        }
+        let table_slot = self.slot_for(TextureSource::Image(*slot));
+        Ok(Material::Mesh {
+            slot: table_slot,
+            alpha: *alpha,
+            tint: tint.to_array(),
+            tile: *tile,
+        })
     }
 
     pub fn draw_line(&mut self, from: Vec2, to: Vec2, paint: &Paint) -> Result<&mut Self> {

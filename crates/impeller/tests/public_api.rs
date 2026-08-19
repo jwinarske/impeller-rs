@@ -10,7 +10,7 @@ use googletest::prelude::*;
 use impeller::{
     Atlas, BackendPreference, BlendMode, Canvas, Color, Context, Coverage, Dash, Extent2D,
     GlyphKey, GradientStop, Layer, Paint, Path, PathBuilder, PixelFormat, PositionedGlyph, Rect,
-    Result, TileMode, Vec2, MAX_STOPS,
+    Result, TileMode, Vec2, VertexMode, Vertices, MAX_STOPS,
 };
 
 const SIZE: Extent2D = Extent2D {
@@ -5232,4 +5232,183 @@ fn a_conical_gradient_whose_circles_are_tangent_draws_only_the_half_plane_it_spa
             "({x}, {y}) is on no circle of the family and should be untouched"
         );
     }
+}
+
+#[test]
+fn a_mesh_draws_the_triangles_it_names_and_nothing_else() {
+    // The only geometry here that this renderer did not produce itself, so the
+    // thing worth checking is that it is drawn as given: the diagonal of a
+    // square split into two triangles is inside both, and a corner cut off by
+    // omitting a triangle stays empty.
+    let Some(mut ctx) = context() else { return };
+    let mut canvas = Canvas::new(SIZE);
+    canvas.clear(Color::BLACK);
+
+    // One triangle of a square: (16,16), (112,16), (16,112). The far corner is
+    // outside it.
+    let mesh = Vertices::new(
+        VertexMode::Triangles,
+        vec![
+            Vec2::new(16.0, 16.0),
+            Vec2::new(112.0, 16.0),
+            Vec2::new(16.0, 112.0),
+        ],
+    )
+    .expect("mesh");
+    canvas
+        .draw_vertices(&mesh, &Paint::fill(Color::linear(1.0, 1.0, 1.0, 1.0)))
+        .expect("mesh");
+    let pixels = render(&mut ctx, canvas);
+
+    assert_eq!(
+        pixel(&pixels, 24, 24),
+        [255, 255, 255, 255],
+        "inside the triangle"
+    );
+    assert_eq!(
+        pixel(&pixels, 100, 100),
+        [0, 0, 0, 255],
+        "the corner the triangle does not cover"
+    );
+}
+
+#[test]
+fn a_mesh_travels_through_the_canvas_transform() {
+    let Some(mut ctx) = context() else { return };
+    let mut canvas = Canvas::new(SIZE);
+    canvas.clear(Color::BLACK);
+    canvas.translate(64.0, 0.0);
+    let mesh = Vertices::new(
+        VertexMode::Triangles,
+        vec![
+            Vec2::new(0.0, 16.0),
+            Vec2::new(48.0, 16.0),
+            Vec2::new(0.0, 112.0),
+        ],
+    )
+    .expect("mesh");
+    canvas
+        .draw_vertices(&mesh, &Paint::fill(Color::linear(1.0, 1.0, 1.0, 1.0)))
+        .expect("mesh");
+    let pixels = render(&mut ctx, canvas);
+
+    assert_eq!(
+        pixel(&pixels, 72, 24),
+        [255, 255, 255, 255],
+        "the mesh should have moved with the transform"
+    );
+    assert_eq!(
+        pixel(&pixels, 8, 24),
+        [0, 0, 0, 255],
+        "the mesh should not still be where it was written"
+    );
+}
+
+#[test]
+fn a_mesh_reads_the_texture_where_its_coordinates_say_rather_than_where_it_sits() {
+    // The whole reason texture coordinates exist here. The quad covers the
+    // target exactly as the image test's rectangle does, but names its
+    // coordinates mirrored, so every quadrant must come out on the opposite
+    // side from the positional draw. Sampling by position instead would
+    // produce the unmirrored picture, which is what makes this test able to
+    // tell the two apart at all.
+    let Some(mut ctx) = context() else { return };
+    let mut image = ctx
+        .create_image(Extent2D::new(4, 4), PixelFormat::Rgba8Unorm)
+        .expect("image");
+    ctx.write_image(&mut image, &quadrant_image())
+        .expect("upload");
+
+    let corners = vec![
+        Vec2::new(0.0, 0.0),
+        Vec2::new(128.0, 0.0),
+        Vec2::new(128.0, 128.0),
+        Vec2::new(0.0, 128.0),
+    ];
+    let mirrored = vec![
+        Vec2::new(1.0, 0.0),
+        Vec2::new(0.0, 0.0),
+        Vec2::new(0.0, 1.0),
+        Vec2::new(1.0, 1.0),
+    ];
+    let mesh = Vertices::indexed(
+        VertexMode::Triangles,
+        corners,
+        mirrored,
+        vec![0, 1, 2, 0, 2, 3],
+    )
+    .expect("mesh");
+
+    let mut canvas = Canvas::new(SIZE);
+    canvas.clear(Color::BLACK);
+    canvas
+        .draw_vertices(&mesh, &Paint::image(0, Rect::from_size(128.0, 128.0)))
+        .expect("mesh");
+
+    let mut surface = ctx
+        .create_surface(SIZE, PixelFormat::Rgba8Unorm)
+        .expect("surface");
+    ctx.draw_with_images(&mut surface, &canvas.finish(), &[&image])
+        .expect("draw");
+    let pixels = ctx.read(&mut surface).expect("read");
+    ctx.destroy_surface(surface);
+    ctx.destroy_image(image);
+
+    for (x, y, want, corner) in [
+        (16u32, 16u32, [0u8, 255, 0, 255], "top-left"),
+        (112, 16, [255, 0, 0, 255], "top-right"),
+        (16, 112, [255, 255, 0, 255], "bottom-left"),
+        (112, 112, [0, 0, 255, 255], "bottom-right"),
+    ] {
+        assert_eq!(
+            pixel(&pixels, x, y),
+            want,
+            "the {corner} corner read the wrong texel; the coordinates were ignored"
+        );
+    }
+}
+
+#[test]
+fn texture_coordinates_without_a_texture_are_refused_rather_than_dropped() {
+    let mut canvas = Canvas::new(SIZE);
+    let mesh = Vertices::textured(
+        VertexMode::Triangles,
+        vec![
+            Vec2::new(0.0, 0.0),
+            Vec2::new(64.0, 0.0),
+            Vec2::new(0.0, 64.0),
+        ],
+        vec![Vec2::ZERO, Vec2::X, Vec2::Y],
+    )
+    .expect("mesh");
+    assert!(
+        canvas
+            .draw_vertices(&mesh, &Paint::fill(Color::linear(1.0, 1.0, 1.0, 1.0)))
+            .is_err(),
+        "a solid paint has no texture for the coordinates to read"
+    );
+}
+
+#[test]
+fn a_source_rectangle_on_a_textured_mesh_is_refused_rather_than_applied_twice() {
+    // Two answers to one question. Silently ignoring the rectangle would put a
+    // coordinate of one at the texture's edge instead of the sprite's, which
+    // looks like a texture that failed to load rather than like a rule.
+    let mut canvas = Canvas::new(SIZE);
+    let mesh = Vertices::textured(
+        VertexMode::Triangles,
+        vec![
+            Vec2::new(0.0, 0.0),
+            Vec2::new(64.0, 0.0),
+            Vec2::new(0.0, 64.0),
+        ],
+        vec![Vec2::ZERO, Vec2::X, Vec2::Y],
+    )
+    .expect("mesh");
+    let paint =
+        Paint::image(0, Rect::from_size(64.0, 64.0)).with_source(Rect::new(0.0, 0.0, 0.5, 0.5));
+    assert!(
+        canvas.draw_vertices(&mesh, &paint).is_err(),
+        "a source rectangle and per-vertex coordinates both select part of the texture"
+    );
 }

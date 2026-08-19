@@ -175,25 +175,57 @@ fn to_gradient_space(clip: vec2<f32>) -> vec2<f32> {
 /// Getting this wrong is invisible until something samples a translucent
 /// texture: with an opaque one the two conventions agree, so a layer nested in
 /// another layer is the first thing that shows it.
+/// Bring a texture coordinate inside the unit square, the way this paint asks.
+///
+/// Shared by the two materials that sample a texture at a coordinate -- an
+/// image, which computes one from the fragment's position, and a mesh, which
+/// is handed one per vertex. Two copies of this would be two chances for a
+/// tiled image and a tiled mesh to disagree about what mirroring means.
+///
+/// Done here rather than through the sampler's address mode so that one
+/// sampler serves every draw: the modes are a property of the paint, and
+/// baking them into samplers would mean one sampler per combination.
+fn tile_uv(uv: vec2<f32>, tile: f32) -> vec2<f32> {
+    if (tile > 0.5 && tile < 1.5) {
+        // Repeat.
+        return fract(uv);
+    }
+    if (tile > 2.5) {
+        // Mirror, per axis: the same fold a gradient uses, applied to each
+        // component so a tiled image meets its neighbors on both edges.
+        return vec2<f32>(1.0) - abs(vec2<f32>(1.0) - (uv - 2.0 * floor(uv * 0.5)));
+    }
+    return clamp(uv, vec2<f32>(0.0), vec2<f32>(1.0));
+}
+
+/// A texture read at coordinates the vertices carried, tinted and scaled.
+///
+/// What a sprite batch draws with. There is no mapping to undo and no source
+/// rectangle to apply -- a caller who states a coordinate per vertex has
+/// already said which part of the sheet each corner reads -- so this is the
+/// image path with everything the vertices already answered taken out.
+fn sample_mesh(uv: vec2<f32>) -> vec4<f32> {
+    let tile = paint.geometry.y;
+    var texel = textureSampleLevel(image_texture, image_sampler, tile_uv(uv, tile), 0.0);
+    if (tile > 1.5 && tile < 2.5) {
+        // Decal, tested against the coordinate as given, since the tiled one
+        // is inside by construction.
+        if (any(uv < vec2<f32>(0.0)) || any(uv > vec2<f32>(1.0))) {
+            texel = vec4<f32>(0.0);
+        }
+    }
+    let tint = paint.stops[0];
+    let premultiplied = vec4<f32>(tint.rgb * tint.a, tint.a);
+    return texel * premultiplied * paint.geometry.x;
+}
+
 fn sample_image(clip: vec2<f32>) -> vec4<f32> {
     // The same mapping a radial gradient uses, so an image lands correctly on a
     // target that is not square and under a transform that rotates or scales.
     let uv = to_gradient_space(clip);
     let tile = paint.geometry.w;
 
-    var coord = uv;
-    if (tile > 0.5 && tile < 1.5) {
-        // Repeat. Done here rather than through the sampler's address mode so
-        // that one sampler serves every draw; the modes are a property of the
-        // paint, and baking them into samplers would mean one per combination.
-        coord = fract(uv);
-    } else if (tile > 2.5) {
-        // Mirror, per axis: the same fold a gradient uses, applied to each
-        // component so a tiled image meets its neighbors on both edges.
-        coord = vec2<f32>(1.0) - abs(vec2<f32>(1.0) - (uv - 2.0 * floor(uv * 0.5)));
-    } else {
-        coord = clamp(uv, vec2<f32>(0.0), vec2<f32>(1.0));
-    }
+    var coord = tile_uv(uv, tile);
 
     // Into the piece of the texture this paint selected. Applied after the
     // tiling above, so `coord` has already been wrapped within one repetition
@@ -554,6 +586,10 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         // Already premultiplied, like anything else sampled from a target, and
         // a weighted average of premultiplied colors is premultiplied.
         return blur_along_axis(in.clip);
+    }
+    if (kind > 9.5 && kind < 10.5) {
+        // Already premultiplied, like anything else sampled from a texture.
+        return sample_mesh(in.uv);
     }
     if (kind > 4.5 && kind < 5.5) {
         // Coverage rather than color: one channel scaling a solid, which is

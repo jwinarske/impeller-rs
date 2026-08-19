@@ -35,8 +35,8 @@ agreement with one implementation's decomposition of that surface.
 
 Where it could have mattered most, it does not. `drawVertices`, `drawAtlas`,
 color filters and image filters all live inside Impeller's own display-list
-directory, so those absences are this renderer's and not artifacts of measuring
-too high. `drawParagraph` is the clear case in the other direction — the
+directory, so what is missing among them is missing here and not an artifact of
+measuring too high. `drawParagraph` is the clear case in the other direction — the
 framework lays out a paragraph and the engine sees glyph runs, which is why it
 is marked out of scope rather than missing. `drawImageNine` and `drawShadow` are
 plausibly decomposed above Impeller as well; I have not confirmed either, and
@@ -83,8 +83,8 @@ reason.
 | `drawPaint` | via | a rect covering the target | |
 | `drawColor` | via | `clear` for a whole target; otherwise a rect with a blend | `transparent-background` |
 | `drawParagraph` | out of scope | shaping and layout are not this project's; `draw_glyphs` takes a positioned run and an atlas | glyph tests |
-| `drawVertices` | no | | |
-| `drawAtlas`, `drawRawAtlas` | no | | |
+| `drawVertices` | partial | `draw_vertices`, with positions and texture coordinates. Per-vertex colors are absent, since the vertex format carries none | `a_mesh_draws_the_triangles_it_names_and_nothing_else` |
+| `drawAtlas`, `drawRawAtlas` | via | build one mesh whose quads carry each sprite's texels as coordinates; that is one draw, which is the whole point of the call | |
 | `drawPoints`, `drawRawPoints` | no | | |
 | `drawDRRect` | no | | |
 | `drawShadow` | no | — the elevation-to-shadow rule, not just a blurred shape | |
@@ -137,8 +137,8 @@ above it or not at all:
 
 ## Where that leaves it
 
-Of forty-seven rows across `Canvas` and `Paint`: twenty-three exist, four are
-partial, six are expressible by a caller who assembles them, thirteen are
+Of forty-seven rows across `Canvas` and `Paint`: twenty-three exist, five are
+partial, seven are expressible by a caller who assembles them, eleven are
 absent, and one is out of scope. Counting them is the least interesting thing
 about the table -- the absences are not equal, and a reader deciding whether
 this renderer is usable should look at which ones rather than how many.
@@ -160,8 +160,14 @@ build them:
    "the budget is full" — it was full of one thing that was not paying for
    itself, and that is worth checking before concluding a mechanism has to
    change.
-2. **`drawVertices` and `drawAtlas`** — arbitrary meshes and batched sprites.
-   The geometry path already produces vertex buffers, so this is mostly API.
+2. **Per-vertex colors**, which is what `drawVertices` is still missing. A
+   mesh can be drawn and can read a texture at coordinates its vertices carry;
+   what it cannot do is give each vertex a color. That is not an API gap but a
+   vertex-format one -- position and texture coordinate are all a vertex holds,
+   and a third attribute is paid for by every solid fill in every frame unless
+   it comes with a second pipeline. Which of those two is right is the decision
+   this row is waiting on, and it should be made against a measurement rather
+   than in the abstract.
 3. **Runtime effects** — user fragment shaders. The largest by far: it needs a
    shader pipeline that compiles at runtime rather than at build time, which is
    a different arrangement from the one here.

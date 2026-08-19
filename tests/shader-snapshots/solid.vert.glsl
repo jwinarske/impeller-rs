@@ -34,6 +34,16 @@ vec2 tile_gradient(float t_2, float tile) {
     return vec2(clamp(t_2, 0.0, 1.0), 1.0);
 }
 
+vec2 tile_uv(vec2 uv_1, float tile_1) {
+    if (((tile_1 > 0.5) && (tile_1 < 1.5))) {
+        return fract(uv_1);
+    }
+    if ((tile_1 > 2.5)) {
+        return (vec2(1.0) - abs((vec2(1.0) - (uv_1 - (2.0 * floor((uv_1 * 0.5)))))));
+    }
+    return clamp(uv_1, vec2(0.0), vec2(1.0));
+}
+
 float coverage_of(float distance_, float per_pixel, float width) {
     float inside_1 = clamp((0.5 - (distance_ / per_pixel)), 0.0, 1.0);
     if ((width <= 0.0)) {
