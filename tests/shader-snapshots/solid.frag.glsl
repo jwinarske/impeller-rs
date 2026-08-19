@@ -74,6 +74,16 @@ vec2 tile_gradient(float t_1, float tile) {
     return vec2(clamp(t_1, 0.0, 1.0), 1.0);
 }
 
+vec4 gradient_color(float t_2, int count_1) {
+    float _e5 = _push_constant_binding_fs.params.w;
+    if ((_e5 > 0.5)) {
+        vec4 _e13 = textureLod(_group_0_binding_0_fs, vec2(vec2(t_2, 0.5)), 0.0);
+        return _e13;
+    }
+    vec4 _e14 = sample_stops(t_2, count_1);
+    return _e14;
+}
+
 vec2 to_gradient_space(vec2 clip) {
     vec4 _e3 = _push_constant_binding_fs.geometry;
     vec2 delta = (clip - _e3.xy);
@@ -225,23 +235,23 @@ void main() {
     color = _e4;
     float kind = _push_constant_binding_fs.params.y;
     float _e13 = _push_constant_binding_fs.params.x;
-    int count_1 = int(_e13);
+    int count_2 = int(_e13);
     if (((kind > 0.5) && (kind < 1.5))) {
         vec4 _e22 = _push_constant_binding_fs.geometry;
         vec2 axis = _e22.zw;
         float length_squared = max(dot(axis, axis), 1e-6);
         vec2 _e28 = to_gradient_space(in_.clip);
-        float t_2 = (dot(_e28, axis) / length_squared);
+        float t_3 = (dot(_e28, axis) / length_squared);
         float _e34 = _push_constant_binding_fs.params.z;
-        vec2 _e35 = tile_gradient(t_2, _e34);
-        vec4 _e37 = sample_stops(_e35.x, count_1);
+        vec2 _e35 = tile_gradient(t_3, _e34);
+        vec4 _e37 = gradient_color(_e35.x, count_2);
         color = (_e37 * _e35.y);
     } else {
         if (((kind > 1.5) && (kind < 2.5))) {
             vec2 _e46 = to_gradient_space(in_.clip);
             float _e51 = _push_constant_binding_fs.params.z;
             vec2 _e52 = tile_gradient(length(_e46), _e51);
-            vec4 _e54 = sample_stops(_e52.x, count_1);
+            vec4 _e54 = gradient_color(_e52.x, count_2);
             color = (_e54 * _e52.y);
         } else {
             if (((kind > 2.5) && (kind < 3.5))) {
@@ -254,7 +264,7 @@ void main() {
                 float ahead = (delta_1 - (6.2831855 * floor((delta_1 / 6.2831855))));
                 float _e88 = _push_constant_binding_fs.params.z;
                 vec2 _e89 = tile_gradient((ahead / sweep), _e88);
-                vec4 _e91 = sample_stops(_e89.x, count_1);
+                vec4 _e91 = gradient_color(_e89.x, count_2);
                 color = (_e91 * _e89.y);
             }
         }

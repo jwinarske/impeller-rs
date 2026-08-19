@@ -420,6 +420,7 @@ fn a_swapchain_image_carries_texture_coordinates_like_any_other_target() {
                         impeller_hal::Stop::new([0.0, 0.0, 1.0, 1.0], 1.0),
                     ],
                     tile: Default::default(),
+                    ramp: None,
                 },
                 BlendMode::Src,
                 None,

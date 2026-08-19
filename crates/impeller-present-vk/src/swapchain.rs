@@ -97,7 +97,10 @@ struct FrameSlot {
     /// and so has to stay `Send`, while a texture tracks its own image layout
     /// in a cell. The lifetime rule is the same either way: released when the
     /// submission that reads them retires.
-    layers: Vec<impeller_hal_vulkan::VulkanTexture>,
+    /// Layer targets and baked gradients this frame owns, freed when its
+    /// work is done. What each one was stops mattering once the submission
+    /// is made; when it is safe to free is the same answer for all of them.
+    retained: Vec<impeller_hal_vulkan::VulkanTexture>,
 }
 
 /// A swapchain, its images, and the frame in flight.
@@ -176,7 +179,7 @@ impl SwapchainTarget {
                 Ok(acquired) => slots.push(FrameSlot {
                     acquired,
                     in_flight: None,
-                    layers: Vec::new(),
+                    retained: Vec::new(),
                 }),
                 Err(e) => {
                     for slot in slots {
@@ -412,7 +415,7 @@ impl SwapchainTarget {
                 ctx.retire_fence(fence);
             }
             // After the fence, since the submission was sampling them.
-            for layer in std::mem::take(&mut self.slots[index].layers) {
+            for layer in std::mem::take(&mut self.slots[index].retained) {
                 ctx.destroy_texture(layer);
             }
         }
@@ -473,25 +476,24 @@ impl SwapchainTarget {
         recording: &impeller_core::Recording,
         images: &[&impeller_hal_vulkan::VulkanTexture],
     ) -> Result<()> {
-        let layers = impeller_core::execute_layers::<impeller_hal_vulkan::VulkanHal>(
+        let transient = impeller_core::execute_layers::<impeller_hal_vulkan::VulkanHal>(
             ctx, recording, images,
         )?;
         let root = recording.root();
-        let outcome =
-            impeller_core::resolve_sources::<impeller_hal_vulkan::VulkanHal>(root, images, &layers)
-                .and_then(|table| self.submit_textured(ctx, &root.batch, root.descriptor, &table));
+        let outcome = impeller_core::resolve_sources::<impeller_hal_vulkan::VulkanHal>(
+            root, images, &transient,
+        )
+        .and_then(|table| self.submit_textured(ctx, &root.batch, root.descriptor, &table));
 
         // Kept whichever way the submission went. On success the fence is
         // reading them; on failure there is no fence, and dropping them here
         // rather than leaking is what the slot's own release does anyway.
         let slot = self.acquired.as_ref().map(|a| a.slot);
         match slot {
-            Some(slot) if outcome.is_ok() => self.slots[slot].layers.extend(layers),
-            _ => {
-                for layer in layers {
-                    ctx.destroy_texture(layer);
-                }
+            Some(slot) if outcome.is_ok() => {
+                self.slots[slot].retained.extend(transient.into_textures())
             }
+            _ => transient.destroy(ctx),
         }
         outcome
     }
@@ -570,7 +572,7 @@ impl PresentTarget<VulkanHal> for SwapchainTarget {
         }
         // Whatever that frame composited is finished with, and this is the
         // first moment it is safe to say so.
-        for layer in std::mem::take(&mut self.slots[slot].layers) {
+        for layer in std::mem::take(&mut self.slots[slot].retained) {
             ctx.destroy_texture(layer);
         }
 

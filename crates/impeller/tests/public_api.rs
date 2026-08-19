@@ -2153,56 +2153,128 @@ fn a_draw_placed_at_nan_contributes_nothing() {
 }
 
 #[test]
-fn a_gradient_with_more_stops_than_fit_is_refused_rather_than_truncated() {
-    // The limit is public, and used here rather than written as a number: a
-    // test that hard-coded four would keep passing while saying nothing if the
-    // limit moved.
-    let ramp = |n: usize| -> Vec<GradientStop> {
-        (0..n)
-            .map(|i| {
-                let t = i as f32 / (n - 1) as f32;
-                GradientStop::new(Color::linear(t, 0.0, 1.0 - t, 1.0), t)
-            })
-            .collect()
+fn a_gradient_with_many_stops_agrees_with_one_that_fits() {
+    let Some(mut ctx) = context() else { return };
+    // The two paths through the shader must produce the same picture where both
+    // can express it. Below the limit the stops travel in push constants and
+    // are walked; above it the recorder tabulates them into a texture and the
+    // shader reads it. A caller does not choose between those and should not be
+    // able to tell which happened.
+    //
+    // So: the same gradient stated twice. Four stops that fit, and the same
+    // ramp restated with extra stops placed exactly on the line between them,
+    // which changes nothing about the gradient and everything about how it is
+    // carried.
+    let ends = vec![
+        GradientStop::new(Color::linear(1.0, 0.0, 0.0, 1.0), 0.0),
+        GradientStop::new(Color::linear(0.5, 0.0, 0.5, 1.0), 0.5),
+        GradientStop::new(Color::linear(0.0, 0.0, 1.0, 1.0), 1.0),
+    ];
+    let mut many = ends.clone();
+    for (offset, t) in [(0.25, 0.25f32), (0.75, 0.75)] {
+        // Exactly on the line: red to purple to blue is linear in each half.
+        let c = if t < 0.5 { t * 2.0 } else { (t - 0.5) * 2.0 };
+        let color = if t < 0.5 {
+            Color::linear(1.0 - c * 0.5, 0.0, c * 0.5, 1.0)
+        } else {
+            Color::linear(0.5 - c * 0.5, 0.0, 0.5 + c * 0.5, 1.0)
+        };
+        many.push(GradientStop::new(color, offset));
+    }
+    many.sort_by(|a, b| a.offset.partial_cmp(&b.offset).unwrap());
+    assert!(
+        ends.len() <= MAX_STOPS,
+        "the control must take the walked path"
+    );
+    assert!(
+        many.len() > MAX_STOPS,
+        "the subject must take the ramp path"
+    );
+
+    let render_with = |ctx: &mut Context, stops: Vec<GradientStop>| {
+        let mut canvas = Canvas::new(SIZE);
+        canvas.clear(Color::BLACK);
+        canvas
+            .draw_rect(
+                Rect::from_size(128.0, 128.0),
+                &Paint::linear_gradient(Vec2::ZERO, Vec2::new(128.0, 0.0), stops)
+                    .with_anti_alias(false),
+            )
+            .expect("gradient");
+        render(ctx, canvas)
     };
 
+    let walked = render_with(&mut ctx, ends);
+    let sampled = render_with(&mut ctx, many);
+
+    // Eight bits through a transfer function is not the same arithmetic as
+    // interpolating in linear float, so this is a tolerance rather than an
+    // equality -- but a small one, and any real disagreement about where a
+    // color sits would be far larger than a quantization step.
+    let mut worst = 0i32;
+    for x in 0..128u32 {
+        let a = pixel(&walked, x, 64);
+        let b = pixel(&sampled, x, 64);
+        for channel in 0..4 {
+            worst = worst.max((a[channel] as i32 - b[channel] as i32).abs());
+        }
+    }
+    assert!(
+        worst <= 3,
+        "the two paths disagree by {worst}, which is more than rounding"
+    );
+    // And the gradient is a gradient rather than two flat halves, which is what
+    // a ramp that failed to upload would look like against a black clear.
+    let left = pixel(&sampled, 4, 64);
+    let right = pixel(&sampled, 124, 64);
+    assert!(left[0] > 200 && left[2] < 60, "left end {left:?}");
+    assert!(right[2] > 200 && right[0] < 60, "right end {right:?}");
+}
+
+#[test]
+fn a_gradient_with_many_stops_places_each_one_where_it_was_asked_for() {
+    let Some(mut ctx) = context() else { return };
+    // The agreement test above uses stops that lie on the line, so it would
+    // pass against a ramp that ignored the extra ones entirely. This one cannot:
+    // six stops, each a different color, at offsets a truncating implementation
+    // would never reach.
+    let stops = vec![
+        GradientStop::new(Color::linear(1.0, 0.0, 0.0, 1.0), 0.0),
+        GradientStop::new(Color::linear(1.0, 1.0, 0.0, 1.0), 0.2),
+        GradientStop::new(Color::linear(0.0, 1.0, 0.0, 1.0), 0.4),
+        GradientStop::new(Color::linear(0.0, 1.0, 1.0, 1.0), 0.6),
+        GradientStop::new(Color::linear(0.0, 0.0, 1.0, 1.0), 0.8),
+        GradientStop::new(Color::linear(1.0, 0.0, 1.0, 1.0), 1.0),
+    ];
     let mut canvas = Canvas::new(SIZE);
     canvas.clear(Color::BLACK);
-    // At the limit, every shape and every road into a draw accepts it.
-    let fits = Paint::linear_gradient(Vec2::ZERO, Vec2::new(128.0, 0.0), ramp(MAX_STOPS));
     canvas
-        .draw_rect(Rect::from_size(64.0, 64.0), &fits)
-        .expect("a gradient at the limit");
-    canvas
-        .draw_rrect(Rect::from_size(64.0, 64.0), 8.0, &fits)
-        .expect("a rounded rectangle at the limit");
+        .draw_rect(
+            Rect::from_size(128.0, 128.0),
+            &Paint::linear_gradient(Vec2::ZERO, Vec2::new(128.0, 0.0), stops)
+                .with_anti_alias(false),
+        )
+        .expect("gradient");
+    let pixels = render(&mut ctx, canvas);
 
-    // One past it, every shape refuses. The rounded rectangle and the circle
-    // are here because they have a second, analytic road -- but only for a
-    // solid color, so a gradient falls back to tessellation and is caught with
-    // everything else. That is worth asserting rather than assuming: it is the
-    // reason one guard suffices, and if the analytic path ever learns
-    // gradients these are the cases that will notice.
-    let too_many = Paint::linear_gradient(Vec2::ZERO, Vec2::new(128.0, 0.0), ramp(MAX_STOPS + 1));
-    assert_eq!(too_many.shader.stop_count(), MAX_STOPS + 1);
-    assert!(
-        canvas
-            .draw_rect(Rect::from_size(64.0, 64.0), &too_many)
-            .is_err(),
-        "a tessellated draw truncated the stops instead of refusing"
-    );
-    assert!(
-        canvas
-            .draw_rrect(Rect::from_size(64.0, 64.0), 8.0, &too_many)
-            .is_err(),
-        "an analytic draw truncated the stops instead of refusing"
-    );
-    assert!(
-        canvas
-            .draw_circle(Vec2::new(32.0, 32.0), 16.0, &too_many)
-            .is_err(),
-        "a circle truncated the stops instead of refusing"
-    );
+    // Each stop sits a fifth of the way along, so each is checked at its own
+    // column. The fifth and sixth are the ones a four-stop truncation loses.
+    for (name, x, want) in [
+        ("red", 0u32, [255u8, 0, 0]),
+        ("yellow", 25, [255, 255, 0]),
+        ("green", 51, [0, 255, 0]),
+        ("cyan", 77, [0, 255, 255]),
+        ("blue", 102, [0, 0, 255]),
+        ("magenta", 127, [255, 0, 255]),
+    ] {
+        let got = pixel(&pixels, x, 64);
+        for channel in 0..3 {
+            assert!(
+                (got[channel] as i32 - want[channel] as i32).abs() <= 12,
+                "the {name} stop came back {got:?}, wanted about {want:?}"
+            );
+        }
+    }
 }
 
 #[test]

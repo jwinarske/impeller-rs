@@ -9,7 +9,95 @@
 //! level where layers cannot be expressed.
 
 use crate::canvas::{Pass, Recording, TextureSource};
-use impeller_hal::{Error, Hal, HalContext, PixelFormat, Result, TextureDescriptor};
+use crate::ramp::RAMP_WIDTH;
+use impeller_hal::{Error, Extent2D, Hal, HalContext, PixelFormat, Result, TextureDescriptor};
+
+/// The textures a recording needs that it did not arrive with.
+///
+/// Layer targets are rendered and baked gradients are uploaded, both per
+/// submission and both released with it. Grouped because they are the same
+/// thing from the caller's side -- resources this frame owns and must destroy
+/// after the work that reads them -- and because a caller that has to submit
+/// the root pass itself would otherwise be handed two lists and trusted to
+/// keep them together.
+pub struct Transient<H: Hal> {
+    /// One per non-root pass, in pass order.
+    pub layers: Vec<H::Texture>,
+    /// One per entry in [`Recording::ramps`], in that order.
+    pub ramps: Vec<H::Texture>,
+}
+
+impl<H: Hal> Transient<H> {
+    fn empty() -> Self {
+        Self {
+            layers: Vec::new(),
+            ramps: Vec::new(),
+        }
+    }
+
+    /// Everything this frame owns, as one list to release when it is done.
+    ///
+    /// For a caller that keeps the resources alive past this call -- a
+    /// presentation target holding them until its fence signals -- where a
+    /// texture came from stops mattering the moment the submission is made.
+    /// What remains is when it is safe to free, and that answer is the same for
+    /// all of them.
+    pub fn into_textures(self) -> Vec<H::Texture> {
+        let mut all = self.layers;
+        all.extend(self.ramps);
+        all
+    }
+
+    /// Release everything, in any order: nothing here refers to anything else.
+    pub fn destroy(self, ctx: &mut H::Context)
+    where
+        H::Context: HalContext<Hal = H>,
+    {
+        for texture in self.layers.into_iter().chain(self.ramps) {
+            ctx.destroy_texture(texture);
+        }
+    }
+}
+
+/// Upload every baked gradient the recording carries.
+///
+/// The format is sRGB, which is the whole reason the ramp is stored the way it
+/// is: the device decodes it on sampling, so eight bits are spaced the way the
+/// eye reads them rather than uniformly across a linear range, where the dark
+/// end of a gradient would band.
+fn upload_ramps<H: Hal>(ctx: &mut H::Context, recording: &Recording) -> Result<Vec<H::Texture>>
+where
+    H::Context: HalContext<Hal = H>,
+{
+    let mut uploaded = Vec::with_capacity(recording.ramps.len());
+    for ramp in &recording.ramps {
+        let extent = Extent2D::new(RAMP_WIDTH as u32, 1);
+        let outcome = ctx
+            .create_texture(&TextureDescriptor::offscreen(
+                extent,
+                PixelFormat::Rgba8UnormSrgb,
+            ))
+            .and_then(
+                |mut texture| match ctx.write_texture(&mut texture, &ramp.texels) {
+                    Ok(()) => Ok(texture),
+                    Err(e) => {
+                        ctx.destroy_texture(texture);
+                        Err(e)
+                    }
+                },
+            );
+        match outcome {
+            Ok(texture) => uploaded.push(texture),
+            Err(e) => {
+                for texture in uploaded {
+                    ctx.destroy_texture(texture);
+                }
+                return Err(e);
+            }
+        }
+    }
+    Ok(uploaded)
+}
 
 /// Resolve one pass's slot table against the caller's images and the layers
 /// rendered so far.
@@ -20,7 +108,7 @@ use impeller_hal::{Error, Hal, HalContext, PixelFormat, Result, TextureDescripto
 pub fn resolve_sources<'a, H: Hal>(
     pass: &Pass,
     images: &[&'a H::Texture],
-    layers: &'a [H::Texture],
+    transient: &'a Transient<H>,
 ) -> Result<Vec<&'a H::Texture>> {
     let mut table = Vec::with_capacity(pass.sources.len());
     for source in &pass.sources {
@@ -34,8 +122,16 @@ pub fn resolve_sources<'a, H: Hal>(
             // recording that named a later one would be malformed rather than
             // merely out of order.
             TextureSource::Layer(pass_index) => {
-                table.push(layers.get(*pass_index).ok_or(Error::Unsupported(
+                table.push(transient.layers.get(*pass_index).ok_or(Error::Unsupported(
                     "a layer is composited before it is rendered",
+                ))?);
+            }
+            // Uploaded before any pass runs, so unlike a layer this cannot be
+            // named too early. A miss means the recording and its ramp table
+            // disagree, which is malformed rather than merely out of order.
+            TextureSource::Ramp(index) => {
+                table.push(transient.ramps.get(*index).ok_or(Error::Unsupported(
+                    "a gradient names a ramp the recording does not carry",
                 ))?);
             }
         }
@@ -58,16 +154,20 @@ pub fn execute_layers<H: Hal>(
     ctx: &mut H::Context,
     recording: &Recording,
     images: &[&H::Texture],
-) -> Result<Vec<H::Texture>>
+) -> Result<Transient<H>>
 where
     H::Context: HalContext<Hal = H>,
 {
-    // Rendered in order, so a layer is always finished before the pass that
+    // Gradients first: a layer pass can sample one, so they have to exist
+    // before any pass runs rather than before the root pass.
+    let mut transient = Transient::<H>::empty();
+    transient.ramps = upload_ramps::<H>(ctx, recording)?;
+
+    // Layers rendered in order, so one is always finished before the pass that
     // samples it -- which is the order a recording stores them in, since a
     // layer is filed when it is restored and cannot be composited before that.
-    let mut layers: Vec<H::Texture> = Vec::new();
     for pass in &recording.passes[..recording.passes.len() - 1] {
-        let outcome = resolve_sources::<H>(pass, images, &layers).and_then(|table| {
+        let outcome = resolve_sources::<H>(pass, images, &transient).and_then(|table| {
             let mut target = ctx.create_texture(&TextureDescriptor::offscreen(
                 pass.extent,
                 PixelFormat::Rgba8Unorm,
@@ -80,28 +180,19 @@ where
             Ok((target, result)) => {
                 // The target joins the list whether or not the draw succeeded,
                 // so a failure releases it with the rest rather than leaking.
-                layers.push(target);
+                transient.layers.push(target);
                 if let Err(e) = result {
-                    destroy_all::<H>(ctx, layers);
+                    transient.destroy(ctx);
                     return Err(e);
                 }
             }
             Err(e) => {
-                destroy_all::<H>(ctx, layers);
+                transient.destroy(ctx);
                 return Err(e);
             }
         }
     }
-    Ok(layers)
-}
-
-fn destroy_all<H: Hal>(ctx: &mut H::Context, layers: Vec<H::Texture>)
-where
-    H::Context: HalContext<Hal = H>,
-{
-    for layer in layers {
-        ctx.destroy_texture(layer);
-    }
+    Ok(transient)
 }
 
 /// Render every pass of a recording, layers first, root into the surface.
@@ -122,11 +213,11 @@ pub fn execute<H: Hal>(
 where
     H::Context: HalContext<Hal = H>,
 {
-    let layers = execute_layers::<H>(ctx, recording, images)?;
+    let transient = execute_layers::<H>(ctx, recording, images)?;
     let root = recording.root();
-    let outcome = resolve_sources::<H>(root, images, &layers)
+    let outcome = resolve_sources::<H>(root, images, &transient)
         .and_then(|table| ctx.submit_batch_textured(surface, &root.batch, root.descriptor, &table));
-    destroy_all::<H>(ctx, layers);
+    transient.destroy(ctx);
     outcome
 }
 
@@ -171,20 +262,20 @@ pub fn execute_deferred<H: Hal>(
     surface: &mut H::Texture,
     recording: &Recording,
     images: &[&H::Texture],
-) -> Result<(H::Fence, Vec<H::Texture>)>
+) -> Result<(H::Fence, Transient<H>)>
 where
     H::Context: HalContext<Hal = H>,
 {
-    let layers = execute_layers::<H>(ctx, recording, images)?;
+    let transient = execute_layers::<H>(ctx, recording, images)?;
     let root = recording.root();
-    let outcome = resolve_sources::<H>(root, images, &layers).and_then(|table| {
+    let outcome = resolve_sources::<H>(root, images, &transient).and_then(|table| {
         ctx.submit_batch_deferred_textured(surface, &root.batch, root.descriptor, &table)
     });
     match outcome {
-        Ok(fence) => Ok((fence, layers)),
+        Ok(fence) => Ok((fence, transient)),
         Err(e) => {
             // No fence means nothing is reading them, so this is the moment.
-            destroy_all::<H>(ctx, layers);
+            transient.destroy(ctx);
             Err(e)
         }
     }

@@ -6,7 +6,8 @@
 //! described before any of it reaches the GPU — that separation is what lets
 //! draws be batched into one pass rather than submitted one at a time.
 
-use crate::paint::{Paint, Shader, Style};
+use crate::paint::{GradientStop, Paint, Shader, Style};
+use crate::ramp::Ramp;
 use crate::Color;
 use glam::{Affine2, Mat2, Vec2};
 use impeller_geometry::transform::{
@@ -140,6 +141,12 @@ pub enum TextureSource {
     Image(u32),
     /// The output of the pass at this index in [`Recording::passes`].
     Layer(usize),
+    /// The baked gradient at this index in [`Recording::ramps`].
+    ///
+    /// Unlike the other two this names something the recorder made rather than
+    /// something it was given or rendered, so it is uploaded at submission and
+    /// discarded with the frame.
+    Ramp(usize),
 }
 
 /// One target's worth of drawing.
@@ -173,6 +180,12 @@ pub struct Recording {
     /// The size of the caller's surface, which is what the root pass renders
     /// at. A layer pass may be smaller; see [`Pass::extent`].
     pub extent: Extent2D,
+    /// Gradients whose colors were too many to carry in a material, tabulated.
+    ///
+    /// Recorded here rather than per pass because a slot table is per pass and
+    /// this is not: the same gradient drawn into a layer and again over it is
+    /// one ramp named twice.
+    pub ramps: Vec<Ramp>,
 }
 
 impl Recording {
@@ -362,38 +375,11 @@ pub struct Canvas {
     /// request on some shapes.
     anti_alias: bool,
     samples: u32,
-}
-
-/// Refuse a gradient carrying more stops than the pipeline can place.
-///
-/// The material packs a fixed number and used to take the first of them, which
-/// draws a gradient that is right up to a point and flat after it -- visibly
-/// wrong, plausibly a design decision, and impossible to tell from a correct
-/// gradient without counting. That is the shape of mistake this renderer
-/// refuses elsewhere: a device without the advanced blend modes reports them
-/// unavailable rather than substituting the nearest, and a glyph run given a
-/// gradient is refused rather than tinted with its first stop.
-///
-/// Lifting the limit means baking the stops into a ramp texture and sampling
-/// it, which is now possible -- the pipeline samples textures for images,
-/// glyphs and blurs -- and is a feature rather than a fix. Until then a caller
-/// reads the limit from [`MAX_STOPS`] and resamples its own ramp, which is what
-/// this would have to do for it anyway.
-///
-/// Called from `draw_path` alone, which is every road a gradient can take: the
-/// analytic shapes carry a solid color by construction and fall back to
-/// tessellation for anything else, so a rounded rectangle filled by a gradient
-/// arrives here like any other shape. A second call on that road looked like
-/// prudence and was unreachable, which a mutation test showed by deleting it
-/// and changing nothing.
-fn check_stops(paint: &Paint) -> Result<()> {
-    if paint.shader.stop_count() > MAX_STOPS {
-        return Err(Error::Unsupported(
-            "a gradient carries more color stops than this pipeline can place; \
-             see MAX_STOPS",
-        ));
-    }
-    Ok(())
+    /// Gradients tabulated because their stops did not fit in a material.
+    ///
+    /// Across the whole recording rather than per pass, so the same gradient
+    /// drawn into a layer and again over it is baked once.
+    ramps: Vec<Ramp>,
 }
 
 impl Canvas {
@@ -415,6 +401,7 @@ impl Canvas {
             background: None,
             anti_alias: false,
             samples: 4,
+            ramps: Vec::new(),
         }
     }
 
@@ -641,6 +628,34 @@ impl Canvas {
     /// Slots are per pass rather than global, because each pass carries its own
     /// table. Deduplicating means a recording that draws the same image twenty
     /// times binds one texture rather than twenty.
+    /// The slot holding this gradient's colors, when they cannot be carried.
+    ///
+    /// `None` for the ordinary case, which keeps the stops in push constants
+    /// and costs no texture, no upload and no binding. Only a gradient with
+    /// more stops than a material can hold pays for a ramp, and it pays once
+    /// per distinct gradient rather than once per draw.
+    fn ramp_for(&mut self, stops: &[GradientStop]) -> Option<u32> {
+        (stops.len() > MAX_STOPS).then(|| self.ramp_slot(stops))
+    }
+
+    /// Tabulate a gradient's colors and return the slot holding them.
+    ///
+    /// Called only where the stops outnumber what a material can carry. The
+    /// ramp is deduplicated across the recording by its contents, because the
+    /// same gradient drawn twice is one texture, and a frame that paints a
+    /// hundred list rows with one theme gradient should upload it once.
+    fn ramp_slot(&mut self, stops: &[GradientStop]) -> u32 {
+        let ramp = Ramp::bake(stops);
+        let index = match self.ramps.iter().position(|r| *r == ramp) {
+            Some(index) => index,
+            None => {
+                self.ramps.push(ramp);
+                self.ramps.len() - 1
+            }
+        };
+        self.slot_for(TextureSource::Ramp(index))
+    }
+
     fn slot_for(&mut self, source: TextureSource) -> u32 {
         if let Some(index) = self.sources.iter().position(|s| *s == source) {
             return index as u32;
@@ -728,7 +743,6 @@ impl Canvas {
     }
 
     pub fn draw_path(&mut self, path: &Path, paint: &Paint) -> Result<&mut Self> {
-        check_stops(paint)?;
         if !paint.is_visible() || path.is_empty() {
             return Ok(self);
         }
@@ -845,6 +859,7 @@ impl Canvas {
                 if !axis.is_finite() || !start.is_finite() {
                     return Material::Solid([0.0; 4]);
                 }
+                let ramp_slot = self.ramp_for(stops);
                 Material::LinearGradient {
                     start: [start.x, start.y],
                     axis: [axis.x, axis.y],
@@ -854,6 +869,7 @@ impl Canvas {
                     to_local: invert_or_identity(to_clip.matrix2),
                     stops: stops_of(stops),
                     tile: *tile,
+                    ramp: ramp_slot,
                 }
             }
             Shader::RadialGradient {
@@ -869,11 +885,13 @@ impl Canvas {
                 if !center_clip.is_finite() || !scaled.is_finite() {
                     return Material::Solid([0.0; 4]);
                 }
+                let ramp_slot = self.ramp_for(stops);
                 Material::RadialGradient {
                     center: [center_clip.x, center_clip.y],
                     to_local: invert_or_identity(scaled),
                     stops: stops_of(stops),
                     tile: *tile,
+                    ramp: ramp_slot,
                 }
             }
             Shader::SweepGradient {
@@ -887,6 +905,7 @@ impl Canvas {
                 if !center_clip.is_finite() || !start_angle.is_finite() || !end_angle.is_finite() {
                     return Material::Solid([0.0; 4]);
                 }
+                let ramp_slot = self.ramp_for(stops);
                 Material::SweepGradient {
                     center: [center_clip.x, center_clip.y],
                     to_local: invert_or_identity(to_clip.matrix2),
@@ -894,6 +913,7 @@ impl Canvas {
                     end_angle: *end_angle,
                     stops: stops_of(stops),
                     tile: *tile,
+                    ramp: ramp_slot,
                 }
             }
         }
@@ -1395,6 +1415,7 @@ impl Canvas {
         Recording {
             passes,
             extent: self.extent,
+            ramps: self.ramps,
         }
     }
 }

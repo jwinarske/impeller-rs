@@ -405,7 +405,20 @@ does not. Its mapping reuses the same origin-plus-matrix pair a radial gradient
 needs — clip space is anisotropic on a non-square target, so both must map back
 before measuring — and the texture is a binding rather than data. What would
 break the budget is a material wanting a gradient's stops and an image's mapping
-at once; nothing does yet, and that is when a uniform buffer becomes the answer.
+at once, and that is when a uniform buffer becomes the answer.
+
+**A gradient with more stops than the material carries is tabulated rather than
+truncated.** Four fit, which is almost every real gradient and costs no texture;
+past that the recorder evaluates the ramp into a small image and the shader
+reads the color at the parameter instead of computing it. That is the case above
+turned around rather than met: such a material wants a gradient's *mapping* and
+a binding, and no longer wants its stops at all, so the budget is not the
+constraint. The ramp is stored through an sRGB format so eight bits are spaced
+the way the eye reads them — linear eight-bit color bands in the darks — and
+holds straight rather than premultiplied color, because a transfer function does
+not commute with multiplying by alpha. Both paths therefore hand the same shape
+of value to the same premultiply at the end, which is what makes the choice
+between them invisible.
 
 **Upload is the exact inverse of readback**, in the same tightly packed
 top-row-first layout, so a round trip through the pair is the identity on both

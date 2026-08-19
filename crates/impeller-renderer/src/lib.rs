@@ -74,6 +74,7 @@ impl Paint {
                 to_local: invert_or_identity(to_clip.matrix2),
                 stops,
                 tile: Default::default(),
+                ramp: None,
             },
             blend: BlendMode::default(),
             clip: None,

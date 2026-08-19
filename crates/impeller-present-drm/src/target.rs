@@ -32,7 +32,10 @@ struct Slot<H: Hal> {
     /// Released when the slot comes free, which is after either the fence has
     /// signalled or the kernel has flipped a commit it gated on that fence --
     /// so in both paths the submission that sampled them has finished.
-    layers: Vec<H::Texture>,
+    /// Layer targets and baked gradients this frame owns, freed when its
+    /// work is done. What each one was stops mattering once the submission
+    /// is made; when it is safe to free is the same answer for all of them.
+    retained: Vec<H::Texture>,
 }
 
 /// A presentation target that scans out directly to a display.
@@ -150,7 +153,7 @@ where
                 fb,
                 on_screen: false,
                 fence: None,
-                layers: Vec::new(),
+                retained: Vec::new(),
             });
         }
         Ok(())
@@ -226,7 +229,7 @@ where
             if let Some(fence) = self.slots[i].fence.take() {
                 ctx.retire_fence(fence);
             }
-            for layer in std::mem::take(&mut self.slots[i].layers) {
+            for layer in std::mem::take(&mut self.slots[i].retained) {
                 ctx.destroy_texture(layer);
             }
             return Some(i);
@@ -425,7 +428,7 @@ where
                 let _ = fence.wait(FRAME_WAIT_TIMEOUT);
                 ctx.retire_fence(fence);
             }
-            for layer in std::mem::take(&mut slot.layers) {
+            for layer in std::mem::take(&mut slot.retained) {
                 ctx.destroy_texture(layer);
             }
             self.output.release_framebuffer(slot.fb);
@@ -482,14 +485,14 @@ where
         let Some(index) = self.acquired else {
             return Err(Error::Unsupported("no frame is currently acquired"));
         };
-        let (fence, layers) = impeller_core::execute_deferred::<H>(
+        let (fence, transient) = impeller_core::execute_deferred::<H>(
             ctx,
             &mut self.slots[index].texture,
             recording,
             images,
         )?;
         self.slots[index].fence = Some(fence);
-        self.slots[index].layers = layers;
+        self.slots[index].retained = transient.into_textures();
         Ok(())
     }
 }

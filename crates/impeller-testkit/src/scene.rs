@@ -1065,6 +1065,33 @@ pub fn corpus() -> Vec<Scene> {
         // of the picture rather than a strip at the edge: clamping shows two
         // flat bands, repeating shows four ramps, and decal leaves the rest
         // empty over whatever the scene put behind it.
+        // Six stops, which is more than a material carries, so this is the
+        // path that tabulates them into a texture. Here rather than only in
+        // the public API tests because the corpus is what compares the two
+        // backends against each other: a ramp bound correctly on one and not
+        // the other is exactly the divergence nothing else would notice.
+        Scene::new(
+            "gradient-many-stops",
+            vec![Item::filled(
+                Shape::Rect {
+                    min: [4.0, 4.0],
+                    max: [124.0, 124.0],
+                },
+                Fill::LinearGradient {
+                    start: [4.0, 0.0],
+                    end: [124.0, 0.0],
+                    stops: vec![
+                        Stop::new(RED, 0.0),
+                        Stop::new([1.0, 1.0, 0.0, 1.0], 0.2),
+                        Stop::new(GREEN, 0.4),
+                        Stop::new([0.0, 1.0, 1.0, 1.0], 0.6),
+                        Stop::new(BLUE, 0.8),
+                        Stop::new([1.0, 0.0, 1.0, 1.0], 1.0),
+                    ],
+                    tile: TileMode::Clamp,
+                },
+            )],
+        ),
         Scene::new(
             "gradient-tiled-clamp",
             vec![tiled_gradient_item(TileMode::Clamp)],

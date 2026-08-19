@@ -26,11 +26,13 @@ const _: () = assert!(
     "a material must fit the 128 bytes of push constants every device guarantees"
 );
 
-/// The most stops a gradient can carry.
+/// The most stops a gradient carries in the material itself.
 ///
-/// Four covers the overwhelming majority of real gradients. More needs the
-/// stops baked into a ramp texture and sampled, which waits on the HAL growing
-/// texture sampling.
+/// Four covers the overwhelming majority of real gradients, and covers them
+/// without a texture, an upload or a binding. It is not a limit on what can be
+/// drawn: beyond this the recorder tabulates the stops into a ramp and the
+/// shader samples it instead, which is what this constant used to say was
+/// waiting on the HAL learning to sample textures. It has since learned.
 pub const MAX_STOPS: usize = 4;
 
 /// Offsets into the packed layout, matching the shader's declaration.
@@ -134,6 +136,15 @@ pub enum Material {
         axis: [f32; 2],
         to_local: ToLocal,
         stops: Vec<Stop>,
+        /// Texture slot holding this gradient's colors, when they did not fit.
+        ///
+        /// `None` is the ordinary case: the stops travel in push constants and
+        /// the shader walks them. `Some` means the recorder tabulated them into
+        /// an image instead, because there were more than [`MAX_STOPS`], and
+        /// the shader reads the color at the parameter rather than computing
+        /// it. The two must agree where both are possible, which is what makes
+        /// the choice invisible to a caller.
+        ramp: Option<u32>,
         /// What happens beyond the two endpoints.
         ///
         /// The parameter a gradient is sampled by runs from zero at one end to
@@ -151,6 +162,15 @@ pub enum Material {
         center: [f32; 2],
         to_local: ToLocal,
         stops: Vec<Stop>,
+        /// Texture slot holding this gradient's colors, when they did not fit.
+        ///
+        /// `None` is the ordinary case: the stops travel in push constants and
+        /// the shader walks them. `Some` means the recorder tabulated them into
+        /// an image instead, because there were more than [`MAX_STOPS`], and
+        /// the shader reads the color at the parameter rather than computing
+        /// it. The two must agree where both are possible, which is what makes
+        /// the choice invisible to a caller.
+        ramp: Option<u32>,
         /// What happens beyond the radius. See [`Material::LinearGradient`].
         tile: TileMode,
     },
@@ -162,6 +182,15 @@ pub enum Material {
         start_angle: f32,
         end_angle: f32,
         stops: Vec<Stop>,
+        /// Texture slot holding this gradient's colors, when they did not fit.
+        ///
+        /// `None` is the ordinary case: the stops travel in push constants and
+        /// the shader walks them. `Some` means the recorder tabulated them into
+        /// an image instead, because there were more than [`MAX_STOPS`], and
+        /// the shader reads the color at the parameter rather than computing
+        /// it. The two must agree where both are possible, which is what makes
+        /// the choice invisible to a caller.
+        ramp: Option<u32>,
         /// What happens outside the swept arc.
         ///
         /// Unlike the other two this can be a no-op: a sweep covering the whole
@@ -352,12 +381,12 @@ impl Material {
             Self::Image { slot, .. } | Self::Glyph { slot, .. } | Self::Blur { slot, .. } => {
                 Some(*slot)
             }
-            Self::Solid(_)
-            | Self::LinearGradient { .. }
-            | Self::RadialGradient { .. }
-            | Self::SweepGradient { .. }
-            | Self::RoundedRect { .. }
-            | Self::Ellipse { .. } => None,
+            // A gradient names a texture only when its colors were too many to
+            // carry, which is why this is an option rather than a slot.
+            Self::LinearGradient { ramp, .. }
+            | Self::RadialGradient { ramp, .. }
+            | Self::SweepGradient { ramp, .. } => *ramp,
+            Self::Solid(_) | Self::RoundedRect { .. } | Self::Ellipse { .. } => None,
         }
     }
 
@@ -507,6 +536,7 @@ impl Material {
                 unreachable!("handled above")
             }
             Self::LinearGradient {
+                ramp,
                 start,
                 axis,
                 to_local,
@@ -514,6 +544,7 @@ impl Material {
                 ..
             } => {
                 out[layout::PARAMS + 2] = tile_code(*tile);
+                out[layout::PARAMS + 3] = f32::from(ramp.is_some());
                 out[layout::GEOMETRY] = start[0];
                 out[layout::GEOMETRY + 1] = start[1];
                 out[layout::GEOMETRY + 2] = axis[0];
@@ -522,18 +553,21 @@ impl Material {
                 out[layout::PARAMS + 1] = kind::LINEAR;
             }
             Self::RadialGradient {
+                ramp,
                 center,
                 to_local,
                 tile,
                 ..
             } => {
                 out[layout::PARAMS + 2] = tile_code(*tile);
+                out[layout::PARAMS + 3] = f32::from(ramp.is_some());
                 out[layout::GEOMETRY] = center[0];
                 out[layout::GEOMETRY + 1] = center[1];
                 out[layout::TO_LOCAL..layout::TO_LOCAL + 4].copy_from_slice(to_local);
                 out[layout::PARAMS + 1] = kind::RADIAL;
             }
             Self::SweepGradient {
+                ramp,
                 center,
                 to_local,
                 start_angle,
@@ -542,6 +576,7 @@ impl Material {
                 ..
             } => {
                 out[layout::PARAMS + 2] = tile_code(*tile);
+                out[layout::PARAMS + 3] = f32::from(ramp.is_some());
                 out[layout::GEOMETRY] = center[0];
                 out[layout::GEOMETRY + 1] = center[1];
                 out[layout::GEOMETRY + 2] = *start_angle;
@@ -599,6 +634,7 @@ mod tests {
             to_local: [1.0, 0.0, 0.0, 1.0],
             stops: two_stops(),
             tile: TileMode::Clamp,
+            ramp: None,
         }
         .to_push_constants();
 
@@ -625,6 +661,7 @@ mod tests {
             to_local: [2.0, 0.0, 0.0, 4.0],
             stops: two_stops(),
             tile: TileMode::Clamp,
+            ramp: None,
         }
         .to_push_constants();
 
@@ -650,6 +687,7 @@ mod tests {
             end_angle: 2.5,
             stops: two_stops(),
             tile: TileMode::Clamp,
+            ramp: None,
         }
         .to_push_constants();
 
@@ -674,12 +712,14 @@ mod tests {
                 to_local: [1.0, 0.0, 0.0, 1.0],
                 stops: one.clone(),
                 tile: TileMode::Clamp,
+                ramp: None,
             },
             Material::RadialGradient {
                 center: [0.0, 0.0],
                 to_local: [1.0, 0.0, 0.0, 1.0],
                 stops: one.clone(),
                 tile: TileMode::Clamp,
+                ramp: None,
             },
             Material::SweepGradient {
                 center: [0.0, 0.0],
@@ -688,6 +728,7 @@ mod tests {
                 end_angle: 1.0,
                 stops: one,
                 tile: TileMode::Clamp,
+                ramp: None,
             },
         ];
         for material in materials {
@@ -708,6 +749,7 @@ mod tests {
             to_local: [1.0, 0.0, 0.0, 1.0],
             stops,
             tile: TileMode::Clamp,
+            ramp: None,
         }
         .to_push_constants();
         // The count is what stops the shader reading past what was written.
@@ -728,6 +770,7 @@ mod tests {
             to_local: [1.0, 0.0, 0.0, 1.0],
             stops: clear,
             tile: TileMode::Clamp,
+            ramp: None,
         }
         .is_invisible());
 
@@ -743,6 +786,7 @@ mod tests {
                 end_angle: 1.0,
                 stops: partly,
                 tile: TileMode::Clamp,
+                ramp: None,
             }
             .is_invisible(),
             "one visible stop is enough"
@@ -761,12 +805,14 @@ mod tests {
                 to_local: [1.0, 0.0, 0.0, 1.0],
                 stops: two_stops(),
                 tile: TileMode::Clamp,
+                ramp: None,
             },
             Material::RadialGradient {
                 center: [0.0; 2],
                 to_local: [1.0, 0.0, 0.0, 1.0],
                 stops: two_stops(),
                 tile: TileMode::Clamp,
+                ramp: None,
             },
         ] {
             assert_eq!(material.variant(), MaterialVariant::Gradient);

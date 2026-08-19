@@ -88,9 +88,12 @@ pub enum Shader {
 impl Shader {
     /// How many color stops this paint carries, or zero where it carries none.
     ///
-    /// Public because the limit is, and a caller building a gradient from data
-    /// -- a theme file, a design token, an SVG -- wants to know before it draws
-    /// rather than to handle an error afterwards.
+    /// Public because the threshold is: at or below [`MAX_STOPS`] a gradient
+    /// costs nothing beyond its material, and above it the recorder bakes a
+    /// small texture. Neither is visible in the result, so this exists for a
+    /// caller who cares about the cost rather than the picture.
+    ///
+    /// [`MAX_STOPS`]: impeller_hal::MAX_STOPS
     pub fn stop_count(&self) -> usize {
         match self {
             Self::Solid(_) | Self::Image { .. } => 0,
@@ -163,9 +166,11 @@ impl Paint {
 
     /// A fill that runs between colors along a line in user space.
     ///
-    /// At most [`MAX_STOPS`] of them. Drawing with more is refused rather than
-    /// truncated, because a gradient correct up to its fourth stop and flat
-    /// afterwards is indistinguishable from one somebody meant.
+    /// Any number of them. Up to [`MAX_STOPS`] the colors travel with the
+    /// material; beyond that the recorder tabulates them into a texture the
+    /// shader samples, which costs one small upload per distinct gradient and
+    /// is otherwise invisible. Ask [`Shader::stop_count`] if you want to know
+    /// which will happen.
     ///
     /// [`MAX_STOPS`]: impeller_hal::MAX_STOPS
     pub fn linear_gradient(start: Vec2, end: Vec2, stops: Vec<GradientStop>) -> Self {
@@ -182,9 +187,7 @@ impl Paint {
 
     /// A fill that runs outward from a center in user space.
     ///
-    /// At most [`MAX_STOPS`] stops; see [`Paint::linear_gradient`].
-    ///
-    /// [`MAX_STOPS`]: impeller_hal::MAX_STOPS
+    /// Any number of stops; see [`Paint::linear_gradient`].
     pub fn radial_gradient(center: Vec2, radius: f32, stops: Vec<GradientStop>) -> Self {
         Self {
             shader: Shader::RadialGradient {
@@ -200,9 +203,7 @@ impl Paint {
     /// A fill that runs around a center in user space.
     ///
     /// Angles are in radians, counter-clockwise from the positive X axis. At
-    /// most [`MAX_STOPS`] stops; see [`Paint::linear_gradient`].
-    ///
-    /// [`MAX_STOPS`]: impeller_hal::MAX_STOPS
+    /// any number of stops; see [`Paint::linear_gradient`].
     pub fn sweep_gradient(
         center: Vec2,
         start_angle: f32,

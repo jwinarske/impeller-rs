@@ -16,6 +16,7 @@ pub mod canvas;
 pub mod color;
 pub mod execute;
 pub mod paint;
+pub mod ramp;
 
 pub use canvas::{Canvas, Layer, Pass, Recording, Rect, TextureSource};
 pub use color::Color;

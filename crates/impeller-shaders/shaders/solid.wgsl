@@ -128,6 +128,28 @@ fn tile_gradient(t: f32, tile: f32) -> vec2<f32> {
     return vec2<f32>(clamp(t, 0.0, 1.0), 1.0);
 }
 
+/// The gradient's color at `t`, from wherever this paint keeps its colors.
+///
+/// Four stops or fewer travel in push constants and are walked; more than that
+/// were tabulated into a texture by the recorder and are read from it. The two
+/// have to agree, so the walk above and the bake that produced the texture
+/// implement the same rule, and this is the only place that chooses between
+/// them.
+///
+/// The ramp is sampled at `t` directly rather than at a texel center: the
+/// tabulation already placed its samples at centers, so the filter reading
+/// between them reconstructs the function rather than shifting it.
+fn gradient_color(t: f32, count: i32) -> vec4<f32> {
+    if (paint.params.w > 0.5) {
+        // Straight color, not premultiplied, and decoded from the transfer
+        // function by the sampler because the texture is an sRGB format. That
+        // is the same shape `sample_stops` returns, so what follows does not
+        // need to know which path produced it.
+        return textureSampleLevel(image_texture, image_sampler, vec2<f32>(t, 0.5), 0.0);
+    }
+    return sample_stops(t, count);
+}
+
 /// Map a clip-space position into the gradient's own space.
 fn to_gradient_space(clip: vec2<f32>) -> vec2<f32> {
     let delta = clip - paint.geometry.xy;
@@ -385,11 +407,11 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         let length_squared = max(dot(axis, axis), 1e-6);
         let t = dot(to_gradient_space(in.clip), axis) / length_squared;
         let tiled = tile_gradient(t, paint.params.z);
-        color = sample_stops(tiled.x, count) * tiled.y;
+        color = gradient_color(tiled.x, count) * tiled.y;
     } else if (kind > 1.5 && kind < 2.5) {
         // Radial: distance in gradient space, where the radius is one.
         let tiled = tile_gradient(length(to_gradient_space(in.clip)), paint.params.z);
-        color = sample_stops(tiled.x, count) * tiled.y;
+        color = gradient_color(tiled.x, count) * tiled.y;
     } else if (kind > 2.5 && kind < 3.5) {
         // Sweep: angle about the center, measured in gradient space so an
         // anisotropic target does not bunch the stops on two sides.
@@ -412,7 +434,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         let turn = 6.28318530717958647692;
         let ahead = delta - turn * floor(delta / turn);
         let tiled = tile_gradient(ahead / sweep, paint.params.z);
-        color = sample_stops(tiled.x, count) * tiled.y;
+        color = gradient_color(tiled.x, count) * tiled.y;
     }
     // Checked after the gradient chain rather than inside it, because the
     // sweep arm tests only a lower bound and would otherwise claim this kind
