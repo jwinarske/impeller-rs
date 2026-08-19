@@ -88,7 +88,12 @@ enum View {
 
 impl App {
     fn new() -> Self {
-        let scenes = corpus();
+        // The corpus first, then the catalog: the corpus is the small tuned
+        // set a failure names a capability in, and the catalog is the broad
+        // one mirroring Impeller's own playground. Both are data, so both
+        // reach the window without a line of code per scene.
+        let mut scenes = corpus();
+        scenes.extend(impeller_testkit::catalog());
         let live = live::scenes();
         assert!(!scenes.is_empty(), "the corpus is empty");
         let knobs = live.iter().map(|s| s.start).collect();
@@ -392,7 +397,7 @@ impl ApplicationHandler for App {
             SwapchainTarget::new(&mut ctx, surface, extent, PresentMode::Fifo).expect("swapchain");
 
         eprintln!(
-            "{}\n{} corpus scenes and {} live ones.\n\
+            "{}\n{} fixed scenes and {} live ones.\n\
              Right/Left or Space to step, Up/Down to turn the knob, A to animate, Q to quit.",
             ctx.capabilities().device_name,
             self.scenes.len(),

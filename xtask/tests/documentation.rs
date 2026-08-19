@@ -248,3 +248,22 @@ fn the_architecture_states_the_material_size_the_code_enforces() {
          sentence that explains why the layout is the size it is."
     );
 }
+
+#[test]
+fn the_playground_inventory_counts_the_catalog_correctly() {
+    // The other numbers in that document describe a source tree this
+    // repository does not contain, and it says so. This one describes the
+    // collection right here, which makes it the one number a reader would be
+    // entitled to trust -- so it is the one that is checked.
+    let total = impeller_testkit::catalog().len();
+    let flattened = doc("playground-parity.md")
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ");
+    let stated = format!("holds {} scenes of roughly", spell(total));
+    assert!(
+        flattened.contains(&stated),
+        "docs/playground-parity.md does not say the catalog holds {total} scenes. \
+         Adding one means saying so, or the inventory stops being an inventory."
+    );
+}

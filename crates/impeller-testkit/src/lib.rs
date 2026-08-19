@@ -13,11 +13,13 @@
 //! - [`image`] compares results, with tolerances that state where the
 //!   specification permits a difference rather than papering over one.
 
+pub mod catalog;
 pub mod executor;
 pub mod image;
 pub mod scene;
 pub mod shape;
 
+pub use catalog::catalog;
 pub use executor::{record_scene, render_corpus, render_scene};
 pub use image::{accepts, compare, Difference, Image, Tolerance};
 pub use scene::{corpus, Fill, Item, LayerSpec, Node, Scene, Stop, StrokeSpec, Transform};

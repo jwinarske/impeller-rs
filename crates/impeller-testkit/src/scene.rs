@@ -218,6 +218,17 @@ pub struct Item {
 }
 
 impl Item {
+    /// Trace this item's outline rather than filling it, keeping whatever
+    /// fill it already has.
+    ///
+    /// [`Self::stroke`] takes a color, which is what almost every stroke
+    /// wants; this is for the ones that do not, and a gradient along a stroke
+    /// is the case that needed it.
+    pub fn with_stroke(mut self, spec: StrokeSpec) -> Self {
+        self.stroke = Some(spec);
+        self
+    }
+
     /// Recolor what this item draws.
     pub fn with_color_filter(mut self, filter: ColorFilter) -> Self {
         self.color_filter = filter;
