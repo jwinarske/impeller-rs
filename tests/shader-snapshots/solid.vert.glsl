@@ -9,6 +9,9 @@ struct Paint {
     vec4 geometry;
     vec4 to_local;
     vec4 params;
+    vec4 recolor[4];
+    vec4 filter_offset;
+    vec4 filter_params;
 };
 struct VertexOutput {
     vec4 position;
@@ -20,18 +23,18 @@ layout(location = 1) in vec2 _p2vs_location1;
 smooth out vec2 _vs2fs_location0;
 smooth out vec2 _vs2fs_location1;
 
-vec2 tile_gradient(float t_2, float tile) {
+vec2 tile_gradient(float t_1, float tile) {
     if (((tile > 0.5) && (tile < 1.5))) {
-        return vec2((t_2 - floor(t_2)), 1.0);
+        return vec2((t_1 - floor(t_1)), 1.0);
     }
     if (((tile > 1.5) && (tile < 2.5))) {
-        float inside = (((t_2 >= 0.0) && (t_2 <= 1.0)) ? 1.0 : 0.0);
-        return vec2(clamp(t_2, 0.0, 1.0), inside);
+        float inside = (((t_1 >= 0.0) && (t_1 <= 1.0)) ? 1.0 : 0.0);
+        return vec2(clamp(t_1, 0.0, 1.0), inside);
     }
     if ((tile > 2.5)) {
-        return vec2((1.0 - abs((1.0 - (t_2 - (2.0 * floor((t_2 * 0.5))))))), 1.0);
+        return vec2((1.0 - abs((1.0 - (t_1 - (2.0 * floor((t_1 * 0.5))))))), 1.0);
     }
-    return vec2(clamp(t_2, 0.0, 1.0), 1.0);
+    return vec2(clamp(t_1, 0.0, 1.0), 1.0);
 }
 
 vec2 tile_uv(vec2 uv_1, float tile_1) {

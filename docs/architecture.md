@@ -1278,12 +1278,13 @@ every fragment walks, which is the cost specialization would remove.
   whole way and only the final write encoded, rather than converting early or
   twice.
 - **Materials**: a paint resolved for a backend — color or gradient, already
-  in clip space — packed into 128 bytes, which was once exactly the
-  push-constant size every device guarantees and is now simply how large a
-  material is. It travels in a uniform buffer, bound at a per-draw offset; the
-  bound that remains is `maxUniformBufferRange`, whose guaranteed minimum is 16
-  KiB. The limit is a compile-time assertion rather than a test, and the size
-  stated here is checked against it.
+  in clip space, and the color filter applied to what it produces — packed
+  into 224 bytes. It was 128 for a long time, which was exactly the
+  push-constant size every device guarantees; the color filter is what grew it,
+  and the move to a uniform buffer is what let it. The bound that remains is
+  `maxUniformBufferRange`, whose guaranteed minimum is 16 KiB. The limit is a
+  compile-time assertion rather than a test, and the size stated here is
+  checked against it.
 
 **A gradient locates itself from an interpolated clip position, not from the
 fragment coordinate builtin.** That builtin's origin differs between the two

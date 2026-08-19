@@ -94,6 +94,7 @@ fn paint_for(item: &Item, anti_alias: bool) -> Paint {
     };
     Paint {
         shader,
+        color_filter: item.color_filter,
         style: match &item.stroke {
             Some(spec) => Style::Stroke(spec.to_style()),
             None => Style::Fill,

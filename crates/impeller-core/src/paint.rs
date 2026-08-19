@@ -5,6 +5,7 @@ use crate::color::Color;
 use glam::Vec2;
 use impeller_geometry::dash::Dash;
 use impeller_geometry::stroke::StrokeStyle;
+use impeller_hal::ColorFilter;
 use impeller_hal::{BlendMode, Extent2D, TileMode};
 
 /// A color stop in a gradient.
@@ -171,6 +172,13 @@ pub enum Style {
 pub struct Paint {
     pub shader: Shader,
     pub style: Style,
+    /// A function applied to the color the shader produces, before blending.
+    ///
+    /// Beside the shader rather than inside it because it applies to all of
+    /// them, and after it rather than before because that is where `dart:ui`
+    /// puts a color filter and where it is useful: what is being recolored is
+    /// the result of the fill, not the inputs it was built from.
+    pub color_filter: ColorFilter,
     /// Cut a stroke into a dash pattern before drawing it.
     ///
     /// On the paint rather than inside [`Style::Stroke`] for two reasons. It
@@ -209,6 +217,7 @@ impl Default for Paint {
         Self {
             shader: Shader::Solid(Color::BLACK),
             style: Style::Fill,
+            color_filter: ColorFilter::None,
             dash: None,
             mask_blur: 0.0,
             blend: BlendMode::SrcOver,
@@ -311,6 +320,16 @@ impl Paint {
             },
             ..Default::default()
         }
+    }
+
+    /// Apply a function to the color this paint produces, before it blends.
+    ///
+    /// Works on any shader, which is the point: the image tint that came
+    /// before it could only recolor an image. A gradient, a shape, a run of
+    /// glyphs all take one now.
+    pub fn with_color_filter(mut self, filter: ColorFilter) -> Self {
+        self.color_filter = filter;
+        self
     }
 
     /// Blur the shape's coverage, for a shadow or a glow.

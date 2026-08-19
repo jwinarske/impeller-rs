@@ -6,6 +6,7 @@
 //! Vulkan backend binds pipelines only where they change, and a record-and-
 //! replay backend can inspect the whole batch before touching any state.
 
+use crate::material::ColorFilter;
 use crate::{BlendMode, Error, Material, Result, Scissor};
 
 /// What a draw does with the stencil buffer.
@@ -143,6 +144,13 @@ pub struct BatchDraw {
     pub first_index: u32,
     pub index_count: u32,
     pub material: Material,
+    /// A function applied to the material's color before the blend.
+    ///
+    /// Beside the material rather than inside it, for the same reason the
+    /// blend mode is: it applies to every kind of material equally and belongs
+    /// to none of them. It is packed into the same uniform the material is,
+    /// because the shader reads one block per draw.
+    pub filter: ColorFilter,
     pub blend: BlendMode,
     /// The region of the target this draw may write to.
     ///
@@ -157,6 +165,20 @@ pub struct BatchDraw {
     pub clip: Option<Scissor>,
     /// What this draw does with the stencil buffer.
     pub stencil: ClipState,
+}
+
+impl BatchDraw {
+    /// The uniform block this draw's shader reads.
+    ///
+    /// The material and the filter are packed together because the shader
+    /// takes one block per draw, and separately here because they are separate
+    /// things: a filter applies to any material, and a material knows nothing
+    /// about being filtered.
+    pub fn to_uniform(&self) -> [f32; crate::MATERIAL_FLOATS] {
+        let mut out = self.material.to_uniform();
+        self.filter.pack_into(&mut out);
+        out
+    }
 }
 
 /// Geometry and paint for a sequence of draws sharing one target.
@@ -214,6 +236,7 @@ impl Batch {
             vertices,
             indices,
             material,
+            ColorFilter::None,
             blend,
             clip,
             ClipState::UNCLIPPED,
@@ -225,11 +248,13 @@ impl Batch {
     /// The general form the other two delegate to. A caller reaches for this
     /// only when building or unwinding a clip, or when drawing content inside
     /// one; everything else is confined by a scissor or not confined at all.
+    #[allow(clippy::too_many_arguments)]
     pub fn push_with(
         &mut self,
         positions: &[[f32; 2]],
         indices: &[u32],
         material: Material,
+        filter: ColorFilter,
         blend: BlendMode,
         clip: Option<Scissor>,
         stencil: ClipState,
@@ -237,7 +262,7 @@ impl Batch {
         // Tessellated geometry has no texture coordinates of its own, and the
         // materials it carries do not read them.
         let vertices: Vec<Vertex> = positions.iter().copied().map(Vertex::at).collect();
-        self.push_mesh(&vertices, indices, material, blend, clip, stencil)
+        self.push_mesh(&vertices, indices, material, filter, blend, clip, stencil)
     }
 
     /// Append a draw whose vertices carry texture coordinates.
@@ -250,6 +275,7 @@ impl Batch {
         vertices: &[Vertex],
         indices: &[u32],
         material: Material,
+        filter: ColorFilter,
         blend: BlendMode,
         clip: Option<Scissor>,
         stencil: ClipState,
@@ -285,6 +311,7 @@ impl Batch {
         self.vertices.extend_from_slice(vertices);
         self.indices.extend(indices.iter().map(|i| i + base));
         self.draws.push(BatchDraw {
+            filter,
             first_index,
             index_count: indices.len() as u32,
             material,

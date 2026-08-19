@@ -5,6 +5,9 @@
 //! because gradient geometry has to travel through the same transform the shape
 //! did.
 
+use crate::blend::BlendMode;
+use crate::error::Error;
+
 /// Floats in the packed representation.
 ///
 /// This was 128 bytes for a long time because that is exactly what every
@@ -19,7 +22,7 @@
 /// a material that needs it. Every float here is read by a shader that
 /// branches on the kind, and floats nobody reads are bandwidth in the one
 /// place a renderer spends it per draw.
-pub const MATERIAL_FLOATS: usize = 32;
+pub const MATERIAL_FLOATS: usize = 56;
 
 /// Enforced at compile time rather than by a test, so a material that outgrew
 /// what every device guarantees could not be built at all.
@@ -64,6 +67,12 @@ pub mod layout {
     /// A zero stop count means the colors are in a ramp texture; see
     /// `stop_count_code`.
     pub const PARAMS: usize = 28;
+    /// A color filter's matrix, by column.
+    pub const FILTER: usize = 32;
+    /// The constant a color filter adds.
+    pub const FILTER_OFFSET: usize = 48;
+    /// Which color filter, if any, and in which form its matrix is stated.
+    pub const FILTER_PARAMS: usize = 52;
 }
 
 /// The number the shader reads for a tile mode.
@@ -116,6 +125,201 @@ pub mod tile {
     pub const REPEAT: f32 = 1.0;
     pub const DECAL: f32 = 2.0;
     pub const MIRROR: f32 = 3.0;
+}
+
+/// What space a color filter's matrix expects its input in.
+///
+/// A `dart:ui` color matrix is defined on straight color, which is the form a
+/// person writes a saturation or a sepia matrix in. A blend against a constant
+/// color is defined on premultiplied color, which is the form the compositing
+/// rules are stated in. Both are affine, both are one matrix here, and this is
+/// which one -- because the shader works in premultiplied color and has to know
+/// whether to undo that before applying the matrix.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ColorForm {
+    /// Premultiplied, which is what the shader already has.
+    #[default]
+    Premultiplied,
+    /// Straight, which the shader divides out first and restores after.
+    Straight,
+}
+
+/// A function applied to a material's color, after the material and before the
+/// blend.
+///
+/// Only affine functions, which is less of a restriction than it sounds: a
+/// `dart:ui` color matrix is affine by definition, and every separable
+/// Porter-Duff blend against a *constant* color is affine in the other operand.
+/// So one matrix in the shader serves both, and which blend modes are offered
+/// is decided on the processor rather than in the fragment.
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+pub enum ColorFilter {
+    #[default]
+    None,
+    /// `columns[j]` scales the input's `j`th channel, and `offset` is added.
+    ///
+    /// Stored by column rather than by row -- the transpose of how `dart:ui`
+    /// writes it -- because that is what makes the shader four multiply-adds
+    /// of vectors rather than four dot products, and because a column is a
+    /// `vec4` where a row of the five-wide form is not.
+    Matrix {
+        columns: [[f32; 4]; 4],
+        offset: [f32; 4],
+        form: ColorForm,
+    },
+}
+
+impl ColorFilter {
+    /// A filter from the twenty numbers `dart:ui` states one in.
+    ///
+    /// Row-major and five wide: four scales and a constant per output channel,
+    /// red row first, applied to straight color with each channel from zero to
+    /// one. The constants are in the same units, so a matrix written against
+    /// the 0-255 convention has to have its last column divided by 255 first.
+    pub fn matrix(rows: [f32; 20]) -> Self {
+        let mut columns = [[0.0f32; 4]; 4];
+        let mut offset = [0.0f32; 4];
+        for (out, row) in rows.chunks_exact(5).enumerate() {
+            for (channel, value) in row[..4].iter().enumerate() {
+                columns[channel][out] = *value;
+            }
+            offset[out] = row[4];
+        }
+        Self::Matrix {
+            columns,
+            offset,
+            form: ColorForm::Straight,
+        }
+    }
+
+    /// A filter that blends a constant color against the material's own.
+    ///
+    /// The material is the destination and `color` is the source, which is the
+    /// way round `dart:ui` states `ColorFilter.mode` and the way round that
+    /// makes an icon sheet tinted by `SrcIn` mean what everyone expects.
+    ///
+    /// Every mode here is affine in the destination once the source is fixed,
+    /// so each becomes a matrix and the shader needs no blending arithmetic at
+    /// all. The advanced modes are not affine -- they are piecewise, or
+    /// exchange components between channels -- and are refused rather than
+    /// approximated. A caller who wants one has the blend mode on the paint,
+    /// which is the hardware's own path for exactly these.
+    ///
+    /// `color` is straight, like every color a caller states.
+    pub fn blend(color: [f32; 4], mode: BlendMode) -> Result<Self, Error> {
+        use BlendMode as B;
+        let alpha = color[3];
+        // Premultiplied, because the rules below are stated for premultiplied
+        // operands and the shader's own color is premultiplied too.
+        let s = [color[0] * alpha, color[1] * alpha, color[2] * alpha, alpha];
+        let zero = [[0.0f32; 4]; 4];
+        let scaled = |k: f32| {
+            let mut m = zero;
+            for (i, column) in m.iter_mut().enumerate() {
+                column[i] = k;
+            }
+            m
+        };
+        // The destination's alpha reaches every output channel through this
+        // column alone, which is what makes the modes that multiply by it --
+        // or by one minus it -- a matrix rather than a special case.
+        let with_alpha_column = |mut m: [[f32; 4]; 4], column: [f32; 4]| {
+            for (i, value) in column.iter().enumerate() {
+                m[3][i] += *value;
+            }
+            m
+        };
+        let negated = [-s[0], -s[1], -s[2], -s[3]];
+        let (columns, offset) = match mode {
+            B::Clear => (zero, [0.0; 4]),
+            B::Src => (zero, s),
+            B::Dst => (scaled(1.0), [0.0; 4]),
+            B::SrcOver => (scaled(1.0 - alpha), s),
+            B::DstOver => (with_alpha_column(scaled(1.0), negated), s),
+            B::SrcIn => (with_alpha_column(zero, s), [0.0; 4]),
+            B::DstIn => (scaled(alpha), [0.0; 4]),
+            B::SrcOut => (with_alpha_column(zero, negated), s),
+            B::DstOut => (scaled(1.0 - alpha), [0.0; 4]),
+            B::SrcATop => (with_alpha_column(scaled(1.0 - alpha), s), [0.0; 4]),
+            B::DstATop => (with_alpha_column(scaled(alpha), negated), s),
+            B::Xor => (with_alpha_column(scaled(1.0 - alpha), negated), s),
+            B::Plus => (scaled(1.0), s),
+            B::Modulate => {
+                let mut m = zero;
+                for (i, column) in m.iter_mut().enumerate() {
+                    column[i] = s[i];
+                }
+                (m, [0.0; 4])
+            }
+            other => {
+                let _ = other;
+                return Err(Error::Unsupported(
+                    "an advanced blend mode is not an affine function of what it blends, so it \
+                     cannot be a color filter; set it as the paint's blend mode instead",
+                ));
+            }
+        };
+        Ok(Self::Matrix {
+            columns,
+            offset,
+            form: ColorForm::Premultiplied,
+        })
+    }
+
+    /// Whether this changes anything.
+    pub fn is_identity(&self) -> bool {
+        match self {
+            Self::None => true,
+            Self::Matrix {
+                columns,
+                offset,
+                form: _,
+            } => {
+                offset.iter().all(|v| *v == 0.0)
+                    && columns.iter().enumerate().all(|(j, column)| {
+                        column
+                            .iter()
+                            .enumerate()
+                            .all(|(i, v)| *v == if i == j { 1.0 } else { 0.0 })
+                    })
+            }
+        }
+    }
+
+    /// The code the shader reads to choose a path.
+    fn code(&self) -> f32 {
+        match self {
+            Self::None => filter::NONE,
+            Self::Matrix {
+                form: ColorForm::Premultiplied,
+                ..
+            } => filter::PREMULTIPLIED,
+            Self::Matrix {
+                form: ColorForm::Straight,
+                ..
+            } => filter::STRAIGHT,
+        }
+    }
+
+    pub(crate) fn pack_into(&self, out: &mut [f32; MATERIAL_FLOATS]) {
+        out[layout::FILTER_PARAMS] = self.code();
+        if let Self::Matrix {
+            columns, offset, ..
+        } = self
+        {
+            for (j, column) in columns.iter().enumerate() {
+                out[layout::FILTER + j * 4..layout::FILTER + j * 4 + 4].copy_from_slice(column);
+            }
+            out[layout::FILTER_OFFSET..layout::FILTER_OFFSET + 4].copy_from_slice(offset);
+        }
+    }
+}
+
+/// Filter selector shared with the shader.
+pub mod filter {
+    pub const NONE: f32 = 0.0;
+    pub const PREMULTIPLIED: f32 = 1.0;
+    pub const STRAIGHT: f32 = 2.0;
 }
 
 /// A color stop.

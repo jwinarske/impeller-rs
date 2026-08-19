@@ -13,7 +13,9 @@ use impeller_geometry::transform::{
     invert_or_identity, max_scale, transform_points, viewport_projection,
 };
 use impeller_geometry::{flatten::DEFAULT_TOLERANCE, Path};
-use impeller_hal::{Batch, BlendMode, ClipState, Extent2D, Material, Result, Scissor, Stop};
+use impeller_hal::{
+    Batch, BlendMode, ClipState, ColorFilter, Extent2D, Material, Result, Scissor, Stop,
+};
 
 /// How a shape is painted.
 ///
@@ -24,6 +26,8 @@ use impeller_hal::{Batch, BlendMode, ClipState, Extent2D, Material, Result, Scis
 pub struct Paint {
     /// What fills the shape, already resolved into clip space.
     pub material: Material,
+    /// A function applied to the material's color before the blend.
+    pub filter: ColorFilter,
     pub blend: BlendMode,
     /// The region of the target this may write to, in device pixels.
     ///
@@ -43,6 +47,7 @@ impl Paint {
     pub fn solid(color: [f32; 4]) -> Self {
         Self {
             material: Material::solid(color),
+            filter: ColorFilter::None,
             blend: BlendMode::default(),
             clip: None,
             stencil: ClipState::UNCLIPPED,
@@ -77,6 +82,7 @@ impl Paint {
                 tile: Default::default(),
                 ramp: None,
             },
+            filter: ColorFilter::None,
             blend: BlendMode::default(),
             clip: None,
             stencil: ClipState::UNCLIPPED,
@@ -240,6 +246,7 @@ impl Renderer {
             &positions,
             &indices,
             paint.material.clone(),
+            paint.filter,
             paint.blend,
             paint.clip,
             paint.stencil,
@@ -263,6 +270,7 @@ impl Renderer {
             &positions,
             &indices,
             paint.material.clone(),
+            paint.filter,
             paint.blend,
             paint.clip,
             paint.stencil,

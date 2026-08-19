@@ -43,6 +43,16 @@ struct Paint {
     to_local: vec4<f32>,
     // x: number of stops in use. y: 0 solid, 1 linear, 2 radial, 3 sweep.
     params: vec4<f32>,
+    // A color filter's matrix, by column: recolor[j] scales the input's jth
+    // channel. Named for what it does rather than what it is, because `filter`
+    // is a reserved word in this language. Stored by column rather than by row because that makes the
+    // application four multiply-adds of vectors, and because a column is a
+    // vec4 where a row of the five-wide form a caller writes is not.
+    recolor: array<vec4<f32>, 4>,
+    // The constant the filter adds.
+    filter_offset: vec4<f32>,
+    // x: 0 no filter, 1 a matrix on premultiplied color, 2 on straight color.
+    filter_params: vec4<f32>,
 };
 
 // In its own group so that the texture bindings below, which are rebuilt per
@@ -456,8 +466,60 @@ fn blur_along_axis(clip: vec2<f32>) -> vec4<f32> {
     return total / max(weight_sum, 1e-6);
 }
 
+/// Apply this paint's color filter, if it has one.
+///
+/// Takes and returns premultiplied color, because that is what every path
+/// through `shade` produces and what the blend equations expect. A filter
+/// stated on straight color -- which is how a color matrix is written, and how
+/// `dart:ui` defines one -- has the alpha divided out first and put back after.
+///
+/// Only affine filters exist here, so this is one matrix and no branching on
+/// what the filter means. What that costs is that the blend modes offered as
+/// filters are the ones affine in their other operand; deciding which those
+/// are happens on the processor, where it is a table rather than a branch per
+/// fragment.
+fn filtered(premultiplied: vec4<f32>) -> vec4<f32> {
+    let kind = paint.filter_params.x;
+    if (kind < 0.5) {
+        return premultiplied;
+    }
+
+    let straight = kind > 1.5;
+    var color = premultiplied;
+    if (straight) {
+        // A fully transparent pixel has no color to recover -- every channel
+        // is zero whatever it was -- so the divisor is floored rather than
+        // guarded, which gives zero and is the right answer.
+        let alpha = max(color.a, 1e-6);
+        color = vec4<f32>(color.rgb / alpha, color.a);
+    }
+
+    var out = paint.recolor[0] * color.r
+        + paint.recolor[1] * color.g
+        + paint.recolor[2] * color.b
+        + paint.recolor[3] * color.a
+        + paint.filter_offset;
+
+    if (straight) {
+        out = clamp(out, vec4<f32>(0.0), vec4<f32>(1.0));
+        return vec4<f32>(out.rgb * out.a, out.a);
+    }
+    // Premultiplied already, so the invariant to keep is the one that form
+    // carries: no channel may exceed the alpha it was multiplied by. A filter
+    // is free to produce a color that does, and a color brighter than its own
+    // alpha is not a color -- it composites as though it were lit from
+    // nowhere.
+    let alpha = clamp(out.a, 0.0, 1.0);
+    return vec4<f32>(clamp(out.rgb, vec3<f32>(0.0), vec3<f32>(alpha)), alpha);
+}
+
 @fragment
 fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
+    return filtered(shade(in));
+}
+
+/// The color this paint produces, premultiplied, before any filter.
+fn shade(in: VertexOutput) -> vec4<f32> {
     var color: vec4<f32> = paint.stops[0];
     let kind = paint.params.y;
     let count = i32(paint.params.x);

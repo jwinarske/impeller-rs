@@ -422,6 +422,7 @@ fn a_swapchain_image_carries_texture_coordinates_like_any_other_target() {
                     tile: Default::default(),
                     ramp: None,
                 },
+                impeller_hal::ColorFilter::None,
                 BlendMode::Src,
                 None,
                 impeller_hal::ClipState::UNCLIPPED,

@@ -81,7 +81,13 @@ impl Color {
         self.a <= 0.0
     }
 
-    pub(crate) fn to_array(self) -> [f32; 4] {
+    /// The four components, linear and straight, in the order everything here
+    /// takes them.
+    ///
+    /// Public because a caller building a color filter needs a color in the
+    /// form the filter takes one, and the alternative is a constructor per
+    /// filter kind on this type.
+    pub fn to_array(self) -> [f32; 4] {
         [self.r, self.g, self.b, self.a]
     }
 }

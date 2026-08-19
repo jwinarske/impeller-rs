@@ -94,7 +94,7 @@ pub fn build(ctx: &mut VulkanContext, batch: &Batch) -> Result<(StagedBuffer, Ma
     // nothing reads a gap that was never initialized.
     let mut bytes = vec![0u8; (draws as u64 * stride) as usize];
     for (index, draw) in batch.draws().iter().enumerate() {
-        let packed = draw.material.to_uniform();
+        let packed = draw.to_uniform();
         let at = index * stride as usize;
         let words = cast_bytes(&packed);
         bytes[at..at + words.len()].copy_from_slice(words);

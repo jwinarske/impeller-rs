@@ -117,7 +117,7 @@ reason.
 | `isAntiAlias` | yes | `with_anti_alias` | `circle-antialiased`, `curve-antialiased` |
 | `blendMode` | yes | `with_blend`, all of Porter-Duff and the fifteen advanced modes where the device offers them | `advanced-blend-*` |
 | `shader` | partial | linear, radial, sweep and conical gradients, and images. Runtime effects are absent | `gradient-*` |
-| `colorFilter` | no | — an image tint exists, which is the narrowest case of one | |
+| `colorFilter` | partial | `with_color_filter`: a color matrix, and any blend against a constant that is affine in what it blends. Not the advanced blend modes, and not the gamma pair | `colour-filter-luminance` |
 | `imageFilter` | no | — a layer can blur itself or its backdrop, which is not the same as a filter on a paint | `layer-blurred`, `layer-backdrop-blurred` |
 | `maskFilter` | partial | `with_mask_blur`, blurring a shape's coverage. Solid colors only, since the identity it rests on holds for nothing else | `mask-blur-shadow` |
 | `filterQuality` | no | — one sampler, linear, fixed | |
@@ -137,30 +137,34 @@ above it or not at all:
 
 ## Where that leaves it
 
-Of forty-seven rows across `Canvas` and `Paint`: twenty-three exist, six are
-partial, six are expressible by a caller who assembles them, eleven are
-absent, and one is out of scope. Counting them is the least interesting thing
+Of forty-seven rows across `Canvas` and `Paint`: twenty-three exist, seven are
+partial, six are expressible by a caller who assembles them, ten are absent,
+and one is out of scope. Counting them is the least interesting thing
 about the table -- the absences are not equal, and a reader deciding whether
 this renderer is usable should look at which ones rather than how many.
 
 The three that would matter most to a real application, in the order I would
 build them:
 
-1. **`colorFilter`** — tinting anything rather than only an image. It is asked
-   for constantly, and unlike every other row here it has to sit *on top of*
-   whatever material is already there, including a four-stop gradient that uses
-   every float. That is what kept it waiting: while materials travelled in push
-   constants there were 128 bytes and no arrangement of them held both.
+1. **The rest of `colorFilter`.** A color matrix works, and so does any blend
+   against a constant color that is affine in what it blends — which is every
+   separable Porter-Duff mode, because with the source fixed each of them is a
+   matrix, and the derivation is checked against the hardware blender computing
+   the same thing its own way. What is missing is the advanced modes, which are
+   piecewise or exchange components between channels and are refused rather
+   than approximated, and `linearToSrgbGamma`/`srgbToLinearGamma`, which are
+   transfer functions rather than affine maps and sit oddly in a pipeline that
+   stays linear until the attachment writes.
 
-   They travel in a uniform buffer now, so nothing structural is in the way and
-   what remains is the work itself. This row previously claimed conical
-   gradients waited on the same move; they did not, and finding out why is
-   worth keeping. The flag saying a gradient's colors had been baked into a
-   texture occupied a whole float, and a material carrying that texture has no
-   stop count to report, so the two were folded into one number. The lesson is
-   narrower than "the budget is full" — it was full of one thing not paying for
-   itself, and that is worth checking before concluding a mechanism has to
-   change. It is also not an argument against changing one when it has to.
+   Getting this far took moving materials out of push constants, and the
+   premise is worth recording because I had just been wrong about a similar
+   one. A conical gradient did *not* need that move: a whole float was carrying
+   a boolean, and a material whose colors are in a texture has no stop count to
+   report, so the two folded into one number. A color filter genuinely does
+   need it — it applies on top of whatever material is there, and a color
+   matrix alone is twenty floats. Check whether a field is paying for its width
+   before concluding a limit has been reached; that is not an argument against
+   changing a mechanism when it has to change.
 2. **Per-vertex colors**, which is the one thing left in both `drawVertices`
    and `drawAtlas`. A mesh can be drawn and can read a texture at coordinates
    its vertices carry, and a sprite batch is one draw; what neither can do is

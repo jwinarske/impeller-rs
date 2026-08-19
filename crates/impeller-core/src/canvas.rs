@@ -16,8 +16,8 @@ use impeller_geometry::transform::{
 };
 use impeller_geometry::{Path, PathBuilder};
 use impeller_hal::{
-    Batch, BlendMode, ClipState, Error, Extent2D, Material, PassDescriptor, Result, Scissor, Stop,
-    TileMode, Vertex, MAX_STOPS,
+    Batch, BlendMode, ClipState, ColorFilter, Error, Extent2D, Material, PassDescriptor, Result,
+    Scissor, Stop, TileMode, Vertex, MAX_STOPS,
 };
 use impeller_renderer::{Paint as RenderPaint, Renderer, TOLERANCE};
 use impeller_text::{Atlas, PositionedGlyph};
@@ -538,6 +538,7 @@ impl Canvas {
             // needed to build one. White says plainly that nothing here is a
             // color decision.
             material: Material::solid([1.0, 1.0, 1.0, 1.0]),
+            filter: ColorFilter::None,
             blend: BlendMode::Src,
             clip: self.clip,
             stencil: ClipState::narrow(self.depth),
@@ -659,6 +660,7 @@ impl Canvas {
         };
         let paint = RenderPaint {
             material,
+            filter: ColorFilter::None,
             blend,
             // Neither clipped nor stencilled: this is the target's own content
             // being restored or seeded, not something the caller drew, and a
@@ -864,6 +866,7 @@ impl Canvas {
             while self.depth > previous.depth {
                 let paint = RenderPaint {
                     material: Material::solid([1.0, 1.0, 1.0, 1.0]),
+                    filter: ColorFilter::None,
                     blend: BlendMode::Src,
                     clip: None,
                     stencil: ClipState::widen(self.depth),
@@ -928,6 +931,7 @@ impl Canvas {
         let material = self.material_for(&paint.shader);
         let render_paint = RenderPaint {
             material,
+            filter: paint.color_filter,
             blend: paint.blend,
             clip: self.clip,
             stencil: ClipState::content(self.depth),
@@ -1311,6 +1315,7 @@ impl Canvas {
         );
         let render_paint = RenderPaint {
             material,
+            filter: paint.color_filter,
             blend: paint.blend,
             clip: self.clip,
             stencil: ClipState::content(self.depth),
@@ -1481,6 +1486,7 @@ impl Canvas {
             &vertices,
             &indices,
             Material::Glyph { color, slot },
+            paint.color_filter,
             paint.blend,
             self.clip,
             ClipState::content(self.depth),
@@ -1545,6 +1551,7 @@ impl Canvas {
             &vertices,
             mesh.indices(),
             material,
+            paint.color_filter,
             paint.blend,
             self.clip,
             ClipState::content(self.depth),
@@ -1727,6 +1734,7 @@ impl Canvas {
         };
         let paint = RenderPaint {
             material,
+            filter: ColorFilter::None,
             blend: frame.paint.blend,
             clip: self.clip,
             stencil: ClipState::content(self.depth),
@@ -1784,6 +1792,7 @@ impl Canvas {
             let sources = vec![TextureSource::Layer(sampled)];
             let paint = RenderPaint {
                 material,
+                filter: ColorFilter::None,
                 // Replaces rather than blends: the target is cleared and this
                 // covers all of it, so anything else would blend against the
                 // clear for no reason.

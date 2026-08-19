@@ -9,6 +9,7 @@ use crate::shape::Shape;
 use glam::{Affine2, Vec2};
 use impeller_geometry::stroke::{LineCap, LineJoin, StrokeStyle};
 use impeller_geometry::FillRule;
+use impeller_hal::ColorFilter;
 use impeller_hal::{BlendMode, Extent2D, TileMode};
 
 /// An affine transform, as data.
@@ -197,6 +198,12 @@ pub struct Item {
     pub stroke: Option<StrokeSpec>,
     pub transform: Transform,
     pub fill: Fill,
+    /// Recolor whatever the fill produced, before blending.
+    ///
+    /// Here rather than left to the public API's own tests because the corpus
+    /// is what compares the two backends against each other, and "the same
+    /// arithmetic, translated twice" is exactly the thing it exists to check.
+    pub color_filter: ColorFilter,
     pub blend: BlendMode,
     /// Confine this item to a rectangle, given in the item's own space as
     /// `[left, top, right, bottom]` and carried through its transform.
@@ -211,6 +218,12 @@ pub struct Item {
 }
 
 impl Item {
+    /// Recolor what this item draws.
+    pub fn with_color_filter(mut self, filter: ColorFilter) -> Self {
+        self.color_filter = filter;
+        self
+    }
+
     pub fn fill(shape: Shape, color: [f32; 4]) -> Self {
         Self {
             mask_blur: 0.0,
@@ -218,6 +231,7 @@ impl Item {
             stroke: None,
             transform: Transform::default(),
             fill: Fill::Solid(color),
+            color_filter: ColorFilter::None,
             blend: BlendMode::Src,
             clip: None,
             clip_shape: None,
@@ -245,6 +259,7 @@ impl Item {
             stroke: None,
             transform: Transform::default(),
             fill,
+            color_filter: ColorFilter::None,
             blend: BlendMode::Src,
             clip: None,
             clip_shape: None,
@@ -258,6 +273,7 @@ impl Item {
             stroke: Some(spec),
             transform: Transform::default(),
             fill: Fill::Solid(color),
+            color_filter: ColorFilter::None,
             blend: BlendMode::Src,
             clip: None,
             clip_shape: None,
@@ -379,7 +395,11 @@ impl LayerSpec {
 /// exactly as it did.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Node {
-    Draw(Item),
+    /// Boxed because an item describes a whole paint -- a gradient's stops, a
+    /// stroke, a color filter's matrix -- and a layer node beside it holds
+    /// little more than a list. Without the indirection every node in a tree
+    /// would be the size of the largest item in it.
+    Draw(Box<Item>),
     /// A group rendered into a target of its own and composited back.
     ///
     /// `bounds` is the region the group promises to stay inside, in the space
@@ -398,7 +418,7 @@ pub enum Node {
 
 impl From<Item> for Node {
     fn from(item: Item) -> Self {
-        Self::Draw(item)
+        Self::Draw(Box::new(item))
     }
 }
 
@@ -435,14 +455,14 @@ impl Node {
     /// contains without caring how it is grouped.
     fn items(&self) -> Box<dyn Iterator<Item = &Item> + '_> {
         match self {
-            Self::Draw(item) => Box::new(std::iter::once(item)),
+            Self::Draw(item) => Box::new(std::iter::once(item.as_ref())),
             Self::Layer { children, .. } => Box::new(children.iter().flat_map(Node::items)),
         }
     }
 
     fn items_mut(&mut self) -> Box<dyn Iterator<Item = &mut Item> + '_> {
         match self {
-            Self::Draw(item) => Box::new(std::iter::once(item)),
+            Self::Draw(item) => Box::new(std::iter::once(item.as_mut())),
             Self::Layer { children, .. } => Box::new(children.iter_mut().flat_map(Node::items_mut)),
         }
     }
@@ -509,7 +529,10 @@ impl Scene {
     /// scenes have no groups, and making every one of them say so would be
     /// noise in the place a reader looks to see what a scene draws.
     pub fn new(name: &'static str, items: Vec<Item>) -> Self {
-        Self::tree(name, items.into_iter().map(Node::Draw).collect())
+        Self::tree(
+            name,
+            items.into_iter().map(Box::new).map(Node::Draw).collect(),
+        )
     }
 
     /// A scene whose entries may be groups.
@@ -1132,6 +1155,32 @@ pub fn corpus() -> Vec<Scene> {
                     tile: TileMode::Clamp,
                 },
             )],
+        ),
+        // A luminance matrix over a gradient: the filter runs per fragment on
+        // a color that varies, which is what makes it a filter rather than a
+        // recoloring of the stops. Asymmetric on purpose -- every row is the
+        // same weights, so a transposed matrix would leave each end its own
+        // hue instead of turning both grey.
+        Scene::new(
+            "colour-filter-luminance",
+            vec![Item::filled(
+                Shape::Rect {
+                    min: [4.0, 4.0],
+                    max: [124.0, 124.0],
+                },
+                Fill::LinearGradient {
+                    start: [4.0, 4.0],
+                    end: [124.0, 124.0],
+                    stops: vec![Stop::new(RED, 0.0), Stop::new(BLUE, 1.0)],
+                    tile: TileMode::Clamp,
+                },
+            )
+            .with_color_filter(ColorFilter::matrix([
+                0.2126, 0.7152, 0.0722, 0.0, 0.0, //
+                0.2126, 0.7152, 0.0722, 0.0, 0.0, //
+                0.2126, 0.7152, 0.0722, 0.0, 0.0, //
+                0.0, 0.0, 0.0, 1.0, 0.0,
+            ]))],
         ),
         Scene::new(
             "gradient-sweep",

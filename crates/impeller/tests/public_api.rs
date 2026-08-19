@@ -8,9 +8,10 @@
 
 use googletest::prelude::*;
 use impeller::{
-    Affine2, Atlas, BackendPreference, BlendMode, Canvas, Color, Context, Coverage, Dash, Extent2D,
-    GlyphKey, GradientStop, Layer, Paint, Path, PathBuilder, PixelFormat, PositionedGlyph, Rect,
-    Result, SourceRect, Sprite, TileMode, Vec2, VertexMode, Vertices, MAX_STOPS,
+    Affine2, Atlas, BackendPreference, BlendMode, Canvas, Color, ColorFilter, Context, Coverage,
+    Dash, Extent2D, GlyphKey, GradientStop, Layer, Paint, Path, PathBuilder, PixelFormat,
+    PositionedGlyph, Rect, Result, SourceRect, Sprite, TileMode, Vec2, VertexMode, Vertices,
+    MAX_STOPS,
 };
 
 const SIZE: Extent2D = Extent2D {
@@ -5577,4 +5578,251 @@ fn an_atlas_needs_the_size_of_the_sheet_it_reads() {
             .is_err(),
         "a sheet with no texels should be refused rather than divided by"
     );
+}
+
+#[test]
+fn a_blend_filter_agrees_with_the_same_blend_done_by_the_blender() {
+    // The check the whole derivation rests on. Every Porter-Duff mode is
+    // affine in its destination once the source is a constant, which is why
+    // these can be matrices at all -- and the way to know the matrices are
+    // right is that the hardware, computing the same blend its own way, agrees.
+    //
+    // One side draws the material and then draws the constant over it with the
+    // mode. The other draws the material once, with the mode compiled into a
+    // filter. Two entirely different paths through the pipeline: fixed-function
+    // blending against the framebuffer, and four multiply-adds in the fragment.
+    let Some(mut ctx) = context() else { return };
+
+    let material = Color::linear(0.6, 0.2, 0.1, 0.8);
+    let constant = Color::linear(0.2, 0.7, 0.4, 0.5);
+    let area = Rect::from_size(128.0, 128.0);
+
+    for mode in [
+        BlendMode::SrcOver,
+        BlendMode::DstOver,
+        BlendMode::SrcIn,
+        BlendMode::DstIn,
+        BlendMode::SrcOut,
+        BlendMode::DstOut,
+        BlendMode::SrcATop,
+        BlendMode::DstATop,
+        BlendMode::Xor,
+        BlendMode::Plus,
+        BlendMode::Modulate,
+        BlendMode::Src,
+        BlendMode::Dst,
+        BlendMode::Clear,
+    ] {
+        // The blender's answer: the material, replaced into the target, then
+        // the constant blended over it.
+        let mut canvas = Canvas::new(SIZE);
+        canvas.clear(Color::linear(0.0, 0.0, 0.0, 0.0));
+        canvas
+            .draw_rect(
+                area,
+                &Paint::fill(material)
+                    .with_blend(BlendMode::Src)
+                    .with_anti_alias(false),
+            )
+            .expect("material");
+        canvas
+            .draw_rect(
+                area,
+                &Paint::fill(constant)
+                    .with_blend(mode)
+                    .with_anti_alias(false),
+            )
+            .expect("constant");
+        let blended = render(&mut ctx, canvas);
+
+        // The filter's answer: one draw, with the same blend compiled in.
+        let filter = ColorFilter::blend(constant.to_array(), mode)
+            .unwrap_or_else(|e| panic!("{mode:?} should be expressible as a filter: {e}"));
+        let mut canvas = Canvas::new(SIZE);
+        canvas.clear(Color::linear(0.0, 0.0, 0.0, 0.0));
+        canvas
+            .draw_rect(
+                area,
+                &Paint::fill(material)
+                    .with_color_filter(filter)
+                    .with_blend(BlendMode::Src)
+                    .with_anti_alias(false),
+            )
+            .expect("filtered");
+        let filtered = render(&mut ctx, canvas);
+
+        let (a, b) = (pixel(&blended, 64, 64), pixel(&filtered, 64, 64));
+        for channel in 0..4 {
+            assert!(
+                (a[channel] as i32 - b[channel] as i32).abs() <= 2,
+                "{mode:?} as a filter gives {b:?} where the blender gives {a:?}"
+            );
+        }
+    }
+}
+
+#[test]
+fn a_colour_matrix_recolours_a_gradient_which_no_tint_could() {
+    // What the row in the parity table means by tinting anything rather than
+    // only an image: the filter applies to the color the shader produced, so a
+    // gradient is recolored along its whole length rather than at its stops.
+    // The matrix swaps red and blue, so the two ends must trade places.
+    let Some(mut ctx) = context() else { return };
+
+    #[rustfmt::skip]
+    let swap = ColorFilter::matrix([
+        0.0, 0.0, 1.0, 0.0, 0.0,
+        0.0, 1.0, 0.0, 0.0, 0.0,
+        1.0, 0.0, 0.0, 0.0, 0.0,
+        0.0, 0.0, 0.0, 1.0, 0.0,
+    ]);
+    let stops = || {
+        vec![
+            GradientStop::new(Color::linear(1.0, 0.0, 0.0, 1.0), 0.0),
+            GradientStop::new(Color::linear(0.0, 0.0, 1.0, 1.0), 1.0),
+        ]
+    };
+
+    let mut canvas = Canvas::new(SIZE);
+    canvas.clear(Color::BLACK);
+    canvas
+        .draw_rect(
+            Rect::from_size(128.0, 128.0),
+            &Paint::linear_gradient(Vec2::new(8.0, 0.0), Vec2::new(120.0, 0.0), stops())
+                .with_color_filter(swap)
+                .with_anti_alias(false),
+        )
+        .expect("gradient");
+    let pixels = render(&mut ctx, canvas);
+
+    let left = pixel(&pixels, 4, 64);
+    let right = pixel(&pixels, 124, 64);
+    assert!(
+        left[2] > 240 && left[0] < 16,
+        "the red end should have become blue, got {left:?}"
+    );
+    assert!(
+        right[0] > 240 && right[2] < 16,
+        "the blue end should have become red, got {right:?}"
+    );
+
+    // And the middle is still a mixture rather than either end, which is what
+    // says the filter ran per fragment and not on the stops.
+    let middle = pixel(&pixels, 64, 64);
+    assert!(
+        middle[0] > 40 && middle[0] < 215 && middle[2] > 40 && middle[2] < 215,
+        "the middle of the gradient should still be a mixture, got {middle:?}"
+    );
+}
+
+#[test]
+fn an_advanced_blend_mode_is_refused_as_a_filter_rather_than_approximated() {
+    // These are piecewise or exchange components between channels, so no
+    // matrix is equal to them. The paint's own blend mode is the hardware path
+    // for exactly these, and the message says so.
+    for mode in [
+        BlendMode::Overlay,
+        BlendMode::HardLight,
+        BlendMode::Difference,
+        BlendMode::Hue,
+        BlendMode::Luminosity,
+    ] {
+        assert!(
+            ColorFilter::blend([1.0, 1.0, 1.0, 1.0], mode).is_err(),
+            "{mode:?} is not affine and must not become a matrix"
+        );
+    }
+}
+
+#[test]
+fn a_colour_matrix_is_applied_to_straight_colour_not_premultiplied() {
+    // The distinction only shows on a translucent color, which is why it needs
+    // its own test: everything else here is opaque, and on an opaque color the
+    // two forms are the same function.
+    //
+    // The matrix adds a half to green and leaves the rest alone. On straight
+    // color that is a half of green at full strength, which premultiplies to a
+    // quarter. Applied to the premultiplied color instead it would be a half
+    // outright -- twice as much green, and the number this test names.
+    let Some(mut ctx) = context() else { return };
+
+    #[rustfmt::skip]
+    let add_green = ColorFilter::matrix([
+        1.0, 0.0, 0.0, 0.0, 0.0,
+        0.0, 1.0, 0.0, 0.0, 0.5,
+        0.0, 0.0, 1.0, 0.0, 0.0,
+        0.0, 0.0, 0.0, 1.0, 0.0,
+    ]);
+
+    let mut canvas = Canvas::new(SIZE);
+    canvas.clear(Color::linear(0.0, 0.0, 0.0, 1.0));
+    canvas
+        .draw_rect(
+            Rect::from_size(128.0, 128.0),
+            &Paint::fill(Color::linear(1.0, 0.0, 0.0, 0.5))
+                .with_color_filter(add_green)
+                .with_anti_alias(false),
+        )
+        .expect("filtered");
+    let pixels = render(&mut ctx, canvas);
+
+    // Half a unit of red and a quarter of green, over black.
+    let got = pixel(&pixels, 64, 64);
+    assert!(
+        (got[0] as i32 - 128).abs() <= 2,
+        "red should be halved by the alpha, got {got:?}"
+    );
+    assert!(
+        (got[1] as i32 - 64).abs() <= 2,
+        "green should be a quarter: half of a half. Twice that means the matrix \
+         was applied to premultiplied color. Got {got:?}"
+    );
+}
+
+#[test]
+fn a_luminance_matrix_turns_every_colour_the_same_grey_it_weighs() {
+    // The canonical color filter, and the one that pins the matrix's
+    // orientation. Every row is the same set of weights, so the matrix is not
+    // symmetric -- transposed, it would scale each channel by its own weight
+    // and leave red red instead of making it grey. The two matrices this file
+    // tests elsewhere are both symmetric and cannot tell the difference.
+    let Some(mut ctx) = context() else { return };
+
+    const R: f32 = 0.2126;
+    const G: f32 = 0.7152;
+    const B: f32 = 0.0722;
+    #[rustfmt::skip]
+    let grey = ColorFilter::matrix([
+        R, G, B, 0.0, 0.0,
+        R, G, B, 0.0, 0.0,
+        R, G, B, 0.0, 0.0,
+        0.0, 0.0, 0.0, 1.0, 0.0,
+    ]);
+
+    for (name, color, want) in [
+        ("red", Color::linear(1.0, 0.0, 0.0, 1.0), R),
+        ("green", Color::linear(0.0, 1.0, 0.0, 1.0), G),
+        ("blue", Color::linear(0.0, 0.0, 1.0, 1.0), B),
+    ] {
+        let mut canvas = Canvas::new(SIZE);
+        canvas.clear(Color::linear(0.0, 0.0, 0.0, 1.0));
+        canvas
+            .draw_rect(
+                Rect::from_size(128.0, 128.0),
+                &Paint::fill(color)
+                    .with_color_filter(grey)
+                    .with_anti_alias(false),
+            )
+            .expect("filtered");
+        let pixels = render(&mut ctx, canvas);
+        let got = pixel(&pixels, 64, 64);
+
+        let expected = (want * 255.0).round() as i32;
+        for channel in 0..3 {
+            assert!(
+                (got[channel] as i32 - expected).abs() <= 2,
+                "{name} should weigh to {expected} in every channel, got {got:?}"
+            );
+        }
+    }
 }
