@@ -2232,6 +2232,57 @@ fn a_gradient_with_many_stops_agrees_with_one_that_fits() {
 }
 
 #[test]
+fn an_arc_leaves_the_part_of_the_circle_it_does_not_sweep() {
+    let Some(mut ctx) = context() else { return };
+    // The end-to-end check that a partial arc is partial. The geometry is
+    // covered without a device elsewhere; what this adds is that the builder is
+    // reachable from the facade and that a three-quarter sweep reaches the
+    // screen as three quarters rather than as a circle.
+    let mut builder = PathBuilder::new();
+    builder.arc(
+        Vec2::new(64.0, 64.0),
+        Vec2::splat(40.0),
+        // From twelve o'clock, three quarters of the way round.
+        -std::f32::consts::FRAC_PI_2,
+        std::f32::consts::TAU * 0.75,
+    );
+    let mut canvas = Canvas::new(SIZE);
+    canvas.clear(Color::BLACK);
+    canvas
+        .draw_path(
+            &builder.build(),
+            &Paint::stroke(Color::WHITE, 8.0).with_anti_alias(false),
+        )
+        .expect("arc");
+    let pixels = render(&mut ctx, canvas);
+
+    // The sweep runs clockwise from twelve and ends at nine, so all four
+    // quarter points are on it -- nine is the end of the arc, not past it --
+    // and the quarter that is missing lies between nine and twelve. Probing
+    // nine expecting nothing is the mistake this comment exists to prevent; it
+    // is where the arc stops, which is exactly where it is still drawn.
+    for (name, x, y) in [
+        ("twelve", 64, 24),
+        ("three", 104, 64),
+        ("six", 64, 104),
+        ("nine", 24, 64),
+    ] {
+        assert!(
+            pixel(&pixels, x, y)[0] > 200,
+            "{name} o'clock should be on the arc"
+        );
+    }
+    // Half past ten, in the middle of the quarter that was never swept.
+    assert_eq!(
+        pixel(&pixels, 36, 36),
+        [0, 0, 0, 255],
+        "the unswept quarter was drawn"
+    );
+    // And the middle is empty, so this is a ring rather than a filled shape.
+    assert_eq!(pixel(&pixels, 64, 64), [0, 0, 0, 255], "the ring is filled");
+}
+
+#[test]
 fn a_dashed_stroke_draws_less_than_a_solid_one_and_leaves_real_gaps() {
     let Some(mut ctx) = context() else { return };
     let draw = |ctx: &mut Context, dash: Option<Dash>| {

@@ -60,6 +60,19 @@ pub enum Shape {
         /// rather than an outline that crosses itself.
         radius: f32,
     },
+    /// An arc, open for a ring or closed through the center for a slice.
+    ///
+    /// The two shapes an arc is actually used for, and they differ in the one
+    /// way that matters here: the ring is stroked along a curve with two caps,
+    /// the slice is a filled region with two straight edges meeting at a point.
+    Arc {
+        center: [f32; 2],
+        radii: [f32; 2],
+        start: f32,
+        sweep: f32,
+        /// Join the ends through the center, making a slice rather than a ring.
+        through_center: bool,
+    },
     /// An open cubic, for curve and stroke coverage.
     Cubic {
         start: [f32; 2],
@@ -79,6 +92,23 @@ impl Shape {
                     .line_to(Vec2::from(*max))
                     .line_to(Vec2::new(min[0], max[1]))
                     .close();
+            }
+            Self::Arc {
+                center,
+                radii,
+                start,
+                sweep,
+                through_center,
+            } => {
+                if *through_center {
+                    // The center first, so the arc joins to it with a line and
+                    // the close brings the far end back: a slice.
+                    b.move_to(Vec2::from(*center));
+                }
+                b.arc(Vec2::from(*center), Vec2::from(*radii), *start, *sweep);
+                if *through_center {
+                    b.close();
+                }
             }
             Self::Polygon(points) => {
                 trace(&mut b, points);

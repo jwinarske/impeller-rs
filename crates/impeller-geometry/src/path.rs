@@ -337,6 +337,77 @@ impl PathBuilder {
         self
     }
 
+    /// Append an elliptical arc, centered at `center` with the given radii.
+    ///
+    /// Angles are in radians, measured from the positive X axis toward positive
+    /// Y, and `sweep` may be negative to travel the other way. A sweep of a
+    /// full turn or more is clamped to one: going round twice draws the same
+    /// pixels as going round once, and the extra segments are cost without a
+    /// picture.
+    ///
+    /// If the path has a current point, a line joins it to the arc's start, the
+    /// way SVG and Skia both behave; otherwise the arc begins with a move. That
+    /// is what makes a pie slice `move_to(center)` then `arc(..)` then `close`,
+    /// and a progress ring just `arc(..)` on an empty builder.
+    ///
+    /// # Accuracy
+    ///
+    /// The arc is emitted as cubics of at most a quarter turn each, with
+    /// control points at `(4/3)·tan(θ/4)` of the radius for a segment spanning
+    /// `θ`. That expression is where the familiar 0.5523 comes from — it is
+    /// this evaluated at a right angle — and using the constant for any other
+    /// angle is the usual way to draw an arc that is visibly wrong near its
+    /// ends. At a quarter turn the worst radial error is under three parts in
+    /// ten thousand, so a circle a thousand pixels across is off by less than a
+    /// third of a pixel.
+    pub fn arc(&mut self, center: Vec2, radii: Vec2, start: f32, sweep: f32) -> &mut Self {
+        if !center.is_finite() || !radii.is_finite() || !start.is_finite() || !sweep.is_finite() {
+            return self;
+        }
+        let point_at = |angle: f32| {
+            Vec2::new(
+                center.x + radii.x * angle.cos(),
+                center.y + radii.y * angle.sin(),
+            )
+        };
+        let first = point_at(start);
+        match self.current {
+            Some(_) => {
+                self.line_to(first);
+            }
+            None => {
+                self.move_to(first);
+            }
+        }
+
+        let turn = std::f32::consts::TAU;
+        let sweep = sweep.clamp(-turn, turn);
+        if sweep == 0.0 {
+            return self;
+        }
+        // At most a quarter turn per cubic, which is where the error bound
+        // below holds. More segments would be more accurate and are not needed;
+        // fewer are visibly wrong.
+        let segments = (sweep.abs() / std::f32::consts::FRAC_PI_2).ceil().max(1.0);
+        let step = sweep / segments;
+        // The tangent handles are proportional to the *derivative* at the
+        // endpoints, which for an ellipse carries the radii, so each is scaled
+        // by its own axis rather than by a single radius.
+        let k = (4.0 / 3.0) * (step / 4.0).tan();
+        let mut angle = start;
+        for _ in 0..segments as u32 {
+            let next = angle + step;
+            let (from, to) = (point_at(angle), point_at(next));
+            // The derivative of the parameterization, which is the tangent
+            // direction scaled by the radii.
+            let d_from = Vec2::new(-radii.x * angle.sin(), radii.y * angle.cos());
+            let d_to = Vec2::new(-radii.x * next.sin(), radii.y * next.cos());
+            self.cubic_to(from + d_from * k, to - d_to * k, to);
+            angle = next;
+        }
+        self
+    }
+
     /// Close the current subpath.
     ///
     /// Closing an empty builder is a no-op rather than an error, so callers
@@ -523,6 +594,151 @@ mod tests {
         assert_eq!(
             polygon_convexity(&[Vec2::ZERO, Vec2::new(1.0, 1.0)]),
             Convexity::Convex
+        );
+    }
+
+    /// Every point on a flattened path, for checking a shape rather than a
+    /// vertex list.
+    fn points_of(path: &Path) -> Vec<Vec2> {
+        crate::flatten::flatten(path, 0.01)
+            .into_iter()
+            .flatten()
+            .collect()
+    }
+
+    #[test]
+    fn an_arc_stays_on_its_circle() {
+        // The property that matters, and the one the familiar constant gets
+        // wrong at any angle but a right one: every point the arc passes
+        // through is at the radius, not merely its ends.
+        for sweep in [
+            std::f32::consts::FRAC_PI_6,
+            std::f32::consts::FRAC_PI_2,
+            2.0,
+            std::f32::consts::PI,
+            -std::f32::consts::PI,
+            std::f32::consts::TAU,
+        ] {
+            let mut builder = PathBuilder::new();
+            builder.arc(Vec2::new(50.0, 50.0), Vec2::splat(40.0), 0.3, sweep);
+            let path = builder.build();
+            let worst = points_of(&path)
+                .iter()
+                .map(|p| ((*p - Vec2::new(50.0, 50.0)).length() - 40.0).abs())
+                .fold(0.0f32, f32::max);
+            assert!(
+                worst < 0.05,
+                "a sweep of {sweep} strays {worst} from a radius of forty"
+            );
+        }
+    }
+
+    #[test]
+    fn an_arc_begins_and_ends_where_it_was_asked_to() {
+        let center = Vec2::new(10.0, 20.0);
+        let radii = Vec2::new(30.0, 30.0);
+        let (start, sweep) = (0.5f32, 1.7f32);
+        let mut builder = PathBuilder::new();
+        builder.arc(center, radii, start, sweep);
+        let points = points_of(&builder.build());
+        let want_first = center + Vec2::new(radii.x * start.cos(), radii.y * start.sin());
+        let end = start + sweep;
+        let want_last = center + Vec2::new(radii.x * end.cos(), radii.y * end.sin());
+        assert!((points[0] - want_first).length() < 0.01, "{:?}", points[0]);
+        assert!(
+            (*points.last().unwrap() - want_last).length() < 0.01,
+            "{:?}",
+            points.last()
+        );
+    }
+
+    #[test]
+    fn a_negative_sweep_travels_the_other_way() {
+        let center = Vec2::ZERO;
+        let arc_of = |sweep: f32| {
+            let mut builder = PathBuilder::new();
+            builder.arc(center, Vec2::splat(10.0), 0.0, sweep);
+            points_of(&builder.build())
+        };
+        // A quarter turn forward passes through positive Y, backward through
+        // negative Y. Same endpoints in X, opposite in Y.
+        let forward = arc_of(std::f32::consts::FRAC_PI_2);
+        let backward = arc_of(-std::f32::consts::FRAC_PI_2);
+        assert!(forward.iter().all(|p| p.y >= -0.01), "forward dipped");
+        assert!(backward.iter().all(|p| p.y <= 0.01), "backward rose");
+    }
+
+    #[test]
+    fn an_elliptical_arc_follows_the_ellipse() {
+        // Different radii, so a circle-shaped approximation would fail this
+        // while passing every test above.
+        let (center, radii) = (Vec2::new(0.0, 0.0), Vec2::new(60.0, 20.0));
+        let mut builder = PathBuilder::new();
+        builder.arc(center, radii, 0.0, std::f32::consts::TAU);
+        let worst = points_of(&builder.build())
+            .iter()
+            .map(|p| {
+                let (x, y) = (p.x / radii.x, p.y / radii.y);
+                (x * x + y * y - 1.0).abs()
+            })
+            .fold(0.0f32, f32::max);
+        assert!(worst < 0.002, "off the ellipse by {worst}");
+    }
+
+    #[test]
+    fn an_arc_after_a_move_is_joined_by_a_line() {
+        // What makes a pie slice: the center, a line out to the arc, the arc,
+        // and a close. Without the joining line the slice would be a chorded
+        // segment with the center left dangling.
+        let mut builder = PathBuilder::new();
+        builder.move_to(Vec2::ZERO);
+        builder.arc(Vec2::ZERO, Vec2::splat(10.0), 0.0, 1.0);
+        builder.close();
+        let path = builder.build();
+        assert_eq!(path.verbs()[0], Verb::MoveTo);
+        assert_eq!(
+            path.verbs()[1],
+            Verb::LineTo,
+            "the arc did not join the current point"
+        );
+        assert!(points_of(&path).iter().any(|p| p.length() < 0.01));
+    }
+
+    #[test]
+    fn an_arc_on_an_empty_builder_starts_with_a_move() {
+        let mut builder = PathBuilder::new();
+        builder.arc(Vec2::ZERO, Vec2::splat(10.0), 0.0, 1.0);
+        assert_eq!(builder.build().verbs()[0], Verb::MoveTo);
+    }
+
+    #[test]
+    fn a_degenerate_arc_adds_no_curve() {
+        // A zero sweep still places the pen, which is what lets a caller emit
+        // one unconditionally in a loop. A non-finite one does nothing at all,
+        // since there is no position it describes.
+        let mut builder = PathBuilder::new();
+        builder.arc(Vec2::ZERO, Vec2::splat(10.0), 0.0, 0.0);
+        let path = builder.build();
+        assert_eq!(path.verbs(), &[Verb::MoveTo]);
+
+        let mut builder = PathBuilder::new();
+        builder.arc(Vec2::ZERO, Vec2::splat(f32::NAN), 0.0, 1.0);
+        assert!(builder.build().is_empty());
+    }
+
+    #[test]
+    fn a_sweep_past_a_full_turn_is_one_turn() {
+        // Round and round draws the same pixels, and the extra segments are
+        // cost without a picture -- but a self-overlapping path also changes
+        // what a nonzero fill rule does, so this is about correctness as well.
+        let count = |sweep| {
+            let mut builder = PathBuilder::new();
+            builder.arc(Vec2::ZERO, Vec2::splat(10.0), 0.0, sweep);
+            builder.build().verbs().len()
+        };
+        assert_eq!(
+            count(std::f32::consts::TAU),
+            count(std::f32::consts::TAU * 3.0)
         );
     }
 }

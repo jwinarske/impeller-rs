@@ -1234,6 +1234,41 @@ pub fn corpus() -> Vec<Scene> {
         // worth comparing between backends: a dash is measured along the
         // flattened path, so a backend flattening differently would place the
         // dashes differently, and nothing else in the corpus would notice.
+        // The two things an arc is for. Both here because they exercise
+        // different halves: the ring is a stroke along a curve with two caps,
+        // the slice is a filled region whose straight edges meet at a point,
+        // and an arc that strayed from its radius would show as a wobble in one
+        // and a dent in the other.
+        Scene::new(
+            "arc-ring-and-slice",
+            vec![
+                Item::stroke(
+                    Shape::Arc {
+                        center: [64.0, 40.0],
+                        radii: [30.0, 30.0],
+                        start: -std::f32::consts::FRAC_PI_2,
+                        // Three quarters, which is what a progress ring at
+                        // seventy-five percent looks like.
+                        sweep: std::f32::consts::TAU * 0.75,
+                        through_center: false,
+                    },
+                    StrokeSpec::new(8.0),
+                    GREEN,
+                ),
+                Item::filled(
+                    Shape::Arc {
+                        center: [64.0, 96.0],
+                        // Elliptical, so a slice drawn as though it were
+                        // circular is visibly the wrong shape.
+                        radii: [36.0, 24.0],
+                        start: -std::f32::consts::FRAC_PI_2 * 0.6,
+                        sweep: std::f32::consts::PI * 0.8,
+                        through_center: true,
+                    },
+                    Fill::Solid(RED),
+                ),
+            ],
+        ),
         Scene::new(
             "stroke-dashed",
             vec![
