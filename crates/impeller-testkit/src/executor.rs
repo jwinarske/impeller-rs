@@ -95,6 +95,14 @@ fn paint_for(item: &Item, anti_alias: bool) -> Paint {
     Paint {
         shader,
         color_filter: item.color_filter,
+        // Not described by the corpus, and for a reason the color filter's
+        // presence there makes clearer by contrast. A color filter is
+        // arithmetic in the fragment shader, which the two backends reach by
+        // separate translations and can disagree about. An image filter is a
+        // layer opened and composited, which produces the same recording
+        // whatever draws it -- and the passes that recording contains are
+        // already compared, by the scenes that blur a layer directly.
+        image_filter: impeller_core::ImageFilter::None,
         style: match &item.stroke {
             Some(spec) => Style::Stroke(spec.to_style()),
             None => Style::Fill,

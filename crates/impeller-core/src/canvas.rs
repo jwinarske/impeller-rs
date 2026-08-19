@@ -6,7 +6,7 @@
 //! described before any of it reaches the GPU — that separation is what lets
 //! draws be batched into one pass rather than submitted one at a time.
 
-use crate::paint::{GradientStop, Paint, Shader, Style};
+use crate::paint::{GradientStop, ImageFilter, Paint, Shader, Style};
 use crate::ramp::Ramp;
 use crate::vertices::{Sprite, VertexMode, Vertices};
 use crate::Color;
@@ -915,6 +915,12 @@ impl Canvas {
         if !paint.is_visible() || path.is_empty() {
             return Ok(self);
         }
+        // Before the mask blur, so the two compose in the order they are
+        // defined in: an image filter acts on what was drawn, and what was
+        // drawn is whatever the mask blur produced.
+        if !paint.image_filter.is_identity() {
+            return self.draw_filtered(path, paint);
+        }
         if paint.mask_blur > 0.0 {
             return self.draw_masked(path, paint);
         }
@@ -1163,6 +1169,55 @@ impl Canvas {
     /// caller doing this by hand has to know that reach, which is exactly the
     /// part that is easy to get wrong and shows as a shadow with a straight
     /// edge where it was cut off.
+    /// Draw into a layer, filter it, and composite it back.
+    ///
+    /// The same machinery a mask blur uses, without the restriction: a mask
+    /// blur is only the same picture as this when the fill does not vary, and
+    /// so takes a solid color, while filtering a result is defined whatever
+    /// produced it. What is paid for that is a target of its own.
+    fn draw_filtered(&mut self, path: &Path, paint: &Paint) -> Result<&mut Self> {
+        let ImageFilter::Blur { sigma } = paint.image_filter else {
+            // Nothing else exists to apply, and `is_identity` kept `None` out.
+            return Err(Error::Unsupported("this image filter is not implemented"));
+        };
+        let bounds = self.filter_bounds(path, paint);
+        self.save_layer_bounds(Layer::opacity(1.0).with_blur(sigma), bounds);
+        // Without the filter, or this would open a layer inside itself
+        // forever. The mask blur, if there is one, is left on: it applies to
+        // the drawing this filter is filtering.
+        let inner = paint.clone().with_image_filter(ImageFilter::None);
+        let failure = self.draw_path(path, &inner).err();
+        self.restore();
+        match failure {
+            Some(e) => Err(e),
+            None => Ok(self),
+        }
+    }
+
+    /// A path's bounds, widened by however far a stroke reaches past it.
+    ///
+    /// How far a blur reaches is deliberately not added: opening a bounded
+    /// layer with a blur already widens the region by that, and the layer is
+    /// the right place for it, since it knows its own sigma.
+    ///
+    /// The stroke's own reach was untested for a while, because that blur
+    /// widening covers any stroke narrower than three deviations and every
+    /// test had one. It takes a wide stroke and a small blur to tell the two
+    /// apart, and there is one now.
+    fn filter_bounds(&self, path: &Path, paint: &Paint) -> Rect {
+        let bounds = path.bounds();
+        let reach = match &paint.style {
+            Style::Stroke(stroke) if stroke.width.is_finite() => stroke.width / 2.0,
+            _ => 0.0,
+        };
+        Rect::new(
+            bounds.min.x - reach,
+            bounds.min.y - reach,
+            bounds.max.x + reach,
+            bounds.max.y + reach,
+        )
+    }
+
     fn draw_masked(&mut self, path: &Path, paint: &Paint) -> Result<&mut Self> {
         if !matches!(paint.shader, Shader::Solid(_)) {
             // See `Paint::mask_blur`: for anything that varies, the two orders
@@ -1173,26 +1228,7 @@ impl Canvas {
                 "a mask blur takes a solid color; draw into a blurred layer for anything else",
             ));
         }
-        let bounds = path.bounds();
-        // A stroke reaches half its width past the path, which the bounds have
-        // to include. How far the blur reaches is *not* added here: opening a
-        // bounded layer with a blur already widens the region by that, and it
-        // is the right place for it -- the layer knows its own sigma, and a
-        // second copy of the rule here would be a second thing to keep right.
-        // Removing this line changed no test, which is how the duplication was
-        // found.
-        let reach = match &paint.style {
-            Style::Stroke(stroke) if stroke.width.is_finite() => stroke.width / 2.0,
-            _ => 0.0,
-        };
-        // The geometry crate's rectangle, which is min/max rather than the
-        // canvas's edges, so it is widened and then restated.
-        let bounds = Rect::new(
-            bounds.min.x - reach,
-            bounds.min.y - reach,
-            bounds.max.x + reach,
-            bounds.max.y + reach,
-        );
+        let bounds = self.filter_bounds(path, paint);
         self.save_layer_bounds(Layer::opacity(1.0).with_blur(paint.mask_blur), bounds);
         // Without the mask, or this would open a layer inside itself forever.
         let inner = paint.clone().with_mask_blur(0.0);

@@ -156,6 +156,41 @@ impl Shader {
     }
 }
 
+/// A function applied to what a paint drew, rather than to the color it
+/// computed.
+///
+/// The distinction from a color filter is what the input is. A color filter
+/// sees one color at a time and cannot know its neighbours; this sees the
+/// picture, which is what a blur needs.
+///
+/// The distinction from [`Paint::mask_blur`] is what is blurred. A mask blur
+/// blurs coverage and then fills, which is only the same picture as blurring
+/// the result when the fill does not vary -- so it takes a solid color and
+/// refuses anything else. This blurs the result, which is defined for every
+/// paint and is what `dart:ui` means by an image filter. For a solid color the
+/// two agree, and there is a test that says so.
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+pub enum ImageFilter {
+    #[default]
+    None,
+    /// Blur what was drawn, by a standard deviation in device pixels.
+    Blur { sigma: f32 },
+}
+
+impl ImageFilter {
+    /// Whether this would change anything.
+    pub fn is_identity(&self) -> bool {
+        match self {
+            Self::None => true,
+            // Stated positively rather than as a negated comparison, which
+            // reads badly on a type where two values can be incomparable: a
+            // sigma that is not finite is not a blur, and neither is one that
+            // is zero or less.
+            Self::Blur { sigma } => !sigma.is_finite() || *sigma <= 0.0,
+        }
+    }
+}
+
 /// Fill the shape, or trace its outline.
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub enum Style {
@@ -174,6 +209,13 @@ pub enum Style {
 pub struct Paint {
     pub shader: Shader,
     pub style: Style,
+    /// A function applied to what this paint drew, after the shader and any
+    /// color filter.
+    ///
+    /// Costs a layer: what is drawn goes into a target of its own, is
+    /// filtered, and is composited back. See [`ImageFilter`] for how this
+    /// differs from a color filter and from a mask blur.
+    pub image_filter: ImageFilter,
     /// A function applied to the color the shader produces, before blending.
     ///
     /// Beside the shader rather than inside it because it applies to all of
@@ -219,6 +261,7 @@ impl Default for Paint {
         Self {
             shader: Shader::Solid(Color::BLACK),
             style: Style::Fill,
+            image_filter: ImageFilter::None,
             color_filter: ColorFilter::None,
             dash: None,
             mask_blur: 0.0,
@@ -336,6 +379,18 @@ impl Paint {
         if let Shader::Image { sampling: at, .. } = &mut self.shader {
             *at = sampling;
         }
+        self
+    }
+
+    /// Filter what this paint draws, rather than the color it computes.
+    ///
+    /// Unlike a mask blur this takes any shader, because blurring a result is
+    /// defined whatever produced it. It is the more expensive of the two: a
+    /// layer is allocated, drawn into and composited back, where a mask blur
+    /// of a solid color reaches the same picture the same way but is only
+    /// offered where that equivalence holds.
+    pub fn with_image_filter(mut self, filter: ImageFilter) -> Self {
+        self.image_filter = filter;
         self
     }
 

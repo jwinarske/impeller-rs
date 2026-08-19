@@ -9,9 +9,9 @@
 use googletest::prelude::*;
 use impeller::{
     Affine2, Atlas, BackendPreference, BlendMode, Canvas, Color, ColorFilter, Context, Coverage,
-    Dash, Extent2D, GlyphKey, GradientStop, Layer, Paint, Path, PathBuilder, PixelFormat,
-    PositionedGlyph, Rect, Result, Sampling, SourceRect, Sprite, TileMode, Vec2, VertexMode,
-    Vertices, MAX_STOPS,
+    Dash, Extent2D, GlyphKey, GradientStop, ImageFilter, Layer, Paint, Path, PathBuilder,
+    PixelFormat, PositionedGlyph, Rect, Result, Sampling, SourceRect, Sprite, TileMode, Vec2,
+    VertexMode, Vertices, MAX_STOPS,
 };
 
 const SIZE: Extent2D = Extent2D {
@@ -6096,6 +6096,154 @@ fn nearest_sampling_reads_one_texel_where_linear_blends_two() {
             pixel(&linear, x, y),
             pixel(&nearest, x, y),
             "the two modes should agree away from a boundary at ({x}, {y})"
+        );
+    }
+}
+
+#[test]
+fn an_image_filter_blur_of_a_solid_agrees_with_the_mask_blur_of_the_same_shape() {
+    // The two are defined differently and only coincide here. A mask blur
+    // blurs coverage and then fills; an image filter fills and then blurs the
+    // result. Those are the same picture exactly when the fill does not vary,
+    // which is why a mask blur takes a solid color and this takes anything --
+    // and on a solid color they must agree, or one of them is wrong.
+    let Some(mut ctx) = context() else { return };
+
+    let shape = || {
+        let mut b = PathBuilder::new();
+        b.move_to(Vec2::new(32.0, 40.0))
+            .line_to(Vec2::new(96.0, 40.0))
+            .line_to(Vec2::new(64.0, 96.0))
+            .close();
+        b.build()
+    };
+    let color = Color::linear(0.9, 0.3, 0.2, 1.0);
+
+    let mut canvas = Canvas::new(SIZE);
+    canvas.clear(Color::linear(0.05, 0.05, 0.08, 1.0));
+    canvas
+        .draw_path(&shape(), &Paint::fill(color).with_mask_blur(6.0))
+        .expect("mask blur");
+    let masked = render(&mut ctx, canvas);
+
+    let mut canvas = Canvas::new(SIZE);
+    canvas.clear(Color::linear(0.05, 0.05, 0.08, 1.0));
+    canvas
+        .draw_path(
+            &shape(),
+            &Paint::fill(color).with_image_filter(ImageFilter::Blur { sigma: 6.0 }),
+        )
+        .expect("image filter");
+    let filtered = render(&mut ctx, canvas);
+
+    let mut worst = 0i32;
+    for (a, b) in masked.chunks_exact(4).zip(filtered.chunks_exact(4)) {
+        for channel in 0..4 {
+            worst = worst.max((a[channel] as i32 - b[channel] as i32).abs());
+        }
+    }
+    assert!(
+        worst <= 2,
+        "blurring coverage and blurring the result should agree on a solid \
+         colour; they differ by {worst}"
+    );
+}
+
+#[test]
+fn an_image_filter_blurs_a_gradient_that_a_mask_blur_refuses() {
+    // What the filter is for. The same call on the same paint is refused as a
+    // mask blur, because blurring coverage and then filling with something
+    // that varies is a different picture from blurring the result -- and
+    // drawing one where the caller asked for the other is the substitution
+    // this renderer declines to make.
+    let Some(mut ctx) = context() else { return };
+
+    let gradient = || {
+        Paint::linear_gradient(
+            Vec2::new(32.0, 0.0),
+            Vec2::new(96.0, 0.0),
+            vec![
+                GradientStop::new(Color::linear(1.0, 0.2, 0.0, 1.0), 0.0),
+                GradientStop::new(Color::linear(0.0, 0.4, 1.0, 1.0), 1.0),
+            ],
+        )
+    };
+    let area = Rect::new(32.0, 40.0, 96.0, 88.0);
+
+    let mut canvas = Canvas::new(SIZE);
+    assert!(
+        canvas
+            .draw_rect(area, &gradient().with_mask_blur(6.0))
+            .is_err(),
+        "a mask blur of a gradient should still be refused"
+    );
+
+    let mut canvas = Canvas::new(SIZE);
+    canvas.clear(Color::BLACK);
+    canvas
+        .draw_rect(
+            area,
+            &gradient().with_image_filter(ImageFilter::Blur { sigma: 6.0 }),
+        )
+        .expect("image filter");
+    let pixels = render(&mut ctx, canvas);
+
+    // Soft at the edge: a pixel just outside the rectangle has colour, and one
+    // well outside has none.
+    let just_outside = pixel(&pixels, 64, 36);
+    let far_outside = pixel(&pixels, 64, 8);
+    assert!(
+        just_outside.iter().take(3).any(|v| *v > 20),
+        "the blur should reach past the shape, got {just_outside:?}"
+    );
+    assert_eq!(
+        far_outside,
+        [0, 0, 0, 255],
+        "the blur should not reach the whole target"
+    );
+
+    // And it is still a gradient: the two ends differ in the way the stops say.
+    let left = pixel(&pixels, 40, 64);
+    let right = pixel(&pixels, 88, 64);
+    assert!(
+        left[0] > right[0] && right[2] > left[2],
+        "the gradient should survive the blur: left {left:?}, right {right:?}"
+    );
+}
+
+#[test]
+fn a_filtered_stroke_keeps_the_half_of_itself_that_lies_outside_the_path() {
+    // The layer a filter draws into is bounded, and a stroke reaches half its
+    // width past the path the bounds come from. That widening is easy to miss
+    // and hard to catch: opening a bounded layer with a blur already widens
+    // the region by three deviations, which covers any stroke narrower than
+    // that. So this uses a wide stroke and a small blur, where the two
+    // widenings are nothing like each other.
+    //
+    // A circle of radius twenty stroked forty wide covers everything within
+    // forty of its centre. Without the stroke's own reach the layer would end
+    // about twenty-three out, and the outer half of the band would be clipped
+    // away -- which looks like a thinner stroke rather than like a bug.
+    let Some(mut ctx) = context() else { return };
+
+    let mut canvas = Canvas::new(SIZE);
+    canvas.clear(Color::BLACK);
+    canvas
+        .draw_circle(
+            Vec2::new(64.0, 64.0),
+            20.0,
+            &Paint::stroke(Color::linear(1.0, 1.0, 1.0, 1.0), 40.0).with_mask_blur(1.0),
+        )
+        .expect("stroke");
+    let pixels = render(&mut ctx, canvas);
+
+    // Well inside the band's outer half, which only exists if the bounds took
+    // the stroke into account.
+    for (x, y) in [(64u32, 28u32), (64, 100), (28, 64), (100, 64)] {
+        let got = pixel(&pixels, x, y);
+        assert!(
+            got[0] > 200,
+            "({x}, {y}) is inside the stroke and should be painted, got {got:?}"
         );
     }
 }
