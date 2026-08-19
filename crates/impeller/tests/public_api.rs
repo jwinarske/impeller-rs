@@ -6,6 +6,7 @@
 //! front door is incomplete regardless of how well the machinery behind it
 //! works.
 
+use googletest::prelude::*;
 use impeller::{
     Atlas, BackendPreference, BlendMode, Canvas, Color, Context, Coverage, Dash, Extent2D,
     GlyphKey, GradientStop, Layer, Paint, Path, PathBuilder, PixelFormat, PositionedGlyph, Rect,
@@ -1984,7 +1985,7 @@ fn a_glyph_placed_by_arithmetic_that_went_wrong_still_renders_a_frame() {
 /// One call made with a value that is not a number, drawn onto a canvas.
 type PoisonedDraw = Box<dyn Fn(&mut Canvas)>;
 
-#[test]
+#[gtest]
 fn a_draw_placed_at_nan_contributes_nothing() {
     let Some(mut ctx) = context() else { return };
     // Infinity and NaN are not the same request. A caller who writes infinity
@@ -2124,7 +2125,6 @@ fn a_draw_placed_at_nan_contributes_nothing() {
         ),
     ];
 
-    let mut wrong = Vec::new();
     for (name, poison) in &cases {
         let mut canvas = Canvas::new(SIZE);
         canvas.clear(Color::BLACK);
@@ -2141,15 +2141,16 @@ fn a_draw_placed_at_nan_contributes_nothing() {
             .zip(expected.chunks_exact(4))
             .filter(|(a, b)| a != b)
             .count();
-        if differing > 0 {
-            wrong.push(format!("{name} changed {differing} pixel(s)"));
-        }
+        // Non-fatal, so one bad call does not hide the rest of the sweep. The
+        // whole point of asking every drawing call the same question is to
+        // learn which of them answer it wrongly, and a fatal assertion reports
+        // the first and stops.
+        expect_that!(
+            differing,
+            eq(0),
+            "{name} at NaN changed {differing} pixel(s); such a draw should contribute nothing"
+        );
     }
-    assert!(
-        wrong.is_empty(),
-        "a draw at NaN should contribute nothing:\n  {}",
-        wrong.join("\n  ")
-    );
 }
 
 #[test]

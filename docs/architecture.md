@@ -1547,6 +1547,22 @@ tests skipped because modesetting master is exclusive per device and the
 harness runs one file's tests on several threads, so all but the first were
 refused the card. Both were found by looking, not by a failure.
 
+**A sweep reports every failure in it, not the first.** Several tests here ask
+the same question of a set — every blend mode against its equation, every
+drawing call given a coordinate that is not a number — and for those the useful
+output is which members fail, since a wrong table usually breaks several and the
+pattern is what identifies the mistake. Rust's built-in assertions are all
+fatal, so this was hand-rolled four times as a vector of strings and an assert
+at the end. It is now the `googletest` crate's `expect_that!` and `expect_true!`,
+which record a failure and let the test continue. That crate is Google's Rust
+counterpart to the C++ framework, and this is the one thing it offers that the
+built-in harness does not; the matchers and fixtures it also provides are not
+used, since helper functions and `Drop` already cover those.
+
+What it does *not* provide is the counterpart to `GTEST_SKIP`. A Rust test that
+discovers at runtime that it cannot run has no way to report itself skipped —
+it returns, and passes. That hole is why the census below exists.
+
 `cargo xtask verify` runs the suite with output uncaptured and reports the skip
 census alongside the counts. It does not treat a skip as a failure, because
 some are correct — a device without the advanced-blend extension genuinely
@@ -1559,6 +1575,15 @@ be looked at, since the incorrect ones look exactly the same from there.
 | L0 | Unit: math, path ops, atlas packing, negotiation logic | Every merge, no GPU | runs |
 | L1 | Property: tessellation invariants, Bezier tolerance, stroke under transform | Every merge, no GPU | runs |
 | L2 | Golden: corpus to offscreen render, image compare | Every merge on software GPU | none — comparison is against another implementation rather than a stored image, deliberately, and no golden apparatus exists |
+<!-- Rejected for L2: generating references through a Rust binding to Skia.
+     `skia-safe` either downloads prebuilt C++ binaries or builds Skia from
+     source with LLVM, Python and Ninja. Either breaks the rule that every
+     dependency compiles from pure Rust source, and the prebuilt path cannot
+     cross-compile to the boards this project exists for. Should goldens ever
+     be wanted, the way to have them without breaking that rule is a tool
+     outside this workspace that emits images, committed as data -- and they
+     would answer "does this match Skia", which is not the same question as
+     "does this match Impeller". -->
 | L3 | Conformance: same corpus, cross-backend and cross-presentation diffs | Every merge (software) | runs, cross-backend and cross-device; cross-presentation only for the offscreen target |
 | L4 | Presentation: resize storms, flip pacing, fence ordering, hotplug | VKMS and headless WSI in CI | partial — headless WSI runs on both backends, fence ordering is checked under the validation layer; no VKMS, no resize storms, no hotplug |
 | L5 | Stress and soak: atlas thrash, layer-depth bombs, leak detection | Nightly and weekly, hardware | none |

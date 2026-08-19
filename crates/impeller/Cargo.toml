@@ -18,6 +18,7 @@ drm = ["dep:impeller-present-drm"]
 present-wsi = []
 
 [dev-dependencies]
+googletest = { workspace = true }
 # This crate, on itself, to turn on the second backend its own tests compare.
 # The default feature set is one backend, which is right for a consumer on a
 # board that has one -- but three tests here need two contexts of different

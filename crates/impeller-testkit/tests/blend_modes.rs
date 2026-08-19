@@ -9,6 +9,7 @@
 //! modes differ in *how* the two mix per channel, so they need channels that
 //! are all distinct and none of them zero.
 
+use googletest::prelude::*;
 use impeller_hal::{
     blend::blend_advanced, Batch, BlendFactor, BlendMode, Error, Extent2D, Hal, HalContext,
     Material, PassDescriptor, PixelFormat, TextureDescriptor,
@@ -169,7 +170,6 @@ where
     H::Context: HalContext<Hal = H>,
 {
     let advanced = ctx.capabilities().advanced_blend;
-    let mut failures = Vec::new();
     let mut checked = 0;
     for mode in BlendMode::ALL {
         if mode.is_advanced() && !advanced {
@@ -179,28 +179,29 @@ where
             Ok(got) => {
                 checked += 1;
                 let want = expected(*mode);
-                if !near(got, want) {
-                    failures.push(format!("  {mode}: got {got:?}, equation says {want:?}"));
-                }
+                // Every mode reported at once: a wrong factor table usually
+                // breaks several, and seeing which ones is what identifies the
+                // mistake. A fatal assertion here would name one and stop.
+                expect_true!(
+                    near(got, want),
+                    "{backend} {mode}: got {got:?}, equation says {want:?}"
+                );
             }
-            Err(e) => failures.push(format!("  {mode}: refused despite being supported: {e}")),
+            Err(e) => {
+                expect_true!(
+                    false,
+                    "{backend} {mode}: refused despite being supported: {e}"
+                )
+            }
         }
     }
-    // Every mode reported at once: a wrong factor table usually breaks several,
-    // and seeing which ones is what identifies the mistake.
-    assert!(
-        failures.is_empty(),
-        "{} of {checked} mode(s) disagree with the blend equation on {backend}:\n{}",
-        failures.len(),
-        failures.join("\n")
-    );
     assert!(
         checked >= BlendMode::PORTER_DUFF.len(),
         "{backend} checked only {checked} modes; every device must do all of Porter-Duff"
     );
 }
 
-#[test]
+#[gtest]
 fn every_mode_matches_its_equation_on_vulkan() {
     // Both devices, because they do not offer the same modes. Advanced blending
     // is an extension one physical device can have and another can lack on the
@@ -224,7 +225,7 @@ fn every_mode_matches_its_equation_on_vulkan() {
     }
 }
 
-#[test]
+#[gtest]
 fn every_mode_matches_its_equation_on_gles() {
     let Ok(mut ctx) = GlesValidated::new(DisplayTarget::Surfaceless) else {
         eprintln!("skipping: no GLES context");
@@ -279,7 +280,7 @@ fn a_mode_the_device_cannot_do_is_refused_rather_than_approximated() {
     }
 }
 
-#[test]
+#[gtest]
 fn the_porter_duff_modes_agree_between_the_backends() {
     let Ok(mut vulkan) = Validated::new(DevicePreference::Auto) else {
         return;
@@ -291,20 +292,11 @@ fn the_porter_duff_modes_agree_between_the_backends() {
     // Only the modes both backends have. The separable modes are Vulkan-only
     // here, and comparing them across backends is what the corpus does through
     // an explicit capability gate rather than what this test papers over.
-    let mut failures = Vec::new();
     for mode in BlendMode::PORTER_DUFF {
         let a = render::<VulkanHal>(&mut vulkan, *mode).expect("vulkan");
         let b = render::<GlesHal>(&mut gles, *mode).expect("gles");
-        if !near(a, b) {
-            failures.push(format!("  {mode}: vulkan {a:?}, gles {b:?}"));
-        }
+        expect_true!(near(a, b), "{mode}: vulkan {a:?}, gles {b:?}");
     }
-    assert!(
-        failures.is_empty(),
-        "{} mode(s) diverge between backends:\n{}",
-        failures.len(),
-        failures.join("\n")
-    );
 }
 
 #[test]
