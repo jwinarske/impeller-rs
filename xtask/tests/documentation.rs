@@ -20,12 +20,17 @@
 use std::collections::BTreeSet;
 use std::path::PathBuf;
 
-fn parity() -> String {
+fn doc(name: &str) -> String {
     let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .parent()
         .expect("xtask sits inside the workspace")
-        .join("docs/parity.md");
+        .join("docs")
+        .join(name);
     std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("reading {}: {e}", path.display()))
+}
+
+fn parity() -> String {
+    doc("parity.md")
 }
 
 /// The table rows, as `(feature, status, citations)`.
@@ -215,5 +220,31 @@ fn a_row_claiming_the_operation_exists_names_the_evidence() {
          An uncited yes is the failure mode the table was written to avoid: it \
          reads as verified and is only asserted.",
         uncited.join("\n  ")
+    );
+}
+
+#[test]
+fn the_architecture_states_the_material_size_the_code_enforces() {
+    // The document said a hundred and twelve bytes and the assertion in the
+    // code said a hundred and twenty-eight. Both numbers were written
+    // deliberately; one of them stopped being true when the layout grew, and
+    // nothing anywhere connected the two.
+    //
+    // This is the number the whole push-constant argument rests on -- the
+    // reason the stop count is four, the reason an image material was a
+    // question, the reason a conical gradient had to find a spare float. A
+    // reader checking that argument against the wrong figure would conclude
+    // there was room to spare.
+    let bytes = impeller_hal::MATERIAL_FLOATS * 4;
+    let stated = format!("packed into {bytes} bytes");
+    let flattened = doc("architecture.md")
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ");
+    assert!(
+        flattened.contains(&stated),
+        "docs/architecture.md does not say the material is {bytes} bytes, which is \
+         what MATERIAL_FLOATS makes it. Changing the layout means changing the \
+         sentence that explains why the layout is the size it is."
     );
 }

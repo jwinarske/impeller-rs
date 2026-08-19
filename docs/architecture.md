@@ -412,6 +412,17 @@ before measuring — and the texture is a binding rather than data. What would
 break the budget is a material wanting a gradient's stops and an image's mapping
 at once, and that is when a uniform buffer becomes the answer.
 
+A full budget is not the same as a budget spent well, and the conical gradient
+is the case that showed the difference. It needed one float more than a
+gradient had, and the obvious reading — the budget is exactly full, so this
+waits for the uniform buffer — was wrong. A whole float was carrying a boolean
+saying the colors had been baked into a texture, and a material whose colors
+are in a texture has no stop count to report, so the count now carries both:
+zero stops means read the ramp. Nothing about the mechanism had to change. The
+rule that came out of it is to look for a field paying for less than its width
+before concluding that a limit has been reached, and to be suspicious of any
+plan that begins by moving everything somewhere larger.
+
 **A gradient with more stops than the material carries is tabulated rather than
 truncated.** Four fit, which is almost every real gradient and costs no texture;
 past that the recorder evaluates the ramp into a small image and the shader
@@ -1230,12 +1241,13 @@ every fragment walks, which is the cost specialization would remove.
   whole way and only the final write encoded, rather than converting early or
   twice.
 - **Materials**: a paint resolved for a backend — color or gradient, already
-  in clip space — packed into 112 bytes, inside the 128 of push constants every
+  in clip space — packed into 128 bytes, exactly the push-constant size every
   device is required to offer. Staying within the guaranteed minimum is
   deliberate: a part that provides only the minimum is exactly the embedded
   hardware this renderer targets, and a material that did not fit there would
   fall back to a uniform buffer on the devices least able to afford one. The
-  limit is a compile-time assertion rather than a test.
+  limit is a compile-time assertion rather than a test, and the size stated
+  here is checked against it.
 
 **A gradient locates itself from an interpolated clip position, not from the
 fragment coordinate builtin.** That builtin's origin differs between the two

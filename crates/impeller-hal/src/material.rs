@@ -15,8 +15,15 @@
 ///
 /// A material needing more than this — an image shader, with its own sampler
 /// and matrix — does not belong in push constants and wants a uniform buffer.
-/// Being at the limit is a signal that the next material is the one that
-/// changes the mechanism.
+///
+/// Being at the limit was read once as a signal that the next material would
+/// have to change the mechanism, and the conical gradient proved that reading
+/// too quick: the budget was full, but one of the floats held a boolean, and
+/// folding it into a number that was already there paid for the new material
+/// outright. Full is worth distinguishing from spent well. What genuinely does
+/// not fit here is a material that has to sit on top of another one -- a color
+/// filter over a four-stop gradient -- because there is no arrangement of these
+/// thirty-two floats that holds both.
 pub const MATERIAL_FLOATS: usize = 32;
 
 /// Enforced at compile time rather than by a test, so a material that outgrew
@@ -50,7 +57,12 @@ pub mod layout {
     pub const GEOMETRY: usize = 20;
     /// Clip-space to gradient-space matrix, in column order.
     pub const TO_LOCAL: usize = 24;
-    /// Stop count and material kind.
+    /// Stop count, material kind, and two floats whose meaning the kind
+    /// decides -- a corner radius, a stroke width, a blur's deviation, a
+    /// gradient's tile mode, a conical gradient's separation.
+    ///
+    /// A zero stop count means the colors are in a ramp texture; see
+    /// `stop_count_code`.
     pub const PARAMS: usize = 28;
 }
 
@@ -58,6 +70,22 @@ pub mod layout {
 ///
 /// Written once rather than at each call site: an image and a gradient must
 /// agree about what `1.0` means, and two copies of a mapping eventually do not.
+/// The stop count the shader reads, which doubles as the ramp flag.
+///
+/// Zero means the colors are in a texture rather than in this material, and
+/// the shader samples them instead of walking the stops. A sentinel rather
+/// than a flag of its own because the two are mutually exclusive by
+/// construction -- a ramp exists only when the stops outnumbered what fits, so
+/// a material with a ramp has no count worth reporting -- and because the float
+/// this frees is the one a conical gradient needs for its second center. That
+/// is the whole reason the fourth parameter slot was available to it.
+fn stop_count_code(count: usize, ramp: &Option<u32>) -> f32 {
+    match ramp {
+        Some(_) => 0.0,
+        None => count.max(1) as f32,
+    }
+}
+
 fn tile_code(tile: TileMode) -> f32 {
     match tile {
         TileMode::Clamp => tile::CLAMP,
@@ -78,6 +106,7 @@ pub mod kind {
     pub const BLUR: f32 = 6.0;
     pub const ROUNDED_RECT: f32 = 7.0;
     pub const ELLIPSE: f32 = 8.0;
+    pub const CONICAL: f32 = 9.0;
 }
 
 /// Tile mode selector shared with the shader.
@@ -195,6 +224,38 @@ pub enum Material {
         ///
         /// Unlike the other two this can be a no-op: a sweep covering the whole
         /// turn has no outside, and every direction lands within it.
+        tile: TileMode,
+    },
+    /// A gradient between two circles, the general form the other two are
+    /// special cases of.
+    ///
+    /// `center` is the first circle's center **in clip space**, and `to_local`
+    /// maps a clip-space offset into a space where that center is the origin
+    /// and the second circle's center lies at `(separation, 0)`. Putting the
+    /// separation on an axis costs nothing -- the rotation folds into a matrix
+    /// that has to be there anyway -- and buys the second center for one float
+    /// instead of two, which is what makes this fit at all.
+    ///
+    /// The radii are in that same space and are *not* normalized, unlike the
+    /// radial gradient's, because there are two of them and a scale can only
+    /// remove one. Carrying both plainly also means the degenerate cases need
+    /// no special handling: concentric circles are `separation == 0`, and a
+    /// cone rather than a tube is `radius_delta != 0`.
+    ConicalGradient {
+        center: [f32; 2],
+        to_local: ToLocal,
+        /// Radius of the first circle.
+        start_radius: f32,
+        /// Second radius minus the first.
+        radius_delta: f32,
+        /// Distance between the two centers.
+        separation: f32,
+        stops: Vec<Stop>,
+        /// Texture slot holding this gradient's colors, when they did not fit.
+        /// See [`Material::LinearGradient`].
+        ramp: Option<u32>,
+        /// What happens where the parameter leaves the unit interval. See
+        /// [`Material::LinearGradient`].
         tile: TileMode,
     },
     /// A texture, sampled through a mapping from clip space.
@@ -377,7 +438,8 @@ impl Material {
             Self::Solid(color) => color[3] <= 0.0,
             Self::LinearGradient { stops, .. }
             | Self::RadialGradient { stops, .. }
-            | Self::SweepGradient { stops, .. } => {
+            | Self::SweepGradient { stops, .. }
+            | Self::ConicalGradient { stops, .. } => {
                 stops.is_empty() || stops.iter().all(|s| s.color[3] <= 0.0)
             }
             // What the texture holds is unknown here, so only a zero alpha
@@ -411,7 +473,8 @@ impl Material {
             // carry, which is why this is an option rather than a slot.
             Self::LinearGradient { ramp, .. }
             | Self::RadialGradient { ramp, .. }
-            | Self::SweepGradient { ramp, .. } => *ramp,
+            | Self::SweepGradient { ramp, .. }
+            | Self::ConicalGradient { ramp, .. } => *ramp,
             Self::Solid(_) | Self::RoundedRect { .. } | Self::Ellipse { .. } => None,
         }
     }
@@ -427,7 +490,8 @@ impl Material {
             | Self::Ellipse { .. } => &[],
             Self::LinearGradient { stops, .. }
             | Self::RadialGradient { stops, .. }
-            | Self::SweepGradient { stops, .. } => stops,
+            | Self::SweepGradient { stops, .. }
+            | Self::ConicalGradient { stops, .. } => stops,
         }
     }
 
@@ -575,8 +639,8 @@ impl Material {
                 tile,
                 ..
             } => {
+                out[layout::PARAMS] = stop_count_code(count, ramp);
                 out[layout::PARAMS + 2] = tile_code(*tile);
-                out[layout::PARAMS + 3] = f32::from(ramp.is_some());
                 out[layout::GEOMETRY] = start[0];
                 out[layout::GEOMETRY + 1] = start[1];
                 out[layout::GEOMETRY + 2] = axis[0];
@@ -591,8 +655,8 @@ impl Material {
                 tile,
                 ..
             } => {
+                out[layout::PARAMS] = stop_count_code(count, ramp);
                 out[layout::PARAMS + 2] = tile_code(*tile);
-                out[layout::PARAMS + 3] = f32::from(ramp.is_some());
                 out[layout::GEOMETRY] = center[0];
                 out[layout::GEOMETRY + 1] = center[1];
                 out[layout::TO_LOCAL..layout::TO_LOCAL + 4].copy_from_slice(to_local);
@@ -607,14 +671,34 @@ impl Material {
                 tile,
                 ..
             } => {
+                out[layout::PARAMS] = stop_count_code(count, ramp);
                 out[layout::PARAMS + 2] = tile_code(*tile);
-                out[layout::PARAMS + 3] = f32::from(ramp.is_some());
                 out[layout::GEOMETRY] = center[0];
                 out[layout::GEOMETRY + 1] = center[1];
                 out[layout::GEOMETRY + 2] = *start_angle;
                 out[layout::GEOMETRY + 3] = *end_angle;
                 out[layout::TO_LOCAL..layout::TO_LOCAL + 4].copy_from_slice(to_local);
                 out[layout::PARAMS + 1] = kind::SWEEP;
+            }
+            Self::ConicalGradient {
+                ramp,
+                center,
+                to_local,
+                start_radius,
+                radius_delta,
+                separation,
+                tile,
+                ..
+            } => {
+                out[layout::PARAMS] = stop_count_code(count, ramp);
+                out[layout::PARAMS + 2] = tile_code(*tile);
+                out[layout::GEOMETRY] = center[0];
+                out[layout::GEOMETRY + 1] = center[1];
+                out[layout::GEOMETRY + 2] = *start_radius;
+                out[layout::GEOMETRY + 3] = *radius_delta;
+                out[layout::TO_LOCAL..layout::TO_LOCAL + 4].copy_from_slice(to_local);
+                out[layout::PARAMS + 1] = kind::CONICAL;
+                out[layout::PARAMS + 3] = *separation;
             }
         }
         out

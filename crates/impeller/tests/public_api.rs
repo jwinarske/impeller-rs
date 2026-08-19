@@ -5017,3 +5017,219 @@ fn bounds_that_cannot_be_honored_fall_back_to_a_full_size_layer() {
     });
     assert_eq!(offscreen, SIZE, "bounds outside the frame");
 }
+
+/// Stops for the conical tests: red at the first circle, blue at the second.
+fn conical_stops() -> Vec<GradientStop> {
+    vec![
+        GradientStop::new(Color::linear(1.0, 0.0, 0.0, 1.0), 0.0),
+        GradientStop::new(Color::linear(0.0, 0.0, 1.0, 1.0), 1.0),
+    ]
+}
+
+#[test]
+fn a_conical_gradient_whose_first_circle_is_a_point_at_the_centre_is_a_radial_gradient() {
+    // The two take entirely different routes -- the radial folds its radius
+    // into a matrix and measures a length, the conical solves a quadratic --
+    // and this is the one configuration where they must agree exactly. It is
+    // the only check available that compares the new arithmetic against
+    // something already known to be right, rather than against my expectation
+    // of what the picture should look like.
+    let Some(mut ctx) = context() else { return };
+
+    let mut canvas = Canvas::new(SIZE);
+    canvas.clear(Color::BLACK);
+    canvas
+        .draw_rect(
+            Rect::from_size(128.0, 128.0),
+            &Paint::radial_gradient(Vec2::new(64.0, 64.0), 60.0, conical_stops())
+                .with_anti_alias(false),
+        )
+        .expect("radial");
+    let radial = render(&mut ctx, canvas);
+
+    let mut canvas = Canvas::new(SIZE);
+    canvas.clear(Color::BLACK);
+    canvas
+        .draw_rect(
+            Rect::from_size(128.0, 128.0),
+            &Paint::conical_gradient(
+                Vec2::new(64.0, 64.0),
+                0.0,
+                Vec2::new(64.0, 64.0),
+                60.0,
+                conical_stops(),
+            )
+            .with_anti_alias(false),
+        )
+        .expect("conical");
+    let conical = render(&mut ctx, canvas);
+
+    let mut worst = 0i32;
+    let mut worst_at = (0, 0);
+    for y in 0..128 {
+        for x in 0..128 {
+            let (a, b) = (pixel(&radial, x, y), pixel(&conical, x, y));
+            for channel in 0..4 {
+                let delta = (a[channel] as i32 - b[channel] as i32).abs();
+                if delta > worst {
+                    worst = delta;
+                    worst_at = (x, y);
+                }
+            }
+        }
+    }
+    let (x, y) = worst_at;
+    assert!(
+        worst <= 1,
+        "a conical gradient from a point differs from the radial gradient it is: \
+         {worst} at ({x}, {y}), radial {:?} against conical {:?}",
+        pixel(&radial, x, y),
+        pixel(&conical, x, y)
+    );
+}
+
+#[test]
+fn a_conical_gradient_between_concentric_circles_holds_the_first_colour_inside_the_inner_one() {
+    // The configuration that gives the first radius somewhere to show. With
+    // both circles on the same center the family is an annulus, the parameter
+    // is zero on the inner circle and one on the outer, and everything inside
+    // the inner circle is before the gradient starts.
+    let Some(mut ctx) = context() else { return };
+    let mut canvas = Canvas::new(SIZE);
+    canvas.clear(Color::BLACK);
+    canvas
+        .draw_rect(
+            Rect::from_size(128.0, 128.0),
+            &Paint::conical_gradient(
+                Vec2::new(64.0, 64.0),
+                20.0,
+                Vec2::new(64.0, 64.0),
+                60.0,
+                conical_stops(),
+            )
+            .with_anti_alias(false),
+        )
+        .expect("conical");
+    let pixels = render(&mut ctx, canvas);
+
+    // Flat across the hole, which is what distinguishes this from a radial
+    // gradient of radius sixty: that one would already be a third of the way
+    // to blue at the inner circle.
+    let middle = pixel(&pixels, 64, 64);
+    let inner_edge = pixel(&pixels, 64 + 18, 64);
+    assert!(
+        middle[0] > 240 && middle[2] < 16,
+        "the hole should hold the first stop, got {middle:?}"
+    );
+    for channel in 0..4 {
+        assert!(
+            (middle[channel] as i32 - inner_edge[channel] as i32).abs() <= 2,
+            "the hole is not flat: center {middle:?} against {inner_edge:?}"
+        );
+    }
+
+    // And halfway between the two circles is halfway along the ramp.
+    let halfway = pixel(&pixels, 64 + 40, 64);
+    assert!(
+        halfway[0] > 90 && halfway[0] < 165 && halfway[2] > 90 && halfway[2] < 165,
+        "midway between the circles should be midway along the ramp, got {halfway:?}"
+    );
+}
+
+#[test]
+fn every_point_on_the_second_circle_reaches_the_last_stop_wherever_the_first_sits() {
+    // What makes a gradient conical rather than radial: the parameter is one
+    // on the whole of the second circle, however far off center the first one
+    // is. A solve that measured distance from the first circle instead would
+    // run from a quarter to three quarters of the ramp around this circle, so
+    // the four samples disagreeing is the signature of exactly that mistake.
+    let Some(mut ctx) = context() else { return };
+    let mut canvas = Canvas::new(SIZE);
+    canvas.clear(Color::BLACK);
+    canvas
+        .draw_rect(
+            Rect::from_size(128.0, 128.0),
+            &Paint::conical_gradient(
+                Vec2::new(44.0, 64.0),
+                0.0,
+                Vec2::new(64.0, 64.0),
+                40.0,
+                conical_stops(),
+            )
+            .with_anti_alias(false),
+        )
+        .expect("conical");
+    let pixels = render(&mut ctx, canvas);
+
+    let focus = pixel(&pixels, 44, 64);
+    assert!(
+        focus[0] > 240 && focus[2] < 16,
+        "the first circle collapsed to a point should be the first stop, got {focus:?}"
+    );
+
+    let on_circle = [
+        pixel(&pixels, 64 + 39, 64),
+        pixel(&pixels, 64 - 39, 64),
+        pixel(&pixels, 64, 64 + 39),
+        pixel(&pixels, 64, 64 - 39),
+    ];
+    for sample in on_circle {
+        assert!(
+            sample[2] > 235 && sample[0] < 24,
+            "a point on the second circle should be the last stop, got {sample:?}"
+        );
+    }
+}
+
+#[test]
+fn a_conical_gradient_whose_circles_are_tangent_draws_only_the_half_plane_it_spans() {
+    // The case the quadratic degenerates in: when the distance between the
+    // centers equals the difference of the radii, the first circle sits on the
+    // second and the squared term vanishes. Solving it as a quadratic anyway
+    // divides by zero and loses the single root that does exist, so this is
+    // the test for the branch that handles it -- and the branch is not
+    // reachable by any nearby configuration, which is why it needs its own.
+    //
+    // Geometrically the cone opens into a half plane: every circle of the
+    // family passes through the first center, so nothing behind it is on any
+    // of them, and nothing is drawn there.
+    let Some(mut ctx) = context() else { return };
+    let mut canvas = Canvas::new(SIZE);
+    canvas.clear(Color::BLACK);
+    canvas
+        .draw_rect(
+            Rect::from_size(128.0, 128.0),
+            &Paint::conical_gradient(
+                Vec2::new(44.0, 64.0),
+                0.0,
+                Vec2::new(64.0, 64.0),
+                20.0,
+                conical_stops(),
+            )
+            .with_anti_alias(false),
+        )
+        .expect("conical");
+    let pixels = render(&mut ctx, canvas);
+
+    // Diametrically opposite on the second circle, both a full turn of the
+    // ramp away from the first center, and both the last stop.
+    for (x, y) in [(84, 64), (64, 84)] {
+        let sample = pixel(&pixels, x, y);
+        assert!(
+            sample[2] > 235 && sample[0] < 24,
+            "({x}, {y}) is on the second circle and should be the last stop, got {sample:?}"
+        );
+    }
+
+    // Behind the first center there is no circle of the family at all. Not a
+    // clamped parameter, which would paint the first color across half the
+    // rectangle: no parameter.
+    for (x, y) in [(20, 64), (4, 4), (4, 124)] {
+        let sample = pixel(&pixels, x, y);
+        assert_eq!(
+            sample,
+            [0, 0, 0, 255],
+            "({x}, {y}) is on no circle of the family and should be untouched"
+        );
+    }
+}

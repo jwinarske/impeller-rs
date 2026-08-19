@@ -116,7 +116,7 @@ reason.
 | `strokeMiterLimit` | yes | `StrokeStyle::miter_limit` | `stroke-joins` |
 | `isAntiAlias` | yes | `with_anti_alias` | `circle-antialiased`, `curve-antialiased` |
 | `blendMode` | yes | `with_blend`, all of Porter-Duff and the fifteen advanced modes where the device offers them | `advanced-blend-*` |
-| `shader` | partial | linear, radial and sweep gradients, and images. Conical gradients and runtime effects are absent | `gradient-*` |
+| `shader` | partial | linear, radial, sweep and conical gradients, and images. Runtime effects are absent | `gradient-*` |
 | `colorFilter` | no | — an image tint exists, which is the narrowest case of one | |
 | `imageFilter` | no | — a layer can blur itself or its backdrop, which is not the same as a filter on a paint | `layer-blurred`, `layer-backdrop-blurred` |
 | `maskFilter` | partial | `with_mask_blur`, blurring a shape's coverage. Solid colors only, since the identity it rests on holds for nothing else | `mask-blur-shadow` |
@@ -143,19 +143,26 @@ absent, and one is out of scope. Counting them is the least interesting thing
 about the table -- the absences are not equal, and a reader deciding whether
 this renderer is usable should look at which ones rather than how many.
 
-The four that would matter most to a real application, in the order I would
+The three that would matter most to a real application, in the order I would
 build them:
 
 1. **`colorFilter`** — tinting anything rather than only an image. It is asked
-   for constantly and it is blocked, not unbuilt: the push constants are
-   exactly full, so a filter's color and mode have nowhere to sit until
-   material data moves to a uniform buffer. That move is the gate on this row
-   and on conical gradients both.
+   for constantly and it is blocked rather than unbuilt: the push constants are
+   exactly full, and unlike the other rows a color filter has to sit *on top
+   of* whatever material is already there, including a four-stop gradient that
+   uses every float. So it waits for material data to move to a uniform buffer.
+
+   This row previously claimed that conical gradients waited on the same move.
+   They did not: the flag saying a gradient's colors had been baked into a
+   texture occupied a whole float, and a material carrying that texture has no
+   stop count to report, so the two were folded into one number and the float
+   that freed is the one a conical gradient needed. The lesson is narrower than
+   "the budget is full" — it was full of one thing that was not paying for
+   itself, and that is worth checking before concluding a mechanism has to
+   change.
 2. **`drawVertices` and `drawAtlas`** — arbitrary meshes and batched sprites.
    The geometry path already produces vertex buffers, so this is mostly API.
-3. **Conical gradients** — the one gradient kind missing, and the shader has
-   room for it beside the other three.
-4. **Runtime effects** — user fragment shaders. The largest by far: it needs a
+3. **Runtime effects** — user fragment shaders. The largest by far: it needs a
    shader pipeline that compiles at runtime rather than at build time, which is
    a different arrangement from the one here.
 

@@ -76,6 +76,21 @@ fn paint_for(item: &Item, anti_alias: bool) -> Paint {
             stops: stops_of(stops),
             tile: *tile,
         },
+        Fill::ConicalGradient {
+            start_center,
+            start_radius,
+            end_center,
+            end_radius,
+            stops,
+            tile,
+        } => Shader::ConicalGradient {
+            start_center: Vec2::from(*start_center),
+            start_radius: *start_radius,
+            end_center: Vec2::from(*end_center),
+            end_radius: *end_radius,
+            stops: stops_of(stops),
+            tile: *tile,
+        },
     };
     Paint {
         shader,

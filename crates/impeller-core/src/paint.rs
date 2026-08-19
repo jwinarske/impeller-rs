@@ -52,8 +52,6 @@ pub enum Shader {
         /// What fills the shape beyond `radius`. See [`Shader::LinearGradient`].
         tile: TileMode,
     },
-    /// A gradient around a center **in user space**, running between two angles
-    /// in radians, measured counter-clockwise from the positive X axis.
     /// A texture, mapped onto a rectangle **in user space**.
     ///
     /// The rectangle travels through the canvas transform with the geometry, so
@@ -81,6 +79,8 @@ pub enum Shader {
         /// Multiplies the sampled color. White changes nothing.
         tint: Color,
     },
+    /// A gradient around a center **in user space**, running between two angles
+    /// in radians, measured counter-clockwise from the positive X axis.
     SweepGradient {
         center: Vec2,
         start_angle: f32,
@@ -90,6 +90,31 @@ pub enum Shader {
         ///
         /// A sweep of a full turn covers every direction and this changes
         /// nothing; it is a partial sweep that has an outside.
+        tile: TileMode,
+    },
+    /// A gradient between two circles **in user space**, reaching its first
+    /// stop on the first circle and its last on the second.
+    ///
+    /// This is the general form: a radial gradient is the case where the first
+    /// circle is a point at the second's center, and the two-point form is what
+    /// `dart:ui` reaches by giving `Gradient.radial` a focal point. It is kept
+    /// separate from [`Shader::RadialGradient`] rather than replacing it,
+    /// because the radial case folds its radius into a matrix and solves no
+    /// quadratic at all, and paying for the general solve on every ordinary
+    /// gradient would be a poor trade on the hardware this targets.
+    ///
+    /// Where no circle in the family passes through a point, nothing is drawn
+    /// there -- which is most of the plane when one circle is far outside the
+    /// other. That is a property of the two circles rather than of the tile
+    /// mode, which acts only where the parameter exists.
+    ConicalGradient {
+        start_center: Vec2,
+        start_radius: f32,
+        end_center: Vec2,
+        end_radius: f32,
+        stops: Vec<GradientStop>,
+        /// What fills the parameter outside the two circles. See
+        /// [`Shader::LinearGradient`].
         tile: TileMode,
     },
 }
@@ -108,7 +133,8 @@ impl Shader {
             Self::Solid(_) | Self::Image { .. } => 0,
             Self::LinearGradient { stops, .. }
             | Self::RadialGradient { stops, .. }
-            | Self::SweepGradient { stops, .. } => stops.len(),
+            | Self::SweepGradient { stops, .. }
+            | Self::ConicalGradient { stops, .. } => stops.len(),
         }
     }
 
@@ -118,7 +144,8 @@ impl Shader {
             Self::Solid(color) => !color.is_invisible(),
             Self::LinearGradient { stops, .. }
             | Self::RadialGradient { stops, .. }
-            | Self::SweepGradient { stops, .. } => stops.iter().any(|s| !s.color.is_invisible()),
+            | Self::SweepGradient { stops, .. }
+            | Self::ConicalGradient { stops, .. } => stops.iter().any(|s| !s.color.is_invisible()),
             // What the texture holds is unknown here, so only a zero alpha or
             // an empty destination makes an image provably invisible.
             Self::Image { alpha, rect, .. } => *alpha > 0.0 && !rect.is_empty(),
@@ -257,6 +284,35 @@ impl Paint {
         }
     }
 
+    /// A fill that runs between two circles in user space.
+    ///
+    /// The general gradient: the first stop lands on the first circle and the
+    /// last on the second, and every stop between them on a circle
+    /// interpolated between the two. `radial_gradient` is the case where the
+    /// first circle is a point at the second's center, and is worth reaching
+    /// for when that is what you mean -- it does less work per fragment.
+    ///
+    /// Any number of stops; see [`Paint::linear_gradient`].
+    pub fn conical_gradient(
+        start_center: Vec2,
+        start_radius: f32,
+        end_center: Vec2,
+        end_radius: f32,
+        stops: Vec<GradientStop>,
+    ) -> Self {
+        Self {
+            shader: Shader::ConicalGradient {
+                start_center,
+                start_radius,
+                end_center,
+                end_radius,
+                stops,
+                tile: TileMode::default(),
+            },
+            ..Default::default()
+        }
+    }
+
     /// Blur the shape's coverage, for a shadow or a glow.
     ///
     /// Ignored unless finite and positive. Applies to a fill or a stroke alike
@@ -314,7 +370,8 @@ impl Paint {
             Shader::Image { tile: current, .. }
             | Shader::LinearGradient { tile: current, .. }
             | Shader::RadialGradient { tile: current, .. }
-            | Shader::SweepGradient { tile: current, .. } => *current = tile,
+            | Shader::SweepGradient { tile: current, .. }
+            | Shader::ConicalGradient { tile: current, .. } => *current = tile,
             Shader::Solid(_) => {}
         }
         self

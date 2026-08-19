@@ -139,8 +139,13 @@ fn tile_gradient(t: f32, tile: f32) -> vec2<f32> {
 /// The ramp is sampled at `t` directly rather than at a texel center: the
 /// tabulation already placed its samples at centers, so the filter reading
 /// between them reconstructs the function rather than shifting it.
+///
+/// A count of zero is what says the colors were tabulated. It used to be a
+/// flag in the fourth parameter slot, which a conical gradient needed for the
+/// distance between its two centers -- and a material carrying a ramp has no
+/// stop count to report anyway, so the two never wanted separate words.
 fn gradient_color(t: f32, count: i32) -> vec4<f32> {
-    if (paint.params.w > 0.5) {
+    if (count <= 0) {
         // Straight color, not premultiplied, and decoded from the transfer
         // function by the sampler because the texture is an sRGB format. That
         // is the same shape `sample_stops` returns, so what follows does not
@@ -464,6 +469,68 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         let ahead = delta - turn * floor(delta / turn);
         let tiled = tile_gradient(ahead / sweep, paint.params.z);
         color = gradient_color(tiled.x, count) * tiled.y;
+    } else if (kind > 8.5 && kind < 9.5) {
+        // Conical: the parameter is where a point sits between two circles,
+        // which is the general gradient the other two are special cases of. A
+        // point lies on the circle interpolated at `t` when
+        //
+        //     |p - t*d| = r0 + t*dr
+        //
+        // and squaring that is a quadratic in `t`, which is what this solves.
+        // The mapping put the first center at the origin and the second on the
+        // positive x axis, so `d` is `(separation, 0)` and the dot products
+        // below lose a term rather than needing one.
+        let point = to_gradient_space(in.clip);
+        let separation = paint.params.w;
+        let r0 = paint.geometry.z;
+        let dr = paint.geometry.w;
+
+        let a = separation * separation - dr * dr;
+        let b = point.x * separation + r0 * dr;
+        let c = dot(point, point) - r0 * r0;
+
+        // Relative, because everything here is in the gradient's own units and
+        // a fixed threshold would call a small gradient degenerate and a large
+        // one well behaved for the same shape.
+        let magnitude = max(separation * separation, dr * dr);
+
+        var t = 0.0;
+        var covered = false;
+        if (abs(a) > magnitude * 1e-5) {
+            let disc = b * b - a * c;
+            if (disc >= 0.0) {
+                let root = sqrt(disc);
+                // Both roots are circles through the point; the larger `t` is
+                // the one nearer the second circle and is what the gradient
+                // means. A circle of negative radius is not one, so a root
+                // producing one is rejected before the other is tried.
+                let far = max((b + root) / a, (b - root) / a);
+                let near = min((b + root) / a, (b - root) / a);
+                if (r0 + far * dr >= 0.0) {
+                    t = far;
+                    covered = true;
+                } else if (r0 + near * dr >= 0.0) {
+                    t = near;
+                    covered = true;
+                }
+            }
+        } else if (abs(b) > 1e-6) {
+            // The quadratic term vanishes when the two circles are tangent
+            // internally -- the cone becomes a half-plane -- and what is left
+            // is linear. Solving the quadratic here would divide by zero and
+            // lose the one root that exists.
+            let only = c / (2.0 * b);
+            if (r0 + only * dr >= 0.0) {
+                t = only;
+                covered = true;
+            }
+        }
+
+        // Outside the cone there is no circle through the point at all, and no
+        // tile mode changes that: repeating a parameter that does not exist
+        // would invent one. Drawing nothing is what the two circles say.
+        let tiled = tile_gradient(t, paint.params.z);
+        color = gradient_color(tiled.x, count) * tiled.y * select(0.0, 1.0, covered);
     }
     // Checked after the gradient chain rather than inside it, because the
     // sweep arm tests only a lower bound and would otherwise claim this kind
@@ -472,18 +539,23 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     if (kind > 3.5 && kind < 4.5) {
         return sample_image(in.clip);
     }
-    if (kind > 7.5) {
+    // Every one of these is bounded on both sides, so each arm claims its own
+    // kind and nothing else. Written as descending open-ended tests they were
+    // correct only because of the returns above them, which meant a kind added
+    // later was claimed by all four: the conical gradient, kind nine, came out
+    // as a rounded rectangle the first time it ran.
+    if (kind > 7.5 && kind < 8.5) {
         return ellipse_coverage(in.clip);
     }
-    if (kind > 6.5) {
+    if (kind > 6.5 && kind < 7.5) {
         return rounded_rect_coverage(in.clip);
     }
-    if (kind > 5.5) {
+    if (kind > 5.5 && kind < 6.5) {
         // Already premultiplied, like anything else sampled from a target, and
         // a weighted average of premultiplied colors is premultiplied.
         return blur_along_axis(in.clip);
     }
-    if (kind > 4.5) {
+    if (kind > 4.5 && kind < 5.5) {
         // Coverage rather than color: one channel scaling a solid, which is
         // what an antialiased glyph is. The coordinates are the vertex's own,
         // so a run of glyphs reading different parts of one atlas needs one

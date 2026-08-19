@@ -23,7 +23,7 @@ smooth in vec2 _vs2fs_location0;
 smooth in vec2 _vs2fs_location1;
 layout(location = 0) out vec4 _fs2p_location0;
 
-vec4 sample_stops(float t, int count) {
+vec4 sample_stops(float t_1, int count) {
     vec4 result = vec4(0.0);
     int i = 1;
     vec4 _e5 = _push_constant_binding_fs.stops[0];
@@ -46,8 +46,8 @@ vec4 sample_stops(float t, int count) {
             int _e20 = i;
             float upper = _push_constant_binding_fs.offsets[_e20];
             float span = max((upper - lower), 1e-6);
-            float local = clamp(((t - lower) / span), 0.0, 1.0);
-            if ((t >= lower)) {
+            float local = clamp(((t_1 - lower) / span), 0.0, 1.0);
+            if ((t_1 >= lower)) {
                 int _e34 = i;
                 vec4 _e38 = _push_constant_binding_fs.stops[(_e34 - 1)];
                 int _e41 = i;
@@ -60,28 +60,27 @@ vec4 sample_stops(float t, int count) {
     return _e48;
 }
 
-vec2 tile_gradient(float t_1, float tile) {
+vec2 tile_gradient(float t_2, float tile) {
     if (((tile > 0.5) && (tile < 1.5))) {
-        return vec2((t_1 - floor(t_1)), 1.0);
+        return vec2((t_2 - floor(t_2)), 1.0);
     }
     if (((tile > 1.5) && (tile < 2.5))) {
-        float inside = (((t_1 >= 0.0) && (t_1 <= 1.0)) ? 1.0 : 0.0);
-        return vec2(clamp(t_1, 0.0, 1.0), inside);
+        float inside = (((t_2 >= 0.0) && (t_2 <= 1.0)) ? 1.0 : 0.0);
+        return vec2(clamp(t_2, 0.0, 1.0), inside);
     }
     if ((tile > 2.5)) {
-        return vec2((1.0 - abs((1.0 - (t_1 - (2.0 * floor((t_1 * 0.5))))))), 1.0);
+        return vec2((1.0 - abs((1.0 - (t_2 - (2.0 * floor((t_2 * 0.5))))))), 1.0);
     }
-    return vec2(clamp(t_1, 0.0, 1.0), 1.0);
+    return vec2(clamp(t_2, 0.0, 1.0), 1.0);
 }
 
-vec4 gradient_color(float t_2, int count_1) {
-    float _e5 = _push_constant_binding_fs.params.w;
-    if ((_e5 > 0.5)) {
-        vec4 _e13 = textureLod(_group_0_binding_0_fs, vec2(vec2(t_2, 0.5)), 0.0);
-        return _e13;
+vec4 gradient_color(float t_3, int count_1) {
+    if ((count_1 <= 0)) {
+        vec4 _e9 = textureLod(_group_0_binding_0_fs, vec2(vec2(t_3, 0.5)), 0.0);
+        return _e9;
     }
-    vec4 _e14 = sample_stops(t_2, count_1);
-    return _e14;
+    vec4 _e10 = sample_stops(t_3, count_1);
+    return _e10;
 }
 
 vec2 to_gradient_space(vec2 clip) {
@@ -241,6 +240,8 @@ vec4 blur_along_axis(vec2 clip_4) {
 void main() {
     VertexOutput in_ = VertexOutput(gl_FragCoord, _vs2fs_location0, _vs2fs_location1);
     vec4 color = vec4(0.0);
+    float t = 0.0;
+    bool covered = false;
     vec4 _e4 = _push_constant_binding_fs.stops[0];
     color = _e4;
     float kind = _push_constant_binding_fs.params.y;
@@ -251,9 +252,9 @@ void main() {
         vec2 axis = _e22.zw;
         float length_squared = max(dot(axis, axis), 1e-6);
         vec2 _e28 = to_gradient_space(in_.clip);
-        float t_3 = (dot(_e28, axis) / length_squared);
+        float t_4 = (dot(_e28, axis) / length_squared);
         float _e34 = _push_constant_binding_fs.params.z;
-        vec2 _e35 = tile_gradient(t_3, _e34);
+        vec2 _e35 = tile_gradient(t_4, _e34);
         vec4 _e37 = gradient_color(_e35.x, count_2);
         color = (_e37 * _e35.y);
     } else {
@@ -276,41 +277,83 @@ void main() {
                 vec2 _e89 = tile_gradient((ahead / sweep), _e88);
                 vec4 _e91 = gradient_color(_e89.x, count_2);
                 color = (_e91 * _e89.y);
+            } else {
+                if (((kind > 8.5) && (kind < 9.5))) {
+                    vec2 _e100 = to_gradient_space(in_.clip);
+                    float separation = _push_constant_binding_fs.params.w;
+                    float r0_ = _push_constant_binding_fs.geometry.z;
+                    float dr = _push_constant_binding_fs.geometry.w;
+                    float a = ((separation * separation) - (dr * dr));
+                    float b = ((_e100.x * separation) + (r0_ * dr));
+                    float c = (dot(_e100, _e100) - (r0_ * r0_));
+                    float magnitude = max((separation * separation), (dr * dr));
+                    if ((abs(a) > (magnitude * 1e-5))) {
+                        float disc = ((b * b) - (a * c));
+                        if ((disc >= 0.0)) {
+                            float root = sqrt(disc);
+                            float far = max(((b + root) / a), ((b - root) / a));
+                            float near = min(((b + root) / a), ((b - root) / a));
+                            if (((r0_ + (far * dr)) >= 0.0)) {
+                                t = far;
+                                covered = true;
+                            } else {
+                                if (((r0_ + (near * dr)) >= 0.0)) {
+                                    t = near;
+                                    covered = true;
+                                }
+                            }
+                        }
+                    } else {
+                        if ((abs(b) > 1e-6)) {
+                            float only = (c / (2.0 * b));
+                            if (((r0_ + (only * dr)) >= 0.0)) {
+                                t = only;
+                                covered = true;
+                            }
+                        }
+                    }
+                    float _e171 = t;
+                    float _e175 = _push_constant_binding_fs.params.z;
+                    vec2 _e176 = tile_gradient(_e171, _e175);
+                    vec4 _e178 = gradient_color(_e176.x, count_2);
+                    bool _e183 = covered;
+                    color = ((_e178 * _e176.y) * (_e183 ? 1.0 : 0.0));
+                }
             }
         }
     }
     if (((kind > 3.5) && (kind < 4.5))) {
-        vec4 _e100 = sample_image(in_.clip);
-        _fs2p_location0 = _e100;
+        vec4 _e192 = sample_image(in_.clip);
+        _fs2p_location0 = _e192;
         return;
     }
-    if ((kind > 7.5)) {
-        vec4 _e104 = ellipse_coverage(in_.clip);
-        _fs2p_location0 = _e104;
+    if (((kind > 7.5) && (kind < 8.5))) {
+        vec4 _e199 = ellipse_coverage(in_.clip);
+        _fs2p_location0 = _e199;
         return;
     }
-    if ((kind > 6.5)) {
-        vec4 _e108 = rounded_rect_coverage(in_.clip);
-        _fs2p_location0 = _e108;
+    if (((kind > 6.5) && (kind < 7.5))) {
+        vec4 _e206 = rounded_rect_coverage(in_.clip);
+        _fs2p_location0 = _e206;
         return;
     }
-    if ((kind > 5.5)) {
-        vec4 _e112 = blur_along_axis(in_.clip);
-        _fs2p_location0 = _e112;
+    if (((kind > 5.5) && (kind < 6.5))) {
+        vec4 _e213 = blur_along_axis(in_.clip);
+        _fs2p_location0 = _e213;
         return;
     }
-    if ((kind > 4.5)) {
-        vec4 _e119 = textureLod(_group_0_binding_0_fs, vec2(in_.uv), 0.0);
-        float coverage = _e119.x;
+    if (((kind > 4.5) && (kind < 5.5))) {
+        vec4 _e223 = textureLod(_group_0_binding_0_fs, vec2(in_.uv), 0.0);
+        float coverage = _e223.x;
         vec4 tint_3 = _push_constant_binding_fs.stops[0];
         float alpha_2 = (tint_3.w * coverage);
         _fs2p_location0 = vec4((tint_3.xyz * alpha_2), alpha_2);
         return;
     }
-    vec4 _e130 = color;
-    float _e133 = color.w;
-    float _e136 = color.w;
-    _fs2p_location0 = vec4((_e130.xyz * _e133), _e136);
+    vec4 _e234 = color;
+    float _e237 = color.w;
+    float _e240 = color.w;
+    _fs2p_location0 = vec4((_e234.xyz * _e237), _e240);
     return;
 }
 

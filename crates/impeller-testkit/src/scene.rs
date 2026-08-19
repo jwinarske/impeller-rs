@@ -148,6 +148,16 @@ pub enum Fill {
         /// What fills the directions the arc does not cover.
         tile: TileMode,
     },
+    /// A gradient between two circles, reaching its last stop on the second.
+    ConicalGradient {
+        start_center: [f32; 2],
+        start_radius: f32,
+        end_center: [f32; 2],
+        end_radius: f32,
+        stops: Vec<Stop>,
+        /// What fills the parameter outside the two circles.
+        tile: TileMode,
+    },
 }
 
 /// A rectangle filled by a gradient that spans only a quarter of it.
@@ -1095,6 +1105,29 @@ pub fn corpus() -> Vec<Scene> {
                 Fill::RadialGradient {
                     center: [64.0, 64.0],
                     radius: 56.0,
+                    stops: vec![Stop::new(WHITE, 0.0), Stop::new(BLUE, 1.0)],
+                    tile: TileMode::Clamp,
+                },
+            )],
+        ),
+        // Offset the first circle from the second so the picture is one no
+        // radial gradient could produce: the rings bunch on the side the first
+        // circle sits toward. Keeping it inside the second circle means every
+        // point lies on some circle of the family, so the tile is fully
+        // covered and comparable to the radial one beside it -- what happens
+        // where no circle reaches is a unit test rather than a picture.
+        Scene::new(
+            "gradient-conical",
+            vec![Item::filled(
+                Shape::Rect {
+                    min: [4.0, 4.0],
+                    max: [124.0, 124.0],
+                },
+                Fill::ConicalGradient {
+                    start_center: [44.0, 44.0],
+                    start_radius: 0.0,
+                    end_center: [64.0, 64.0],
+                    end_radius: 60.0,
                     stops: vec![Stop::new(WHITE, 0.0), Stop::new(BLUE, 1.0)],
                     tile: TileMode::Clamp,
                 },

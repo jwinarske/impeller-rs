@@ -1063,6 +1063,58 @@ impl Canvas {
                     ramp: ramp_slot,
                 }
             }
+            Shader::ConicalGradient {
+                start_center,
+                start_radius,
+                end_center,
+                end_radius,
+                stops,
+                tile,
+            } => {
+                let start_clip = to_clip.transform_point2(*start_center);
+                let axis = *end_center - *start_center;
+                // The shader is told where the second center is with one float
+                // instead of two, which is only possible if it already knows
+                // the direction. Rotating the gradient's space so the axis
+                // runs along +X is how it comes to know it, and the rotation
+                // costs nothing: it folds into a matrix that has to be built
+                // and inverted regardless.
+                //
+                // A zero axis leaves the angle undefined and the rotation
+                // arbitrary, which is correct rather than merely harmless --
+                // two concentric circles have no direction to preserve, and
+                // every rotation is the right one.
+                let angle = if axis == Vec2::ZERO {
+                    0.0
+                } else {
+                    axis.y.atan2(axis.x)
+                };
+                let oriented = to_clip.matrix2 * Mat2::from_angle(angle);
+                if !start_clip.is_finite()
+                    || !oriented.is_finite()
+                    || !start_radius.is_finite()
+                    || !end_radius.is_finite()
+                {
+                    return Material::Solid([0.0; 4]);
+                }
+                let ramp_slot = self.ramp_for(stops);
+                Material::ConicalGradient {
+                    center: [start_clip.x, start_clip.y],
+                    to_local: invert_or_identity(oriented),
+                    // In the gradient's own space, which this rotation and the
+                    // canvas transform's inverse together make into user space
+                    // -- so both radii are the ones the caller stated, and
+                    // neither is folded into the matrix the way a radial
+                    // gradient's single radius is. A scale can normalize one
+                    // radius; it cannot normalize two.
+                    start_radius: *start_radius,
+                    radius_delta: *end_radius - *start_radius,
+                    separation: axis.length(),
+                    stops: stops_of(stops),
+                    tile: *tile,
+                    ramp: ramp_slot,
+                }
+            }
             Shader::SweepGradient {
                 center,
                 start_angle,
