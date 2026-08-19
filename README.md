@@ -136,11 +136,11 @@ scene onto one sheet to look at. `cargo xtask help` lists them.
 ```
 crates/
   impeller              public facade; carries the feature flags
-  impeller-core         public API: Canvas, Paint, Path, Image, GlyphRun
-  impeller-entity       entity and contents layer
-  impeller-geometry     path types, tessellation, analytic fast paths
+  impeller-core         drawing API: Canvas, Paint, Color, recording, execution
+  impeller-entity       planned entity and contents layer -- a stub, nothing built
+  impeller-geometry     path types, flattening, tessellation, stroking, dashing
   impeller-renderer     render pass encoding, generic over the HAL
-  impeller-text         glyph atlas, rasterization, SDF
+  impeller-text         glyph atlas packing and placement; bring your own rasterizer
   impeller-hal          rendering HAL trait
   impeller-hal-vulkan   Vulkan backend (first-class)
   impeller-hal-gles     GLES 3.0 backend

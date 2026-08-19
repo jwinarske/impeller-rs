@@ -41,15 +41,20 @@ frame loop is paced.**
 These axes are independent. Every presentation target works with every
 rendering backend that can produce compatible images, and vice versa.
 
+This is the design. Boxes marked *planned* are not built, and the section on
+what exists says so again in more detail — but a diagram is what a reader looks
+at first, so it says which parts are drawings of intent rather than of code.
+
 ```
 ┌───────────────────────────────────────────────────────────────┐
 │  Public API (impeller-core)                                   │
-│  Canvas, Paint, Path, Image, GlyphRun                         │
+│  Canvas, Paint, Path, Layer, Recording                        │
 ├───────────────────────────────────────────────────────────────┤
-│  Entity layer (impeller-entity)          backend-agnostic     │
+│  Entity layer (impeller-entity)   planned; backend-agnostic   │
 ├───────────────────────────────────────────────────────────────┤
 │  Renderer (impeller-renderer)  — generic over Hal             │
-│  RenderPass sorting, pipeline cache, per-frame allocators     │
+│  Tessellation into clip space, batch assembly                 │
+│  (planned: pass sorting, pipeline cache, frame allocators)    │
 ├───────────────────────────────────────────────────────────────┤
 │  Rendering HAL trait (impeller-hal)                           │
 │      ┌────────────────┴────────────────┐                      │
@@ -1226,7 +1231,7 @@ rather than staying pinned to the screen.
 | `impeller` | Public facade; carries the feature flags |
 | `impeller-core` | Public API: Canvas, Paint, Path, Recording, glyph runs |
 | `impeller-entity` | Entity and Contents layer — **a stub; nothing is built** |
-| `impeller-geometry` | Path types, tessellation, fast paths |
+| `impeller-geometry` | Path types, flattening, tessellation, stroking, dashing |
 | `impeller-renderer` | Render pass encoding, generic over the HAL |
 | `impeller-text` | Glyph atlas: packing, compaction, growth. Not rasterization |
 | `impeller-hal` | Rendering HAL trait |
@@ -1238,7 +1243,7 @@ rather than staying pinned to the screen.
 | `impeller-present-drm` | DRM/KMS scanout target |
 | `impeller-shaders` | WGSL sources and build-time translation |
 | `impeller-testkit` | Shared test harness |
-| `xtask` | Capability reporting; device runs, golden management and CI reproduction planned |
+| `xtask` | Capability and scanout reporting, the skip census, the contact sheet; device runs against real boards and golden management planned |
 
 Feature flags live on the `impeller` facade because a virtual workspace root
 cannot declare them. `drm` is presentation-only and composes with either
