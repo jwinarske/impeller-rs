@@ -1,27 +1,29 @@
-//! Look at a corpus scene in a window, live.
+//! Look at a scene in a window, live.
 //!
 //! # What this is for
 //!
 //! The suite says whether a scene matches another backend and a software
-//! reference. It does not say whether the scene looks right, and several
-//! mistakes this renderer has made were of exactly that kind: a gradient that
-//! agreed across backends and was flat for the last forty percent of its
-//! length, a frosted panel that rendered identically with the filter on and
-//! off. Those are visible in a second and invisible to a comparison against a
-//! second implementation making the same mistake.
+//! reference. It does not say whether the scene looks right, and this renderer
+//! has made that mistake twice in a way nothing caught: a gradient that agreed
+//! across backends and went flat for the last part of its length, and a frosted
+//! panel that rendered identically with the filter on and off. Both were a
+//! second's work to see and invisible to a comparison between two
+//! implementations making the same mistake.
 //!
-//! So: the same corpus, on screen, resizable, one key to the next scene. The
-//! contact sheet already shows every scene at once; this shows one at a size
-//! where you can see it, and re-renders it as the window changes.
+//! # Two kinds of scene
 //!
-//! # Why the scene is drawn through a texture
+//! The **corpus** is what the suite compares: fixed size, fixed parameters.
+//! Those are rendered at their own size into a texture and drawn into the
+//! window centered and scaled, because their coordinates are absolute and their
+//! recordings are in clip space — submitting one straight into a window-sized
+//! image would stretch it to whatever shape the window is.
 //!
-//! Corpus scenes are authored at a fixed size in absolute coordinates. Their
-//! recordings are in clip space, so submitting one straight into a window-sized
-//! image would stretch it to whatever shape the window is. Rendering the scene
-//! into a texture of its own size and then drawing that texture centered and
-//! scaled keeps its aspect, and costs one extra pass on a tool where that does
-//! not matter.
+//! **Live** scenes are drawn at the window's own size and carry a knob. They
+//! are for the questions a still image cannot answer: whether a parameter
+//! sweeps smoothly, and whether something that moves every frame moves well.
+//! See `live.rs`.
+
+mod live;
 
 use impeller_core::{Canvas, Color, Paint, Rect, TileMode};
 use impeller_hal::{Extent2D, PixelFormat, TextureDescriptor};
@@ -47,68 +49,171 @@ fn main() {
 
 struct App {
     scenes: Vec<Scene>,
+    live: Vec<live::Live>,
+    /// Index across the corpus and then the live scenes, so one key steps
+    /// through everything.
     current: usize,
-    /// Everything that needs a window, created together when one arrives.
-    ///
-    /// winit hands the window over in `resumed` rather than at construction, so
-    /// this cannot be built until then -- and on a platform that suspends, it
-    /// can go away and come back.
-    live: Option<Live>,
+    /// One per live scene, kept while stepping away so a swept value is not
+    /// lost by looking at something else.
+    knobs: Vec<f32>,
+    animating: bool,
+    time: f32,
+    stage: Option<Stage>,
 }
 
-struct Live {
+/// Everything that needs a window, built when one arrives.
+///
+/// winit hands the window over in `resumed` rather than at construction, and on
+/// a platform that suspends it can go away and come back.
+struct Stage {
     window: Window,
     ctx: VulkanContext,
     target: SwapchainTarget,
     surface: ash::vk::SurfaceKHR,
-    /// The scene, rendered at its own size, ready to be drawn into the window.
+    /// A corpus scene rendered at its own size, kept until the view changes.
     scene_texture: Option<(VulkanTexture, Extent2D)>,
+}
+
+enum View {
+    Corpus(usize),
+    Live(usize),
 }
 
 impl App {
     fn new() -> Self {
         let scenes = corpus();
+        let live = live::scenes();
         assert!(!scenes.is_empty(), "the corpus is empty");
+        let knobs = live.iter().map(|s| s.start).collect();
         Self {
             scenes,
+            live,
             current: 0,
-            live: None,
+            knobs,
+            animating: true,
+            time: 0.0,
+            stage: None,
+        }
+    }
+
+    fn total(&self) -> usize {
+        self.scenes.len() + self.live.len()
+    }
+
+    fn view(&self) -> View {
+        if self.current < self.scenes.len() {
+            View::Corpus(self.current)
+        } else {
+            View::Live(self.current - self.scenes.len())
         }
     }
 
     fn step(&mut self, forward: bool) {
-        let n = self.scenes.len();
+        let n = self.total();
         self.current = if forward {
             (self.current + 1) % n
         } else {
             (self.current + n - 1) % n
         };
-        if let Some(live) = &mut self.live {
-            live.drop_scene_texture();
-            live.window.request_redraw();
+        if let Some(stage) = &mut self.stage {
+            stage.drop_scene_texture();
         }
-        eprintln!(
-            "[{}/{}] {}",
-            self.current + 1,
-            self.scenes.len(),
-            self.scenes[self.current].name
-        );
+        self.announce();
+        self.request_redraw();
+    }
+
+    /// Move the current live scene's knob, as a fraction of its range.
+    fn turn(&mut self, fraction: f32) {
+        let View::Live(index) = self.view() else {
+            return;
+        };
+        let (low, high) = self.live[index].range;
+        let step = (high - low) * fraction;
+        self.knobs[index] = (self.knobs[index] + step).clamp(low, high);
+        self.announce();
+        self.request_redraw();
+    }
+
+    fn announce(&self) {
+        match self.view() {
+            View::Corpus(i) => eprintln!(
+                "[{}/{}] corpus: {}",
+                self.current + 1,
+                self.total(),
+                self.scenes[i].name
+            ),
+            View::Live(i) => eprintln!(
+                "[{}/{}] live: {} — {} {:.2}{}",
+                self.current + 1,
+                self.total(),
+                self.live[i].name,
+                self.live[i].knob,
+                self.knobs[i],
+                if self.animating { ", animating" } else { "" }
+            ),
+        }
+    }
+
+    fn request_redraw(&self) {
+        if let Some(stage) = &self.stage {
+            stage.window.request_redraw();
+        }
+    }
+
+    /// Whether the current view changes on its own, and so wants a new frame
+    /// without an event to prompt one.
+    fn is_moving(&self) -> bool {
+        self.animating && matches!(self.view(), View::Live(_))
+    }
+
+    fn redraw(&mut self) {
+        // Advanced here rather than from a clock, because a playground wants
+        // motion that is steady to look at rather than true to wall time.
+        if self.is_moving() {
+            self.time += 1.0 / 60.0;
+        }
+        let view = self.view();
+        let (time, knob) = match view {
+            View::Live(i) => (self.time, self.knobs[i]),
+            View::Corpus(_) => (0.0, 0.0),
+        };
+        let scene = match view {
+            View::Corpus(i) => Some(self.scenes[i].clone()),
+            View::Live(_) => None,
+        };
+        let draw = match view {
+            View::Live(i) => Some(self.live[i].draw),
+            View::Corpus(_) => None,
+        };
+        let Some(stage) = &mut self.stage else {
+            return;
+        };
+        match (scene, draw) {
+            (Some(scene), _) => stage.show_corpus(&scene),
+            (None, Some(draw)) => {
+                let extent = stage.target.extent();
+                let mut canvas = Canvas::new(extent);
+                draw(&mut canvas, extent, knob, time);
+                let recording = canvas.finish();
+                stage.submit(&recording, &[]);
+            }
+            (None, None) => {}
+        }
     }
 }
 
-impl Live {
+impl Stage {
     fn drop_scene_texture(&mut self) {
         if let Some((texture, _)) = self.scene_texture.take() {
             self.ctx.destroy_texture(texture);
         }
     }
 
-    /// Render the scene once, into a texture of the scene's own size.
+    /// Render a corpus scene into a texture of the scene's own size.
     ///
-    /// Kept until the scene changes: a resize redraws the window from this
-    /// rather than re-recording, which is both faster and the honest thing to
-    /// show -- the scene is authored at one size and the window is showing it
-    /// larger.
+    /// Kept until the view changes, so a resize redraws from this rather than
+    /// re-recording — the scene is authored at one size and the window is
+    /// showing it larger.
     fn ensure_scene_texture(&mut self, scene: &Scene) {
         if self.scene_texture.is_some() {
             return;
@@ -116,20 +221,14 @@ impl Live {
         let extent = Extent2D::new(scene.size.width, scene.size.height);
         let recording = match record_scene(scene) {
             Ok(recording) => recording,
-            Err(e) => {
-                eprintln!("cannot record {}: {e}", scene.name);
-                return;
-            }
+            Err(e) => return eprintln!("cannot record {}: {e}", scene.name),
         };
-        let mut texture = match self
-            .ctx
-            .create_texture(&TextureDescriptor::offscreen(extent, PixelFormat::Rgba8Unorm))
-        {
+        let mut texture = match self.ctx.create_texture(&TextureDescriptor::offscreen(
+            extent,
+            PixelFormat::Rgba8Unorm,
+        )) {
             Ok(texture) => texture,
-            Err(e) => {
-                eprintln!("cannot allocate a target for {}: {e}", scene.name);
-                return;
-            }
+            Err(e) => return eprintln!("cannot allocate a target for {}: {e}", scene.name),
         };
         match impeller_core::execute::<VulkanHal>(&mut self.ctx, &mut texture, &recording, &[]) {
             Ok(()) => self.scene_texture = Some((texture, extent)),
@@ -140,14 +239,11 @@ impl Live {
         }
     }
 
-    /// Draw the scene texture into the window, centered and scaled to fit.
-    fn draw(&mut self, scene: &Scene) {
+    /// Compose a corpus scene's texture into the window, centered and scaled.
+    fn corpus_frame(&mut self, scene: &Scene) -> Option<impeller_core::Recording> {
         self.ensure_scene_texture(scene);
-        let Some((_, scene_extent)) = &self.scene_texture else {
-            return;
-        };
+        let (_, scene_extent) = self.scene_texture.as_ref()?;
         let window = self.target.extent();
-        // The largest whole-pixel rectangle of the scene's shape that fits.
         let scale = (window.width as f32 / scene_extent.width as f32)
             .min(window.height as f32 / scene_extent.height as f32)
             .max(0.01);
@@ -161,8 +257,8 @@ impl Live {
         );
 
         let mut canvas = Canvas::new(window);
-        // A ground that is neither black nor white, so a scene of either is
-        // visible against it and the letterboxing is obviously not the scene.
+        // Neither black nor white, so a scene of either is visible against it
+        // and the letterboxing is obviously not part of the scene.
         canvas.clear(Color::srgb(0.12, 0.12, 0.14, 1.0));
         let rect = Rect::new(x, y, x + w, y + h);
         if let Err(e) = canvas.draw_rect(
@@ -172,26 +268,51 @@ impl Live {
                 .with_anti_alias(false),
         ) {
             eprintln!("cannot compose the frame: {e}");
-            return;
+            return None;
         }
-        let recording = canvas.finish();
+        Some(canvas.finish())
+    }
 
-        let Some((texture, _)) = &self.scene_texture else {
+    /// Compose and present a corpus scene.
+    ///
+    /// One method rather than two, because the texture it samples belongs to
+    /// this struct and the submission needs the struct mutably: splitting them
+    /// leaves a borrow of the texture spanning a call that wants everything.
+    fn show_corpus(&mut self, scene: &Scene) {
+        let Some(recording) = self.corpus_frame(scene) else {
             return;
         };
+        let Some((texture, _)) = self.scene_texture.take() else {
+            return;
+        };
+        let images: Vec<&VulkanTexture> = vec![&texture];
+        // Submitted while the texture is out of the struct, then put back --
+        // the alternative is holding a borrow of it across a method that needs
+        // `self` mutably, which is the same lifetime problem stated less
+        // plainly.
         if let Err(e) = self.target.acquire(&mut self.ctx) {
             eprintln!("acquire: {e}");
-            return;
-        }
-        // Reborrowed here rather than held across the acquire, which needs the
-        // context mutably.
-        let images: Vec<&VulkanTexture> = vec![texture];
-        if let Err(e) = self
+        } else if let Err(e) = self
             .target
             .submit_recording(&mut self.ctx, &recording, &images)
         {
             eprintln!("submit: {e}");
-            return;
+        } else if let Err(e) = self.target.present(&mut self.ctx) {
+            eprintln!("present: {e}");
+        }
+        let extent = Extent2D::new(scene.size.width, scene.size.height);
+        self.scene_texture = Some((texture, extent));
+    }
+
+    fn submit(&mut self, recording: &impeller_core::Recording, images: &[&VulkanTexture]) {
+        if let Err(e) = self.target.acquire(&mut self.ctx) {
+            return eprintln!("acquire: {e}");
+        }
+        if let Err(e) = self
+            .target
+            .submit_recording(&mut self.ctx, recording, images)
+        {
+            return eprintln!("submit: {e}");
         }
         if let Err(e) = self.target.present(&mut self.ctx) {
             eprintln!("present: {e}");
@@ -201,7 +322,7 @@ impl Live {
 
 impl ApplicationHandler for App {
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
-        if self.live.is_some() {
+        if self.stage.is_some() {
             return;
         }
         let attributes = Window::default_attributes()
@@ -226,51 +347,55 @@ impl ApplicationHandler for App {
 
         let size = window.inner_size();
         let extent = Extent2D::new(size.width.max(1), size.height.max(1));
-        let target = SwapchainTarget::new(&mut ctx, surface, extent, PresentMode::Fifo)
-            .expect("swapchain");
+        let target =
+            SwapchainTarget::new(&mut ctx, surface, extent, PresentMode::Fifo).expect("swapchain");
 
         eprintln!(
-            "{} — {} scenes. Right/Left or Space to step, Q to quit.",
+            "{}\n{} corpus scenes and {} live ones.\n\
+             Right/Left or Space to step, Up/Down to turn the knob, A to animate, Q to quit.",
             ctx.capabilities().device_name,
-            self.scenes.len()
+            self.scenes.len(),
+            self.live.len()
         );
-        eprintln!("[1/{}] {}", self.scenes.len(), self.scenes[0].name);
 
-        self.live = Some(Live {
+        self.stage = Some(Stage {
             window,
             ctx,
             target,
             surface,
             scene_texture: None,
         });
+        self.announce();
     }
 
     fn window_event(&mut self, event_loop: &ActiveEventLoop, _: WindowId, event: WindowEvent) {
         match event {
             WindowEvent::CloseRequested => event_loop.exit(),
             WindowEvent::Resized(size) => {
-                if let Some(live) = &mut self.live {
+                if let Some(stage) = &mut self.stage {
                     let extent = Extent2D::new(size.width.max(1), size.height.max(1));
-                    if let Err(e) = live.target.reconfigure(&mut live.ctx, extent) {
+                    if let Err(e) = stage.target.reconfigure(&mut stage.ctx, extent) {
                         eprintln!("reconfigure: {e}");
                     }
-                    live.window.request_redraw();
+                    stage.window.request_redraw();
                 }
             }
-            WindowEvent::RedrawRequested => {
-                let scene = self.scenes[self.current].clone();
-                if let Some(live) = &mut self.live {
-                    live.draw(&scene);
-                }
-            }
+            WindowEvent::RedrawRequested => self.redraw(),
             WindowEvent::KeyboardInput { event, .. } if event.state == ElementState::Pressed => {
                 match event.logical_key {
                     Key::Named(NamedKey::ArrowRight) | Key::Named(NamedKey::Space) => {
                         self.step(true)
                     }
                     Key::Named(NamedKey::ArrowLeft) => self.step(false),
+                    Key::Named(NamedKey::ArrowUp) => self.turn(0.05),
+                    Key::Named(NamedKey::ArrowDown) => self.turn(-0.05),
                     Key::Named(NamedKey::Escape) => event_loop.exit(),
                     Key::Character(ref c) if c.as_str() == "q" => event_loop.exit(),
+                    Key::Character(ref c) if c.as_str() == "a" => {
+                        self.animating = !self.animating;
+                        self.announce();
+                        self.request_redraw();
+                    }
                     _ => {}
                 }
             }
@@ -278,19 +403,26 @@ impl ApplicationHandler for App {
         }
     }
 
+    fn about_to_wait(&mut self, _: &ActiveEventLoop) {
+        // A moving scene asks for the next frame itself; a still one waits for
+        // an event, so the tool costs nothing while it sits there.
+        if self.is_moving() {
+            self.request_redraw();
+        }
+    }
+
     fn exiting(&mut self, _: &ActiveEventLoop) {
         // Torn down in the order the objects depend on each other: the scene
         // texture and the swapchain belong to the context, and the surface
         // outlives the swapchain built on it.
-        if let Some(mut live) = self.live.take() {
-            live.drop_scene_texture();
-            let Live {
-                ctx,
+        if let Some(mut stage) = self.stage.take() {
+            stage.drop_scene_texture();
+            let Stage {
+                mut ctx,
                 target,
                 surface,
                 ..
-            } = live;
-            let mut ctx = ctx;
+            } = stage;
             target.destroy(&mut ctx);
             // SAFETY: the swapchain built on it has just been destroyed.
             unsafe { impeller_present_vk::destroy_surface(&ctx, surface) };

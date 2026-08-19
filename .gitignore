@@ -2,7 +2,11 @@
 /plan.md
 
 # Rust build artifacts
-/target/
+# Unanchored, so it catches a target directory at any depth. It was anchored to
+# the root, and a crate deliberately kept outside the workspace has a target
+# directory of its own -- two thousand files of one got committed before this
+# was noticed.
+target/
 **/*.rs.bk
 
 # Test output: diff images, JSON/JUnit reports, capture artifacts (plan.md 15.3)

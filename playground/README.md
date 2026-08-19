@@ -1,7 +1,25 @@
 # Playground
 
-Look at a corpus scene in a window, live. Right or Space for the next scene,
-Left for the previous, Q or Escape to quit.
+Look at a scene in a window, live.
+
+| Key | |
+|---|---|
+| Right, Space | next scene |
+| Left | previous scene |
+| Up, Down | turn the current live scene's knob |
+| A | toggle animation |
+| Q, Escape | quit |
+
+Two kinds of scene. The **corpus** is what the test suite compares — fixed size,
+fixed parameters — rendered at its own size and scaled into the window. **Live**
+scenes are drawn at the window's size and carry one parameter you can sweep,
+which is what a still image cannot show: whether a value moves smoothly through
+its range, and whether something that changes every frame changes well.
+
+The gradient scene is the one to try first. Its knob is the number of color
+stops, and it crosses the point where they stop fitting in a material and get
+baked into a texture instead — two different shader paths. A step in the picture
+as it crosses is those paths disagreeing.
 
 ```sh
 cd playground && cargo run
@@ -30,8 +48,6 @@ is the point, and is checked by those jobs continuing to pass with this present.
 
 - **GLES.** Vulkan only so far; the EGL window target exists and the same window
   can carry it, chosen at startup rather than live, since the contexts differ.
-- **Live parameters.** Scenes render as the corpus defines them. The knobs worth
-  having — blur sigma, dash phase, tile mode — come next, on keys.
 - **A board.** The DRM/KMS target needs no window server at all, and running the
   same scene list through it is the version that matters where this renderer is
   aimed.
