@@ -71,17 +71,28 @@ jobs:
           # EGL initializes and reports no usable config.
           packages="libvulkan1 mesa-vulkan-drivers vulkan-validationlayers"
           packages="$packages libegl1 libgles2 libgbm1 libdrm2 libgl1-mesa-dri"
+          # The index first, and only if it is needed. The runner image ships
+          # with a populated apt index, so the common case needs no fetch at
+          # all -- and fetching it was the slowest thing in this step and on
+          # the critical path of every attempt, which is why three attempts
+          # could all run out of time on a slow mirror.
+          if timeout 300 sudo apt-get $APT_OPTS install -y \
+               --no-install-recommends $packages; then
+            echo "installed from the image's own index"
+            exit 0
+          fi
+          echo "the shipped index was not enough; refreshing it"
           for attempt in 1 2 3; do
-            if timeout 150 sudo apt-get $APT_OPTS update \
+            if timeout 200 sudo apt-get $APT_OPTS update \
               && timeout 300 sudo apt-get $APT_OPTS install -y \
                    --no-install-recommends $packages; then
-              echo "installed on attempt $attempt"
+              echo "installed on attempt $attempt after a refresh"
               exit 0
             fi
             echo "attempt $attempt was too slow or failed; trying again"
             sleep 5
           done
-          echo "apt did not finish in three attempts"
+          echo "apt did not finish after three refreshes"
           exit 1
 
       - name: Cache cargo
