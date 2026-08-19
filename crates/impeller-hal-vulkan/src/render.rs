@@ -1101,6 +1101,11 @@ fn build_pipeline(
             .binding(0)
             .format(vk::Format::R32G32_SFLOAT)
             .offset(std::mem::size_of::<[f32; 2]>() as u32),
+        vk::VertexInputAttributeDescription::default()
+            .location(2)
+            .binding(0)
+            .format(vk::Format::R32G32B32A32_SFLOAT)
+            .offset(2 * std::mem::size_of::<[f32; 2]>() as u32),
     ];
     let vertex_input = vk::PipelineVertexInputStateCreateInfo::default()
         .vertex_binding_descriptions(&bindings)

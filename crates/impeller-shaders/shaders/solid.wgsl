@@ -73,17 +73,23 @@ struct VertexOutput {
     // Where this vertex reads from a sampled texture. Zero for geometry that
     // samples nothing, which costs an interpolation nobody looks at.
     @location(1) uv: vec2<f32>,
+    // A premultiplied color multiplied into whatever the material produced.
+    // Opaque white for everything a caller did not color per vertex, and white
+    // is the identity.
+    @location(2) tint: vec4<f32>,
 };
 
 @vertex
 fn vs_main(
     @location(0) position: vec2<f32>,
     @location(1) uv: vec2<f32>,
+    @location(2) tint: vec4<f32>,
 ) -> VertexOutput {
     var out: VertexOutput;
     out.position = vec4<f32>(position, 0.0, 1.0);
     out.clip = position;
     out.uv = uv;
+    out.tint = tint;
     return out;
 }
 
@@ -515,7 +521,14 @@ fn filtered(premultiplied: vec4<f32>) -> vec4<f32> {
 
 @fragment
 fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
-    return filtered(shade(in));
+    // The vertex color multiplies the material, and the filter applies to what
+    // that produced -- which is the order `dart:ui` states: a color filter acts
+    // on the paint's result, and a mesh's own colors are part of producing it.
+    //
+    // Both sides are premultiplied, so this is a componentwise product and
+    // stays premultiplied. Multiplying by a straight color instead would leave
+    // the alpha applied once to the color and twice to itself.
+    return filtered(shade(in) * in.tint);
 }
 
 /// The color this paint produces, premultiplied, before any filter.

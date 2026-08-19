@@ -5826,3 +5826,198 @@ fn a_luminance_matrix_turns_every_colour_the_same_grey_it_weighs() {
         }
     }
 }
+
+#[test]
+fn a_mesh_interpolates_the_colours_its_vertices_carry() {
+    // What per-vertex color is for: a gradient across a triangle that no
+    // gradient shader describes, because the three corners are independent.
+    // Each corner must be its own color and the middle a mixture of all three,
+    // which is what says the rasterizer interpolated rather than picking one.
+    let Some(mut ctx) = context() else { return };
+
+    let mut canvas = Canvas::new(SIZE);
+    canvas.clear(Color::BLACK);
+    let mesh = Vertices::colored(
+        VertexMode::Triangles,
+        vec![
+            Vec2::new(64.0, 8.0),
+            Vec2::new(120.0, 112.0),
+            Vec2::new(8.0, 112.0),
+        ],
+        vec![
+            Color::linear(1.0, 0.0, 0.0, 1.0),
+            Color::linear(0.0, 1.0, 0.0, 1.0),
+            Color::linear(0.0, 0.0, 1.0, 1.0),
+        ],
+    )
+    .expect("mesh");
+    canvas
+        .draw_vertices(&mesh, &Paint::fill(Color::linear(1.0, 1.0, 1.0, 1.0)))
+        .expect("mesh");
+    let pixels = render(&mut ctx, canvas);
+
+    // Well inside each corner, where one color dominates.
+    for (x, y, channel, corner) in [
+        (64u32, 20u32, 0usize, "top"),
+        (108, 104, 1, "bottom-right"),
+        (20, 104, 2, "bottom-left"),
+    ] {
+        let got = pixel(&pixels, x, y);
+        let others: Vec<u8> = (0..3).filter(|c| *c != channel).map(|c| got[c]).collect();
+        assert!(
+            got[channel] > 150 && others.iter().all(|v| *v < 110),
+            "the {corner} corner should be dominated by its own color, got {got:?}"
+        );
+    }
+
+    // The middle is all three at once, which no single vertex is.
+    let middle = pixel(&pixels, 64, 80);
+    assert!(
+        (0..3).all(|c| middle[c] > 40 && middle[c] < 160),
+        "the middle should mix all three corners, got {middle:?}"
+    );
+}
+
+#[test]
+fn a_vertex_colour_multiplies_the_paint_rather_than_replacing_it() {
+    // The rule that makes a white paint leave the mesh's colors alone and any
+    // other paint shade them. A half-strength red paint under a green vertex
+    // color has to give neither red nor green but their product, which is
+    // black -- so the test uses a paint that shares a channel with the color.
+    let Some(mut ctx) = context() else { return };
+
+    let corners = vec![
+        Vec2::new(0.0, 0.0),
+        Vec2::new(128.0, 0.0),
+        Vec2::new(0.0, 128.0),
+    ];
+    let mut canvas = Canvas::new(SIZE);
+    canvas.clear(Color::BLACK);
+    let mesh = Vertices::colored(
+        VertexMode::Triangles,
+        corners,
+        vec![Color::linear(1.0, 0.5, 0.0, 1.0); 3],
+    )
+    .expect("mesh");
+    canvas
+        .draw_vertices(
+            &mesh,
+            &Paint::fill(Color::linear(0.5, 1.0, 1.0, 1.0)).with_anti_alias(false),
+        )
+        .expect("mesh");
+    let pixels = render(&mut ctx, canvas);
+
+    // (1.0, 0.5, 0.0) times (0.5, 1.0, 1.0) is (0.5, 0.5, 0.0).
+    let got = pixel(&pixels, 20, 20);
+    for (channel, want) in [(0usize, 128i32), (1, 128), (2, 0)] {
+        assert!(
+            (got[channel] as i32 - want).abs() <= 2,
+            "channel {channel} should be the product of paint and vertex, got {got:?}"
+        );
+    }
+}
+
+#[test]
+fn an_atlas_tints_each_sprite_on_its_own_in_one_draw() {
+    // The reason a sprite carries a color rather than the batch carrying one:
+    // a palette out of a single monochrome sheet is the whole idiom, and doing
+    // it per batch would mean one draw per color, which is the thing the call
+    // exists to avoid.
+    let Some(mut ctx) = context() else { return };
+    let mut image = ctx
+        .create_image(Extent2D::new(4, 4), PixelFormat::Rgba8Unorm)
+        .expect("image");
+    // Opaque white throughout, so what comes out is the tint alone.
+    ctx.write_image(&mut image, &[255u8; 4 * 4 * 4])
+        .expect("upload");
+
+    let whole = SourceRect::new(0.0, 0.0, 4.0, 4.0);
+    let place =
+        |x: f32| Affine2::from_scale_angle_translation(Vec2::splat(16.0), 0.0, Vec2::new(x, 0.0));
+    let sprites = vec![
+        Sprite::new(whole, place(0.0)).with_color(Color::linear(1.0, 0.0, 0.0, 1.0)),
+        Sprite::new(whole, place(64.0)).with_color(Color::linear(0.0, 1.0, 0.0, 1.0)),
+    ];
+
+    let mut canvas = Canvas::new(SIZE);
+    canvas.clear(Color::BLACK);
+    canvas
+        .draw_atlas(
+            &sprites,
+            Extent2D::new(4, 4),
+            &Paint::image(0, Rect::from_size(128.0, 128.0)),
+        )
+        .expect("atlas");
+    let recording = canvas.finish();
+    assert_eq!(
+        recording.passes[0].batch.draw_count(),
+        1,
+        "tinting per sprite must not split the batch"
+    );
+
+    let mut surface = ctx
+        .create_surface(SIZE, PixelFormat::Rgba8Unorm)
+        .expect("surface");
+    ctx.draw_with_images(&mut surface, &recording, &[&image])
+        .expect("draw");
+    let pixels = ctx.read(&mut surface).expect("read");
+    ctx.destroy_surface(surface);
+    ctx.destroy_image(image);
+
+    assert_eq!(pixel(&pixels, 32, 32), [255, 0, 0, 255], "the first sprite");
+    assert_eq!(
+        pixel(&pixels, 96, 32),
+        [0, 255, 0, 255],
+        "the second sprite"
+    );
+}
+
+#[test]
+fn a_vertex_colour_is_interpolated_premultiplied_across_a_fading_edge() {
+    // The distinction only appears where alpha varies between vertices, which
+    // is why the other color tests cannot see it: on constant alpha the two
+    // forms are the same numbers.
+    //
+    // A quad red at one edge and transparent at the other. Halfway along, a
+    // premultiplied interpolation gives half a unit of red at half alpha,
+    // which over black is half. Interpolating straight color and using it as
+    // though it were premultiplied gives a full unit of red at half alpha --
+    // a color brighter than the alpha it is multiplied by, which is not a
+    // color, and which over black is twice as bright.
+    let Some(mut ctx) = context() else { return };
+
+    let mut canvas = Canvas::new(SIZE);
+    canvas.clear(Color::BLACK);
+    let mesh = Vertices::full(
+        VertexMode::Triangles,
+        vec![
+            Vec2::new(8.0, 32.0),
+            Vec2::new(120.0, 32.0),
+            Vec2::new(120.0, 96.0),
+            Vec2::new(8.0, 96.0),
+        ],
+        Vec::new(),
+        vec![
+            Color::linear(1.0, 0.0, 0.0, 1.0),
+            Color::linear(1.0, 0.0, 0.0, 0.0),
+            Color::linear(1.0, 0.0, 0.0, 0.0),
+            Color::linear(1.0, 0.0, 0.0, 1.0),
+        ],
+        vec![0, 1, 2, 0, 2, 3],
+    )
+    .expect("mesh");
+    canvas
+        .draw_vertices(
+            &mesh,
+            &Paint::fill(Color::linear(1.0, 1.0, 1.0, 1.0)).with_anti_alias(false),
+        )
+        .expect("mesh");
+    let pixels = render(&mut ctx, canvas);
+
+    let middle = pixel(&pixels, 64, 64);
+    assert!(
+        (middle[0] as i32 - 128).abs() <= 6,
+        "halfway along the fade should be half strength; twice that means the \
+         color was interpolated straight and then used as premultiplied. Got {middle:?}"
+    );
+}

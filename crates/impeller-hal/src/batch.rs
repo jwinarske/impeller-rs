@@ -125,18 +125,48 @@ pub struct Vertex {
     /// Where in a sampled texture this vertex reads, if the material samples
     /// one. Zero where it does not, which costs nothing to interpolate.
     pub uv: [f32; 2],
+    /// A color multiplied into whatever the material produced, **premultiplied**.
+    ///
+    /// Opaque white for everything but a mesh a caller colored, and white is
+    /// the identity, so a fill pays for this in bandwidth rather than in a
+    /// second path. Sixteen bytes per vertex: at fifty thousand vertices a
+    /// frame, which is a great deal of two-dimensional geometry, that is under
+    /// fifty megabytes a second against a tiler already spending ten times
+    /// that on the framebuffer alone. A second vertex layout and a second
+    /// pipeline would save it and cost a permanent split in the batch model,
+    /// which is the wrong trade at this magnitude.
+    ///
+    /// Premultiplied rather than straight because it is interpolated across a
+    /// triangle, and interpolating straight color between vertices whose alpha
+    /// differs gives a color no point on the edge actually has.
+    pub color: [f32; 4],
 }
 
 impl Vertex {
     pub const fn new(position: [f32; 2], uv: [f32; 2]) -> Self {
-        Self { position, uv }
+        Self {
+            position,
+            uv,
+            color: WHITE,
+        }
     }
 
     /// A vertex that samples nothing.
     pub const fn at(position: [f32; 2]) -> Self {
         Self::new(position, [0.0, 0.0])
     }
+
+    /// The same vertex, tinted.
+    ///
+    /// `color` is premultiplied; see [`Self::color`].
+    pub const fn with_color(mut self, color: [f32; 4]) -> Self {
+        self.color = color;
+        self
+    }
 }
+
+/// The color that changes nothing when multiplied in.
+const WHITE: [f32; 4] = [1.0, 1.0, 1.0, 1.0];
 
 /// One draw within a batch.
 #[derive(Debug, Clone)]

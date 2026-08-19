@@ -1536,6 +1536,7 @@ impl Canvas {
 
         let to_clip = self.target.projection() * self.transform;
         let coords = mesh.texture_coords();
+        let colors = mesh.colors();
         let vertices: Vec<Vertex> = mesh
             .positions()
             .iter()
@@ -1543,7 +1544,16 @@ impl Canvas {
             .map(|(i, position)| {
                 let clip = to_clip.transform_point2(*position);
                 let uv = coords.get(i).copied().unwrap_or(Vec2::ZERO);
-                Vertex::new([clip.x, clip.y], [uv.x, uv.y])
+                let vertex = Vertex::new([clip.x, clip.y], [uv.x, uv.y]);
+                match colors.get(i) {
+                    // Premultiplied here rather than in the shader, because
+                    // what the rasterizer interpolates between two vertices is
+                    // what gets multiplied in, and interpolating straight color
+                    // across an edge whose alpha varies gives a color neither
+                    // end asked for.
+                    Some(color) => vertex.with_color(premultiplied(*color)),
+                    None => vertex,
+                }
             })
             .collect();
 
@@ -1603,6 +1613,7 @@ impl Canvas {
         let texels = Vec2::new(sheet.width as f32, sheet.height as f32);
         let mut positions = Vec::with_capacity(sprites.len() * 4);
         let mut coords = Vec::with_capacity(sprites.len() * 4);
+        let mut colors = Vec::with_capacity(sprites.len() * 4);
         let mut indices = Vec::with_capacity(sprites.len() * 6);
         for sprite in sprites {
             let source = &sprite.source;
@@ -1621,11 +1632,15 @@ impl Canvas {
             for corner in corners {
                 positions.push(sprite.transform.transform_point2(corner));
                 coords.push((origin + corner) / texels);
+                // The same color at all four corners: a sprite is tinted as a
+                // whole, and a gradient across one is a mesh rather than a
+                // sprite.
+                colors.push(sprite.color);
             }
             indices.extend_from_slice(&[base, base + 1, base + 2, base, base + 2, base + 3]);
         }
 
-        let mesh = Vertices::indexed(VertexMode::Triangles, positions, coords, indices)?;
+        let mesh = Vertices::full(VertexMode::Triangles, positions, coords, colors, indices)?;
         self.draw_vertices(&mesh, paint)
     }
 
@@ -2001,6 +2016,16 @@ fn circle_path(center: Vec2, radius: f32) -> Path {
         )
         .close();
     b.build()
+}
+
+/// A color in the form a vertex carries one.
+///
+/// Premultiplied, because a vertex color is interpolated across a triangle and
+/// straight color interpolated between differing alphas is wrong at every point
+/// between the ends.
+fn premultiplied(color: Color) -> [f32; 4] {
+    let [r, g, b, a] = color.to_array();
+    [r * a, g * a, b * a, a]
 }
 
 #[cfg(test)]

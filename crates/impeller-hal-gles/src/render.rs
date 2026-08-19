@@ -340,6 +340,8 @@ impl GlesContext {
             gl.vertex_attrib_pointer_f32(0, 2, glow::FLOAT, false, stride, 0);
             gl.enable_vertex_attrib_array(1);
             gl.vertex_attrib_pointer_f32(1, 2, glow::FLOAT, false, stride, 8);
+            gl.enable_vertex_attrib_array(2);
+            gl.vertex_attrib_pointer_f32(2, 4, glow::FLOAT, false, stride, 16);
 
             // Blend and scissor state are both global, so each is set only
             // where a draw actually needs a different one. Tracking them here

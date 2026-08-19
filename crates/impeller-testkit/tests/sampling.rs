@@ -274,6 +274,90 @@ fn a_mesh_tint_scales_the_texel_it_read() {
     }
 }
 
+/// A corner-colored quad drawn with a plain white material.
+///
+/// No texture at all, which is the point: the vertex color is a fourth
+/// attribute travelling through a vertex layout both backends declare
+/// separately -- a descriptor-driven pipeline on one, `glVertexAttribPointer`
+/// on the other -- so an offset or a stride wrong on one side shows up here
+/// and nowhere else.
+fn render_colored<H: Hal>(ctx: &mut H::Context) -> Vec<u8>
+where
+    H::Context: HalContext<Hal = H>,
+{
+    // Red, green, blue, and white, in the same corner order as `FULL`.
+    const CORNERS: [[f32; 4]; 4] = [
+        [1.0, 0.0, 0.0, 1.0],
+        [0.0, 1.0, 0.0, 1.0],
+        [0.0, 0.0, 1.0, 1.0],
+        [1.0, 1.0, 1.0, 1.0],
+    ];
+    let vertices: Vec<Vertex> = FULL
+        .iter()
+        .zip(CORNERS.iter())
+        .map(|(p, c)| Vertex::at(*p).with_color(*c))
+        .collect();
+    let mut batch = Batch::new();
+    batch
+        .push_mesh(
+            &vertices,
+            &QUAD,
+            Material::solid([1.0, 1.0, 1.0, 1.0]),
+            impeller_hal::ColorFilter::None,
+            BlendMode::Src,
+            None,
+            ClipState::default(),
+        )
+        .expect("push");
+
+    let mut target = ctx
+        .create_texture(&TextureDescriptor::offscreen(SIZE, PixelFormat::Rgba8Unorm))
+        .expect("target");
+    ctx.submit_batch(
+        &mut target,
+        &batch,
+        PassDescriptor::clear([0.0, 0.0, 0.0, 1.0]),
+    )
+    .expect("submit");
+    let pixels = ctx.read_texture(&mut target).expect("readback");
+    ctx.destroy_texture(target);
+    pixels
+}
+
+#[test]
+fn a_vertex_colour_reaches_the_shader_the_same_way_on_both_backends() {
+    let check = |pixels: &[u8], backend: &str| {
+        // Well inside each corner, where its own color dominates. The corner
+        // order is `FULL`'s, and the target's rows run the other way from clip
+        // space, which is why the reds and greens are at the bottom here.
+        for (x, y, channel, corner) in [
+            (4u32, 27u32, 0usize, "first"),
+            (27, 27, 1, "second"),
+            (27, 4, 2, "third"),
+        ] {
+            let got = pixel(pixels, x, y);
+            assert!(
+                got[channel] > 150,
+                "{backend}: the {corner} corner should be dominated by its own \
+                 channel, got {got:?}"
+            );
+        }
+    };
+
+    let mut ran = 0;
+    if let Ok(mut ctx) = Validated::new(DevicePreference::Auto) {
+        check(&render_colored::<VulkanHal>(&mut ctx), "vulkan");
+        ran += 1;
+    }
+    if let Ok(mut ctx) = GlesValidated::new(DisplayTarget::Surfaceless) {
+        check(&render_colored::<GlesHal>(&mut ctx), "gles");
+        ran += 1;
+    }
+    if ran == 0 {
+        eprintln!("no backend available");
+    }
+}
+
 fn assert_quadrants(pixels: &[u8], backend: &str) {
     // Sampled well inside each quadrant, so a filter kernel at the boundary
     // does not blend two of them together.

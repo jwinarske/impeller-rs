@@ -17,6 +17,7 @@ struct VertexOutput {
     vec4 position;
     vec2 clip;
     vec2 uv;
+    vec4 tint;
 };
 layout(std140) uniform Paint_block_0Fragment { Paint _group_1_binding_0_fs; };
 
@@ -24,6 +25,7 @@ uniform highp sampler2D _group_0_binding_0_fs;
 
 smooth in vec2 _vs2fs_location0;
 smooth in vec2 _vs2fs_location1;
+smooth in vec4 _vs2fs_location2;
 layout(location = 0) out vec4 _fs2p_location0;
 
 vec4 sample_stops(float t, int count) {
@@ -119,8 +121,8 @@ vec4 sample_mesh(vec2 uv_2) {
             texel = vec4(0.0);
         }
     }
-    vec4 tint = _group_1_binding_0_fs.stops[0];
-    vec4 premultiplied_1 = vec4((tint.xyz * tint.w), tint.w);
+    vec4 tint_1 = _group_1_binding_0_fs.stops[0];
+    vec4 premultiplied_1 = vec4((tint_1.xyz * tint_1.w), tint_1.w);
     vec4 _e36 = texel;
     float _e41 = _group_1_binding_0_fs.geometry.x;
     return ((_e36 * premultiplied_1) * _e41);
@@ -150,8 +152,8 @@ vec4 sample_image(vec2 clip_1) {
             texel_1 = vec4(0.0);
         }
     }
-    vec4 tint_1 = _group_1_binding_0_fs.stops[1];
-    vec4 premultiplied_2 = vec4((tint_1.xyz * tint_1.w), tint_1.w);
+    vec4 tint_2 = _group_1_binding_0_fs.stops[1];
+    vec4 premultiplied_2 = vec4((tint_2.xyz * tint_2.w), tint_2.w);
     vec4 _e68 = texel_1;
     float _e73 = _group_1_binding_0_fs.geometry.z;
     return ((_e68 * premultiplied_2) * _e73);
@@ -193,9 +195,9 @@ vec4 rounded_rect_coverage(vec2 clip_2) {
     float width_2 = length(gradient);
     float _e25 = _group_1_binding_0_fs.params.w;
     float _e26 = coverage_of(_e15, max(width_2, 1e-6), _e25);
-    vec4 tint_2 = _group_1_binding_0_fs.stops[0];
-    float alpha = (tint_2.w * _e26);
-    return vec4((tint_2.xyz * alpha), alpha);
+    vec4 tint_3 = _group_1_binding_0_fs.stops[0];
+    float alpha = (tint_3.w * _e26);
+    return vec4((tint_3.xyz * alpha), alpha);
 }
 
 vec4 ellipse_coverage(vec2 clip_3) {
@@ -219,9 +221,9 @@ vec4 ellipse_coverage(vec2 clip_3) {
     }
     float _e37 = stroke;
     float _e38 = coverage_of(implicit, per_pixel_1, _e37);
-    vec4 tint_3 = _group_1_binding_0_fs.stops[0];
-    float alpha_1 = (tint_3.w * _e38);
-    return vec4((tint_3.xyz * alpha_1), alpha_1);
+    vec4 tint_4 = _group_1_binding_0_fs.stops[0];
+    float alpha_1 = (tint_4.w * _e38);
+    return vec4((tint_4.xyz * alpha_1), alpha_1);
 }
 
 vec4 blur_along_axis(vec2 clip_4) {
@@ -407,9 +409,9 @@ vec4 shade(VertexOutput in_1) {
     if (((kind_1 > 4.5) && (kind_1 < 5.5))) {
         vec4 _e230 = textureLod(_group_0_binding_0_fs, vec2(in_1.uv), 0.0);
         float coverage = _e230.x;
-        vec4 tint_4 = _group_1_binding_0_fs.stops[0];
-        float alpha_4 = (tint_4.w * coverage);
-        return vec4((tint_4.xyz * alpha_4), alpha_4);
+        vec4 tint_5 = _group_1_binding_0_fs.stops[0];
+        float alpha_4 = (tint_5.w * coverage);
+        return vec4((tint_5.xyz * alpha_4), alpha_4);
     }
     vec4 _e241 = color_1;
     float _e244 = color_1.w;
@@ -418,10 +420,10 @@ vec4 shade(VertexOutput in_1) {
 }
 
 void main() {
-    VertexOutput in_ = VertexOutput(gl_FragCoord, _vs2fs_location0, _vs2fs_location1);
+    VertexOutput in_ = VertexOutput(gl_FragCoord, _vs2fs_location0, _vs2fs_location1, _vs2fs_location2);
     vec4 _e1 = shade(in_);
-    vec4 _e2 = filtered(_e1);
-    _fs2p_location0 = _e2;
+    vec4 _e4 = filtered((_e1 * in_.tint));
+    _fs2p_location0 = _e4;
     return;
 }
 

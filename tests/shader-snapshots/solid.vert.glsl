@@ -17,11 +17,14 @@ struct VertexOutput {
     vec4 position;
     vec2 clip;
     vec2 uv;
+    vec4 tint;
 };
 layout(location = 0) in vec2 _p2vs_location0;
 layout(location = 1) in vec2 _p2vs_location1;
+layout(location = 2) in vec4 _p2vs_location2;
 smooth out vec2 _vs2fs_location0;
 smooth out vec2 _vs2fs_location1;
+smooth out vec4 _vs2fs_location2;
 
 vec2 tile_gradient(float t_1, float tile) {
     if (((tile > 0.5) && (tile < 1.5))) {
@@ -65,14 +68,17 @@ float rounded_rect_distance(vec2 point, vec2 half_size, float radius) {
 void main() {
     vec2 position = _p2vs_location0;
     vec2 uv = _p2vs_location1;
-    VertexOutput out_ = VertexOutput(vec4(0.0), vec2(0.0), vec2(0.0));
+    vec4 tint = _p2vs_location2;
+    VertexOutput out_ = VertexOutput(vec4(0.0), vec2(0.0), vec2(0.0), vec4(0.0));
     out_.position = vec4(position, 0.0, 1.0);
     out_.clip = position;
     out_.uv = uv;
-    VertexOutput _e9 = out_;
-    gl_Position = _e9.position;
-    _vs2fs_location0 = _e9.clip;
-    _vs2fs_location1 = _e9.uv;
+    out_.tint = tint;
+    VertexOutput _e11 = out_;
+    gl_Position = _e11.position;
+    _vs2fs_location0 = _e11.clip;
+    _vs2fs_location1 = _e11.uv;
+    _vs2fs_location2 = _e11.tint;
     gl_Position.yz = vec2(-gl_Position.y, gl_Position.z * 2.0 - gl_Position.w);
     return;
 }

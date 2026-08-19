@@ -6,6 +6,7 @@
 //! happens once at construction rather than at every draw: a mesh that exists
 //! is a mesh that can be drawn.
 
+use crate::Color;
 use glam::{Affine2, Vec2};
 use impeller_hal::{Error, Result};
 
@@ -39,6 +40,7 @@ pub enum VertexMode {
 pub struct Vertices {
     positions: Vec<Vec2>,
     texture_coords: Vec<Vec2>,
+    colors: Vec<Color>,
     indices: Vec<u32>,
 }
 
@@ -49,7 +51,7 @@ impl Vertices {
     /// runs across the mesh the way it would across a path covering the same
     /// area.
     pub fn new(mode: VertexMode, positions: Vec<Vec2>) -> Result<Self> {
-        Self::build(mode, positions, Vec::new(), None)
+        Self::build(mode, positions, Vec::new(), Vec::new(), None)
     }
 
     /// A mesh whose vertices name where in an image they read.
@@ -61,7 +63,18 @@ impl Vertices {
         positions: Vec<Vec2>,
         texture_coords: Vec<Vec2>,
     ) -> Result<Self> {
-        Self::build(mode, positions, texture_coords, None)
+        Self::build(mode, positions, texture_coords, Vec::new(), None)
+    }
+
+    /// A mesh whose vertices each carry a color.
+    ///
+    /// The color multiplies whatever the paint produced, so a white paint
+    /// leaves the mesh's own colors, and a gradient paint is shaded by them.
+    /// Multiplying is the only combination offered: `dart:ui` takes a blend
+    /// mode here, and every other mode either discards one of the two inputs
+    /// or is not expressible without a second value per fragment.
+    pub fn colored(mode: VertexMode, positions: Vec<Vec2>, colors: Vec<Color>) -> Result<Self> {
+        Self::build(mode, positions, Vec::new(), colors, None)
     }
 
     /// The same, with the triangles named by index rather than by order.
@@ -71,18 +84,35 @@ impl Vertices {
         texture_coords: Vec<Vec2>,
         indices: Vec<u32>,
     ) -> Result<Self> {
-        Self::build(mode, positions, texture_coords, Some(indices))
+        Self::build(mode, positions, texture_coords, Vec::new(), Some(indices))
+    }
+
+    /// Everything at once, for a caller who has all of it.
+    pub fn full(
+        mode: VertexMode,
+        positions: Vec<Vec2>,
+        texture_coords: Vec<Vec2>,
+        colors: Vec<Color>,
+        indices: Vec<u32>,
+    ) -> Result<Self> {
+        Self::build(mode, positions, texture_coords, colors, Some(indices))
     }
 
     fn build(
         mode: VertexMode,
         positions: Vec<Vec2>,
         texture_coords: Vec<Vec2>,
+        colors: Vec<Color>,
         indices: Option<Vec<u32>>,
     ) -> Result<Self> {
         if !texture_coords.is_empty() && texture_coords.len() != positions.len() {
             return Err(Error::Unsupported(
                 "a mesh with texture coordinates needs one per position",
+            ));
+        }
+        if !colors.is_empty() && colors.len() != positions.len() {
+            return Err(Error::Unsupported(
+                "a mesh with colors needs one per position",
             ));
         }
         // Checked here rather than clamped at draw time. An index past the end
@@ -117,6 +147,7 @@ impl Vertices {
         Ok(Self {
             positions,
             texture_coords,
+            colors,
             indices,
         })
     }
@@ -128,6 +159,11 @@ impl Vertices {
     /// Texture coordinates, or empty where the mesh carries none.
     pub fn texture_coords(&self) -> &[Vec2] {
         &self.texture_coords
+    }
+
+    /// Per-vertex colors, or empty where the mesh carries none.
+    pub fn colors(&self) -> &[Color] {
+        &self.colors
     }
 
     /// Triangle indices, three per triangle, whatever mode built them.
@@ -152,6 +188,13 @@ impl Vertices {
 pub struct Sprite {
     /// The part of the sheet to draw, in texels.
     pub source: SourceRect,
+    /// A color multiplied into this sprite alone.
+    ///
+    /// White changes nothing, and is what [`Sprite::new`] and [`Sprite::at`]
+    /// give. This is what makes one sheet serve a whole palette -- and it is
+    /// per sprite rather than per batch, which is the difference between one
+    /// draw and one draw per color.
+    pub color: Color,
     /// Where it goes, applied to a quad running from the origin to the
     /// source's size.
     ///
@@ -196,7 +239,17 @@ impl SourceRect {
 
 impl Sprite {
     pub fn new(source: SourceRect, transform: Affine2) -> Self {
-        Self { source, transform }
+        Self {
+            source,
+            color: Color::WHITE,
+            transform,
+        }
+    }
+
+    /// The same sprite, tinted.
+    pub fn with_color(mut self, color: Color) -> Self {
+        self.color = color;
+        self
     }
 
     /// A sprite placed without rotation or scaling.
