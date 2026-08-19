@@ -1,0 +1,35 @@
+# Deliberately not a member of the workspace beside it.
+#
+# The workspace bans `cc`, `cmake` and `pkg-config` from its dependency graph,
+# because compiling from pure Rust source is what keeps cross-compiling the
+# renderer to aarch64 and riscv64 boards trivial -- and that ban is checked on
+# every push. Every route to a Wayland window in Rust goes through
+# `wayland-backend`, which has `cc` and `wayland-sys` (and so `pkg-config`) as
+# unconditional build dependencies. Not feature-gated, and `dlopen` changes only
+# runtime linking.
+#
+# So this tool sits outside, with its own lockfile. The renderer's guarantee is
+# about the renderer; a desktop program for looking at scenes is not shipped to
+# a board and has no business narrowing what the library may depend on. Nothing
+# here is reachable from a workspace build, `cargo deny`, the MSRV job or the
+# cross-compile jobs.
+[package]
+name = "impeller-playground"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.85"
+publish = false
+license = "BSD-3-Clause"
+
+[dependencies]
+impeller-core = { path = "../crates/impeller-core" }
+impeller-hal = { path = "../crates/impeller-hal" }
+impeller-hal-vulkan = { path = "../crates/impeller-hal-vulkan" }
+impeller-present = { path = "../crates/impeller-present" }
+impeller-present-vk = { path = "../crates/impeller-present-vk" }
+impeller-testkit = { path = "../crates/impeller-testkit" }
+
+ash = "0.38"
+ash-window = "0.13"
+raw-window-handle = "0.6"
+winit = "0.30"

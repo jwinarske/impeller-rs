@@ -1,6 +1,9 @@
 [workspace]
 resolver = "2"
 members = ["crates/*", "xtask"]
+# A desktop tool for looking at scenes, kept out of the graph this workspace
+# makes promises about. See playground/Cargo.toml for why.
+exclude = ["playground"]
 
 [workspace.package]
 version = "0.1.0"
