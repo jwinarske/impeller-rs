@@ -58,6 +58,14 @@ Corpus scenes are rendered on both backends and compared against each other and
 a software reference, so an evidence entry naming one means the operation runs
 rather than merely compiles.
 
+The evidence column is checked by a test rather than by hand: every name in it
+has to be a corpus scene or a function that exists, and no row may claim *yes*
+with the column empty. That check found five citations pointing at nothing --
+four naming local variables inside a test about something else, one a name
+truncated to an ellipsis -- and three rows resting on prose or on nothing at
+all. The counting sentence below is checked against the table too, for the same
+reason.
+
 ## Canvas
 
 | `dart:ui` | Status | Here | Evidence |
@@ -69,8 +77,8 @@ rather than merely compiles.
 | `drawLine` | yes | `draw_line` | `stroke-caps` |
 | `drawPath` | yes | `draw_path` | `concave-polygon`, `self-crossing-nonzero` |
 | `drawArc` | via | `PathBuilder::arc` then `draw_path` | `arc-ring-and-slice` |
-| `drawImage` | yes | `Paint::image` | sampling tests |
-| `drawImageRect` | yes | `Paint::with_source_pixels` | `a_sprite_can_be_drawn_from_a_sheet…` |
+| `drawImage` | yes | `Paint::image` | `an_image_paint_draws_a_texture_through_the_api` |
+| `drawImageRect` | yes | `Paint::with_source_pixels` | `a_sprite_can_be_drawn_from_a_sheet_by_naming_its_texels` |
 | `drawImageNine` | no | — nine draws with source rects would do it, but that is the caller writing the operation | |
 | `drawPaint` | via | a rect covering the target | |
 | `drawColor` | via | `clear` for a whole target; otherwise a rect with a blend | `transparent-background` |
@@ -89,11 +97,11 @@ rather than merely compiles.
 | `save`, `restore` | yes | `save`, `restore` | `translucent-stack` |
 | `saveLayer` | yes | `save_layer`, `save_layer_bounds` | `layer-group-opacity`, `layer-bounded` |
 | `restoreToCount` | via | `save_depth` and a loop | |
-| `getSaveCount` | yes | `save_depth` | |
+| `getSaveCount` | yes | `save_depth` | `saves_nest` |
 | `translate`, `scale`, `rotate` | yes | same names | `transformed` |
 | `skew` | via | `concat` of the affine | |
 | `transform` | partial | `concat` takes a 2D affine; `dart:ui` takes a 4×4 and so admits perspective | |
-| `getTransform` | yes | `transform()` | |
+| `getTransform` | yes | `transform()` | `save_and_restore_return_the_previous_transform` |
 | `getLocalClipBounds`, `getDestinationClipBounds` | partial | `clip()` gives the device-space scissor; a path clip's bounds are not tracked | |
 
 ## Paint
@@ -101,17 +109,17 @@ rather than merely compiles.
 | `dart:ui` | Status | Here | Evidence |
 |---|---|---|---|
 | `color` | yes | `Paint::fill` | `rect-fill` |
-| `style` | yes | `with_style` | `stroked` |
-| `strokeWidth` | yes | `Style::Stroke` | `stroked` |
+| `style` | yes | `with_style` | `rect-fill`, `stroke-polygon-and-curve` |
+| `strokeWidth` | yes | `Style::Stroke` | `stroke-polygon-and-curve`, `rounded-rect-stroked` |
 | `strokeCap` | yes | `StrokeStyle::cap` | `stroke-caps` |
 | `strokeJoin` | yes | `StrokeStyle::join` | `stroke-joins` |
 | `strokeMiterLimit` | yes | `StrokeStyle::miter_limit` | `stroke-joins` |
-| `isAntiAlias` | yes | `with_anti_alias` | `antialiased`, `aliased` |
+| `isAntiAlias` | yes | `with_anti_alias` | `circle-antialiased`, `curve-antialiased` |
 | `blendMode` | yes | `with_blend`, all of Porter-Duff and the fifteen advanced modes where the device offers them | `advanced-blend-*` |
 | `shader` | partial | linear, radial and sweep gradients, and images. Conical gradients and runtime effects are absent | `gradient-*` |
 | `colorFilter` | no | — an image tint exists, which is the narrowest case of one | |
 | `imageFilter` | no | — a layer can blur itself or its backdrop, which is not the same as a filter on a paint | `layer-blurred`, `layer-backdrop-blurred` |
-| `maskFilter` | no | — no blur applied to a shape's coverage | |
+| `maskFilter` | partial | `with_mask_blur`, blurring a shape's coverage. Solid colors only, since the identity it rests on holds for nothing else | `mask-blur-shadow` |
 | `filterQuality` | no | — one sampler, linear, fixed | |
 | `invertColors` | no | | |
 
@@ -129,8 +137,8 @@ above it or not at all:
 
 ## Where that leaves it
 
-Of forty-seven rows across `Canvas` and `Paint`: twenty-three exist, three are
-partial, six are expressible by a caller who assembles them, fourteen are
+Of forty-seven rows across `Canvas` and `Paint`: twenty-three exist, four are
+partial, six are expressible by a caller who assembles them, thirteen are
 absent, and one is out of scope. Counting them is the least interesting thing
 about the table -- the absences are not equal, and a reader deciding whether
 this renderer is usable should look at which ones rather than how many.
@@ -138,9 +146,11 @@ this renderer is usable should look at which ones rather than how many.
 The four that would matter most to a real application, in the order I would
 build them:
 
-1. **`colorFilter` and `maskFilter`** — tinting anything rather than only an
-   image, and blurring a shape's coverage. Both are small next to what is
-   already here, and both are asked for constantly.
+1. **`colorFilter`** — tinting anything rather than only an image. It is asked
+   for constantly and it is blocked, not unbuilt: the push constants are
+   exactly full, so a filter's color and mode have nowhere to sit until
+   material data moves to a uniform buffer. That move is the gate on this row
+   and on conical gradients both.
 2. **`drawVertices` and `drawAtlas`** — arbitrary meshes and batched sprites.
    The geometry path already produces vertex buffers, so this is mostly API.
 3. **Conical gradients** — the one gradient kind missing, and the shader has
