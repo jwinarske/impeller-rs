@@ -105,6 +105,15 @@ a layer, an image sampled through a path clip, a blend mode, and a run of
 glyphs — and writes a binary PPM, which needs no encoder. Image encoding is out
 of scope, so converting to something friendlier is `magick frame.ppm frame.png`.
 
+## How much of a renderer this is
+
+[`docs/parity.md`](docs/parity.md) is the operation-by-operation comparison
+against the `dart:ui` `Canvas` and `Paint` surface — the contract a
+Flutter-class renderer owes, and a more useful yardstick than any one
+implementation's internals. It distinguishes what exists from what a caller
+could assemble, and every row claiming something works names the scene or test
+that renders it.
+
 ## Building
 
 Requires a Rust toolchain; no other build dependencies. MSRV is 1.85, which is

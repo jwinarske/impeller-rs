@@ -1246,6 +1246,16 @@ solid draw would otherwise pay for. Gradient endpoints travel through the same
 transform the geometry does, so a gradient rotates and scales with its shape
 rather than staying pinned to the screen.
 
+## Coverage against `dart:ui`
+
+What this renderer owes an answer to is the `Canvas` and `Paint` surface Flutter
+draws through, not any particular implementation of it.
+[`parity.md`](parity.md) is that comparison, row by row, with each claim of
+support naming the corpus scene or test that renders it. It is deliberately not
+a comparison against the C++ Impeller's internals: matching another
+implementation's structure is how a reimplementation acquires its design without
+its reasons.
+
 ## Crate layout
 
 | Crate | Owns |
