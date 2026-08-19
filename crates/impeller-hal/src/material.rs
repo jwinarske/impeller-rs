@@ -7,30 +7,29 @@
 
 /// Floats in the packed representation.
 ///
-/// 128 bytes, which is exactly what every device is required to offer and
-/// therefore the ceiling rather than a comfortable fit. That limit is what
-/// decided the stop count and the geometry budget, not the other way round: a
-/// part providing only the minimum is exactly the embedded hardware this
-/// renderer targets.
+/// This was 128 bytes for a long time because that is exactly what every
+/// device guarantees as push constants, and the material travelled as one.
+/// That guarantee was also a ceiling, and the material had grown to occupy it
+/// exactly -- so the mechanism was deciding what a paint could hold, which is
+/// the wrong way round. Materials travel in a uniform buffer now, and the
+/// limit that binds is `maxUniformBufferRange`, whose guaranteed minimum is
+/// sixteen kilobytes: two orders of magnitude of room rather than none.
 ///
-/// A material needing more than this — an image shader, with its own sampler
-/// and matrix — does not belong in push constants and wants a uniform buffer.
-///
-/// Being at the limit was read once as a signal that the next material would
-/// have to change the mechanism, and the conical gradient proved that reading
-/// too quick: the budget was full, but one of the floats held a boolean, and
-/// folding it into a number that was already there paid for the new material
-/// outright. Full is worth distinguishing from spent well. What genuinely does
-/// not fit here is a material that has to sit on top of another one -- a color
-/// filter over a four-stop gradient -- because there is no arrangement of these
-/// thirty-two floats that holds both.
+/// The size has not changed with the mechanism, and should not change without
+/// a material that needs it. Every float here is read by a shader that
+/// branches on the kind, and floats nobody reads are bandwidth in the one
+/// place a renderer spends it per draw.
 pub const MATERIAL_FLOATS: usize = 32;
 
 /// Enforced at compile time rather than by a test, so a material that outgrew
-/// the guaranteed push-constant size could not be built at all.
+/// what every device guarantees could not be built at all.
+///
+/// The bound is `maxUniformBufferRange`'s guaranteed minimum. A material is
+/// nowhere near it; the assertion is here because the previous bound was
+/// reached, and the way that was noticed was this line failing to compile.
 const _: () = assert!(
-    MATERIAL_FLOATS * 4 <= 128,
-    "a material must fit the 128 bytes of push constants every device guarantees"
+    MATERIAL_FLOATS * 4 <= 16384,
+    "a material must fit the 16 KiB of uniform buffer range every device guarantees"
 );
 
 /// The most stops a gradient carries in the material itself.
@@ -45,9 +44,10 @@ pub const MAX_STOPS: usize = 4;
 /// Offsets into the packed layout, matching the shader's declaration.
 ///
 /// Public because it is a contract between the shader and every backend, not an
-/// internal detail. A backend without push constants has to set each member
-/// separately, and naming the offsets here keeps it from repeating the layout
-/// as bare indices that quietly go stale when the layout grows.
+/// internal detail. Both backends copy the packed floats straight into a
+/// uniform buffer, so a member is found by its offset here rather than by a
+/// name -- and naming the offsets in one place keeps the layout from being
+/// written out again as bare indices that quietly go stale when it grows.
 pub mod layout {
     /// Four stop colors.
     pub const STOPS: usize = 0;
@@ -168,7 +168,7 @@ pub enum Material {
         stops: Vec<Stop>,
         /// Texture slot holding this gradient's colors, when they did not fit.
         ///
-        /// `None` is the ordinary case: the stops travel in push constants and
+        /// `None` is the ordinary case: the stops travel in the material and
         /// the shader walks them. `Some` means the recorder tabulated them into
         /// an image instead, because there were more than [`MAX_STOPS`], and
         /// the shader reads the color at the parameter rather than computing
@@ -194,7 +194,7 @@ pub enum Material {
         stops: Vec<Stop>,
         /// Texture slot holding this gradient's colors, when they did not fit.
         ///
-        /// `None` is the ordinary case: the stops travel in push constants and
+        /// `None` is the ordinary case: the stops travel in the material and
         /// the shader walks them. `Some` means the recorder tabulated them into
         /// an image instead, because there were more than [`MAX_STOPS`], and
         /// the shader reads the color at the parameter rather than computing
@@ -214,7 +214,7 @@ pub enum Material {
         stops: Vec<Stop>,
         /// Texture slot holding this gradient's colors, when they did not fit.
         ///
-        /// `None` is the ordinary case: the stops travel in push constants and
+        /// `None` is the ordinary case: the stops travel in the material and
         /// the shader walks them. `Some` means the recorder tabulated them into
         /// an image instead, because there were more than [`MAX_STOPS`], and
         /// the shader reads the color at the parameter rather than computing
@@ -524,10 +524,16 @@ impl Material {
 
     /// Pack into the layout the shader declares.
     ///
+    /// Every member is a four-component vector, which is what lets this be a
+    /// flat array of floats copied straight into a uniform buffer: the std140
+    /// rules the shader's block is declared with place a `vec4` and an array
+    /// of them at exactly these offsets, so no member needs padding written
+    /// around it.
+    ///
     /// Stops beyond the limit are dropped rather than resampled, and the count
     /// travels alongside so the shader ignores unused entries instead of
     /// blending toward whatever happens to be in them.
-    pub fn to_push_constants(&self) -> [f32; MATERIAL_FLOATS] {
+    pub fn to_uniform(&self) -> [f32; MATERIAL_FLOATS] {
         let mut out = [0.0f32; MATERIAL_FLOATS];
 
         if let Self::Solid(color) = self {
@@ -776,7 +782,7 @@ mod tests {
 
     #[test]
     fn a_solid_colour_lands_in_the_first_stop_and_selects_the_solid_path() {
-        let packed = Material::solid([0.25, 0.5, 0.75, 1.0]).to_push_constants();
+        let packed = Material::solid([0.25, 0.5, 0.75, 1.0]).to_uniform();
         assert_eq!(&packed[0..4], &[0.25, 0.5, 0.75, 1.0]);
         assert_eq!(packed[layout::PARAMS], 1.0, "stop count");
         assert_eq!(packed[layout::PARAMS + 1], kind::SOLID);
@@ -792,7 +798,7 @@ mod tests {
             tile: TileMode::Clamp,
             ramp: None,
         }
-        .to_push_constants();
+        .to_uniform();
 
         assert_eq!(&packed[0..4], &[1.0, 0.0, 0.0, 1.0], "first stop");
         assert_eq!(&packed[4..8], &[0.0, 0.0, 1.0, 1.0], "second stop");
@@ -819,7 +825,7 @@ mod tests {
             tile: TileMode::Clamp,
             ramp: None,
         }
-        .to_push_constants();
+        .to_uniform();
 
         assert_eq!(
             &packed[layout::GEOMETRY..layout::GEOMETRY + 2],
@@ -845,7 +851,7 @@ mod tests {
             tile: TileMode::Clamp,
             ramp: None,
         }
-        .to_push_constants();
+        .to_uniform();
 
         // Angles share the geometry slot with the center, which is why a linear
         // gradient's endpoints and a sweep's angles cannot both be present.
@@ -888,7 +894,7 @@ mod tests {
             },
         ];
         for material in materials {
-            let packed = material.to_push_constants();
+            let packed = material.to_uniform();
             assert_eq!(packed[layout::PARAMS + 1], kind::SOLID, "{material:?}");
             assert_eq!(&packed[0..4], &[1.0, 1.0, 1.0, 1.0]);
         }
@@ -907,7 +913,7 @@ mod tests {
             tile: TileMode::Clamp,
             ramp: None,
         }
-        .to_push_constants();
+        .to_uniform();
         // The count is what stops the shader reading past what was written.
         assert_eq!(packed[layout::PARAMS], MAX_STOPS as f32);
     }

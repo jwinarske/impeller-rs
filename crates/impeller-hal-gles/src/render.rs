@@ -40,33 +40,48 @@ impl GlesTexture {
     }
 }
 
+/// The name the translator gives the paint's uniform block.
+///
+/// Part of the contract with the shader build rather than an implementation
+/// detail, in the same way the generated sampler name below it is: the block
+/// is named after the struct it carries, and a snapshot test on the other side
+/// pins the generated source this reads from.
+const PAINT_BLOCK: &str = "Paint_block_0Fragment";
+
+/// The binding point the paint's block is assigned to.
+///
+/// Assigned here rather than declared in the shader because GLSL ES 3.00 has
+/// no `layout(binding = )` for a uniform block; that arrived in 3.10, above
+/// this backend's floor.
+const PAINT_BINDING: u32 = 0;
+
+/// Bytes one draw's paint occupies, before the padding alignment adds.
+const MATERIAL_BYTES: usize = impeller_hal::MATERIAL_FLOATS * 4;
+
 /// The compiled solid-color program and the vertex state it draws with.
 pub(crate) struct SolidProgram {
     pub(crate) program: glow::Program,
-    /// Locations of the paint uniform's members, which the shader translator
-    /// lowered the push constant to. Looked up by name, so those names are part
-    /// of the contract rather than an implementation detail.
-    ///
-    /// GLES has no push constants and no way to set a struct in one call, so
-    /// each member is set individually. The array of stops needs one location
-    /// per element for the same reason.
-    pub(crate) stops: [Option<glow::UniformLocation>; impeller_hal::MAX_STOPS],
     /// The sampler the image paint reads.
     ///
     /// The translator combines WGSL's separate texture and sampler into one
     /// GLSL sampler, named for the texture's group and binding, so that name is
-    /// part of the contract in exactly the way the paint member names are.
+    /// part of the contract rather than an implementation detail.
     pub(crate) image: Option<glow::UniformLocation>,
-    /// Every non-array member, paired with where it starts in the packed
-    /// material.
-    ///
-    /// Pairing them means the offsets come from the shared layout rather than
-    /// being written out again as bare indices, which is how this fell out of
-    /// step when the material grew a matrix.
-    pub(crate) members: Vec<(Option<glow::UniformLocation>, usize)>,
     pub(crate) vao: glow::VertexArray,
     pub(crate) vertices: glow::Buffer,
     pub(crate) indices: glow::Buffer,
+    /// One buffer holding every draw's paint, rebound to a different range per
+    /// draw.
+    ///
+    /// The paint used to be set member by member, because the translator
+    /// lowered a push constant to loose uniforms and GLES has no way to set a
+    /// struct in one call. It is a uniform block now, which the other backend
+    /// needed and this one is better off for: a material of any size is one
+    /// upload and a range binding rather than a call per member per draw.
+    pub(crate) paints: glow::Buffer,
+    /// Distance between one draw's paint and the next, which the
+    /// implementation's minimum offset alignment decides.
+    pub(crate) paint_stride: usize,
 }
 
 impl GlesContext {
@@ -304,6 +319,18 @@ impl GlesContext {
                 glow::STREAM_DRAW,
             );
 
+            // Written into the padded layout directly, so the gaps the
+            // implementation's alignment requires are zeros rather than
+            // whatever the last batch left there.
+            let mut paints = vec![0u8; batch.draw_count().max(1) * program.paint_stride];
+            for (index, draw) in batch.draws().iter().enumerate() {
+                let packed = draw.material.to_uniform();
+                let at = index * program.paint_stride;
+                paints[at..at + MATERIAL_BYTES].copy_from_slice(cast_bytes(&packed));
+            }
+            gl.bind_buffer(glow::UNIFORM_BUFFER, Some(program.paints));
+            gl.buffer_data_u8_slice(glow::UNIFORM_BUFFER, &paints, glow::STREAM_DRAW);
+
             // Position then texture coordinates, interleaved in one buffer.
             // The stride comes from the shared vertex type rather than a
             // literal, so adding a member cannot leave the two backends
@@ -323,7 +350,7 @@ impl GlesContext {
             let mut scissor: Option<Scissor> = None;
             let mut stencil_state: Option<ClipState> = None;
             let mut bound_texture: Option<Option<u32>> = None;
-            for draw in batch.draws() {
+            for (index, draw) in batch.draws().iter().enumerate() {
                 if current != Some(draw.blend) {
                     apply_blend(gl, draw.blend);
                     current = Some(draw.blend);
@@ -380,24 +407,17 @@ impl GlesContext {
                     bound_texture = Some(wanted);
                 }
 
-                let packed = draw.material.to_push_constants();
-                let set = |location: &Option<glow::UniformLocation>, at: usize| {
-                    if let Some(location) = location {
-                        gl.uniform_4_f32(
-                            Some(location),
-                            packed[at],
-                            packed[at + 1],
-                            packed[at + 2],
-                            packed[at + 3],
-                        );
-                    }
-                };
-                for (i, location) in program.stops.iter().enumerate() {
-                    set(location, impeller_hal::material::layout::STOPS + i * 4);
-                }
-                for (location, at) in &program.members {
-                    set(location, *at);
-                }
+                // One block for the whole batch, rebound to this draw's range.
+                // The size is the material rather than the stride: the stride
+                // includes padding the implementation required, and a range
+                // reaching past the last material would run off the buffer.
+                gl.bind_buffer_range(
+                    glow::UNIFORM_BUFFER,
+                    PAINT_BINDING,
+                    Some(program.paints),
+                    (index * program.paint_stride) as i32,
+                    MATERIAL_BYTES as i32,
+                );
                 gl.draw_elements(
                     glow::TRIANGLES,
                     draw.index_count as i32,
@@ -880,30 +900,22 @@ fn build_program(gl: &glow::Context) -> Result<SolidProgram> {
             gl.delete_shader(*shader);
         }
 
-        // The translator lowers the push constant to a uniform struct, so each
-        // member is addressed by its qualified name. A member the compiler
-        // decided was unused has no location, which is why these are optional
-        // rather than an error.
-        let mut stops = [const { None }; impeller_hal::MAX_STOPS];
-        for (i, slot) in stops.iter_mut().enumerate() {
-            *slot =
-                gl.get_uniform_location(program, &format!("_push_constant_binding_fs.stops[{i}]"));
-        }
-        // Name and offset together, so adding a member to the material means
-        // adding one line here rather than editing indices in two places.
-        use impeller_hal::material::layout;
-        let members: Vec<(Option<glow::UniformLocation>, usize)> = [
-            ("offsets", layout::OFFSETS),
-            ("geometry", layout::GEOMETRY),
-            ("to_local", layout::TO_LOCAL),
-            ("params", layout::PARAMS),
-        ]
-        .into_iter()
-        .map(|(name, at)| {
-            let qualified = format!("_push_constant_binding_fs.{name}");
-            (gl.get_uniform_location(program, &qualified), at)
-        })
-        .collect();
+        // The paint's block, named by the translator after the struct it
+        // carries. GLSL ES 3.00 has no `layout(binding = )` for a block, so
+        // the binding point is assigned here rather than declared in the
+        // shader -- which is also why the block's layout is `std140` by an
+        // explicit qualifier the build step adds, and not by default.
+        //
+        // A missing block is an error rather than an optional location: every
+        // draw reads a paint, so a program without one would draw whatever
+        // uninitialized memory happened to be bound.
+        let block = gl
+            .get_uniform_block_index(program, PAINT_BLOCK)
+            .ok_or(Error::Backend {
+                backend: "gles",
+                detail: format!("the compiled program has no {PAINT_BLOCK} uniform block"),
+            })?;
+        gl.uniform_block_binding(program, block, PAINT_BINDING);
 
         // Naga names a combined sampler after the texture's group and binding
         // rather than after the WGSL variable, so this is the generated name
@@ -920,14 +932,24 @@ fn build_program(gl: &glow::Context) -> Result<SolidProgram> {
             .create_buffer()
             .map_err(|e| gl_err("create_buffer", &e))?;
 
+        let paints = gl
+            .create_buffer()
+            .map_err(|e| gl_err("create_buffer", &e))?;
+        // Queried once with the program rather than per submission: it is a
+        // property of the implementation and cannot change under a context.
+        let alignment = (gl
+            .get_parameter_i32(glow::UNIFORM_BUFFER_OFFSET_ALIGNMENT)
+            .max(1)) as usize;
+        let paint_stride = MATERIAL_BYTES.div_ceil(alignment) * alignment;
+
         Ok(SolidProgram {
             program,
-            stops,
             image,
-            members,
             vao,
             vertices,
             indices,
+            paints,
+            paint_stride,
         })
     }
 }

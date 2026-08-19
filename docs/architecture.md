@@ -423,6 +423,43 @@ rule that came out of it is to look for a field paying for less than its width
 before concluding that a limit has been reached, and to be suspicious of any
 plan that begins by moving everything somewhere larger.
 
+**Materials travel in a uniform buffer, not in push constants.** The paragraphs
+above are kept as written because the reasoning in them was sound and the
+conclusion still arrived: the case that broke the budget was a material sitting
+on top of another one. A color filter is exactly that — it applies to whatever
+material is already there, including a four-stop gradient that uses every float
+— and a color matrix alone is twenty floats. No rearrangement holds both.
+
+The reason to hesitate was the hardware. Push constants are the cheap path for
+small per-draw data on tile-based parts, and the 128-byte guarantee exists
+because parts offering only the guarantee are exactly the ones this targets. So
+the question is not what is elegant but what that hardware does well, and the
+answer came from Impeller itself: it places per-draw uniform data in a
+per-frame host buffer, aligned to the backend's minimum uniform offset
+(`HostBuffer::EmplaceUniform`), on the same class of parts. That is a uniform
+buffer with a dynamic offset per draw, which is what this does now.
+
+One buffer per submission holds every draw's material end to end, each padded
+to the device's minimum offset alignment, with one descriptor set rebound at a
+different offset per draw. On Vulkan it is a second descriptor set rather than
+another binding in the texture set, because that set includes a placeholder
+owned by the context and outliving any one submission. On GLES it is a uniform
+block, which is what this document already specified for that backend and what
+the implementation had not yet done — so the two backends now agree on
+mechanism as well as on layout.
+
+The layout is `std140`, stated rather than assumed. A block with no qualifier
+is `shared`, whose member offsets the implementation chooses and a caller is
+expected to query; both backends write the bytes themselves, so they need the
+layout every implementation agrees on. The translator writes the qualifier only
+alongside an explicit binding, and GLSL ES 3.00 has no `layout(binding = )` for
+a uniform block — that arrived in 3.10, above this project's floor — so the
+build step adds it, asserts it found exactly what it expected, and a test reads
+the generated source back to confirm.
+
+The material is still 32 floats. The mechanism changed; the size should not,
+until a material needs it.
+
 **A gradient with more stops than the material carries is tabulated rather than
 truncated.** Four fit, which is almost every real gradient and costs no texture;
 past that the recorder evaluates the ramp into a small image and the shader
@@ -867,8 +904,8 @@ available.
 `glFenceSync` and `glClientWaitSync` back `HalFence`;
 `EGL_ANDROID_native_fence_sync` exports sync fds for the DRM path. Uniform data
 lives in UBOs with std140 layouts generated alongside the shaders; there is no
-push-constant equivalent, so small per-draw data uses a ring-buffered UBO with
-dynamic offsets. MSAA uses multisampled renderbuffers with a blit resolve, and
+push-constant equivalent, so per-draw material data is written into one buffer
+per submission and bound a range at a time. MSAA uses multisampled renderbuffers with a blit resolve, and
 `GL_EXT_multisampled_render_to_texture` on tilers where present.
 
 GLES 2.0 is permanently out of scope; the feature gap is too large.
@@ -1241,13 +1278,12 @@ every fragment walks, which is the cost specialization would remove.
   whole way and only the final write encoded, rather than converting early or
   twice.
 - **Materials**: a paint resolved for a backend — color or gradient, already
-  in clip space — packed into 128 bytes, exactly the push-constant size every
-  device is required to offer. Staying within the guaranteed minimum is
-  deliberate: a part that provides only the minimum is exactly the embedded
-  hardware this renderer targets, and a material that did not fit there would
-  fall back to a uniform buffer on the devices least able to afford one. The
-  limit is a compile-time assertion rather than a test, and the size stated
-  here is checked against it.
+  in clip space — packed into 128 bytes, which was once exactly the
+  push-constant size every device guarantees and is now simply how large a
+  material is. It travels in a uniform buffer, bound at a per-draw offset; the
+  bound that remains is `maxUniformBufferRange`, whose guaranteed minimum is 16
+  KiB. The limit is a compile-time assertion rather than a test, and the size
+  stated here is checked against it.
 
 **A gradient locates itself from an interpolated clip position, not from the
 fragment coordinate builtin.** That builtin's origin differs between the two

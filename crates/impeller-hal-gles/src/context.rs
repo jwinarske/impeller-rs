@@ -373,6 +373,7 @@ impl Drop for GlesContext {
                 self.gl.delete_vertex_array(program.vao);
                 self.gl.delete_buffer(program.vertices);
                 self.gl.delete_buffer(program.indices);
+                self.gl.delete_buffer(program.paints);
             }
         }
         // Unbind before destroying, or the driver keeps the context alive and

@@ -147,19 +147,20 @@ The three that would matter most to a real application, in the order I would
 build them:
 
 1. **`colorFilter`** — tinting anything rather than only an image. It is asked
-   for constantly and it is blocked rather than unbuilt: the push constants are
-   exactly full, and unlike the other rows a color filter has to sit *on top
-   of* whatever material is already there, including a four-stop gradient that
-   uses every float. So it waits for material data to move to a uniform buffer.
+   for constantly, and unlike every other row here it has to sit *on top of*
+   whatever material is already there, including a four-stop gradient that uses
+   every float. That is what kept it waiting: while materials travelled in push
+   constants there were 128 bytes and no arrangement of them held both.
 
-   This row previously claimed that conical gradients waited on the same move.
-   They did not: the flag saying a gradient's colors had been baked into a
+   They travel in a uniform buffer now, so nothing structural is in the way and
+   what remains is the work itself. This row previously claimed conical
+   gradients waited on the same move; they did not, and finding out why is
+   worth keeping. The flag saying a gradient's colors had been baked into a
    texture occupied a whole float, and a material carrying that texture has no
-   stop count to report, so the two were folded into one number and the float
-   that freed is the one a conical gradient needed. The lesson is narrower than
-   "the budget is full" — it was full of one thing that was not paying for
+   stop count to report, so the two were folded into one number. The lesson is
+   narrower than "the budget is full" — it was full of one thing not paying for
    itself, and that is worth checking before concluding a mechanism has to
-   change.
+   change. It is also not an argument against changing one when it has to.
 2. **Per-vertex colors**, which is the one thing left in both `drawVertices`
    and `drawAtlas`. A mesh can be drawn and can read a texture at coordinates
    its vertices carry, and a sprite batch is one draw; what neither can do is

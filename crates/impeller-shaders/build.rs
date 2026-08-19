@@ -92,7 +92,7 @@ fn compile(path: &Path) -> String {
         (naga::ShaderStage::Vertex, "vs_main", "VS_GLSL"),
         (naga::ShaderStage::Fragment, "fs_main", "FS_GLSL"),
     ] {
-        let glsl = write_glsl(&module, &info, stage, entry, path);
+        let glsl = force_std140(write_glsl(&module, &info, stage, entry, path), path, stage);
         out.push_str(&format!(
             "/// GLSL ES 300 for `{}.wgsl`, {} stage.\npub static {}_{}: &str = r####\"{}\"####;\n\n",
             path.file_stem().unwrap().to_string_lossy(),
@@ -104,6 +104,42 @@ fn compile(path: &Path) -> String {
     }
 
     out
+}
+
+/// Give the paint's uniform block an explicit `std140` layout.
+///
+/// A uniform block with no layout qualifier is `shared`, which means the
+/// driver chooses where each member sits and a caller is expected to ask.
+/// This side writes the bytes itself, so it needs a layout that is specified
+/// rather than reported -- and `std140` is the one every implementation
+/// agrees on.
+///
+/// naga would write the qualifier itself, but only alongside an explicit
+/// binding, and GLSL ES 3.00 has no `layout(binding = )` for a uniform block;
+/// that arrived in 3.10, which is above this project's floor. So it is added
+/// here.
+///
+/// Editing generated source is worth doing carefully rather than avoiding: the
+/// declaration is located exactly, the count is asserted, and a translator that
+/// emits a different shape fails the build here instead of producing a shader
+/// whose members are read from wherever the driver put them. The snapshot test
+/// pins the same output from the other side.
+fn force_std140(glsl: String, path: &Path, stage: naga::ShaderStage) -> String {
+    const DECLARATION: &str = "\nuniform Paint_block_";
+    // Only the fragment stage reads the paint, and a translator emits a global
+    // only into the stages that use it -- so the vertex stage having one would
+    // mean the shader changed, not the translation.
+    let want = usize::from(stage == naga::ShaderStage::Fragment);
+    let found = glsl.matches(DECLARATION).count();
+    assert_eq!(
+        found,
+        want,
+        "{} {stage:?}: expected {want} unqualified paint block(s) to qualify, found {found}. \
+         Either the translator's output changed shape or a stage started reading the paint; \
+         qualify what is actually there rather than dropping this.",
+        path.display()
+    );
+    glsl.replace(DECLARATION, "\nlayout(std140) uniform Paint_block_")
 }
 
 /// Translate one entry point to GLSL ES 300.

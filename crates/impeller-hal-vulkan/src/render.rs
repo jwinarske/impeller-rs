@@ -205,6 +205,7 @@ impl VulkanContext {
             cast_bytes(batch.indices()),
             vk::BufferUsageFlags::INDEX_BUFFER,
         )?;
+        let (material_buffer, materials) = crate::materials::build(self, batch)?;
 
         let result = self.record_batch(
             &device,
@@ -217,11 +218,14 @@ impl VulkanContext {
             pass,
             stencil_format,
             &bindings,
+            &materials,
             textures,
         );
 
         self.release(vertex_buffer);
         self.release(index_buffer);
+        self.release(material_buffer);
+        materials.destroy(&device);
         bindings.destroy(self);
         result
     }
@@ -239,6 +243,7 @@ impl VulkanContext {
         pass: PassDescriptor,
         stencil_format: Option<vk::Format>,
         bindings: &crate::sampling::Bindings,
+        materials: &crate::materials::Materials,
         sampled: &[&VulkanTexture],
     ) -> Result<()> {
         let layout = self.pipeline_cache().layout().expect("ensured above");
@@ -389,9 +394,10 @@ impl VulkanContext {
                     layout,
                     area,
                     bindings,
+                    materials,
                 };
                 let mut state = RecordedState::at_pass_start(area);
-                for draw in batch.draws() {
+                for (index, draw) in batch.draws().iter().enumerate() {
                     let pipeline = self
                         .pipeline_cache()
                         .pipeline(PipelineKey {
@@ -402,7 +408,7 @@ impl VulkanContext {
                             role: draw.stencil.role,
                         })
                         .expect("ensured above");
-                    record_draw(&recording, draw, pipeline, &mut state);
+                    record_draw(&recording, draw, index, pipeline, &mut state);
                 }
 
                 device.cmd_end_render_pass(cmd);
@@ -618,6 +624,9 @@ impl VulkanContext {
         if let Some(bindings) = fence.bindings.take() {
             bindings.destroy(self);
         }
+        if let Some(materials) = fence.materials.take() {
+            materials.destroy(&self.raw_device().clone());
+        }
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -640,6 +649,7 @@ impl VulkanContext {
         // flight for as long as the caller likes -- so the bindings travel with
         // the fence, alongside the framebuffer and view they sit next to here.
         let bindings = crate::sampling::build(self, batch, textures)?;
+        let (material_buffer, materials) = crate::materials::build(self, batch)?;
         let layout = self.pipeline_cache().layout().expect("ensured above");
         let extent = target.extent();
 
@@ -749,16 +759,19 @@ impl VulkanContext {
                 layout,
                 area,
                 bindings: &bindings,
+                materials: &materials,
             };
             let mut state = RecordedState::at_pass_start(area);
-            for (draw, pipeline) in batch.draws().iter().zip(&pipelines) {
-                record_draw(&recording, draw, *pipeline, &mut state);
+            for (index, (draw, pipeline)) in batch.draws().iter().zip(&pipelines).enumerate() {
+                record_draw(&recording, draw, index, *pipeline, &mut state);
             }
             device.cmd_end_render_pass(cmd);
         }
 
         let mut fence = self.submit_exportable(cmd, framebuffer, view, sync)?;
         fence.bindings = Some(bindings);
+        fence.materials = Some(materials);
+        fence.retained.push(material_buffer);
         target.set_layout(if sync.presents {
             vk::ImageLayout::PRESENT_SRC_KHR
         } else {
@@ -789,7 +802,8 @@ impl VulkanContext {
                 // every pipeline declares the set whether it samples or not
                 // and so cannot be created without it.
                 let descriptors = self.descriptor_layout()?;
-                let l = build_pipeline_layout(&device, descriptors)?;
+                let materials = self.material_layout()?;
+                let l = build_pipeline_layout(&device, descriptors, materials)?;
                 self.pipeline_cache_mut().layout = Some(l);
                 l
             }
@@ -799,7 +813,11 @@ impl VulkanContext {
         Ok(())
     }
 
-    fn upload(&mut self, bytes: &[u8], usage: vk::BufferUsageFlags) -> Result<StagedBuffer> {
+    pub(crate) fn upload(
+        &mut self,
+        bytes: &[u8],
+        usage: vk::BufferUsageFlags,
+    ) -> Result<StagedBuffer> {
         let device = self.raw_device().clone();
         let info = vk::BufferCreateInfo::default()
             .size(bytes.len().max(1) as u64)
@@ -1029,19 +1047,18 @@ pub(crate) fn sample_flags(count: u32) -> vk::SampleCountFlags {
 fn build_pipeline_layout(
     device: &ash::Device,
     descriptor_layout: vk::DescriptorSetLayout,
+    material_layout: vk::DescriptorSetLayout,
 ) -> Result<vk::PipelineLayout> {
-    // Paint travels as a push constant; the one descriptor set carries the
-    // texture an image paint samples. One layout serves every pipeline, since
-    // they all take the same paint and declare the same binding -- which is
-    // also why a solid fill still binds something there.
-    let ranges = [vk::PushConstantRange::default()
-        .stage_flags(vk::ShaderStageFlags::FRAGMENT)
-        .offset(0)
-        .size((impeller_hal::MATERIAL_FLOATS * 4) as u32)];
-    let set_layouts = [descriptor_layout];
-    let info = vk::PipelineLayoutCreateInfo::default()
-        .push_constant_ranges(&ranges)
-        .set_layouts(&set_layouts);
+    // Two sets: the first carries the texture an image paint samples, the
+    // second the paint itself. One layout serves every pipeline, since they
+    // all declare the same two -- which is also why a solid fill still binds a
+    // texture it never reads.
+    //
+    // Separate sets rather than two bindings in one, because the texture set
+    // includes a placeholder owned by the context and outliving any single
+    // submission, while the paint's buffer is built per submission.
+    let set_layouts = [descriptor_layout, material_layout];
+    let info = vk::PipelineLayoutCreateInfo::default().set_layouts(&set_layouts);
     unsafe { device.create_pipeline_layout(&info, None) }
         .map_err(|e| backend_err("create_pipeline_layout", e))
 }
@@ -1237,6 +1254,7 @@ struct PassRecording<'a> {
     /// The whole render area, which is also what an unclipped draw scissors to.
     area: vk::Rect2D,
     bindings: &'a crate::sampling::Bindings,
+    materials: &'a crate::materials::Materials,
 }
 
 /// What has already been recorded, so each piece is set only where it changes.
@@ -1279,6 +1297,7 @@ impl RecordedState {
 unsafe fn record_draw(
     pass: &PassRecording,
     draw: &impeller_hal::BatchDraw,
+    index: usize,
     pipeline: vk::Pipeline,
     state: &mut RecordedState,
 ) {
@@ -1288,6 +1307,7 @@ unsafe fn record_draw(
         layout,
         area,
         bindings,
+        materials,
     } = *pass;
     unsafe {
         if state.pipeline != Some(pipeline) {
@@ -1353,12 +1373,18 @@ unsafe fn record_draw(
             state.stencil_reference = Some(reference);
         }
 
-        device.cmd_push_constants(
+        // One set for the whole batch, rebound per draw with a different
+        // offset into it. The set itself never changes, but a dynamic offset
+        // travels with the binding call, so this is a rebind rather than a
+        // separate command -- and cheaper than the descriptor update per draw
+        // that a non-dynamic binding would need.
+        device.cmd_bind_descriptor_sets(
             cmd,
+            vk::PipelineBindPoint::GRAPHICS,
             layout,
-            vk::ShaderStageFlags::FRAGMENT,
-            0,
-            cast_bytes(&draw.material.to_push_constants()),
+            1,
+            &[materials.set()],
+            &[materials.offset(index)],
         );
         device.cmd_draw_indexed(cmd, draw.index_count, 1, draw.first_index, 0, 0);
     }
@@ -1412,7 +1438,7 @@ fn vk_blend_factor(factor: impeller_hal::BlendFactor) -> vk::BlendFactor {
 }
 
 /// Reinterpret a slice of plain data as bytes.
-fn cast_bytes<T>(slice: &[T]) -> &[u8] {
+pub(crate) fn cast_bytes<T>(slice: &[T]) -> &[u8] {
     // SAFETY: T is a plain-data type here ([f32; 2], [f32; 4] or u32), every
     // byte of it is initialized, and the returned slice borrows the same memory
     // for a shorter-or-equal lifetime.

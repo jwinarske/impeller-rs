@@ -13,19 +13,17 @@
 // Passing it as a varying also avoids a second vertex attribute, which every
 // solid draw would otherwise pay for.
 
-// One paint per draw, in push constants: the data is small and changes every
-// draw, so a uniform buffer would need either a fresh allocation or a dynamic
-// offset each time.
+// One paint per draw, in a uniform buffer bound at a different offset for each
+// draw. It travelled in push constants for a long time, which suited data this
+// small and this changeable -- but 128 bytes is all a device guarantees there,
+// the material had grown to occupy exactly that, and a material that has to
+// sit on top of another one does not fit at any arrangement. A color filter is
+// that case.
 //
-// This occupies 128 bytes, which is exactly what every device is required to
-// offer and therefore the ceiling.
-//
-// The image shader was expected to be what broke that budget, and it is not:
-// its mapping reuses the same origin-plus-matrix pair a radial gradient needs,
-// and the texture it samples is a binding rather than data, so it costs no
-// push-constant space at all. What would break the budget is a material
-// wanting both a gradient's stops and an image's mapping at once. Nothing does
-// yet, and that is the point at which a uniform buffer becomes the answer.
+// Every member is a four-component vector on purpose. Under the std140 rules
+// this block is declared with, a vec4 and an array of them sit at exactly the
+// offsets a flat array of floats would, so the two backends copy the packed
+// material in without writing padding around anything.
 struct Paint {
     // Up to four stops. Unused entries are ignored rather than blended.
     stops: array<vec4<f32>, 4>,
@@ -47,7 +45,10 @@ struct Paint {
     params: vec4<f32>,
 };
 
-var<push_constant> paint: Paint;
+// In its own group so that the texture bindings below, which are rebuilt per
+// submission and include a long-lived placeholder set, are untouched by a
+// buffer that changes with every draw.
+@group(1) @binding(0) var<uniform> paint: Paint;
 
 // One texture per draw. Always bound, even for a paint that does not sample it:
 // the alternative is a pipeline variant per material kind, and a binding a
@@ -130,7 +131,7 @@ fn tile_gradient(t: f32, tile: f32) -> vec2<f32> {
 
 /// The gradient's color at `t`, from wherever this paint keeps its colors.
 ///
-/// Four stops or fewer travel in push constants and are walked; more than that
+/// Four stops or fewer travel in the material and are walked; more than that
 /// were tabulated into a texture by the recorder and are read from it. The two
 /// have to agree, so the walk above and the bake that produced the texture
 /// implement the same rule, and this is the only place that chooses between

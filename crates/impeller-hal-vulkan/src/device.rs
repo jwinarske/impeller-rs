@@ -215,6 +215,11 @@ pub struct VulkanContext {
     /// unused -- and every context created by a test that only fills shapes is
     /// exactly that.
     descriptor_layout: Option<vk::DescriptorSetLayout>,
+    /// Built on the first batch, like the sampling layout above it.
+    material_layout: Option<vk::DescriptorSetLayout>,
+    /// `minUniformBufferOffsetAlignment`, which sets the stride between one
+    /// draw's paint and the next.
+    uniform_alignment: u64,
     sampler: Option<vk::Sampler>,
     placeholder: Option<crate::resource::VulkanTexture>,
     /// Pool, view and set for the placeholder, owned by the context rather than
@@ -456,6 +461,10 @@ impl VulkanContext {
         let command_pool = unsafe { device.create_command_pool(&pool_info, None) }
             .map_err(|e| backend_err("create_command_pool", e))?;
 
+        let uniform_alignment = unsafe { instance.get_physical_device_properties(physical_device) }
+            .limits
+            .min_uniform_buffer_offset_alignment;
+
         Ok(Self {
             debug_messenger,
             validation_log,
@@ -469,6 +478,8 @@ impl VulkanContext {
             queue_family_index,
             capabilities,
             descriptor_layout: None,
+            material_layout: None,
+            uniform_alignment,
             sampler: None,
             placeholder: None,
             placeholder_binding: None,
@@ -483,6 +494,26 @@ impl VulkanContext {
     }
 
     /// The descriptor set layout every pipeline is built against.
+    /// The layout for the set carrying a draw's paint.
+    ///
+    /// Lazy like the sampling layout beside it, and for the same reason: a
+    /// context that never records a batch should build nothing.
+    pub(crate) fn material_layout(&mut self) -> Result<vk::DescriptorSetLayout> {
+        if self.material_layout.is_none() {
+            self.material_layout = Some(crate::materials::create_layout(&self.device)?);
+        }
+        Ok(self.material_layout.expect("just created"))
+    }
+
+    /// The smallest offset a dynamic uniform buffer binding may use.
+    ///
+    /// Read once at creation rather than per submission: it is a property of
+    /// the device, and querying it inside the record path would mean a call
+    /// into the loader for a number that cannot change.
+    pub(crate) fn uniform_alignment(&self) -> u64 {
+        self.uniform_alignment
+    }
+
     pub(crate) fn descriptor_layout(&mut self) -> Result<vk::DescriptorSetLayout> {
         if self.descriptor_layout.is_none() {
             self.descriptor_layout = Some(crate::sampling::create_descriptor_layout(&self.device)?);

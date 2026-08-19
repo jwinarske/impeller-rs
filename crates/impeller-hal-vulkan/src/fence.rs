@@ -64,6 +64,11 @@ pub struct VulkanFence {
     /// here: a fence is handed to a page flip and so has to stay `Send`, and a
     /// texture tracks its own image layout in a cell.
     pub(crate) bindings: Option<crate::sampling::Bindings>,
+    /// The paint set the submission reads, on the same terms as `bindings`:
+    /// its pool cannot be destroyed while a command buffer using it is still
+    /// in flight, and a deferred submission is in flight for as long as the
+    /// caller likes.
+    pub(crate) materials: Option<crate::materials::Materials>,
     retired: bool,
 }
 
@@ -90,6 +95,7 @@ impl VulkanFence {
             export,
             retained: Vec::new(),
             bindings: None,
+            materials: None,
             retired: false,
         }
     }

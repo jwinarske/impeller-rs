@@ -25,13 +25,29 @@ mod tests {
     }
 
     #[test]
-    fn the_glsl_carries_the_paint_uniform() {
-        // Push constants have no GLES equivalent, so the translator lowers them
-        // to a plain uniform. The backend looks the member up by name, so the
-        // name is part of the contract rather than an implementation detail.
+    fn the_glsl_carries_the_paint_block_under_the_name_the_backend_looks_up() {
+        // The GLES backend asks for this block by name and assigns its binding
+        // point, so the name is part of the contract rather than an
+        // implementation detail. It was `_push_constant_binding_fs` while the
+        // paint travelled as a push constant, and this test is what said so.
         assert!(
-            super::SOLID_FS_GLSL.contains("_push_constant_binding_fs"),
-            "the paint uniform is missing or renamed:\n{}",
+            super::SOLID_FS_GLSL.contains("uniform Paint_block_0Fragment"),
+            "the paint block is missing or renamed:\n{}",
+            super::SOLID_FS_GLSL
+        );
+    }
+
+    #[test]
+    fn the_paint_block_states_the_layout_rather_than_taking_the_default() {
+        // A uniform block with no qualifier is `shared`, whose member offsets
+        // the implementation chooses and a caller is expected to ask for. Both
+        // backends write the bytes themselves, so the layout has to be the one
+        // every implementation agrees on. The translator will not write the
+        // qualifier for GLSL ES 3.00, so the build step adds it -- and this is
+        // what fails if that ever stops happening.
+        assert!(
+            super::SOLID_FS_GLSL.contains("layout(std140) uniform Paint_block_"),
+            "the paint block would be laid out at the driver's discretion:\n{}",
             super::SOLID_FS_GLSL
         );
     }
