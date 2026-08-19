@@ -9,7 +9,7 @@
 
 use impeller_hal::{
     Batch, BlendMode, ClipState, Extent2D, Hal, HalContext, Material, PassDescriptor, PixelFormat,
-    TextureDescriptor, TileMode, Vertex,
+    Sampling, TextureDescriptor, TileMode, Vertex,
 };
 use impeller_hal_gles::Validated as GlesValidated;
 use impeller_hal_gles::{DisplayTarget, GlesHal};
@@ -64,6 +64,7 @@ fn full_target_mapping() -> Material {
         slot: 0,
         alpha: 1.0,
         tile: TileMode::Clamp,
+        sampling: impeller_hal::Sampling::Linear,
         source: [0.0, 0.0, 1.0, 1.0],
         tint: [1.0, 1.0, 1.0, 1.0],
     }
@@ -216,6 +217,7 @@ fn a_mesh_reads_its_own_coordinates_the_same_way_on_both_backends() {
         alpha: 1.0,
         tint: [1.0, 1.0, 1.0, 1.0],
         tile: TileMode::Clamp,
+        sampling: impeller_hal::Sampling::Linear,
     };
     let mut ran = 0;
     if let Ok(mut ctx) = Validated::new(DevicePreference::Auto) {
@@ -248,6 +250,7 @@ fn a_mesh_tint_scales_the_texel_it_read() {
             alpha: 1.0,
             tint: [1.0, 1.0, 1.0, 1.0],
             tile: TileMode::Clamp,
+            sampling: impeller_hal::Sampling::Linear,
         },
     );
     let halved = render_mesh::<VulkanHal>(
@@ -257,6 +260,7 @@ fn a_mesh_tint_scales_the_texel_it_read() {
             alpha: 0.5,
             tint: [1.0, 1.0, 1.0, 1.0],
             tile: TileMode::Clamp,
+            sampling: impeller_hal::Sampling::Linear,
         },
     );
     // Premultiplied, so alpha scales every channel and not only the fourth.
@@ -356,6 +360,81 @@ fn a_vertex_colour_reaches_the_shader_the_same_way_on_both_backends() {
     if ran == 0 {
         eprintln!("no backend available");
     }
+}
+
+#[test]
+fn nearest_sampling_steps_between_texels_on_both_backends() {
+    // Nearest is a coordinate snapped to a texel centre rather than a second
+    // sampler, and the snap needs the texture's size -- which the two
+    // translations reach differently. So this is a place the two can disagree
+    // while each looks plausible on its own, which is what this file is for.
+    let quadrant = |sampling| Material::Image {
+        origin: [-1.0, 1.0],
+        to_local: [1.0, 0.0, 0.0, -1.0],
+        slot: 0,
+        alpha: 1.0,
+        tile: TileMode::Clamp,
+        sampling,
+        source: [0.0, 0.0, 1.0, 1.0],
+        tint: [1.0, 1.0, 1.0, 1.0],
+    };
+
+    let mut ran = 0;
+    if let Ok(mut ctx) = Validated::new(DevicePreference::Auto) {
+        let linear = render::<VulkanHal>(&mut ctx, quadrant(Sampling::Linear));
+        let nearest = render::<VulkanHal>(&mut ctx, quadrant(Sampling::Nearest));
+        assert_steps(&linear, &nearest, "vulkan");
+        ran += 1;
+    }
+    if let Ok(mut ctx) = GlesValidated::new(DisplayTarget::Surfaceless) {
+        let linear = render::<GlesHal>(&mut ctx, quadrant(Sampling::Linear));
+        let nearest = render::<GlesHal>(&mut ctx, quadrant(Sampling::Nearest));
+        assert_steps(&linear, &nearest, "gles");
+        ran += 1;
+    }
+    if ran == 0 {
+        eprintln!("no backend available");
+    }
+}
+
+/// The two modes agree away from a boundary and differ across one.
+fn assert_steps(linear: &[u8], nearest: &[u8], backend: &str) {
+    // Well inside a quadrant, where there is nothing between texels to choose
+    // between.
+    for (x, y) in [(4u32, 4u32), (27, 27)] {
+        assert_eq!(
+            pixel(linear, x, y),
+            pixel(nearest, x, y),
+            "{backend}: the two modes should agree away from a boundary at ({x}, {y})"
+        );
+    }
+
+    // What nearest means, stated exactly rather than by picking a boundary and
+    // arguing about where the mapping puts it: every pixel is a texel of the
+    // source, so the whole target is made of the source's own four colors and
+    // nothing between them. Linear must produce something between them
+    // somewhere, or it would not be blending at all.
+    const PALETTE: [[u8; 4]; 4] = [
+        [255, 0, 0, 255],
+        [0, 255, 0, 255],
+        [0, 0, 255, 255],
+        [255, 255, 0, 255],
+    ];
+    let between = |pixels: &[u8]| {
+        (0..SIZE.height)
+            .flat_map(|y| (0..SIZE.width).map(move |x| (x, y)))
+            .filter(|(x, y)| !PALETTE.contains(&pixel(pixels, *x, *y)))
+            .count()
+    };
+    assert_eq!(
+        between(nearest),
+        0,
+        "{backend}: nearest produced a color the source does not contain"
+    );
+    assert!(
+        between(linear) > 0,
+        "{backend}: linear blended nothing anywhere, so the two modes are the same"
+    );
 }
 
 fn assert_quadrants(pixels: &[u8], backend: &str) {
@@ -461,6 +540,7 @@ fn a_source_rectangle_draws_only_that_part_of_the_image() {
         slot: 0,
         alpha: 1.0,
         tile: TileMode::Clamp,
+        sampling: impeller_hal::Sampling::Linear,
         source,
         tint: [1.0, 1.0, 1.0, 1.0],
     };
@@ -509,6 +589,7 @@ fn a_repeated_source_rectangle_tiles_the_piece_rather_than_the_sheet() {
             slot: 0,
             alpha: 1.0,
             tile: TileMode::Repeat,
+            sampling: impeller_hal::Sampling::Linear,
             source: [0.0, 0.0, 0.5, 0.5],
             tint: [1.0, 1.0, 1.0, 1.0],
         },
@@ -536,6 +617,7 @@ fn the_tile_modes_differ_outside_the_image() {
         slot: 0,
         alpha: 1.0,
         tile,
+        sampling: impeller_hal::Sampling::Linear,
         source: [0.0, 0.0, 1.0, 1.0],
         tint: [1.0, 1.0, 1.0, 1.0],
     };
@@ -681,6 +763,7 @@ fn a_rendered_target_can_be_sampled_by_a_later_pass() {
                 slot: 0,
                 alpha: 1.0,
                 tile: TileMode::Clamp,
+                sampling: impeller_hal::Sampling::Linear,
                 source: [0.0, 0.0, 1.0, 1.0],
                 tint: [1.0, 1.0, 1.0, 1.0],
             },

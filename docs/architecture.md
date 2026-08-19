@@ -477,6 +477,15 @@ retained state anywhere below the canvas, and it is the right one here -- but
 it is the reason `drawPicture` would be a convenience rather than the reuse it
 is in a command-list renderer.
 
+**Sampling quality lives in the shader too, for the same reason tile modes do.**
+A sampler built with a filter would mean one sampler per combination of filter
+and address mode, and a descriptor set per draw that used a different one. A
+linear read taken exactly at a texel's centre has all its weight on that texel,
+so nearest sampling is the coordinate snapped to the nearest centre before the
+read — one multiply, floor and divide, and no bindings at all. The texture's
+size comes from the shader rather than from the material, because the recorder
+that built the material has never seen the texture.
+
 **A batch merges adjacent draws that differ in nothing.** Two draws with the
 same material, filter, blend, clip and stencil are one draw over a longer index
 range: their indices were appended to the same buffer, so extending the first

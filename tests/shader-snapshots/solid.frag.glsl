@@ -100,6 +100,15 @@ vec2 to_gradient_space(vec2 clip) {
     return ((column0_ * delta.x) + (column1_ * delta.y));
 }
 
+vec2 snapped(vec2 coord) {
+    float _e4 = _group_1_binding_0_fs.params.z;
+    if ((_e4 < 0.5)) {
+        return coord;
+    }
+    vec2 size = vec2(uvec2(textureSize(_group_0_binding_0_fs, 0).xy));
+    return ((floor((coord * size)) + vec2(0.5)) / size);
+}
+
 vec2 tile_uv(vec2 uv_1, float tile_1) {
     if (((tile_1 > 0.5) && (tile_1 < 1.5))) {
         return fract(uv_1);
@@ -114,8 +123,9 @@ vec4 sample_mesh(vec2 uv_2) {
     vec4 texel = vec4(0.0);
     float tile_2 = _group_1_binding_0_fs.geometry.y;
     vec2 _e7 = tile_uv(uv_2, tile_2);
-    vec4 _e9 = textureLod(_group_0_binding_0_fs, vec2(_e7), 0.0);
-    texel = _e9;
+    vec2 _e8 = snapped(_e7);
+    vec4 _e10 = textureLod(_group_0_binding_0_fs, vec2(_e8), 0.0);
+    texel = _e10;
     if (((tile_2 > 1.5) && (tile_2 < 2.5))) {
         if ((any(lessThan(uv_2, vec2(0.0))) || any(greaterThan(uv_2, vec2(1.0))))) {
             texel = vec4(0.0);
@@ -123,29 +133,30 @@ vec4 sample_mesh(vec2 uv_2) {
     }
     vec4 tint_1 = _group_1_binding_0_fs.stops[0];
     vec4 premultiplied_1 = vec4((tint_1.xyz * tint_1.w), tint_1.w);
-    vec4 _e36 = texel;
-    float _e41 = _group_1_binding_0_fs.geometry.x;
-    return ((_e36 * premultiplied_1) * _e41);
+    vec4 _e37 = texel;
+    float _e42 = _group_1_binding_0_fs.geometry.x;
+    return ((_e37 * premultiplied_1) * _e42);
 }
 
 vec4 sample_image(vec2 clip_1) {
-    vec2 coord = vec2(0.0);
+    vec2 coord_1 = vec2(0.0);
     vec4 texel_1 = vec4(0.0);
     vec2 _e1 = to_gradient_space(clip_1);
     float tile_3 = _group_1_binding_0_fs.geometry.w;
     vec2 _e6 = tile_uv(_e1, tile_3);
-    coord = _e6;
+    coord_1 = _e6;
     vec4 source = _group_1_binding_0_fs.stops[0];
-    vec2 _e13 = coord;
-    coord = (source.xy + (_e13 * (source.zw - source.xy)));
+    vec2 _e13 = coord_1;
+    coord_1 = (source.xy + (_e13 * (source.zw - source.xy)));
     vec2 half_texel = (vec2(0.5) / vec2(uvec2(textureSize(_group_0_binding_0_fs, 0).xy)));
     vec2 low = min((source.xy + half_texel), (source.zw - half_texel));
     vec2 high = max((source.xy + half_texel), (source.zw - half_texel));
-    vec2 _e35 = coord;
-    coord = clamp(_e35, low, high);
-    vec2 _e39 = coord;
-    vec4 _e41 = textureLod(_group_0_binding_0_fs, vec2(_e39), 0.0);
-    texel_1 = _e41;
+    vec2 _e35 = coord_1;
+    coord_1 = clamp(_e35, low, high);
+    vec2 _e39 = coord_1;
+    vec2 _e40 = snapped(_e39);
+    vec4 _e42 = textureLod(_group_0_binding_0_fs, vec2(_e40), 0.0);
+    texel_1 = _e42;
     if (((tile_3 > 1.5) && (tile_3 < 2.5))) {
         bool outside = (any(lessThan(_e1, vec2(0.0))) || any(greaterThan(_e1, vec2(1.0))));
         if (outside) {
@@ -154,9 +165,9 @@ vec4 sample_image(vec2 clip_1) {
     }
     vec4 tint_2 = _group_1_binding_0_fs.stops[1];
     vec4 premultiplied_2 = vec4((tint_2.xyz * tint_2.w), tint_2.w);
-    vec4 _e68 = texel_1;
-    float _e73 = _group_1_binding_0_fs.geometry.z;
-    return ((_e68 * premultiplied_2) * _e73);
+    vec4 _e69 = texel_1;
+    float _e74 = _group_1_binding_0_fs.geometry.z;
+    return ((_e69 * premultiplied_2) * _e74);
 }
 
 float coverage_of(float distance_, float per_pixel, float width) {
@@ -248,9 +259,9 @@ vec4 blur_along_axis(vec2 clip_4) {
         float _e33 = i_1;
         float offset = (_e33 * spread);
         float weight = exp(((offset * offset) * denominator));
-        vec2 coord_1 = clamp((_e1 + (step_ * offset)), vec2(0.0), vec2(1.0));
+        vec2 coord_2 = clamp((_e1 + (step_ * offset)), vec2(0.0), vec2(1.0));
         vec4 _e45 = total;
-        vec4 _e49 = textureLod(_group_0_binding_0_fs, vec2(coord_1), 0.0);
+        vec4 _e49 = textureLod(_group_0_binding_0_fs, vec2(coord_2), 0.0);
         total = (_e45 + (_e49 * weight));
         float _e52 = weight_sum;
         weight_sum = (_e52 + weight);

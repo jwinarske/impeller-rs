@@ -10,8 +10,8 @@ use googletest::prelude::*;
 use impeller::{
     Affine2, Atlas, BackendPreference, BlendMode, Canvas, Color, ColorFilter, Context, Coverage,
     Dash, Extent2D, GlyphKey, GradientStop, Layer, Paint, Path, PathBuilder, PixelFormat,
-    PositionedGlyph, Rect, Result, SourceRect, Sprite, TileMode, Vec2, VertexMode, Vertices,
-    MAX_STOPS,
+    PositionedGlyph, Rect, Result, Sampling, SourceRect, Sprite, TileMode, Vec2, VertexMode,
+    Vertices, MAX_STOPS,
 };
 
 const SIZE: Extent2D = Extent2D {
@@ -6022,4 +6022,80 @@ fn a_vertex_colour_is_interpolated_premultiplied_across_a_fading_edge() {
         "halfway along the fade should be half strength; twice that means the \
          color was interpolated straight and then used as premultiplied. Got {middle:?}"
     );
+}
+
+#[test]
+fn nearest_sampling_reads_one_texel_where_linear_blends_two() {
+    // The four-by-four fixture magnified thirty-two times, so each texel covers
+    // a wide band and the boundary between two of them is the place the two
+    // modes disagree. Linear blends across it; nearest steps.
+    //
+    // Sampled just either side of the midpoint, which is where the boundary
+    // lands: linear must give something between the two colors there, and
+    // nearest must give one of them exactly.
+    let Some(mut ctx) = context() else { return };
+    let mut image = ctx
+        .create_image(Extent2D::new(4, 4), PixelFormat::Rgba8Unorm)
+        .expect("image");
+    ctx.write_image(&mut image, &quadrant_image())
+        .expect("upload");
+
+    let draw = |ctx: &mut Context, sampling: Sampling| {
+        let mut canvas = Canvas::new(SIZE);
+        canvas.clear(Color::BLACK);
+        canvas
+            .draw_rect(
+                Rect::from_size(128.0, 128.0),
+                &Paint::image(0, Rect::from_size(128.0, 128.0))
+                    .with_sampling(sampling)
+                    .with_anti_alias(false),
+            )
+            .expect("image");
+        let mut surface = ctx
+            .create_surface(SIZE, PixelFormat::Rgba8Unorm)
+            .expect("surface");
+        ctx.draw_with_images(&mut surface, &canvas.finish(), &[&image])
+            .expect("draw");
+        let pixels = ctx.read(&mut surface).expect("read");
+        ctx.destroy_surface(surface);
+        pixels
+    };
+
+    let linear = draw(&mut ctx, Sampling::Linear);
+    let nearest = draw(&mut ctx, Sampling::Nearest);
+    ctx.destroy_image(image);
+
+    // The seam between the red and green quadrants runs down the middle. Two
+    // texels meet there, so a linear read a pixel to either side is a mixture
+    // of both.
+    for x in [62u32, 66] {
+        let got = pixel(&linear, x, 32);
+        assert!(
+            got[0] > 20 && got[1] > 20,
+            "linear at ({x}, 32) should mix the two quadrants, got {got:?}"
+        );
+    }
+
+    // Nearest reads whichever texel the coordinate falls in, so the same two
+    // places are the two colors outright.
+    assert_eq!(
+        pixel(&nearest, 62, 32),
+        [255, 0, 0, 255],
+        "nearest left of the seam should be the red texel alone"
+    );
+    assert_eq!(
+        pixel(&nearest, 66, 32),
+        [0, 255, 0, 255],
+        "nearest right of the seam should be the green texel alone"
+    );
+
+    // And well inside a quadrant the two agree, which says nearest moved the
+    // coordinate rather than changing what it addressed.
+    for (x, y) in [(16u32, 16u32), (112, 112)] {
+        assert_eq!(
+            pixel(&linear, x, y),
+            pixel(&nearest, x, y),
+            "the two modes should agree away from a boundary at ({x}, {y})"
+        );
+    }
 }

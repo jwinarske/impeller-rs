@@ -202,6 +202,25 @@ fn to_gradient_space(clip: vec2<f32>) -> vec2<f32> {
 /// Done here rather than through the sampler's address mode so that one
 /// sampler serves every draw: the modes are a property of the paint, and
 /// baking them into samplers would mean one sampler per combination.
+/// Snap a coordinate to the centre of the texel it falls in, if this paint
+/// asked for nearest sampling.
+///
+/// The sampler stays linear for every draw -- see the note on tile modes for
+/// why one sampler is worth keeping -- and a linear read taken exactly at a
+/// texel's centre has all its weight on that texel. So nearest sampling is a
+/// coordinate adjustment rather than a second binding.
+///
+/// Sized from the texture rather than passed in, because the recorder that
+/// built this material has never seen the texture and cannot know how large it
+/// is.
+fn snapped(coord: vec2<f32>) -> vec2<f32> {
+    if (paint.params.z < 0.5) {
+        return coord;
+    }
+    let size = vec2<f32>(textureDimensions(image_texture));
+    return (floor(coord * size) + vec2<f32>(0.5)) / size;
+}
+
 fn tile_uv(uv: vec2<f32>, tile: f32) -> vec2<f32> {
     if (tile > 0.5 && tile < 1.5) {
         // Repeat.
@@ -223,7 +242,7 @@ fn tile_uv(uv: vec2<f32>, tile: f32) -> vec2<f32> {
 /// image path with everything the vertices already answered taken out.
 fn sample_mesh(uv: vec2<f32>) -> vec4<f32> {
     let tile = paint.geometry.y;
-    var texel = textureSampleLevel(image_texture, image_sampler, tile_uv(uv, tile), 0.0);
+    var texel = textureSampleLevel(image_texture, image_sampler, snapped(tile_uv(uv, tile)), 0.0);
     if (tile > 1.5 && tile < 2.5) {
         // Decal, tested against the coordinate as given, since the tiled one
         // is inside by construction.
@@ -266,7 +285,7 @@ fn sample_image(clip: vec2<f32>) -> vec4<f32> {
     let high = max(source.xy + half_texel, source.zw - half_texel);
     coord = clamp(coord, low, high);
 
-    var texel = textureSampleLevel(image_texture, image_sampler, coord, 0.0);
+    var texel = textureSampleLevel(image_texture, image_sampler, snapped(coord), 0.0);
     if (tile > 1.5 && tile < 2.5) {
         // Decal: nothing outside the image's own bounds. Tested against the
         // unclamped coordinate, since the clamped one is inside by

@@ -17,7 +17,7 @@ use impeller_geometry::transform::{
 use impeller_geometry::{Path, PathBuilder};
 use impeller_hal::{
     Batch, BlendMode, ClipState, ColorFilter, Error, Extent2D, Material, PassDescriptor, Result,
-    Scissor, Stop, TileMode, Vertex, MAX_STOPS,
+    Sampling, Scissor, Stop, TileMode, Vertex, MAX_STOPS,
 };
 use impeller_renderer::{Paint as RenderPaint, Renderer, TOLERANCE};
 use impeller_text::{Atlas, PositionedGlyph};
@@ -655,6 +655,10 @@ impl Canvas {
             slot,
             alpha: 1.0,
             tile: TileMode::Clamp,
+            // A layer is composited at its own size, so a texel lands on a
+            // pixel and the filter has nothing to blend. Linear anyway, which
+            // is what a target scaled by a resize would want.
+            sampling: Sampling::Linear,
             source: [0.0, 0.0, 1.0, 1.0],
             tint: [1.0, 1.0, 1.0, 1.0],
         };
@@ -977,6 +981,7 @@ impl Canvas {
                 tile,
                 source,
                 tint,
+                sampling,
             } => {
                 // Texture coordinates run from zero to one across the
                 // destination rectangle, so the mapping is: undo the transform
@@ -1010,6 +1015,7 @@ impl Canvas {
                     } else {
                         [0.0; 4]
                     },
+                    sampling: *sampling,
                     // The caller's index goes through this pass's own table,
                     // because a layer occupies a slot too and the two number
                     // independently. A recording that never uses a layer maps
@@ -1663,6 +1669,7 @@ impl Canvas {
             tile,
             tint,
             source,
+            sampling,
             ..
         } = shader
         else {
@@ -1684,6 +1691,7 @@ impl Canvas {
             alpha: *alpha,
             tint: tint.to_array(),
             tile: *tile,
+            sampling: *sampling,
         })
     }
 
@@ -1748,6 +1756,9 @@ impl Canvas {
             slot,
             alpha: frame.paint.alpha,
             tile: TileMode::Clamp,
+            // A layer composites at its own size, so nothing is between texels
+            // to choose between.
+            sampling: Sampling::Linear,
             source: [0.0, 0.0, 1.0, 1.0],
             tint: [1.0, 1.0, 1.0, 1.0],
         };

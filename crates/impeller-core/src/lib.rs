@@ -32,7 +32,7 @@ pub use impeller_geometry::dash::Dash;
 pub use impeller_geometry::stroke::{LineCap, LineJoin, StrokeStyle};
 pub use impeller_geometry::{FillRule, Path, PathBuilder};
 pub use impeller_hal::{
-    BlendMode, ColorFilter, ColorForm, Extent2D, PixelFormat, TileMode, MAX_STOPS,
+    BlendMode, ColorFilter, ColorForm, Extent2D, PixelFormat, Sampling, TileMode, MAX_STOPS,
 };
 
 /// Two-dimensional vector and affine types, from `glam`.

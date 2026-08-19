@@ -51,6 +51,7 @@ fn image_material() -> Material {
         slot: 0,
         alpha: 1.0,
         tile: TileMode::Clamp,
+        sampling: impeller_hal::Sampling::Linear,
         source: [0.0, 0.0, 1.0, 1.0],
         tint: [1.0, 1.0, 1.0, 1.0],
     }

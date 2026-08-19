@@ -119,6 +119,45 @@ pub mod kind {
     pub const MESH: f32 = 10.0;
 }
 
+/// How a texture is read between its texels.
+///
+/// Not two samplers. The same argument that keeps tile modes in the shader
+/// keeps this there: a sampler baked with a filter would mean one sampler per
+/// combination and a descriptor set per draw that used a different one. A
+/// linear sampler read exactly at a texel's centre returns that texel and
+/// nothing else, so nearest sampling is the coordinate snapped to the nearest
+/// centre before the read, which is one multiply-floor-divide and no bindings
+/// at all.
+///
+/// `dart:ui` offers four qualities. These are its first two; the other two are
+/// mipmapped and bicubic, and neither exists here to select.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Sampling {
+    /// Blend the texels around the coordinate. The right default: an image
+    /// drawn at any size but its own is otherwise a mess of hard edges.
+    #[default]
+    Linear,
+    /// The one texel the coordinate falls in.
+    ///
+    /// What pixel art needs, and what a sprite drawn at exactly its own size
+    /// wants in order to be certain no neighbour bled in.
+    Nearest,
+}
+
+/// The number the shader reads for a sampling mode.
+fn sampling_code(sampling: Sampling) -> f32 {
+    match sampling {
+        Sampling::Linear => sampling::LINEAR,
+        Sampling::Nearest => sampling::NEAREST,
+    }
+}
+
+/// Sampling selector shared with the shader.
+pub mod sampling {
+    pub const LINEAR: f32 = 0.0;
+    pub const NEAREST: f32 = 1.0;
+}
+
 /// Tile mode selector shared with the shader.
 pub mod tile {
     pub const CLAMP: f32 = 0.0;
@@ -486,6 +525,8 @@ pub enum Material {
         tint: [f32; 4],
         /// What happens where a vertex names a coordinate outside the texture.
         tile: TileMode,
+        /// How to read between texels.
+        sampling: Sampling,
     },
     /// A texture, sampled through a mapping from clip space.
     ///
@@ -513,6 +554,8 @@ pub enum Material {
         /// and plain the moment one translucent image is drawn into another.
         alpha: f32,
         tile: TileMode,
+        /// How to read between texels.
+        sampling: Sampling,
         /// The part of the texture to draw, as `[u0, v0, u1, v1]` from zero to
         /// one.
         ///
@@ -820,7 +863,11 @@ impl Material {
         }
 
         if let Self::Mesh {
-            alpha, tint, tile, ..
+            alpha,
+            tint,
+            tile,
+            sampling,
+            ..
         } = self
         {
             out[layout::STOPS..layout::STOPS + 4].copy_from_slice(tint);
@@ -828,6 +875,7 @@ impl Material {
             out[layout::GEOMETRY + 1] = tile_code(*tile);
             out[layout::PARAMS] = 1.0;
             out[layout::PARAMS + 1] = kind::MESH;
+            out[layout::PARAMS + 2] = sampling_code(*sampling);
             return out;
         }
 
@@ -836,6 +884,7 @@ impl Material {
             to_local,
             alpha,
             tile,
+            sampling,
             source,
             tint,
             ..
@@ -852,6 +901,7 @@ impl Material {
             out[layout::TO_LOCAL..layout::TO_LOCAL + 4].copy_from_slice(to_local);
             out[layout::PARAMS] = 1.0;
             out[layout::PARAMS + 1] = kind::IMAGE;
+            out[layout::PARAMS + 2] = sampling_code(*sampling);
             return out;
         }
 

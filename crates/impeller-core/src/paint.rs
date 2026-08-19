@@ -5,8 +5,8 @@ use crate::color::Color;
 use glam::Vec2;
 use impeller_geometry::dash::Dash;
 use impeller_geometry::stroke::StrokeStyle;
-use impeller_hal::ColorFilter;
 use impeller_hal::{BlendMode, Extent2D, TileMode};
+use impeller_hal::{ColorFilter, Sampling};
 
 /// A color stop in a gradient.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -79,6 +79,8 @@ pub enum Shader {
         source: Rect,
         /// Multiplies the sampled color. White changes nothing.
         tint: Color,
+        /// How to read between texels. See [`Paint::with_sampling`].
+        sampling: Sampling,
     },
     /// A gradient around a center **in user space**, running between two angles
     /// in radians, measured counter-clockwise from the positive X axis.
@@ -322,6 +324,21 @@ impl Paint {
         }
     }
 
+    /// How to read a texture between its texels.
+    ///
+    /// Linear by default, which is what an image drawn at any size but its own
+    /// wants. [`Sampling::Nearest`] is for the cases where blending is the
+    /// wrong answer: pixel art, and a sprite drawn at exactly its own size
+    /// where certainty that no neighbour bled in matters more than smoothness.
+    ///
+    /// Ignored by a paint with no texture.
+    pub fn with_sampling(mut self, sampling: Sampling) -> Self {
+        if let Shader::Image { sampling: at, .. } = &mut self.shader {
+            *at = sampling;
+        }
+        self
+    }
+
     /// Apply a function to the color this paint produces, before it blends.
     ///
     /// Works on any shader, which is the point: the image tint that came
@@ -373,6 +390,7 @@ impl Paint {
                 tile: TileMode::default(),
                 source: Rect::new(0.0, 0.0, 1.0, 1.0),
                 tint: Color::WHITE,
+                sampling: Sampling::default(),
             },
             ..Default::default()
         }

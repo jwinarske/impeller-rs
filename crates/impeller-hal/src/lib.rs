@@ -50,7 +50,8 @@ pub use capabilities::{Capabilities, DmaBufSupport, SampleCounts, SyncSupport};
 pub use error::{Error, Result};
 pub use format::{Extent2D, FormatModifierSet, Fourcc, Modifier, PixelFormat};
 pub use material::{
-    ColorFilter, ColorForm, Material, MaterialVariant, Stop, TileMode, MATERIAL_FLOATS, MAX_STOPS,
+    ColorFilter, ColorForm, Material, MaterialVariant, Sampling, Stop, TileMode, MATERIAL_FLOATS,
+    MAX_STOPS,
 };
 pub use resource::{BufferDescriptor, BufferUsage, TextureDescriptor, TextureUsage};
 pub use scissor::Scissor;
