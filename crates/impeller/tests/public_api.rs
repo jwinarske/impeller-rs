@@ -8,9 +8,9 @@
 
 use googletest::prelude::*;
 use impeller::{
-    Atlas, BackendPreference, BlendMode, Canvas, Color, Context, Coverage, Dash, Extent2D,
+    Affine2, Atlas, BackendPreference, BlendMode, Canvas, Color, Context, Coverage, Dash, Extent2D,
     GlyphKey, GradientStop, Layer, Paint, Path, PathBuilder, PixelFormat, PositionedGlyph, Rect,
-    Result, TileMode, Vec2, VertexMode, Vertices, MAX_STOPS,
+    Result, SourceRect, Sprite, TileMode, Vec2, VertexMode, Vertices, MAX_STOPS,
 };
 
 const SIZE: Extent2D = Extent2D {
@@ -5410,5 +5410,171 @@ fn a_source_rectangle_on_a_textured_mesh_is_refused_rather_than_applied_twice() 
     assert!(
         canvas.draw_vertices(&mesh, &paint).is_err(),
         "a source rectangle and per-vertex coordinates both select part of the texture"
+    );
+}
+
+/// Four sprites, one per quadrant of the four-by-four fixture, laid out in a
+/// different order than they sit in the sheet.
+///
+/// Shuffled deliberately: a batch that drew each sprite where it sits in the
+/// sheet would pass a test that only checked colors were present. Moving them
+/// means each destination names exactly one source, and getting the mapping
+/// backwards puts the wrong color in a place a reader can see.
+fn shuffled_quadrants() -> Vec<Sprite> {
+    let quarter = |x, y| SourceRect::new(x, y, 2.0, 2.0);
+    vec![
+        // Bottom-right of the sheet (yellow) into the top-left of the target.
+        Sprite::new(
+            quarter(2.0, 2.0),
+            Affine2::from_scale_angle_translation(Vec2::splat(32.0), 0.0, Vec2::new(0.0, 0.0)),
+        ),
+        // Bottom-left (blue) into the top-right.
+        Sprite::new(
+            quarter(0.0, 2.0),
+            Affine2::from_scale_angle_translation(Vec2::splat(32.0), 0.0, Vec2::new(64.0, 0.0)),
+        ),
+        // Top-right (green) into the bottom-left.
+        Sprite::new(
+            quarter(2.0, 0.0),
+            Affine2::from_scale_angle_translation(Vec2::splat(32.0), 0.0, Vec2::new(0.0, 64.0)),
+        ),
+        // Top-left (red) into the bottom-right.
+        Sprite::new(
+            quarter(0.0, 0.0),
+            Affine2::from_scale_angle_translation(Vec2::splat(32.0), 0.0, Vec2::new(64.0, 64.0)),
+        ),
+    ]
+}
+
+#[test]
+fn an_atlas_draws_each_sprite_from_the_part_of_the_sheet_it_named() {
+    let Some(mut ctx) = context() else { return };
+    let mut image = ctx
+        .create_image(Extent2D::new(4, 4), PixelFormat::Rgba8Unorm)
+        .expect("image");
+    ctx.write_image(&mut image, &quadrant_image())
+        .expect("upload");
+
+    let mut canvas = Canvas::new(SIZE);
+    canvas.clear(Color::BLACK);
+    canvas
+        .draw_atlas(
+            &shuffled_quadrants(),
+            Extent2D::new(4, 4),
+            &Paint::image(0, Rect::from_size(128.0, 128.0)),
+        )
+        .expect("atlas");
+
+    let mut surface = ctx
+        .create_surface(SIZE, PixelFormat::Rgba8Unorm)
+        .expect("surface");
+    ctx.draw_with_images(&mut surface, &canvas.finish(), &[&image])
+        .expect("draw");
+    let pixels = ctx.read(&mut surface).expect("read");
+    ctx.destroy_surface(surface);
+    ctx.destroy_image(image);
+
+    for (x, y, want, place) in [
+        (32u32, 32u32, [255u8, 255, 0, 255], "top-left"),
+        (96, 32, [0, 0, 255, 255], "top-right"),
+        (32, 96, [0, 255, 0, 255], "bottom-left"),
+        (96, 96, [255, 0, 0, 255], "bottom-right"),
+    ] {
+        assert_eq!(
+            pixel(&pixels, x, y),
+            want,
+            "the {place} sprite read the wrong part of the sheet"
+        );
+    }
+}
+
+#[test]
+fn an_atlas_is_one_draw_however_many_sprites_it_holds() {
+    // The reason the call exists rather than being left to a caller with a
+    // loop. Four sprites drawn one at a time are four draws and four pipeline
+    // bindings; here they differ only in their vertices, so they are one.
+    let mut canvas = Canvas::new(SIZE);
+    canvas
+        .draw_atlas(
+            &shuffled_quadrants(),
+            Extent2D::new(4, 4),
+            &Paint::image(0, Rect::from_size(128.0, 128.0)),
+        )
+        .expect("atlas");
+    let recording = canvas.finish();
+    let pass = recording.passes.first().expect("one pass");
+    assert_eq!(
+        pass.batch.draw_count(),
+        1,
+        "four sprites should be one draw, not one draw each"
+    );
+}
+
+#[test]
+fn an_atlas_sprite_travels_through_its_own_transform() {
+    // A quarter turn about the sprite's own center, which is the case the
+    // transform exists for: the sprite is square and its colors are not, so a
+    // rotation is visible in where the halves land rather than only in the
+    // outline.
+    let Some(mut ctx) = context() else { return };
+    let mut image = ctx
+        .create_image(Extent2D::new(4, 4), PixelFormat::Rgba8Unorm)
+        .expect("image");
+    ctx.write_image(&mut image, &quadrant_image())
+        .expect("upload");
+
+    // The whole sheet, drawn at 128 by 128, turned a quarter turn about its
+    // center. Clockwise on screen, since y runs downward.
+    let placement = Affine2::from_translation(Vec2::splat(64.0))
+        * Affine2::from_angle(std::f32::consts::FRAC_PI_2)
+        * Affine2::from_translation(Vec2::splat(-64.0))
+        * Affine2::from_scale(Vec2::splat(32.0));
+    let mut canvas = Canvas::new(SIZE);
+    canvas.clear(Color::BLACK);
+    canvas
+        .draw_atlas(
+            &[Sprite::new(SourceRect::new(0.0, 0.0, 4.0, 4.0), placement)],
+            Extent2D::new(4, 4),
+            &Paint::image(0, Rect::from_size(128.0, 128.0)),
+        )
+        .expect("atlas");
+
+    let mut surface = ctx
+        .create_surface(SIZE, PixelFormat::Rgba8Unorm)
+        .expect("surface");
+    ctx.draw_with_images(&mut surface, &canvas.finish(), &[&image])
+        .expect("draw");
+    let pixels = ctx.read(&mut surface).expect("read");
+    ctx.destroy_surface(surface);
+    ctx.destroy_image(image);
+
+    // Turned a quarter clockwise, the sheet's top-left corner is now at the
+    // top-right of the target.
+    for (x, y, want, place) in [
+        (96u32, 32u32, [255u8, 0, 0, 255], "top-right"),
+        (96, 96, [0, 255, 0, 255], "bottom-right"),
+        (32, 96, [255, 255, 0, 255], "bottom-left"),
+        (32, 32, [0, 0, 255, 255], "top-left"),
+    ] {
+        assert_eq!(
+            pixel(&pixels, x, y),
+            want,
+            "the {place} corner is not where a quarter turn puts it"
+        );
+    }
+}
+
+#[test]
+fn an_atlas_needs_the_size_of_the_sheet_it_reads() {
+    let mut canvas = Canvas::new(SIZE);
+    assert!(
+        canvas
+            .draw_atlas(
+                &shuffled_quadrants(),
+                Extent2D::new(0, 4),
+                &Paint::image(0, Rect::from_size(128.0, 128.0)),
+            )
+            .is_err(),
+        "a sheet with no texels should be refused rather than divided by"
     );
 }

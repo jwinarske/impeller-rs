@@ -6,7 +6,7 @@
 //! happens once at construction rather than at every draw: a mesh that exists
 //! is a mesh that can be drawn.
 
-use glam::Vec2;
+use glam::{Affine2, Vec2};
 use impeller_hal::{Error, Result};
 
 /// How positions are grouped into triangles.
@@ -137,6 +137,71 @@ impl Vertices {
 
     pub fn is_empty(&self) -> bool {
         self.indices.is_empty()
+    }
+}
+
+/// One piece of a sprite sheet, and where it goes.
+///
+/// The unit a batched sprite draw is built from. `source` is in texels of the
+/// sheet, because that is how a sheet's layout is known -- a packer emits
+/// pixel rectangles, and normalizing them at every call site is how one of
+/// them eventually gets normalized twice. The quad is that rectangle's size in
+/// user units before the transform, so a sprite drawn with the identity lands
+/// at its own size with its top-left corner at the origin.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Sprite {
+    /// The part of the sheet to draw, in texels.
+    pub source: SourceRect,
+    /// Where it goes, applied to a quad running from the origin to the
+    /// source's size.
+    ///
+    /// A full affine rather than the rotation-scale-translation that
+    /// `dart:ui` restricts this to. That restriction buys a smaller per-sprite
+    /// payload for a shader that applies the transform itself; these are
+    /// applied here, where a general transform costs exactly the same and a
+    /// caller who wants to skew a sprite is not told they may not.
+    pub transform: Affine2,
+}
+
+/// A rectangle in texels, as a sprite's source.
+///
+/// Deliberately not the canvas `Rect`, which is in user space: a sheet
+/// rectangle and a destination rectangle are different things, and the one
+/// mistake this call invites is passing one where the other belongs.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct SourceRect {
+    pub x: f32,
+    pub y: f32,
+    pub width: f32,
+    pub height: f32,
+}
+
+impl SourceRect {
+    pub const fn new(x: f32, y: f32, width: f32, height: f32) -> Self {
+        Self {
+            x,
+            y,
+            width,
+            height,
+        }
+    }
+
+    pub fn is_finite(&self) -> bool {
+        self.x.is_finite()
+            && self.y.is_finite()
+            && self.width.is_finite()
+            && self.height.is_finite()
+    }
+}
+
+impl Sprite {
+    pub fn new(source: SourceRect, transform: Affine2) -> Self {
+        Self { source, transform }
+    }
+
+    /// A sprite placed without rotation or scaling.
+    pub fn at(source: SourceRect, position: Vec2) -> Self {
+        Self::new(source, Affine2::from_translation(position))
     }
 }
 

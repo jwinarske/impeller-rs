@@ -84,7 +84,7 @@ reason.
 | `drawColor` | via | `clear` for a whole target; otherwise a rect with a blend | `transparent-background` |
 | `drawParagraph` | out of scope | shaping and layout are not this project's; `draw_glyphs` takes a positioned run and an atlas | glyph tests |
 | `drawVertices` | partial | `draw_vertices`, with positions and texture coordinates. Per-vertex colors are absent, since the vertex format carries none | `a_mesh_draws_the_triangles_it_names_and_nothing_else` |
-| `drawAtlas`, `drawRawAtlas` | via | build one mesh whose quads carry each sprite's texels as coordinates; that is one draw, which is the whole point of the call | |
+| `drawAtlas`, `drawRawAtlas` | partial | `draw_atlas`, one draw for the whole batch. Per-sprite colors are absent for the same reason `drawVertices` has no per-vertex ones | `an_atlas_draws_each_sprite_from_the_part_of_the_sheet_it_named` |
 | `drawPoints`, `drawRawPoints` | no | | |
 | `drawDRRect` | no | | |
 | `drawShadow` | no | — the elevation-to-shadow rule, not just a blurred shape | |
@@ -137,8 +137,8 @@ above it or not at all:
 
 ## Where that leaves it
 
-Of forty-seven rows across `Canvas` and `Paint`: twenty-three exist, five are
-partial, seven are expressible by a caller who assembles them, eleven are
+Of forty-seven rows across `Canvas` and `Paint`: twenty-three exist, six are
+partial, six are expressible by a caller who assembles them, eleven are
 absent, and one is out of scope. Counting them is the least interesting thing
 about the table -- the absences are not equal, and a reader deciding whether
 this renderer is usable should look at which ones rather than how many.
@@ -160,9 +160,10 @@ build them:
    "the budget is full" — it was full of one thing that was not paying for
    itself, and that is worth checking before concluding a mechanism has to
    change.
-2. **Per-vertex colors**, which is what `drawVertices` is still missing. A
-   mesh can be drawn and can read a texture at coordinates its vertices carry;
-   what it cannot do is give each vertex a color. That is not an API gap but a
+2. **Per-vertex colors**, which is the one thing left in both `drawVertices`
+   and `drawAtlas`. A mesh can be drawn and can read a texture at coordinates
+   its vertices carry, and a sprite batch is one draw; what neither can do is
+   give each vertex, or each sprite, a color of its own. That is not an API gap but a
    vertex-format one -- position and texture coordinate are all a vertex holds,
    and a third attribute is paid for by every solid fill in every frame unless
    it comes with a second pipeline. Which of those two is right is the decision

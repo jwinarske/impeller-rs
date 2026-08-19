@@ -36,8 +36,8 @@ pub use context::{Context, Image, Surface};
 pub use impeller_core::{
     Affine2, Atlas, AtlasError, AtlasRect, BlendMode, Canvas, Color, Coverage, Dash, Extent2D,
     FillRule, GlyphKey, GradientStop, Layer, LineCap, LineJoin, Paint, Path, PathBuilder,
-    PixelFormat, PositionedGlyph, Recording, Rect, Shader, StrokeStyle, Style, TileMode, Vec2,
-    VertexMode, Vertices, MAX_STOPS,
+    PixelFormat, PositionedGlyph, Recording, Rect, Shader, SourceRect, Sprite, StrokeStyle, Style,
+    TileMode, Vec2, VertexMode, Vertices, MAX_STOPS,
 };
 pub use impeller_hal::{BlendFactor, Capabilities, Error, Result};
 

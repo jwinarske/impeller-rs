@@ -8,7 +8,7 @@
 
 use crate::paint::{GradientStop, Paint, Shader, Style};
 use crate::ramp::Ramp;
-use crate::vertices::Vertices;
+use crate::vertices::{Sprite, VertexMode, Vertices};
 use crate::Color;
 use glam::{Affine2, Mat2, Vec2};
 use impeller_geometry::transform::{
@@ -1550,6 +1550,76 @@ impl Canvas {
             ClipState::content(self.depth),
         )?;
         Ok(self)
+    }
+
+    /// Draw many pieces of one sheet, each with its own transform, in one draw.
+    ///
+    /// This is `draw_vertices` with the mesh built for you, and building it is
+    /// the part worth not getting wrong: each sprite is a quad running from
+    /// the origin to its source's size, placed by its transform, with the
+    /// source rectangle divided by the sheet's size to become the
+    /// coordinates its corners read. A caller assembling that themselves has
+    /// four chances per sprite to transpose an axis.
+    ///
+    /// One draw for the whole batch, which is the entire point of the call: a
+    /// hundred sprites from one sheet differ only in their vertices, so they
+    /// have no reason to be a hundred draws. Anything that would split them --
+    /// a different sheet, a different paint -- is a second call.
+    ///
+    /// `sheet` is the size of the uploaded texture in texels, which the paint
+    /// does not carry: a recording is built without touching a device and has
+    /// never seen how large the texture is.
+    ///
+    /// Per-sprite colors, which `dart:ui` offers here, need a color per vertex
+    /// and this vertex format has none. A tint on the paint applies to the
+    /// whole batch.
+    pub fn draw_atlas(
+        &mut self,
+        sprites: &[Sprite],
+        sheet: Extent2D,
+        paint: &Paint,
+    ) -> Result<&mut Self> {
+        if sprites.is_empty() || !paint.is_visible() {
+            return Ok(self);
+        }
+        if sheet.width == 0 || sheet.height == 0 {
+            return Err(Error::Unsupported(
+                "a sprite sheet with no texels has nothing to read",
+            ));
+        }
+        if !sprites.iter().all(|s| s.source.is_finite()) {
+            return Err(Error::Unsupported(
+                "a sprite's source rectangle is not a finite number",
+            ));
+        }
+
+        let texels = Vec2::new(sheet.width as f32, sheet.height as f32);
+        let mut positions = Vec::with_capacity(sprites.len() * 4);
+        let mut coords = Vec::with_capacity(sprites.len() * 4);
+        let mut indices = Vec::with_capacity(sprites.len() * 6);
+        for sprite in sprites {
+            let source = &sprite.source;
+            let size = Vec2::new(source.width, source.height);
+            let origin = Vec2::new(source.x, source.y);
+            // Corners in the same order for both, so a coordinate and the
+            // position it belongs to are written by one step of the loop and
+            // cannot come apart.
+            let corners = [
+                Vec2::ZERO,
+                Vec2::new(size.x, 0.0),
+                size,
+                Vec2::new(0.0, size.y),
+            ];
+            let base = positions.len() as u32;
+            for corner in corners {
+                positions.push(sprite.transform.transform_point2(corner));
+                coords.push((origin + corner) / texels);
+            }
+            indices.extend_from_slice(&[base, base + 1, base + 2, base, base + 2, base + 3]);
+        }
+
+        let mesh = Vertices::indexed(VertexMode::Triangles, positions, coords, indices)?;
+        self.draw_vertices(&mesh, paint)
     }
 
     /// The material for a mesh reading a texture at its own coordinates.
