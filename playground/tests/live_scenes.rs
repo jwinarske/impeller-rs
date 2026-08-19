@@ -10,6 +10,7 @@
 //! it started from.
 
 use impeller_core::{Canvas, Extent2D};
+use impeller_hal::{PixelFormat, TextureDescriptor};
 use impeller_hal_vulkan::{DevicePreference, Validated, VulkanHal};
 
 #[path = "../src/live.rs"]
@@ -31,6 +32,18 @@ fn every_live_scene_draws_across_its_whole_range() {
         return;
     };
 
+    // The same sheet the playground uploads, because a scene that names a
+    // texture slot is refused outright when none is supplied -- and being
+    // refused is indistinguishable here from drawing nothing.
+    let mut sheet = ctx
+        .create_texture(&TextureDescriptor::offscreen(
+            Extent2D::new(4, 4),
+            PixelFormat::Rgba8Unorm,
+        ))
+        .expect("sheet");
+    ctx.write_texture(&mut sheet, &live::sheet_pixels())
+        .expect("upload");
+
     for scene in live::scenes() {
         let (low, high) = scene.range;
         // The ends and the middle, plus a time that is not zero, because a
@@ -41,8 +54,9 @@ fn every_live_scene_draws_across_its_whole_range() {
             (scene.draw)(&mut canvas, SIZE, knob, time);
             let recording = canvas.finish();
 
-            let pixels = impeller_core::render_offscreen::<VulkanHal>(&mut ctx, &recording, &[])
-                .unwrap_or_else(|e| panic!("{} at {knob}: {e}", scene.name));
+            let pixels =
+                impeller_core::render_offscreen::<VulkanHal>(&mut ctx, &recording, &[&sheet])
+                    .unwrap_or_else(|e| panic!("{} at {knob}: {e}", scene.name));
 
             // Something other than the ground it cleared to. A scene that drew
             // nothing leaves one color everywhere, which is the failure this
@@ -67,6 +81,7 @@ fn every_live_scene_draws_across_its_whole_range() {
             );
         }
     }
+    ctx.destroy_texture(sheet);
 }
 
 #[test]
@@ -79,12 +94,24 @@ fn a_live_scene_reacts_to_its_knob() {
         return;
     };
 
+    // The same sheet the playground uploads, because a scene that names a
+    // texture slot is refused outright when none is supplied -- and being
+    // refused is indistinguishable here from drawing nothing.
+    let mut sheet = ctx
+        .create_texture(&TextureDescriptor::offscreen(
+            Extent2D::new(4, 4),
+            PixelFormat::Rgba8Unorm,
+        ))
+        .expect("sheet");
+    ctx.write_texture(&mut sheet, &live::sheet_pixels())
+        .expect("upload");
+
     for scene in live::scenes() {
         let (low, high) = scene.range;
         let render = |ctx: &mut Validated, knob: f32| {
             let mut canvas = Canvas::new(SIZE);
             (scene.draw)(&mut canvas, SIZE, knob, 0.0);
-            impeller_core::render_offscreen::<VulkanHal>(ctx, &canvas.finish(), &[])
+            impeller_core::render_offscreen::<VulkanHal>(ctx, &canvas.finish(), &[&sheet])
                 .expect("render")
         };
         let a = render(&mut ctx, low);
@@ -101,4 +128,5 @@ fn a_live_scene_reacts_to_its_knob() {
             scene.knob
         );
     }
+    ctx.destroy_texture(sheet);
 }

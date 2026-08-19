@@ -72,6 +72,13 @@ struct Stage {
     surface: ash::vk::SurfaceKHR,
     /// A corpus scene rendered at its own size, kept until the view changes.
     scene_texture: Option<(VulkanTexture, Extent2D)>,
+    /// The sprite sheet the atlas scene reads, uploaded once and kept for the
+    /// window's life.
+    ///
+    /// Built whether or not the scene that reads it is on screen, because it
+    /// is sixteen texels and the alternative is a lazily-created resource
+    /// whose absence is a rendering bug rather than an allocation saved.
+    sheet: Option<VulkanTexture>,
 }
 
 enum View {
@@ -195,7 +202,15 @@ impl App {
                 let mut canvas = Canvas::new(extent);
                 draw(&mut canvas, extent, knob, time);
                 let recording = canvas.finish();
-                stage.submit(&recording, &[]);
+                // Taken out and put back, because submitting borrows the stage
+                // mutably and the sheet lives on it. A scene that never names
+                // a texture slot is unaffected by one being supplied.
+                let sheet = stage.sheet.take();
+                match &sheet {
+                    Some(sheet) => stage.submit(&recording, &[sheet]),
+                    None => stage.submit(&recording, &[]),
+                }
+                stage.sheet = sheet;
             }
             (None, None) => {}
         }
@@ -320,6 +335,32 @@ impl Stage {
     }
 }
 
+/// Upload the sprite sheet the atlas scene reads.
+///
+/// A failure here is reported and then ignored: every other scene draws
+/// without it, and losing the whole playground because sixteen texels would
+/// not upload is a worse outcome than one scene coming out flat.
+fn upload_sheet(ctx: &mut VulkanContext) -> Option<VulkanTexture> {
+    let mut texture = match ctx.create_texture(&TextureDescriptor::offscreen(
+        Extent2D::new(4, 4),
+        PixelFormat::Rgba8Unorm,
+    )) {
+        Ok(texture) => texture,
+        Err(e) => {
+            eprintln!("cannot allocate the sprite sheet: {e}");
+            return None;
+        }
+    };
+    match ctx.write_texture(&mut texture, &live::sheet_pixels()) {
+        Ok(()) => Some(texture),
+        Err(e) => {
+            eprintln!("cannot upload the sprite sheet: {e}");
+            ctx.destroy_texture(texture);
+            None
+        }
+    }
+}
+
 impl ApplicationHandler for App {
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
         if self.stage.is_some() {
@@ -358,12 +399,15 @@ impl ApplicationHandler for App {
             self.live.len()
         );
 
+        let sheet = upload_sheet(&mut ctx);
+
         self.stage = Some(Stage {
             window,
             ctx,
             target,
             surface,
             scene_texture: None,
+            sheet,
         });
         self.announce();
     }
