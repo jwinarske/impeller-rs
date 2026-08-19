@@ -11,10 +11,11 @@ use crate::ramp::Ramp;
 use crate::vertices::{Sprite, VertexMode, Vertices};
 use crate::Color;
 use glam::{Affine2, Mat2, Vec2};
+use impeller_geometry::stroke::{LineCap, StrokeStyle};
 use impeller_geometry::transform::{
     invert_or_identity, preserves_axis_alignment, transformed_bounds, viewport_projection,
 };
-use impeller_geometry::{Path, PathBuilder};
+use impeller_geometry::{FillRule, Path, PathBuilder};
 use impeller_hal::{
     Batch, BlendMode, ClipState, ColorFilter, Error, Extent2D, Material, PassDescriptor, Result,
     Sampling, Scissor, Stop, TileMode, Vertex, MAX_STOPS,
@@ -94,12 +95,23 @@ impl Rect {
         if radius.is_nan() || radius <= 0.0 {
             return self.to_path();
         }
+        let mut path = PathBuilder::new();
+        self.add_rounded_contour(&mut path, radius);
+        path.build()
+    }
+
+    /// Append this rectangle's rounded outline to a builder, as one contour.
+    ///
+    /// Separate from [`Self::to_rounded_path`] because a shape made of two of
+    /// these -- a ring between an outer rectangle and an inner one -- needs
+    /// both in one path, and a path built from two paths is not something this
+    /// crate offers.
+    fn add_rounded_contour(self, path: &mut PathBuilder, radius: f32) {
         let radius = radius.min(self.width() / 2.0).min(self.height() / 2.0);
         // The same constant that makes four cubics a circle, which is what the
         // four corners are: a quarter turn each, at the same radius.
         let k = KAPPA * radius;
         let (l, t, r, b) = (self.left, self.top, self.right, self.bottom);
-        let mut path = PathBuilder::new();
         path.move_to(Vec2::new(l + radius, t))
             .line_to(Vec2::new(r - radius, t))
             .cubic_to(
@@ -126,7 +138,6 @@ impl Rect {
                 Vec2::new(l + radius, t),
             )
             .close();
-        path.build()
     }
 }
 
@@ -162,6 +173,18 @@ pub struct Pass {
     /// renders into a target the size of those bounds. The root pass always
     /// carries the recording's extent, since that is the caller's surface.
     pub extent: Extent2D,
+}
+
+/// How a run of points is joined up.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum PointMode {
+    /// Each point on its own, drawn as the stroke's cap.
+    #[default]
+    Points,
+    /// Each pair a segment, and an odd point at the end drawn as nothing.
+    Lines,
+    /// One open run through all of them.
+    Polygon,
 }
 
 /// A finished recording, ready to submit.
@@ -1891,6 +1914,110 @@ impl Canvas {
             tile: *tile,
             sampling: *sampling,
         })
+    }
+
+    /// Draw a run of points, joined as the mode says.
+    ///
+    /// A point is a segment of no length, which is what decides how it looks:
+    /// the stroke's cap is the whole of the shape. A round cap gives a dot the
+    /// width across, a square cap a square of that side, and a butt cap --
+    /// which adds nothing to either end of a segment -- gives nothing at all.
+    /// That is not a special case being handled; it is the only reading of a
+    /// zero-length segment that stays consistent with how every other stroke
+    /// is drawn.
+    ///
+    /// Takes the stroke's width even from a paint asking to fill, since there
+    /// is no interior to fill and a point with no width is not a shape.
+    pub fn draw_points(
+        &mut self,
+        mode: PointMode,
+        points: &[Vec2],
+        paint: &Paint,
+    ) -> Result<&mut Self> {
+        let stroke = match &paint.style {
+            Style::Stroke(stroke) => *stroke,
+            Style::Fill => StrokeStyle::default(),
+        };
+        if !stroke.width.is_finite() || stroke.width <= 0.0 {
+            return Ok(self);
+        }
+
+        match mode {
+            PointMode::Points => {
+                let radius = stroke.width / 2.0;
+                // Filled rather than stroked: what is being drawn is the cap
+                // itself, and asking the stroker for a segment of no length is
+                // asking it for a direction that does not exist.
+                let dot = paint.clone().with_style(Style::Fill);
+                for point in points {
+                    if !point.is_finite() {
+                        continue;
+                    }
+                    match stroke.cap {
+                        LineCap::Round => {
+                            self.draw_circle(*point, radius, &dot)?;
+                        }
+                        LineCap::Square => {
+                            self.draw_rect(
+                                Rect::new(
+                                    point.x - radius,
+                                    point.y - radius,
+                                    point.x + radius,
+                                    point.y + radius,
+                                ),
+                                &dot,
+                            )?;
+                        }
+                        // A butt cap extends a segment by nothing, and nothing
+                        // is what a segment of no length becomes.
+                        LineCap::Butt => {}
+                    }
+                }
+            }
+            PointMode::Lines => {
+                for pair in points.chunks_exact(2) {
+                    self.draw_line(pair[0], pair[1], paint)?;
+                }
+            }
+            PointMode::Polygon => {
+                if points.len() >= 2 {
+                    let mut b = PathBuilder::new();
+                    b.move_to(points[0]);
+                    for point in &points[1..] {
+                        b.line_to(*point);
+                    }
+                    self.draw_path(&b.build(), paint)?;
+                }
+            }
+        }
+        Ok(self)
+    }
+
+    /// Fill the ring between two rounded rectangles.
+    ///
+    /// One path of two contours filled by the even-odd rule, which is what
+    /// makes the inner one a hole rather than a second ring drawn on top. A
+    /// caller could assemble this, and the reason not to leave them to it is
+    /// the rule: two contours wound the same way fill solid under the nonzero
+    /// rule and hollow under even-odd, and which one a border needs is not
+    /// something to rediscover per call site.
+    pub fn draw_drrect(
+        &mut self,
+        outer: Rect,
+        outer_radius: f32,
+        inner: Rect,
+        inner_radius: f32,
+        paint: &Paint,
+    ) -> Result<&mut Self> {
+        if outer.is_empty() {
+            return Ok(self);
+        }
+        let mut b = PathBuilder::new().with_fill_rule(FillRule::EvenOdd);
+        outer.add_rounded_contour(&mut b, outer_radius);
+        if !inner.is_empty() {
+            inner.add_rounded_contour(&mut b, inner_radius);
+        }
+        self.draw_path(&b.build(), paint)
     }
 
     pub fn draw_line(&mut self, from: Vec2, to: Vec2, paint: &Paint) -> Result<&mut Self> {

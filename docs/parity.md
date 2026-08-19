@@ -85,8 +85,8 @@ reason.
 | `drawParagraph` | out of scope | shaping and layout are not this project's; `draw_glyphs` takes a positioned run and an atlas | glyph tests |
 | `drawVertices` | yes | `draw_vertices`, with positions, texture coordinates and per-vertex colors | `a_mesh_interpolates_the_colours_its_vertices_carry` |
 | `drawAtlas`, `drawRawAtlas` | yes | `draw_atlas`, one draw for the whole batch, each sprite with its own transform and color | `an_atlas_tints_each_sprite_on_its_own_in_one_draw` |
-| `drawPoints`, `drawRawPoints` | no | | |
-| `drawDRRect` | no | | |
+| `drawPoints`, `drawRawPoints` | yes | `draw_points`, in all three modes. A point is a segment of no length, so the cap is the whole shape | `a_point_is_drawn_as_the_cap_it_would_have_had` |
+| `drawDRRect` | yes | `draw_drrect`: two contours filled even-odd, which is what makes the inner one a hole | `a_double_rounded_rect_is_a_ring_rather_than_two_shapes` |
 | `drawShadow` | yes | `draw_shadow`: offset, blur and alpha all from the elevation, under one light | `a_shadow_falls_below_what_casts_it_and_widens_with_elevation` |
 | `drawRSuperellipse` | no | | |
 | `drawPicture` | no | — a recording here is tessellated, not a command list; see below | |
@@ -137,8 +137,8 @@ above it or not at all:
 
 ## Where that leaves it
 
-Of forty-seven rows across `Canvas` and `Paint`: twenty-seven exist, six are
-partial, seven are expressible by a caller who assembles them, six are absent,
+Of forty-seven rows across `Canvas` and `Paint`: twenty-nine exist, six are
+partial, seven are expressible by a caller who assembles them, four are absent,
 and one is out of scope. Counting them is the least interesting thing
 about the table -- the absences are not equal, and a reader deciding whether
 this renderer is usable should look at which ones rather than how many.
@@ -185,8 +185,17 @@ build them:
    shader pipeline that compiles at runtime rather than at build time, which is
    a different arrangement from the one here.
 
-`drawRSuperellipse` and `clipRSuperellipse` are shapes with rules attached
-rather than rendering problems, and are cheap once somebody needs them.
+`drawRSuperellipse` and `clipRSuperellipse` were once described here as shapes
+with rules attached, cheap once somebody needed them. That was wrong, and the
+correction is worth more than the row. Flutter's rounded superellipse is not a
+closed form: each corner is built from a superellipse arc joined to a circular
+one, and the superellipse's degree comes from an eleven-entry lookup table
+interpolated on the ratio of side to radius, extrapolated beyond it. Matching
+that shape means transcribing a fitted table from another project, and nothing
+in this repository could check the transcription — there is no reference here
+to compare against. Drawing *a* rounded superellipse under that name instead
+would be the substitution this renderer refuses everywhere else. So it stays
+absent, and the reason is a decision rather than a gap in the work.
 
 ## What this table does not tell you
 

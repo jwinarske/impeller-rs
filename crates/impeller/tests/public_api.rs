@@ -9,9 +9,9 @@
 use googletest::prelude::*;
 use impeller::{
     Affine2, Atlas, BackendPreference, BlendMode, Canvas, Color, ColorFilter, Context, Coverage,
-    Dash, Extent2D, GlyphKey, GradientStop, ImageFilter, Layer, MaskBlurStyle, Paint, Path,
-    PathBuilder, PixelFormat, PositionedGlyph, Rect, Result, Sampling, SourceRect, Sprite,
-    TileMode, Vec2, VertexMode, Vertices, MAX_STOPS,
+    Dash, Extent2D, GlyphKey, GradientStop, ImageFilter, Layer, LineCap, MaskBlurStyle, Paint,
+    Path, PathBuilder, PixelFormat, PointMode, PositionedGlyph, Rect, Result, Sampling, SourceRect,
+    Sprite, StrokeStyle, Style, TileMode, Vec2, VertexMode, Vertices, MAX_STOPS,
 };
 
 const SIZE: Extent2D = Extent2D {
@@ -6509,4 +6509,95 @@ fn an_opaque_occluder_is_not_given_a_shadow_it_would_hide() {
             "{name}: the shadow past the object should survive: {below}"
         );
     }
+}
+
+#[test]
+fn a_point_is_drawn_as_the_cap_it_would_have_had() {
+    // A point is a segment of no length, so the cap is the whole shape. Round
+    // gives a dot, square gives a square, and butt -- which extends a segment
+    // by nothing -- gives nothing. That last one is not a special case; it is
+    // the only reading that stays consistent with how a segment is drawn.
+    let Some(mut ctx) = context() else { return };
+
+    let draw = |ctx: &mut Context, cap: LineCap| {
+        let mut canvas = Canvas::new(SIZE);
+        canvas.clear(Color::BLACK);
+        canvas
+            .draw_points(
+                PointMode::Points,
+                &[Vec2::new(64.0, 64.0)],
+                &Paint {
+                    style: Style::Stroke(StrokeStyle {
+                        cap,
+                        ..StrokeStyle::new(40.0)
+                    }),
+                    ..Paint::fill(Color::linear(1.0, 1.0, 1.0, 1.0)).with_anti_alias(false)
+                },
+            )
+            .expect("points");
+        render(ctx, canvas)
+    };
+
+    let round = draw(&mut ctx, LineCap::Round);
+    let square = draw(&mut ctx, LineCap::Square);
+    let butt = draw(&mut ctx, LineCap::Butt);
+
+    // The corner of the square the point spans: inside a square cap, outside
+    // a round one.
+    let corner = (64 + 18, 64 + 18);
+    assert!(
+        pixel(&square, corner.0, corner.1)[0] > 240,
+        "a square cap should fill its corners"
+    );
+    assert_eq!(
+        pixel(&round, corner.0, corner.1),
+        [0, 0, 0, 255],
+        "a round cap should not reach its corners"
+    );
+    assert!(
+        pixel(&round, 64, 64)[0] > 240 && pixel(&square, 64, 64)[0] > 240,
+        "both should cover the point itself"
+    );
+
+    let first = &butt[0..4];
+    assert!(
+        butt.chunks_exact(4).all(|texel| texel == first),
+        "a butt cap adds nothing to a segment of no length, so nothing is drawn"
+    );
+}
+
+#[test]
+fn a_double_rounded_rect_is_a_ring_rather_than_two_shapes() {
+    // Two contours wound the same way fill solid under the nonzero rule and
+    // hollow under even-odd, and a border wants the second. So the test is
+    // that the middle is untouched -- not that something was drawn, which
+    // both rules satisfy.
+    let Some(mut ctx) = context() else { return };
+    let mut canvas = Canvas::new(SIZE);
+    canvas.clear(Color::BLACK);
+    canvas
+        .draw_drrect(
+            Rect::new(16.0, 16.0, 112.0, 112.0),
+            18.0,
+            Rect::new(40.0, 40.0, 88.0, 88.0),
+            10.0,
+            &Paint::fill(Color::linear(1.0, 1.0, 1.0, 1.0)).with_anti_alias(false),
+        )
+        .expect("ring");
+    let pixels = render(&mut ctx, canvas);
+
+    assert_eq!(
+        pixel(&pixels, 64, 64),
+        [0, 0, 0, 255],
+        "the inner rectangle should be a hole"
+    );
+    assert!(
+        pixel(&pixels, 64, 28)[0] > 240,
+        "the band between them should be filled"
+    );
+    assert_eq!(
+        pixel(&pixels, 4, 4),
+        [0, 0, 0, 255],
+        "and nothing outside the outer one"
+    );
 }

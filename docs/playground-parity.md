@@ -69,7 +69,7 @@ the scene model cannot describe.
 Three different kinds of obstacle, worth separating because only one of them is
 about the renderer.
 
-**Capabilities this renderer lacks.** Round superellipses. Runtime effects. Perspective transforms, which the
+**Capabilities this renderer lacks.** Runtime effects. Perspective transforms, which the
 transform type is affine and two-dimensional by design. Dithering. These are the rows of `docs/parity.md`, and the scenes
 that need them arrive when the row does.
 
@@ -101,6 +101,14 @@ matrix by the time a scene carries one, and the constructor that builds one
 from a blend mode had existed for days. Thirty-four blend scenes came across as
 soon as somebody checked the claim instead of repeating it, which is the
 argument for writing an inventory down rather than carrying it in one's head.
+
+**A capability deliberately declined.** Round superellipses. Flutter's version
+is not a closed form — each corner joins a superellipse arc to a circular one,
+and the superellipse's degree comes from an eleven-entry lookup table
+interpolated on the ratio of side to radius. Matching it means transcribing a
+fitted table that nothing here could check, and drawing a different curve under
+the same name would be worse than not drawing it. `docs/parity.md` has the
+longer version.
 
 **Things that are deliberately out of scope.** Text, which needs shaping and
 font parsing that `docs/architecture.md` places outside this project. And the
