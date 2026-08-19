@@ -37,7 +37,7 @@ use crate::scene::{Fill, Item, LayerSpec, Node, Scene, Stop, StrokeSpec, Transfo
 use crate::shape::Shape;
 use impeller_geometry::stroke::{LineCap, LineJoin};
 use impeller_geometry::FillRule;
-use impeller_hal::{BlendMode, TileMode};
+use impeller_hal::{BlendMode, ColorFilter, TileMode};
 
 const WHITE: [f32; 4] = [1.0, 1.0, 1.0, 1.0];
 const RED: [f32; 4] = [1.0, 0.0, 0.0, 1.0];
@@ -62,6 +62,7 @@ pub fn catalog() -> Vec<Scene> {
     scenes.extend(gradient());
     scenes.extend(clip());
     scenes.extend(opacity());
+    scenes.extend(blend());
     scenes
 }
 
@@ -966,4 +967,198 @@ fn opacity() -> Vec<Scene> {
         .with_background(DARK)
         .with_samples(4),
     ]
+}
+
+/// Every blend mode, by the name the catalog gives its scene.
+///
+/// Named here rather than derived from a `Display` implementation because a
+/// scene's name is a `&'static str` and has to be one: it is an identifier the
+/// playground steps through and a test reports, not a label. Writing them out
+/// also means adding a mode to the renderer does not silently add a scene
+/// nobody looked at.
+const MODES: &[(BlendMode, &str)] = &[
+    (BlendMode::Clear, "blend/blend-mode-clear"),
+    (BlendMode::Src, "blend/blend-mode-src"),
+    (BlendMode::Dst, "blend/blend-mode-dst"),
+    (BlendMode::SrcOver, "blend/blend-mode-src-over"),
+    (BlendMode::DstOver, "blend/blend-mode-dst-over"),
+    (BlendMode::SrcIn, "blend/blend-mode-src-in"),
+    (BlendMode::DstIn, "blend/blend-mode-dst-in"),
+    (BlendMode::SrcOut, "blend/blend-mode-src-out"),
+    (BlendMode::DstOut, "blend/blend-mode-dst-out"),
+    (BlendMode::SrcATop, "blend/blend-mode-src-atop"),
+    (BlendMode::DstATop, "blend/blend-mode-dst-atop"),
+    (BlendMode::Xor, "blend/blend-mode-xor"),
+    (BlendMode::Plus, "blend/blend-mode-plus"),
+    (BlendMode::Modulate, "blend/blend-mode-modulate"),
+    (BlendMode::Multiply, "blend/blend-mode-multiply"),
+    (BlendMode::Screen, "blend/blend-mode-screen"),
+    (BlendMode::Overlay, "blend/blend-mode-overlay"),
+    (BlendMode::Darken, "blend/blend-mode-darken"),
+    (BlendMode::Lighten, "blend/blend-mode-lighten"),
+    (BlendMode::ColorDodge, "blend/blend-mode-color-dodge"),
+    (BlendMode::ColorBurn, "blend/blend-mode-color-burn"),
+    (BlendMode::HardLight, "blend/blend-mode-hard-light"),
+    (BlendMode::SoftLight, "blend/blend-mode-soft-light"),
+    (BlendMode::Difference, "blend/blend-mode-difference"),
+    (BlendMode::Exclusion, "blend/blend-mode-exclusion"),
+    (BlendMode::Hue, "blend/blend-mode-hue"),
+    (BlendMode::Saturation, "blend/blend-mode-saturation"),
+    (BlendMode::Color, "blend/blend-mode-color"),
+    (BlendMode::Luminosity, "blend/blend-mode-luminosity"),
+];
+
+/// `aiks_dl_blend_unittests.cc`.
+///
+/// The per-mode scenes mirror what the original generates with a macro over
+/// every blend mode. A scene naming an advanced mode declares that need by
+/// containing one, so a device without the extension reports it as a gap
+/// rather than as a difference.
+fn blend() -> Vec<Scene> {
+    let mut scenes: Vec<Scene> = MODES
+        .iter()
+        .map(|(mode, name)| {
+            plate(
+                name,
+                vec![
+                    // A destination with structure rather than a flat colour:
+                    // dodge, burn and the two contrast modes are functions of
+                    // what is underneath, and a flat backdrop would exercise
+                    // one point of each curve.
+                    Item::filled(
+                        Shape::Rect {
+                            min: [8.0, 8.0],
+                            max: [120.0, 120.0],
+                        },
+                        Fill::LinearGradient {
+                            start: [8.0, 8.0],
+                            end: [120.0, 120.0],
+                            stops: vec![
+                                Stop::new([0.1, 0.1, 0.1, 1.0], 0.0),
+                                Stop::new([0.95, 0.95, 0.95, 1.0], 1.0),
+                            ],
+                            tile: TileMode::Clamp,
+                        },
+                    ),
+                    // Translucent, so the modes that read the source's alpha
+                    // differ from the ones that do not.
+                    Item::fill(
+                        Shape::Circle {
+                            center: [64.0, 64.0],
+                            radius: 40.0,
+                        },
+                        [0.9, 0.35, 0.2, 0.75],
+                    )
+                    .with_blend(*mode),
+                ],
+            )
+        })
+        .collect();
+
+    scenes.push(plate(
+        "blend/blend-mode-should-cover-whole-screen",
+        vec![
+            Item::fill(
+                Shape::Rect {
+                    min: [0.0, 0.0],
+                    max: [128.0, 128.0],
+                },
+                RED,
+            ),
+            // A source covering everything, which is what the original checks:
+            // a blend that left an unwritten margin would show the ground.
+            Item::fill(
+                Shape::Rect {
+                    min: [0.0, 0.0],
+                    max: [128.0, 128.0],
+                },
+                BLUE,
+            )
+            .with_blend(BlendMode::Screen),
+        ],
+    ));
+
+    scenes.push(plate(
+        "blend/color-filter-blend",
+        vec![Item::filled(
+            Shape::Rect {
+                min: [8.0, 8.0],
+                max: [120.0, 120.0],
+            },
+            ramp(),
+        )
+        // A blend against a constant, applied to the paint rather than to the
+        // framebuffer -- which is the distinction this scene exists to show,
+        // since the picture is the one the blend mode would give against a
+        // flat destination of that colour.
+        .with_color_filter(
+            ColorFilter::blend([0.2, 0.5, 1.0, 1.0], BlendMode::SrcIn).expect("affine"),
+        )],
+    ));
+
+    scenes.push(plate(
+        "blend/color-filter-matrix",
+        vec![Item::filled(
+            Shape::Rect {
+                min: [8.0, 8.0],
+                max: [120.0, 120.0],
+            },
+            ramp(),
+        )
+        .with_color_filter(ColorFilter::matrix([
+            0.2126, 0.7152, 0.0722, 0.0, 0.0, //
+            0.2126, 0.7152, 0.0722, 0.0, 0.0, //
+            0.2126, 0.7152, 0.0722, 0.0, 0.0, //
+            0.0, 0.0, 0.0, 1.0, 0.0,
+        ]))],
+    ));
+
+    scenes.push(plate(
+        "blend/clear-blend",
+        vec![
+            Item::fill(
+                Shape::Rect {
+                    min: [8.0, 8.0],
+                    max: [120.0, 120.0],
+                },
+                GREEN,
+            ),
+            // Clear takes neither operand, so this punches a hole rather than
+            // drawing anything -- and the ground showing through it is the
+            // whole picture.
+            Item::fill(
+                Shape::Circle {
+                    center: [64.0, 64.0],
+                    radius: 34.0,
+                },
+                WHITE,
+            )
+            .with_blend(BlendMode::Clear),
+        ],
+    ));
+
+    scenes.push(plate(
+        "blend/color-wheel",
+        (0..12)
+            .map(|i| {
+                let turn = i as f32 / 12.0 * std::f32::consts::TAU;
+                let at = [64.0 + 26.0 * turn.cos(), 64.0 + 26.0 * turn.sin()];
+                Item::fill(
+                    Shape::Circle {
+                        center: at,
+                        radius: 26.0,
+                    },
+                    [
+                        0.5 + 0.5 * turn.cos(),
+                        0.5 + 0.5 * (turn + 2.094).cos(),
+                        0.5 + 0.5 * (turn + 4.189).cos(),
+                        1.0,
+                    ],
+                )
+                .with_blend(BlendMode::Plus)
+            })
+            .collect(),
+    ));
+
+    scenes
 }

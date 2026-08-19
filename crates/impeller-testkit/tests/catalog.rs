@@ -54,6 +54,9 @@ fn every_catalog_scene_draws_something() {
 
     let mut blank = Vec::new();
     for scene in catalog() {
+        if !scene.supported_by(ctx.capabilities()) {
+            continue;
+        }
         let image = render::<VulkanHal>(&mut ctx, &scene);
         // Something other than the ground it cleared to. A scene whose
         // geometry landed offscreen, or whose colour matched the background,
@@ -82,13 +85,36 @@ fn the_catalog_matches_across_backends() {
     };
 
     let mut failures = Vec::new();
+    let mut gaps = Vec::new();
+    let mut compared = 0usize;
     for scene in catalog() {
+        // A scene needing a capability a device does not have is coverage that
+        // was not got, not a difference between backends. The scene derives
+        // that need from what it contains, so a plate using an advanced blend
+        // on a device without the extension is reported here rather than
+        // failing as a regression.
+        if !scene.supported_by(vulkan.capabilities()) || !scene.supported_by(gles.capabilities()) {
+            gaps.push(scene.name);
+            continue;
+        }
         let a = render::<VulkanHal>(&mut vulkan, &scene);
         let b = render::<GlesHal>(&mut gles, &scene);
+        compared += 1;
         let difference = compare(&a, &b).expect("same size");
         if !accepts(&difference, CATALOG) {
             failures.push(format!("{}: {difference}", scene.name));
         }
+    }
+    // Said out loud rather than left implicit. A comparison that quietly
+    // compared nothing passes, and the number is the only thing that
+    // distinguishes that from a comparison that found no differences.
+    eprintln!("compared {compared} scene(s)");
+    if !gaps.is_empty() {
+        eprintln!(
+            "{} scene(s) not compared, by declared capability: {}",
+            gaps.len(),
+            gaps.join(", ")
+        );
     }
     assert!(
         failures.is_empty(),

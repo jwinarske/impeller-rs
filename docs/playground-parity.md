@@ -33,9 +33,14 @@ folding the corpus into the catalog would lose the per-scene rigor.
 
 Counts are from the files as fetched, and are the number of `TEST_P` cases
 rather than of playground scenes — most call `OpenPlaygroundHere`, a few only
-assert. Nothing here checks them mechanically: this repository has no copy of
-that source, and a number in a document that nothing verifies is a number to
-treat as approximate.
+assert. The blend count includes the cases a macro generates per blend mode,
+which are the majority of that file. Nothing here checks any of them
+mechanically: this repository has no copy of that source, and a number in a
+document that nothing verifies is a number to treat as approximate.
+
+The one number describing *this* repository is checked. A scene added to the
+catalog without the count following it fails a test, because an inventory that
+drifts from what it inventories is worse than none.
 
 | File | Scenes there | Here | Blocked on |
 |---|---|---|---|
@@ -44,7 +49,7 @@ treat as approximate.
 | `aiks_dl_gradient_unittests.cc` | ~40 | 17 | dithering |
 | `aiks_dl_clip_unittests.cc` | ~5 | 3 | difference clips |
 | `aiks_dl_opacity_unittests.cc` | ~3 | 2 | subpass collapse |
-| `aiks_dl_blend_unittests.cc` | ~21 | 0 | the scene model cannot name a colour filter's blend form yet |
+| `aiks_dl_blend_unittests.cc` | ~79 | 34 | framebuffer fetch, wide gamut, subpass collapse |
 | `aiks_dl_blur_unittests.cc` | ~59 | 0 | mask blur styles: inner, outer and solid |
 | `aiks_dl_vertices_unittests.cc` | ~16 | 0 | the scene model cannot describe a mesh |
 | `aiks_dl_atlas_unittests.cc` | ~15 | 0 | the scene model cannot carry a texture |
@@ -54,8 +59,8 @@ treat as approximate.
 | `aiks_dl_runtime_effect_unittests.cc` | — | 0 | runtime effects |
 | `aiks_dl_unittests.cc` | ~39 | 0 | mostly internal optimizations and picture round-trips |
 
-The catalog holds forty-eight scenes of roughly three hundred and fifty, and
-the proportion is less interesting than which ones: the arithmetic of drawing is largely covered, and
+The catalog holds eighty-two scenes of roughly four hundred, and the proportion
+is less interesting than which ones: the arithmetic of drawing is largely covered, and
 what is missing is either a capability this renderer does not have or a thing
 the scene model cannot describe.
 
@@ -73,11 +78,18 @@ that need them arrive when the row does.
 
 **Things the scene model cannot describe**, which is a testkit limitation and
 not a renderer one. A scene is a list of shapes with fills; it cannot name a
-mesh, a texture, or a colour filter stated as a blend against a constant. All
-three exist in the renderer and have their own tests — the meshes and the
-sprite batches are in the playground's live scenes, and the colour filters are
-in the public API's suite. Extending the scene model would bring roughly thirty
-more scenes across, and is the cheapest remaining tranche.
+mesh or a texture. Both exist in the renderer and have their own tests, and the
+playground's live scenes show them — but neither can be a plate here until the
+model can say so, which is what keeps `aiks_dl_vertices` and `aiks_dl_atlas` at
+nothing between them. That is about thirty scenes, and the cheapest tranche
+left.
+
+This category was larger when it was first written, and wrongly so: it claimed
+a colour filter stated as a blend was among them. It was not. A filter is a
+matrix by the time a scene carries one, and the constructor that builds one
+from a blend mode had existed for days. Thirty-four blend scenes came across as
+soon as somebody checked the claim instead of repeating it, which is the
+argument for writing an inventory down rather than carrying it in one's head.
 
 **Things that are deliberately out of scope.** Text, which needs shaping and
 font parsing that `docs/architecture.md` places outside this project. And the
