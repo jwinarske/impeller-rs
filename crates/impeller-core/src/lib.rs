@@ -23,7 +23,7 @@ pub use canvas::{Canvas, Layer, Pass, Recording, Rect, TextureSource};
 pub use color::Color;
 pub use execute::{execute, execute_deferred, execute_layers, render_offscreen, resolve_sources};
 pub use impeller_text::{Atlas, AtlasError, AtlasRect, Coverage, GlyphKey, PositionedGlyph};
-pub use paint::{GradientStop, ImageFilter, Paint, Shader, Style};
+pub use paint::{GradientStop, ImageFilter, MaskBlurStyle, Paint, Shader, Style};
 pub use vertices::{SourceRect, Sprite, VertexMode, Vertices};
 
 // Geometry a caller builds paths with, re-exported so an application needs one

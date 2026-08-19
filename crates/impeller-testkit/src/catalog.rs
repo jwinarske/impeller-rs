@@ -38,7 +38,7 @@ use crate::scene::{
     Transform,
 };
 use crate::shape::Shape;
-use impeller_core::VertexMode;
+use impeller_core::{MaskBlurStyle, VertexMode};
 use impeller_geometry::stroke::{LineCap, LineJoin};
 use impeller_geometry::FillRule;
 use impeller_hal::{BlendMode, ColorFilter, Sampling, TileMode};
@@ -70,6 +70,7 @@ pub fn catalog() -> Vec<Scene> {
     scenes.extend(image());
     scenes.extend(vertices());
     scenes.extend(atlas_scenes());
+    scenes.extend(blur());
     scenes
 }
 
@@ -1575,4 +1576,81 @@ fn atlas_scenes() -> Vec<Scene> {
             },
         ),
     ]
+}
+
+/// `aiks_dl_blur_unittests.cc`, as far as the styles reach.
+///
+/// The file is the largest of them and most of it turns on mask blur styles,
+/// which is what these four are. What is still missing from it needs blurs
+/// this renderer does not have -- an image filter on a backdrop identified by
+/// a key, a blur that survives a rotation and a clip together, and the
+/// tiny-mipmap cases.
+fn blur() -> Vec<Scene> {
+    let styles = [
+        ("blur/gaussian-blur-style-normal", MaskBlurStyle::Normal),
+        ("blur/gaussian-blur-style-solid", MaskBlurStyle::Solid),
+        ("blur/gaussian-blur-style-outer", MaskBlurStyle::Outer),
+        ("blur/gaussian-blur-style-inner", MaskBlurStyle::Inner),
+    ];
+    let mut scenes: Vec<Scene> = styles
+        .iter()
+        .map(|(name, style)| {
+            plate(
+                name,
+                vec![Item::fill(
+                    Shape::Circle {
+                        center: [64.0, 64.0],
+                        radius: 34.0,
+                    },
+                    WHITE,
+                )
+                .with_mask_blur(7.0)
+                .with_mask_blur_style(*style)],
+            )
+        })
+        .collect();
+
+    scenes.push(plate(
+        "blur/solid-color-circle-mask-blur-tiny-sigma",
+        vec![Item::fill(
+            Shape::Circle {
+                center: [64.0, 64.0],
+                radius: 40.0,
+            },
+            WHITE,
+        )
+        // Small enough that the halo is a pixel or two, which is the case a
+        // blur implemented by scaling a target down and back up gets wrong.
+        .with_mask_blur(0.6)],
+    ));
+
+    scenes.push(plate(
+        "blur/can-render-mask-blur-huge-sigma",
+        vec![Item::fill(
+            Shape::Circle {
+                center: [64.0, 64.0],
+                radius: 20.0,
+            },
+            WHITE,
+        )
+        // Reaching well past the plate, so the halo is cut by the frame rather
+        // than by the layer -- which is the distinction a bounded layer sized
+        // to its content alone gets wrong.
+        .with_mask_blur(30.0)],
+    ));
+
+    scenes.push(plate(
+        "blur/mask-blur-with-zero-sigma-is-skipped",
+        vec![Item::fill(
+            Shape::RoundedRect {
+                min: [24.0, 32.0],
+                max: [104.0, 96.0],
+                radius: 12.0,
+            },
+            WHITE,
+        )
+        .with_mask_blur(0.0)],
+    ));
+
+    scenes
 }

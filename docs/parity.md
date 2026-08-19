@@ -119,7 +119,7 @@ reason.
 | `shader` | partial | linear, radial, sweep and conical gradients, and images. Runtime effects are absent | `gradient-*` |
 | `colorFilter` | partial | `with_color_filter`: a color matrix, and any blend against a constant that is affine in what it blends. Not the advanced blend modes, and not the gamma pair | `colour-filter-luminance` |
 | `imageFilter` | partial | `with_image_filter`: a blur, applied to what the paint drew rather than to the colour it computed. No other filter kind | `an_image_filter_blurs_a_gradient_that_a_mask_blur_refuses` |
-| `maskFilter` | partial | `with_mask_blur`, blurring a shape's coverage. Solid colors only, since the identity it rests on holds for nothing else | `mask-blur-shadow` |
+| `maskFilter` | yes | `with_mask_blur` and `with_mask_blur_style`: a blur of a shape's coverage in all four styles. Solid colors only, since the identity it rests on holds for nothing else | `each_mask_blur_style_keeps_the_part_of_the_blur_it_names` |
 | `filterQuality` | partial | `with_sampling`: linear and nearest. `medium` and `high` are mipmapped and bicubic, and neither exists here to select | `nearest_sampling_reads_one_texel_where_linear_blends_two` |
 | `invertColors` | via | a color filter whose matrix negates each channel and adds one | |
 
@@ -137,7 +137,7 @@ above it or not at all:
 
 ## Where that leaves it
 
-Of forty-seven rows across `Canvas` and `Paint`: twenty-five exist, seven are
+Of forty-seven rows across `Canvas` and `Paint`: twenty-six exist, six are
 partial, seven are expressible by a caller who assembles them, seven are
 absent, and one is out of scope. Counting them is the least interesting thing
 about the table -- the absences are not equal, and a reader deciding whether

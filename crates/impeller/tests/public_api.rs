@@ -9,9 +9,9 @@
 use googletest::prelude::*;
 use impeller::{
     Affine2, Atlas, BackendPreference, BlendMode, Canvas, Color, ColorFilter, Context, Coverage,
-    Dash, Extent2D, GlyphKey, GradientStop, ImageFilter, Layer, Paint, Path, PathBuilder,
-    PixelFormat, PositionedGlyph, Rect, Result, Sampling, SourceRect, Sprite, TileMode, Vec2,
-    VertexMode, Vertices, MAX_STOPS,
+    Dash, Extent2D, GlyphKey, GradientStop, ImageFilter, Layer, MaskBlurStyle, Paint, Path,
+    PathBuilder, PixelFormat, PositionedGlyph, Rect, Result, Sampling, SourceRect, Sprite,
+    TileMode, Vec2, VertexMode, Vertices, MAX_STOPS,
 };
 
 const SIZE: Extent2D = Extent2D {
@@ -6246,4 +6246,146 @@ fn a_filtered_stroke_keeps_the_half_of_itself_that_lies_outside_the_path() {
             "({x}, {y}) is inside the stroke and should be painted, got {got:?}"
         );
     }
+}
+
+/// A shape and the three places a blur style is decided: well inside it, on
+/// its edge, and outside but within the blur's reach.
+fn mask_blur_probe(ctx: &mut Context, style: MaskBlurStyle) -> ([u8; 4], [u8; 4], [u8; 4]) {
+    let mut canvas = Canvas::new(SIZE);
+    canvas.clear(Color::BLACK);
+    canvas
+        .draw_circle(
+            Vec2::new(64.0, 64.0),
+            34.0,
+            &Paint::fill(Color::linear(1.0, 1.0, 1.0, 1.0))
+                .with_mask_blur(6.0)
+                .with_mask_blur_style(style),
+        )
+        .expect("mask blur");
+    let pixels = render(ctx, canvas);
+    (
+        pixel(&pixels, 64, 64),
+        pixel(&pixels, 64, 30),
+        pixel(&pixels, 64, 18),
+    )
+}
+
+#[test]
+fn each_mask_blur_style_keeps_the_part_of_the_blur_it_names() {
+    // The four styles are four combinations of two things: the shape's own
+    // coverage, and that coverage blurred. Naming them is only useful if each
+    // actually discards what it says it discards, which is what these three
+    // probes are for -- inside the shape, on its edge, and outside it but
+    // within the blur's reach.
+    let Some(mut ctx) = context() else { return };
+
+    let (inside, edge, outside) = mask_blur_probe(&mut ctx, MaskBlurStyle::Normal);
+    assert!(
+        inside[0] > 240,
+        "normal should be solid well inside: {inside:?}"
+    );
+    assert!(
+        edge[0] > 40 && edge[0] < 220,
+        "normal should be soft at the edge: {edge:?}"
+    );
+    assert!(outside[0] > 4, "normal should reach outside: {outside:?}");
+
+    let (inside, edge, outside) = mask_blur_probe(&mut ctx, MaskBlurStyle::Solid);
+    assert!(inside[0] > 240, "solid should be solid inside: {inside:?}");
+    assert!(
+        edge[0] > 240,
+        "solid keeps the shape at full strength, so its own edge is hard: {edge:?}"
+    );
+    assert!(
+        outside[0] > 4,
+        "solid should still blur outside: {outside:?}"
+    );
+
+    let (inside, edge, outside) = mask_blur_probe(&mut ctx, MaskBlurStyle::Outer);
+    assert_eq!(
+        inside,
+        [0, 0, 0, 255],
+        "outer draws nothing inside the shape"
+    );
+    assert!(outside[0] > 4, "outer is the blur outside: {outside:?}");
+    assert!(
+        edge[0] < 240,
+        "the shape is taken out of the blur, so its edge is not full strength: {edge:?}"
+    );
+
+    let (inside, edge, outside) = mask_blur_probe(&mut ctx, MaskBlurStyle::Inner);
+    assert_eq!(
+        outside,
+        [0, 0, 0, 255],
+        "inner draws nothing outside the shape"
+    );
+    assert!(
+        inside[0] > 240,
+        "inner is solid away from the edge: {inside:?}"
+    );
+    assert!(
+        edge[0] > 4 && edge[0] < 240,
+        "inner fades toward the shape's own edge: {edge:?}"
+    );
+}
+
+#[test]
+fn the_two_halves_of_a_blur_add_up_to_the_whole_of_it() {
+    // Outer and inner partition the normal style between them: one keeps the
+    // blurred coverage where the shape is not, the other where it is, and
+    // neither invents anything. So at every pixel the two have to add back up
+    // to the whole -- a stronger statement than any of the three makes alone,
+    // and the one that catches a style keeping slightly too much.
+    //
+    // Drawn separately and added here rather than drawn on top of each other,
+    // because a paint's blend mode applies to the draw *inside* the layer a
+    // mask blur opens, not to the layer's composite. Two styles drawn in
+    // sequence therefore composite with source-over, which is not addition
+    // wherever both are non-zero -- which is exactly the edge this is about.
+    let Some(mut ctx) = context() else { return };
+
+    let draw = |ctx: &mut Context, style: MaskBlurStyle| {
+        let mut canvas = Canvas::new(SIZE);
+        // Black, so what comes back at each pixel is the contribution itself:
+        // source-over onto zero leaves the premultiplied colour alone.
+        canvas.clear(Color::linear(0.0, 0.0, 0.0, 1.0));
+        canvas
+            .draw_circle(
+                Vec2::new(64.0, 64.0),
+                34.0,
+                &Paint::fill(Color::linear(1.0, 1.0, 1.0, 1.0))
+                    .with_mask_blur(6.0)
+                    .with_mask_blur_style(style),
+            )
+            .expect("mask blur");
+        render(ctx, canvas)
+    };
+
+    let whole = draw(&mut ctx, MaskBlurStyle::Normal);
+    let inner = draw(&mut ctx, MaskBlurStyle::Inner);
+    let outer = draw(&mut ctx, MaskBlurStyle::Outer);
+
+    let mut worst = 0i32;
+    let mut worst_at = 0usize;
+    for (i, ((w, a), b)) in whole
+        .chunks_exact(4)
+        .zip(inner.chunks_exact(4))
+        .zip(outer.chunks_exact(4))
+        .enumerate()
+    {
+        // The red channel alone: the fill is white, so all three carry the
+        // same number, and the fourth is the target's own opaque alpha.
+        let delta = (w[0] as i32 - (a[0] as i32 + b[0] as i32)).abs();
+        if delta > worst {
+            worst = delta;
+            worst_at = i;
+        }
+    }
+    assert!(
+        worst <= 4,
+        "the inner and outer halves should reconstruct the whole blur; they \
+         differ by {worst} at pixel ({}, {})",
+        worst_at % 128,
+        worst_at / 128
+    );
 }

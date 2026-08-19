@@ -7,7 +7,7 @@
 
 use crate::shape::Shape;
 use glam::{Affine2, Vec2};
-use impeller_core::VertexMode;
+use impeller_core::{MaskBlurStyle, VertexMode};
 use impeller_geometry::stroke::{LineCap, LineJoin, StrokeStyle};
 use impeller_geometry::FillRule;
 use impeller_hal::{BlendMode, Extent2D, TileMode};
@@ -260,6 +260,8 @@ fn tiled_gradient_item(tile: TileMode) -> Item {
 pub struct Item {
     /// Blur this item's coverage before filling it. Zero for none.
     pub mask_blur: MaskBlur,
+    /// Which part of the blurred coverage survives.
+    pub mask_blur_style: MaskBlurStyle,
     pub shape: Shape,
     /// Stroke the shape rather than filling it.
     pub stroke: Option<StrokeSpec>,
@@ -305,6 +307,7 @@ impl Item {
     pub fn fill(shape: Shape, color: [f32; 4]) -> Self {
         Self {
             mask_blur: 0.0,
+            mask_blur_style: MaskBlurStyle::Normal,
             shape,
             stroke: None,
             transform: Transform::default(),
@@ -333,6 +336,7 @@ impl Item {
     pub fn filled(shape: Shape, fill: Fill) -> Self {
         Self {
             mask_blur: 0.0,
+            mask_blur_style: MaskBlurStyle::Normal,
             shape,
             stroke: None,
             transform: Transform::default(),
@@ -347,6 +351,7 @@ impl Item {
     pub fn stroke(shape: Shape, spec: StrokeSpec, color: [f32; 4]) -> Self {
         Self {
             mask_blur: 0.0,
+            mask_blur_style: MaskBlurStyle::Normal,
             shape,
             stroke: Some(spec),
             transform: Transform::default(),
@@ -364,6 +369,16 @@ impl Item {
     }
 
     /// Soften this item's coverage, which is what a shadow is.
+    /// Keep only the part of the blurred coverage the style names.
+    ///
+    /// Separate from [`Self::with_mask_blur`] rather than an argument to it,
+    /// because every scene predating the styles wants the default and stating
+    /// it at each of them would say nothing.
+    pub fn with_mask_blur_style(mut self, style: MaskBlurStyle) -> Self {
+        self.mask_blur_style = style;
+        self
+    }
+
     pub fn with_mask_blur(mut self, sigma: f32) -> Self {
         self.mask_blur = sigma;
         self

@@ -156,6 +156,28 @@ impl Shader {
     }
 }
 
+/// Which part of a blurred shape survives.
+///
+/// A mask blur produces two things a picture can be made from: the shape's own
+/// coverage, and that coverage blurred. Every style here is one combination of
+/// the two, and naming them is what `dart:ui` and Skia both do -- a shadow
+/// wants the blur outside and nothing inside, a glow wants it inside, and a
+/// soft-edged solid wants the shape intact with the blur around it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum MaskBlurStyle {
+    /// The blurred coverage, and nothing else. Soft on both sides of the edge.
+    #[default]
+    Normal,
+    /// The shape at full strength, with the blur outside it.
+    Solid,
+    /// The blur outside the shape only. What a drop shadow behind an opaque
+    /// object is: the part that would be hidden is not drawn at all.
+    Outer,
+    /// The blur inside the shape only, which is an inner shadow or a glow
+    /// confined to what it lights.
+    Inner,
+}
+
 /// A function applied to what a paint drew, rather than to the color it
 /// computed.
 ///
@@ -209,6 +231,8 @@ pub enum Style {
 pub struct Paint {
     pub shader: Shader,
     pub style: Style,
+    /// Which part of the blurred shape survives. Ignored without a mask blur.
+    pub mask_blur_style: MaskBlurStyle,
     /// A function applied to what this paint drew, after the shader and any
     /// color filter.
     ///
@@ -262,6 +286,7 @@ impl Default for Paint {
             shader: Shader::Solid(Color::BLACK),
             style: Style::Fill,
             image_filter: ImageFilter::None,
+            mask_blur_style: MaskBlurStyle::default(),
             color_filter: ColorFilter::None,
             dash: None,
             mask_blur: 0.0,
@@ -379,6 +404,15 @@ impl Paint {
         if let Shader::Image { sampling: at, .. } = &mut self.shader {
             *at = sampling;
         }
+        self
+    }
+
+    /// Keep only part of the blurred shape. See [`MaskBlurStyle`].
+    ///
+    /// Ignored unless a mask blur is set, since there is nothing to take a
+    /// part of otherwise.
+    pub fn with_mask_blur_style(mut self, style: MaskBlurStyle) -> Self {
+        self.mask_blur_style = style;
         self
     }
 

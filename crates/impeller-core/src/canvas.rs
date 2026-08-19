@@ -6,7 +6,7 @@
 //! described before any of it reaches the GPU — that separation is what lets
 //! draws be batched into one pass rather than submitted one at a time.
 
-use crate::paint::{GradientStop, ImageFilter, Paint, Shader, Style};
+use crate::paint::{GradientStop, ImageFilter, MaskBlurStyle, Paint, Shader, Style};
 use crate::ramp::Ramp;
 use crate::vertices::{Sprite, VertexMode, Vertices};
 use crate::Color;
@@ -759,7 +759,7 @@ impl Canvas {
         //
         // Three deviations, matching where the shader stops taking taps, so the
         // target covers everything the blur will actually read.
-        let reach = if blur > 0.0 { (blur * 3.0).ceil() } else { 0.0 };
+        let reach = blur_reach(blur);
         let (min, max) = (min - Vec2::splat(reach), max + Vec2::splat(reach));
         let parent = self.target;
         let left = min.x.floor().max(parent.origin.x);
@@ -1229,14 +1229,84 @@ impl Canvas {
             ));
         }
         let bounds = self.filter_bounds(path, paint);
-        self.save_layer_bounds(Layer::opacity(1.0).with_blur(paint.mask_blur), bounds);
         // Without the mask, or this would open a layer inside itself forever.
         let inner = paint.clone().with_mask_blur(0.0);
-        // The result is discarded to end the borrow before restoring, and
-        // taken up again after: the layer has to be closed whether the draw
-        // inside it succeeded or not, or every later draw lands in a layer
-        // nobody composites.
-        let failure = self.draw_path(path, &inner).err();
+
+        // The blurred coverage alone is the whole picture for the default
+        // style, so it needs one layer and no second draw.
+        if paint.mask_blur_style == MaskBlurStyle::Normal {
+            self.save_layer_bounds(Layer::opacity(1.0).with_blur(paint.mask_blur), bounds);
+            // The result is discarded to end the borrow before restoring, and
+            // taken up again after: the layer has to be closed whether the
+            // draw inside it succeeded or not, or every later draw lands in a
+            // layer nobody composites.
+            let failure = self.draw_path(path, &inner).err();
+            self.restore();
+            return match failure {
+                Some(e) => Err(e),
+                None => Ok(self),
+            };
+        }
+
+        // Every other style combines the blurred coverage with the shape's
+        // own, so both have to exist at once, inside a layer that confines the
+        // combination. Drawn straight onto the target, a blend that reads the
+        // destination would reach what was already there.
+        //
+        // Which of the two is drawn first is not a matter of taste. A blend
+        // only runs where its source produces a fragment, and the shape
+        // produces none outside itself -- so a rule that has to *remove*
+        // something outside the shape cannot be written with the shape as the
+        // source. The blurred layer composites as a quad over the whole
+        // region, so it is the operand that can act everywhere, and the two
+        // rules needing that are the two where the shape goes down first.
+
+        // The outer layer holds the blur as well as the shape, and it is not
+        // itself blurred, so nothing widens it on its behalf.
+        let reach = blur_reach(paint.mask_blur);
+        let held = Rect::new(
+            bounds.left - reach,
+            bounds.top - reach,
+            bounds.right + reach,
+            bounds.bottom + reach,
+        );
+        let blurred = Layer::opacity(1.0).with_blur(paint.mask_blur);
+
+        self.save_layer_bounds(Layer::opacity(1.0), held);
+        let failure = match paint.mask_blur_style {
+            // Blur first, then the shape over it. `SrcOver` leaves the blur
+            // where the shape is not, and `DstOut` takes the shape out of it
+            // -- both of which want the destination untouched outside the
+            // shape, which is what a source that draws nothing there gives.
+            MaskBlurStyle::Solid | MaskBlurStyle::Outer => {
+                let blend = match paint.mask_blur_style {
+                    MaskBlurStyle::Solid => BlendMode::SrcOver,
+                    _ => BlendMode::DstOut,
+                };
+                self.save_layer_bounds(blurred, bounds);
+                let first = self.draw_path(path, &inner).err();
+                self.restore();
+                first.or_else(|| self.draw_path(path, &inner.with_blend(blend)).err())
+            }
+            // The shape first, and the blur composited onto it with `DstIn`.
+            // The other order is the obvious one and is wrong: outside the
+            // shape there is no fragment for `DstIn` to run on, so the blur
+            // survives exactly where this style is supposed to discard it.
+            // Compositing a layer covers the whole region, so putting the
+            // blur on that side is what makes the rule act everywhere.
+            MaskBlurStyle::Inner => {
+                let first = self.draw_path(path, &inner).err();
+                if first.is_none() {
+                    self.save_layer_bounds(blurred.with_blend(BlendMode::DstIn), bounds);
+                    let second = self.draw_path(path, &inner).err();
+                    self.restore();
+                    second
+                } else {
+                    first
+                }
+            }
+            MaskBlurStyle::Normal => unreachable!("handled above"),
+        };
         self.restore();
         match failure {
             Some(e) => Err(e),
@@ -2067,6 +2137,23 @@ fn circle_path(center: Vec2, radius: f32) -> Path {
         )
         .close();
     b.build()
+}
+
+/// How far past its content a blur of this deviation reaches.
+///
+/// Three deviations, matching where the shader stops taking taps, so a target
+/// sized by this covers everything the blur will actually read.
+///
+/// Shared rather than written twice. A bounded layer sizes its target with it,
+/// and a mask blur style that combines the blurred coverage with the shape's
+/// own has to size the layer holding both by the same rule -- which it did not
+/// at first, and the halo was cut off square at the shape's own bounds.
+fn blur_reach(sigma: f32) -> f32 {
+    if sigma > 0.0 {
+        (sigma * 3.0).ceil()
+    } else {
+        0.0
+    }
 }
 
 /// A color in the form a vertex carries one.

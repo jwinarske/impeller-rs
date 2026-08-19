@@ -146,6 +146,7 @@ fn paint_for(item: &Item, anti_alias: bool) -> Paint {
             None => Style::Fill,
         },
         mask_blur: item.mask_blur,
+        mask_blur_style: item.mask_blur_style,
         dash: item.stroke.as_ref().and_then(|spec| {
             spec.dash
                 .as_ref()
