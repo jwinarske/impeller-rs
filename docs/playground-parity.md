@@ -51,16 +51,16 @@ drifts from what it inventories is worse than none.
 | `aiks_dl_opacity_unittests.cc` | ~3 | 2 | subpass collapse |
 | `aiks_dl_blend_unittests.cc` | ~79 | 34 | framebuffer fetch, wide gamut, subpass collapse |
 | `aiks_dl_blur_unittests.cc` | ~59 | 0 | mask blur styles: inner, outer and solid |
-| `aiks_dl_vertices_unittests.cc` | ~16 | 0 | the scene model cannot describe a mesh |
-| `aiks_dl_atlas_unittests.cc` | ~15 | 0 | the scene model cannot describe a sprite batch |
+| `aiks_dl_vertices_unittests.cc` | ~16 | 10 | runtime effects, mask filters on a mesh |
+| `aiks_dl_atlas_unittests.cc` | ~15 | 5 | advanced blends per sprite, wide gamut, geometry-level cases |
 | `aiks_dl_shadow_unittests.cc` | ~30 | 0 | `drawShadow` |
 | `aiks_dl_primitive_shape_unittests.cc` | ~2 | 0 | one is a playground harness, one is a hairline skew |
 | `aiks_dl_text_unittests.cc` | — | 0 | text shaping and font parsing, out of scope |
 | `aiks_dl_runtime_effect_unittests.cc` | — | 0 | runtime effects |
 | `aiks_dl_unittests.cc` | ~39 | 0 | mostly internal optimizations and picture round-trips |
 
-The catalog holds ninety-two scenes of roughly four hundred, and the proportion
-is less interesting than which ones: the arithmetic of drawing is largely covered, and
+The catalog holds one hundred and seven scenes of roughly four hundred, and the
+proportion is less interesting than which ones: the arithmetic of drawing is largely covered, and
 what is missing is either a capability this renderer does not have or a thing
 the scene model cannot describe.
 
@@ -76,20 +76,27 @@ inner, outer and solid — where only the normal style exists. Dithering.
 Conic path segments. These are the rows of `docs/parity.md`, and the scenes
 that need them arrive when the row does.
 
-**Things the scene model cannot describe**, which is a testkit limitation and
-not a renderer one. A scene is a list of shapes with fills, so it cannot name a
-mesh or a sprite batch. Both exist in the renderer and have their own tests,
-and the playground's live scenes show them — but neither can be a plate here
-until the model can say so, which is what keeps `aiks_dl_vertices` and
-`aiks_dl_atlas` at nothing between them. That is about thirty scenes, and the
-cheapest tranche left.
+**Things the scene model could not describe.** This category is empty now, and
+what was in it is worth keeping because of how it was closed rather than that
+it was.
 
-A texture was on this list until the model learned to name one. It does not
-name a *handle*: a scene has to be writable without a device, which is what
-lets one list serve a window, a headless comparison and a board at the end of a
-cable. It says it samples an image, and the executor uploads a single fixture
-and binds it — for the scenes that ask, and allocating nothing for the ones
-that do not.
+A scene has to be writable without a device — that is what lets one list serve
+a window, a headless comparison and a board at the end of a cable — so a scene
+cannot hold a texture. It does not need to: an item says it samples an image,
+and the executor uploads a single fixture and binds it, for the scenes that ask
+and allocating nothing for the ones that do not. A mesh and a sprite batch were
+the other two, and they are their own kinds of node rather than kinds of item,
+because an item is a shape with a fill and everything that follows from that —
+a stroke, a clip built from its outline, a transform applied to its path — and
+a mesh has none of them.
+
+The lesson worth carrying is about the derivations. What a scene needs from a
+device, what tolerance it earns, whether it samples the fixture: all three are
+derived from what the scene contains rather than declared beside it, and all
+three walked its *items*. A node kind that was not an item would have been
+missed silently — a mesh using an advanced blend reported as a backend
+regression rather than as a known gap. They ask the node now, exhaustively, so
+the compiler will not let the next kind be added without a decision for each.
 
 This category was larger when it was first written, and wrongly so: it claimed
 a colour filter stated as a blend was among them. It was not. A filter is a

@@ -7,6 +7,7 @@
 
 use crate::shape::Shape;
 use glam::{Affine2, Vec2};
+use impeller_core::VertexMode;
 use impeller_geometry::stroke::{LineCap, LineJoin, StrokeStyle};
 use impeller_geometry::FillRule;
 use impeller_hal::{BlendMode, Extent2D, TileMode};
@@ -67,6 +68,53 @@ pub struct StrokeSpec {
     /// Empty for a solid stroke, which is what every scene predating dashes
     /// wants and what `new` gives.
     pub dash: Option<(Vec<f32>, f32)>,
+}
+
+/// A mesh of triangles, which is the one thing a scene draws that it did not
+/// describe as a shape.
+///
+/// Its own node rather than a kind of [`Item`], because an item is a shape
+/// with a fill and everything that follows from that -- a stroke, a clip built
+/// from its outline, a transform applied to its path. A mesh has none of them:
+/// it is the triangles, stated.
+#[derive(Debug, Clone, PartialEq)]
+pub struct MeshSpec {
+    pub mode: VertexMode,
+    pub positions: Vec<[f32; 2]>,
+    /// One per position, or empty. Multiplied into whatever the fill produced.
+    pub colors: Vec<[f32; 4]>,
+    /// One per position, or empty. Needs an image fill to read.
+    pub texture_coords: Vec<[f32; 2]>,
+    /// Three per triangle, or empty for the positions in order.
+    pub indices: Vec<u32>,
+    pub fill: Fill,
+    pub blend: BlendMode,
+    pub transform: Transform,
+}
+
+/// One piece of the fixture sheet, placed.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct SpriteSpec {
+    /// The part of the sheet to draw, in texels.
+    pub source: [f32; 4],
+    /// Where it goes, as a rotation in radians, a uniform scale, and a
+    /// translation. Stated in the terms a sprite is usually placed in rather
+    /// than as a matrix, which is what `dart:ui` restricts this call to and
+    /// what makes a scene readable.
+    pub rotate: f32,
+    pub scale: f32,
+    pub translate: [f32; 2],
+    /// Multiplied into this sprite alone. White changes nothing.
+    pub color: [f32; 4],
+}
+
+/// A batch of sprites out of the fixture sheet.
+#[derive(Debug, Clone, PartialEq)]
+pub struct AtlasSpec {
+    pub sprites: Vec<SpriteSpec>,
+    pub blend: BlendMode,
+    /// Scales every sprite.
+    pub alpha: f32,
 }
 
 /// How a scene item softens its own coverage, if it does.
@@ -430,6 +478,12 @@ pub enum Node {
     /// little more than a list. Without the indirection every node in a tree
     /// would be the size of the largest item in it.
     Draw(Box<Item>),
+    /// Triangles a scene supplies directly.
+    ///
+    /// Boxed like a drawn item and for the same reason: it carries lists.
+    Mesh(Box<MeshSpec>),
+    /// Pieces of the fixture sheet, each placed and tinted on its own.
+    Atlas(Box<AtlasSpec>),
     /// A group rendered into a target of its own and composited back.
     ///
     /// `bounds` is the region the group promises to stay inside, in the space
@@ -486,6 +540,11 @@ impl Node {
     fn items(&self) -> Box<dyn Iterator<Item = &Item> + '_> {
         match self {
             Self::Draw(item) => Box::new(std::iter::once(item.as_ref())),
+            // A mesh and a sprite batch are not items and have none. What the
+            // derivations need from them is asked for separately, by
+            // `samples_fixture` and `blends`, which are exhaustive over this
+            // enum so that a node kind cannot be added without deciding.
+            Self::Mesh(_) | Self::Atlas(_) => Box::new(std::iter::empty()),
             Self::Layer { children, .. } => Box::new(children.iter().flat_map(Node::items)),
         }
     }
@@ -493,6 +552,7 @@ impl Node {
     fn items_mut(&mut self) -> Box<dyn Iterator<Item = &mut Item> + '_> {
         match self {
             Self::Draw(item) => Box::new(std::iter::once(item.as_mut())),
+            Self::Mesh(_) | Self::Atlas(_) => Box::new(std::iter::empty()),
             Self::Layer { children, .. } => Box::new(children.iter_mut().flat_map(Node::items_mut)),
         }
     }
@@ -500,14 +560,44 @@ impl Node {
     /// Whether this subtree composites a group at all.
     fn has_layer(&self) -> bool {
         match self {
-            Self::Draw(_) => false,
+            Self::Draw(_) | Self::Mesh(_) | Self::Atlas(_) => false,
             Self::Layer { .. } => true,
+        }
+    }
+
+    /// Whether this subtree reads the fixture sheet.
+    ///
+    /// Exhaustive on purpose. The scene-level derivations used to walk items
+    /// alone, which was correct while every node was one; a node kind that
+    /// sampled a texture and was not an item would have been missed silently,
+    /// and the draw refused for naming a texture nobody supplied.
+    fn samples_fixture(&self) -> bool {
+        match self {
+            Self::Draw(item) => matches!(item.fill, Fill::Image { .. }),
+            Self::Mesh(mesh) => matches!(mesh.fill, Fill::Image { .. }),
+            // A sprite batch is pieces of the sheet by definition.
+            Self::Atlas(_) => true,
+            Self::Layer { children, .. } => children.iter().any(Node::samples_fixture),
+        }
+    }
+
+    /// Every blend mode this subtree uses, for the capability derivation.
+    fn blends(&self) -> Box<dyn Iterator<Item = BlendMode> + '_> {
+        match self {
+            Self::Draw(item) => Box::new(std::iter::once(item.blend)),
+            Self::Mesh(mesh) => Box::new(std::iter::once(mesh.blend)),
+            Self::Atlas(atlas) => Box::new(std::iter::once(atlas.blend)),
+            Self::Layer {
+                layer, children, ..
+            } => {
+                Box::new(std::iter::once(layer.blend).chain(children.iter().flat_map(Node::blends)))
+            }
         }
     }
 
     fn has_bounded_layer(&self) -> bool {
         match self {
-            Self::Draw(_) => false,
+            Self::Draw(_) | Self::Mesh(_) | Self::Atlas(_) => false,
             Self::Layer {
                 bounds, children, ..
             } => bounds.is_some() || children.iter().any(Node::has_bounded_layer),
@@ -523,7 +613,7 @@ impl Node {
     /// bounded-equals-unbounded comparison cannot be asked of these.
     fn filters_its_backdrop(&self) -> bool {
         match self {
-            Self::Draw(_) => false,
+            Self::Draw(_) | Self::Mesh(_) | Self::Atlas(_) => false,
             Self::Layer {
                 layer, children, ..
             } => layer.backdrop_blur > 0.0 || children.iter().any(Node::filters_its_backdrop),
@@ -680,8 +770,7 @@ impl Scene {
     /// that can be forgotten, and forgetting this one means a draw refused for
     /// naming a texture nobody supplied.
     pub fn samples_fixture(&self) -> bool {
-        self.items()
-            .any(|item| matches!(item.fill, Fill::Image { .. }))
+        self.items.iter().any(Node::samples_fixture)
     }
 
     /// Whether a device can render this scene at all.
@@ -700,7 +789,13 @@ impl Scene {
         if !capabilities.sample_counts.supports(self.samples) {
             return false;
         }
-        if !capabilities.advanced_blend && self.items().any(|item| item.blend.is_advanced()) {
+        if !capabilities.advanced_blend
+            && self
+                .items
+                .iter()
+                .flat_map(Node::blends)
+                .any(|b| b.is_advanced())
+        {
             return false;
         }
         true

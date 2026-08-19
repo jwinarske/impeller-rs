@@ -17,7 +17,8 @@ use crate::image::Image;
 use crate::scene::{Fill, Item, Node, Scene};
 use crate::shape::Shape;
 use impeller_core::{
-    Canvas, Color, GradientStop, Layer, Paint, Recording, Rect, Shader, Style, Vec2,
+    Affine2, Canvas, Color, GradientStop, Layer, Paint, Recording, Rect, Shader, SourceRect,
+    Sprite, Style, Vec2, Vertices,
 };
 use impeller_geometry::dash::Dash;
 use impeller_hal::{Hal, HalContext, PixelFormat, Result, TextureDescriptor};
@@ -33,13 +34,13 @@ fn stops_of(stops: &[crate::scene::Stop]) -> Vec<GradientStop> {
         .collect()
 }
 
-/// How an item is painted.
+/// The shader half of a paint.
 ///
-/// `anti_alias` comes from the scene rather than the item because multisampling
-/// is a property of the target: a canvas antialiases everything or nothing, and
-/// the scene's sample count is the scene saying which.
-fn paint_for(item: &Item, anti_alias: bool) -> Paint {
-    let shader = match &item.fill {
+/// Separate from the rest because a node that is not an item has a fill and
+/// nothing else to say: no stroke, no dash, no mask blur, no colour filter.
+/// A mesh is the case that needed it.
+fn shader_for(fill: &Fill) -> Shader {
+    match fill {
         Fill::Solid(color) => Shader::Solid(color_of(*color)),
         Fill::LinearGradient {
             start,
@@ -109,7 +110,26 @@ fn paint_for(item: &Item, anti_alias: bool) -> Paint {
             stops: stops_of(stops),
             tile: *tile,
         },
-    };
+    }
+}
+
+/// A paint from a fill alone, for the nodes that have no item to speak for
+/// them.
+fn paint_from(fill: &Fill, anti_alias: bool) -> Paint {
+    Paint {
+        shader: shader_for(fill),
+        anti_alias,
+        ..Paint::default()
+    }
+}
+
+/// How an item is painted.
+///
+/// `anti_alias` comes from the scene rather than the item because multisampling
+/// is a property of the target: a canvas antialiases everything or nothing, and
+/// the scene's sample count is the scene saying which.
+fn paint_for(item: &Item, anti_alias: bool) -> Paint {
+    let shader = shader_for(&item.fill);
     Paint {
         shader,
         color_filter: item.color_filter,
@@ -148,6 +168,67 @@ fn rect_of([left, top, right, bottom]: [f32; 4]) -> Rect {
 /// meaning depends on what came before.
 fn record_node(canvas: &mut Canvas, node: &Node, anti_alias: bool) -> Result<()> {
     match node {
+        Node::Mesh(mesh) => {
+            canvas.save();
+            canvas.concat(mesh.transform.to_affine());
+            let vertices = Vertices::full(
+                mesh.mode,
+                mesh.positions.iter().copied().map(Vec2::from).collect(),
+                mesh.texture_coords
+                    .iter()
+                    .copied()
+                    .map(Vec2::from)
+                    .collect(),
+                mesh.colors.iter().copied().map(color_of).collect(),
+                if mesh.indices.is_empty() {
+                    (0..mesh.positions.len() as u32).collect()
+                } else {
+                    mesh.indices.clone()
+                },
+            )?;
+            let mut paint = paint_from(&mesh.fill, anti_alias);
+            paint.blend = mesh.blend;
+            // Restored before the error is raised, or a mesh a device refuses
+            // would leave the canvas inside a save nobody closes and every
+            // later node in the scene inside it too.
+            let result = canvas.draw_vertices(&vertices, &paint).map(|_| ());
+            canvas.restore();
+            result?;
+        }
+        Node::Atlas(atlas) => {
+            canvas.save();
+            let sprites: Vec<Sprite> = atlas
+                .sprites
+                .iter()
+                .map(|s| {
+                    Sprite::new(
+                        SourceRect::new(
+                            s.source[0],
+                            s.source[1],
+                            s.source[2] - s.source[0],
+                            s.source[3] - s.source[1],
+                        ),
+                        Affine2::from_scale_angle_translation(
+                            Vec2::splat(s.scale),
+                            s.rotate,
+                            Vec2::from(s.translate),
+                        ),
+                    )
+                    .with_color(color_of(s.color))
+                })
+                .collect();
+            // The paint's own rectangle is never mapped through for a sprite
+            // batch -- each sprite's source rectangle says what it reads --
+            // so this only has to be a well-formed one.
+            let paint = Paint::image(crate::fixture::SLOT, Rect::new(0.0, 0.0, 1.0, 1.0))
+                .with_image_alpha(atlas.alpha)
+                .with_blend(atlas.blend);
+            let result = canvas
+                .draw_atlas(&sprites, crate::fixture::SIZE, &paint)
+                .map(|_| ());
+            canvas.restore();
+            result?;
+        }
         Node::Draw(item) => {
             canvas.save();
             canvas.concat(item.transform.to_affine());

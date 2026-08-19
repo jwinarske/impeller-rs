@@ -33,8 +33,12 @@
 //! a scene is supposed to show can find the original by its name, and a
 //! scene here with no counterpart there would be visible as one.
 
-use crate::scene::{Fill, Item, LayerSpec, Node, Scene, Stop, StrokeSpec, Transform};
+use crate::scene::{
+    AtlasSpec, Fill, Item, LayerSpec, MeshSpec, Node, Scene, SpriteSpec, Stop, StrokeSpec,
+    Transform,
+};
 use crate::shape::Shape;
+use impeller_core::VertexMode;
 use impeller_geometry::stroke::{LineCap, LineJoin};
 use impeller_geometry::FillRule;
 use impeller_hal::{BlendMode, ColorFilter, Sampling, TileMode};
@@ -64,6 +68,8 @@ pub fn catalog() -> Vec<Scene> {
     scenes.extend(opacity());
     scenes.extend(blend());
     scenes.extend(image());
+    scenes.extend(vertices());
+    scenes.extend(atlas_scenes());
     scenes
 }
 
@@ -1309,6 +1315,264 @@ fn image() -> Vec<Scene> {
                 scale: [1.3, 0.8],
                 ..Transform::default()
             })],
+        ),
+    ]
+}
+
+/// A triangle, as three corners of the plate.
+fn triangle() -> Vec<[f32; 2]> {
+    vec![[64.0, 16.0], [116.0, 108.0], [12.0, 108.0]]
+}
+
+fn mesh(name: &'static str, spec: MeshSpec) -> Scene {
+    Scene::tree(name, vec![Node::Mesh(Box::new(spec))])
+        .with_background(DARK)
+        .with_samples(4)
+}
+
+fn mesh_of(positions: Vec<[f32; 2]>, fill: Fill) -> MeshSpec {
+    MeshSpec {
+        mode: VertexMode::Triangles,
+        positions,
+        colors: Vec::new(),
+        texture_coords: Vec::new(),
+        indices: Vec::new(),
+        fill,
+        blend: BlendMode::SrcOver,
+        transform: Transform::default(),
+    }
+}
+
+/// `aiks_dl_vertices_unittests.cc`.
+fn vertices() -> Vec<Scene> {
+    let quad = vec![[16.0, 16.0], [112.0, 16.0], [112.0, 112.0], [16.0, 112.0]];
+    let corners = vec![
+        ALL_CORNERS[0],
+        ALL_CORNERS[1],
+        ALL_CORNERS[2],
+        ALL_CORNERS[3],
+    ];
+
+    vec![
+        mesh(
+            "vertices/draw-vertices-solid-color-triangles-without-indices",
+            mesh_of(triangle(), Fill::Solid(BLUE)),
+        ),
+        mesh(
+            "vertices/draw-vertices-solid-color-triangles-with-indices",
+            MeshSpec {
+                positions: quad.clone(),
+                indices: vec![0, 1, 2, 0, 2, 3],
+                ..mesh_of(Vec::new(), Fill::Solid(GREEN))
+            },
+        ),
+        mesh(
+            "vertices/can-convert-triangle-fan-to-triangles",
+            MeshSpec {
+                mode: VertexMode::TriangleFan,
+                positions: fan(),
+                ..mesh_of(Vec::new(), Fill::Solid(YELLOW))
+            },
+        ),
+        mesh(
+            "vertices/draw-vertices-linear-gradient-without-indices",
+            mesh_of(triangle(), ramp()),
+        ),
+        mesh(
+            "vertices/vertices-geometry-color-uv-position-data",
+            MeshSpec {
+                positions: quad.clone(),
+                // A colour at each corner, which no gradient describes: the
+                // four are independent and the interior is all of them at once.
+                colors: corners.clone(),
+                indices: vec![0, 1, 2, 0, 2, 3],
+                ..mesh_of(Vec::new(), Fill::Solid(WHITE))
+            },
+        ),
+        mesh(
+            "vertices/draw-vertices-premultiplies-colors",
+            MeshSpec {
+                positions: quad.clone(),
+                // Alpha varying between the corners, which is the case that
+                // tells a premultiplied interpolation from a straight one: the
+                // transparent end fades toward nothing rather than staying
+                // bright and only thinning.
+                colors: vec![
+                    [1.0, 0.3, 0.1, 1.0],
+                    [1.0, 0.3, 0.1, 0.0],
+                    [1.0, 0.3, 0.1, 0.0],
+                    [1.0, 0.3, 0.1, 1.0],
+                ],
+                indices: vec![0, 1, 2, 0, 2, 3],
+                ..mesh_of(Vec::new(), Fill::Solid(WHITE))
+            },
+        ),
+        mesh(
+            "vertices/vertices-geometry-uv-position-data",
+            MeshSpec {
+                positions: quad.clone(),
+                texture_coords: vec![[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]],
+                indices: vec![0, 1, 2, 0, 2, 3],
+                ..mesh_of(
+                    Vec::new(),
+                    sheet(SHEET, ALL, TileMode::Clamp, Sampling::Linear),
+                )
+            },
+        ),
+        mesh(
+            "vertices/draw-vertices-image-source-with-texture-coordinates",
+            MeshSpec {
+                positions: quad.clone(),
+                // Mirrored coordinates, so the sheet lands the other way round
+                // from where the geometry sits -- which is what says the
+                // coordinates were read rather than the position.
+                texture_coords: vec![[1.0, 0.0], [0.0, 0.0], [0.0, 1.0], [1.0, 1.0]],
+                indices: vec![0, 1, 2, 0, 2, 3],
+                ..mesh_of(
+                    Vec::new(),
+                    sheet(SHEET, ALL, TileMode::Clamp, Sampling::Linear),
+                )
+            },
+        ),
+        mesh(
+            "vertices/draw-vertices-image-source-with-texture-coordinates-and-color-blending",
+            MeshSpec {
+                positions: quad,
+                texture_coords: vec![[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]],
+                colors: corners,
+                indices: vec![0, 1, 2, 0, 2, 3],
+                ..mesh_of(
+                    Vec::new(),
+                    sheet(SHEET, ALL, TileMode::Clamp, Sampling::Linear),
+                )
+            },
+        ),
+        mesh(
+            "vertices/vertices-geometry-uv-position-data-with-translate",
+            MeshSpec {
+                positions: triangle(),
+                texture_coords: vec![[0.0, 0.0], [1.0, 1.0], [0.0, 1.0]],
+                transform: Transform {
+                    translate: [-18.0, 10.0],
+                    ..Transform::default()
+                },
+                ..mesh_of(
+                    Vec::new(),
+                    sheet(SHEET, ALL, TileMode::Clamp, Sampling::Linear),
+                )
+            },
+        ),
+    ]
+}
+
+/// Four colours, one per corner.
+const ALL_CORNERS: [[f32; 4]; 4] = [
+    [1.0, 0.2, 0.2, 1.0],
+    [0.2, 1.0, 0.3, 1.0],
+    [0.3, 0.4, 1.0, 1.0],
+    [1.0, 0.9, 0.2, 1.0],
+];
+
+/// A fan around the plate's centre.
+fn fan() -> Vec<[f32; 2]> {
+    let mut points = vec![[64.0, 64.0]];
+    for i in 0..=8 {
+        let a = i as f32 / 8.0 * std::f32::consts::TAU;
+        points.push([64.0 + 48.0 * a.cos(), 64.0 + 48.0 * a.sin()]);
+    }
+    points
+}
+
+fn atlas(name: &'static str, spec: AtlasSpec) -> Scene {
+    Scene::tree(name, vec![Node::Atlas(Box::new(spec))])
+        .with_background(DARK)
+        .with_samples(4)
+}
+
+/// One sprite per quadrant of the sheet, laid out in a row.
+fn quadrants(color: [f32; 4]) -> Vec<SpriteSpec> {
+    (0..4)
+        .map(|i| {
+            let (sx, sy) = ((i % 2) as f32 * 4.0, (i / 2) as f32 * 4.0);
+            SpriteSpec {
+                source: [sx, sy, sx + 4.0, sy + 4.0],
+                rotate: 0.0,
+                scale: 6.0,
+                translate: [10.0 + i as f32 * 28.0, 52.0],
+                color,
+            }
+        })
+        .collect()
+}
+
+/// `aiks_dl_atlas_unittests.cc`.
+fn atlas_scenes() -> Vec<Scene> {
+    vec![
+        atlas(
+            "atlas/draw-atlas-no-color",
+            AtlasSpec {
+                sprites: quadrants(WHITE),
+                blend: BlendMode::SrcOver,
+                alpha: 1.0,
+            },
+        ),
+        atlas(
+            "atlas/draw-atlas-with-color-simple",
+            AtlasSpec {
+                sprites: (0..4)
+                    .map(|i| SpriteSpec {
+                        color: ALL_CORNERS[i],
+                        ..quadrants(WHITE)[i]
+                    })
+                    .collect(),
+                blend: BlendMode::SrcOver,
+                alpha: 1.0,
+            },
+        ),
+        atlas(
+            "atlas/draw-atlas-with-opacity",
+            AtlasSpec {
+                sprites: quadrants(WHITE),
+                blend: BlendMode::SrcOver,
+                alpha: 0.4,
+            },
+        ),
+        atlas(
+            "atlas/draw-atlas-no-color-full-size",
+            AtlasSpec {
+                sprites: vec![SpriteSpec {
+                    source: [0.0, 0.0, 8.0, 8.0],
+                    rotate: 0.0,
+                    scale: 12.0,
+                    translate: [16.0, 16.0],
+                    color: WHITE,
+                }],
+                blend: BlendMode::SrcOver,
+                alpha: 1.0,
+            },
+        ),
+        atlas(
+            "atlas/draw-atlas-advanced-and-transform",
+            AtlasSpec {
+                sprites: (0..6)
+                    .map(|i| {
+                        let t = i as f32 / 6.0;
+                        let turn = t * std::f32::consts::TAU;
+                        SpriteSpec {
+                            source: [0.0, 0.0, 4.0, 4.0],
+                            rotate: turn,
+                            scale: 5.0,
+                            translate: [
+                                64.0 + 34.0 * turn.cos() - 10.0,
+                                64.0 + 34.0 * turn.sin() - 10.0,
+                            ],
+                            color: WHITE,
+                        }
+                    })
+                    .collect(),
+                blend: BlendMode::SrcOver,
+                alpha: 1.0,
+            },
         ),
     ]
 }

@@ -169,7 +169,14 @@ fn spell(n: usize) -> String {
         0..=19 => ONES[n].to_owned(),
         20..=99 if n % 10 == 0 => TENS[n / 10].to_owned(),
         20..=99 => format!("{}-{}", TENS[n / 10], ONES[n % 10]),
-        _ => panic!("the table is not expected to grow past ninety-nine rows"),
+        // Hundreds arrived when the catalog passed a hundred plates, which the
+        // parity table alone would never have done. The panic below was worded
+        // for that table and was reached by the other document -- a reminder
+        // that a helper stops being about the thing it was written for the
+        // moment a second caller uses it.
+        100..=999 if n % 100 == 0 => format!("{} hundred", ONES[n / 100]),
+        100..=999 => format!("{} hundred and {}", ONES[n / 100], spell(n % 100)),
+        _ => panic!("no document here counts past nine hundred and ninety-nine"),
     }
 }
 
