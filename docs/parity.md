@@ -89,7 +89,7 @@ reason.
 | `drawDRRect` | no | | |
 | `drawShadow` | no | — the elevation-to-shadow rule, not just a blurred shape | |
 | `drawRSuperellipse` | no | | |
-| `drawPicture` | no | — no nested recordings | |
+| `drawPicture` | no | — a recording here is tessellated, not a command list; see below | |
 | `clipRect` | yes | `clip_rect` | `clipped-circle`, `shape-clip-and-scissor-together` |
 | `clipPath` | yes | `clip_path` | `clip-varies-between-draws`, `shape-clipped-fill` |
 | `clipRRect` | via | `clip_path` of `Rect::to_rounded_path` | |
@@ -165,10 +165,22 @@ build them:
    matrix alone is twenty floats. Check whether a field is paying for its width
    before concluding a limit has been reached; that is not an argument against
    changing a mechanism when it has to change.
-2. **`drawPicture`**, which needs nested recordings. The pass model would have
-   opinions about it: a recording drawn inside another arrives with its own
-   passes and its own texture table, and merging those is a question about
-   numbering slots rather than about pixels.
+2. **`drawPicture`**, which is a smaller feature here than it is in Skia and
+   worth understanding before anyone plans it. An `SkPicture` is a command
+   list, so replaying one under a new transform re-runs the commands and
+   re-tessellates. A `Recording` here is already tessellated: paths were
+   flattened at a tolerance chosen from the transform in force when they were
+   recorded, and both the vertices and the materials are in clip space.
+
+   Replaying one under another transform is mechanically possible — the
+   composite is affine, so clip-space positions and each material's own
+   geometry can be carried through it — but the flattening cannot be undone.
+   A recording magnified shows the polygon it was flattened to. So this would
+   be a convenience for composing scenes at the scale they were recorded at,
+   not the reuse optimization the same call is elsewhere, and a caller who
+   wants that should re-record. The pass model has the other half of the
+   question: a nested recording arrives with its own passes and its own
+   texture table, and merging those is about numbering slots.
 3. **Runtime effects** — user fragment shaders. The largest by far: it needs a
    shader pipeline that compiles at runtime rather than at build time, which is
    a different arrangement from the one here.

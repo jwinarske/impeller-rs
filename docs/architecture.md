@@ -460,6 +460,36 @@ the generated source back to confirm.
 The material is still 32 floats. The mechanism changed; the size should not,
 until a material needs it.
 
+**A recording is tessellated geometry, not a command list.** Worth stating
+because the name suggests otherwise and because it decides what nesting one
+inside another could mean. By the time a draw reaches a batch its path has been
+flattened -- at a tolerance taken from the scale of the transform then in force
+-- and its vertices and its material are both in clip space. Nothing upstream
+of that survives.
+
+Two consequences. Replaying a recording under a different transform is possible
+in principle, since the composite is affine and both the positions and each
+material's geometry could be carried through it, but the flattening cannot be
+undone: magnified, a curve shows the polygon it was flattened to. And a
+recording is not a cache of drawing commands, so it cannot be re-rendered at a
+new resolution without being recorded again. That is the trade for having no
+retained state anywhere below the canvas, and it is the right one here -- but
+it is the reason `drawPicture` would be a convenience rather than the reuse it
+is in a command-list renderer.
+
+**A batch merges adjacent draws that differ in nothing.** Two draws with the
+same material, filter, blend, clip and stencil are one draw over a longer index
+range: their indices were appended to the same buffer, so extending the first
+range covers both, and the triangles rasterize in the same order either way.
+That last part is what makes it safe under painter's-algorithm ordering, where
+two overlapping shapes must not trade places.
+
+Adjacent only. Sorting draws to create more of these is a different decision
+with a different safety argument -- it needs overlap analysis or a depth buffer
+-- and this one needs none, because the sequence is untouched. The check that
+merging changed nothing is that rendering each draw as its own submission gives
+the same pixels, which is a path that never merges anything.
+
 **A gradient with more stops than the material carries is tabulated rather than
 truncated.** Four fit, which is almost every real gradient and costs no texture;
 past that the recorder evaluates the ramp into a small image and the shader

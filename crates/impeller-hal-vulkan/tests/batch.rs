@@ -164,20 +164,60 @@ fn mixed_blend_modes_compose_the_same_way_in_one_pass() {
 fn a_batch_binds_a_pipeline_only_when_it_changes() {
     let mut batch = Batch::new();
     let verts = band(-1.0, 1.0);
-    for blend in [
+    // A different colour each time, so no two of these merge into one draw.
+    // With identical draws the count would collapse to the number of binds and
+    // this test would be comparing a number with itself.
+    for (i, blend) in [
         BlendMode::Src,
         BlendMode::Src,
         BlendMode::Src,
         BlendMode::SrcOver,
         BlendMode::Src,
-    ] {
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let shade = i as f32 / 8.0;
         batch
-            .push(&verts, &QUAD, Material::solid([1.0; 4]), blend)
+            .push(&verts, &QUAD, Material::solid([shade; 4]), blend)
             .expect("push");
     }
     // The saving batching exists for: five draws, three binds.
     assert_eq!(batch.draw_count(), 5);
     assert_eq!(batch.pipeline_binds(), 3);
+}
+
+#[test]
+fn draws_that_differ_in_nothing_become_one_and_draw_the_same_picture() {
+    // Merging changes how many times a backend is asked to draw, not what it
+    // draws. Rendering each draw as its own submission is the reference: that
+    // path never merges anything, so agreeing with it is the claim.
+    //
+    // The two bands overlap and are translucent, so the order they composite
+    // in is visible in the overlap -- which is the property merging must not
+    // disturb, since two draws sharing everything are still two draws whose
+    // sequence decides what ends up on top.
+    let Some(mut ctx) = context() else { return };
+    let scene = Scene {
+        draws: vec![
+            (band(-1.0, 0.2), [1.0, 0.4, 0.2, 0.5], BlendMode::SrcOver),
+            (band(-0.2, 1.0), [1.0, 0.4, 0.2, 0.5], BlendMode::SrcOver),
+        ],
+    };
+
+    let mut batch = Batch::new();
+    for (verts, color, blend) in &scene.draws {
+        batch
+            .push(verts, &QUAD, Material::solid(*color), *blend)
+            .expect("push");
+    }
+    assert_eq!(batch.draw_count(), 1, "two alike draws should be one");
+
+    assert_eq!(
+        scene.batched(&mut ctx),
+        scene.separately(&mut ctx),
+        "merging two draws changed the picture"
+    );
 }
 
 #[test]

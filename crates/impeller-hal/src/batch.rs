@@ -340,6 +340,30 @@ impl Batch {
 
         self.vertices.extend_from_slice(vertices);
         self.indices.extend(indices.iter().map(|i| i + base));
+
+        // A draw that differs from the one before it in nothing a backend can
+        // set is not a second draw. Its indices were just appended to the same
+        // buffer, so extending the previous range covers both, and the
+        // triangles are rasterized in the same order either way -- which is
+        // what makes this safe under painter's-algorithm ordering, where two
+        // overlapping shapes must not trade places.
+        //
+        // Adjacent only, never sorted. Reordering to create more of these is a
+        // different decision with a different safety argument, and this one
+        // needs none: the sequence is untouched.
+        if let Some(last) = self.draws.last_mut() {
+            if last.first_index + last.index_count == first_index
+                && last.material == material
+                && last.filter == filter
+                && last.blend == blend
+                && last.clip == clip
+                && last.stencil == stencil
+            {
+                last.index_count += indices.len() as u32;
+                return Ok(());
+            }
+        }
+
         self.draws.push(BatchDraw {
             filter,
             first_index,
@@ -477,11 +501,14 @@ mod tests {
     #[test]
     fn indices_are_rebased_onto_the_shared_buffer() {
         let mut batch = Batch::new();
+        // Two colors, so the draws do not merge and the second one's own
+        // range is visible. What is being checked is the rebasing, which a
+        // merged pair would hide behind a single range covering both.
         batch
             .push(&TRI, &[0, 1, 2], Material::solid([1.0; 4]), BlendMode::Src)
             .unwrap();
         batch
-            .push(&TRI, &[0, 1, 2], Material::solid([1.0; 4]), BlendMode::Src)
+            .push(&TRI, &[0, 1, 2], Material::solid([0.5; 4]), BlendMode::Src)
             .unwrap();
 
         // The second draw's indices must point at its own vertices, not the
@@ -493,17 +520,51 @@ mod tests {
     }
 
     #[test]
+    fn a_draw_that_differs_from_the_one_before_it_in_nothing_is_not_a_second_draw() {
+        let mut batch = Batch::new();
+        for _ in 0..4 {
+            batch
+                .push(&TRI, &[0, 1, 2], Material::solid([1.0; 4]), BlendMode::Src)
+                .unwrap();
+        }
+        assert_eq!(batch.draw_count(), 1, "four alike draws should be one");
+        // All four triangles are still there, and still in order: merging
+        // changes how many times a backend is asked to draw, not what it
+        // draws.
+        assert_eq!(batch.indices, vec![0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]);
+        assert_eq!(batch.draws[0].index_count, 12);
+
+        // A change in any one thing a backend sets ends the run.
+        batch
+            .push(
+                &TRI,
+                &[0, 1, 2],
+                Material::solid([1.0; 4]),
+                BlendMode::SrcOver,
+            )
+            .unwrap();
+        assert_eq!(batch.draw_count(), 2);
+    }
+
+    #[test]
     fn pipeline_binds_count_transitions_not_draws() {
         let mut batch = Batch::new();
-        for blend in [
+        // A different color each time, so no two draws merge and the count
+        // this is about -- pipeline binds against draws -- stays a real
+        // distinction rather than one merging has already collapsed.
+        for (i, blend) in [
             BlendMode::Src,
             BlendMode::Src,
             BlendMode::SrcOver,
             BlendMode::SrcOver,
             BlendMode::Src,
-        ] {
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let shade = i as f32 / 8.0;
             batch
-                .push(&TRI, &[0, 1, 2], Material::solid([1.0; 4]), blend)
+                .push(&TRI, &[0, 1, 2], Material::solid([shade; 4]), blend)
                 .unwrap();
         }
         // Five draws, three runs of like pipelines.

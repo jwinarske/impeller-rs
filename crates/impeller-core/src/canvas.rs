@@ -1578,10 +1578,14 @@ impl Canvas {
     /// coordinates its corners read. A caller assembling that themselves has
     /// four chances per sprite to transpose an axis.
     ///
-    /// One draw for the whole batch, which is the entire point of the call: a
-    /// hundred sprites from one sheet differ only in their vertices, so they
-    /// have no reason to be a hundred draws. Anything that would split them --
-    /// a different sheet, a different paint -- is a second call.
+    /// One draw for the whole batch: a hundred sprites from one sheet differ
+    /// only in their vertices, so they have no reason to be a hundred draws.
+    /// Anything that would split them -- a different sheet, a different paint
+    /// -- is a second call.
+    ///
+    /// A loop over [`Self::draw_vertices`] would end up as one draw too, since
+    /// a batch merges adjacent draws that differ in nothing. What this saves
+    /// is the per-sprite arithmetic rather than the draw calls.
     ///
     /// `sheet` is the size of the uploaded texture in texels, which the paint
     /// does not carry: a recording is built without touching a device and has

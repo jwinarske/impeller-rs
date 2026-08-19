@@ -5491,9 +5491,11 @@ fn an_atlas_draws_each_sprite_from_the_part_of_the_sheet_it_named() {
 
 #[test]
 fn an_atlas_is_one_draw_however_many_sprites_it_holds() {
-    // The reason the call exists rather than being left to a caller with a
-    // loop. Four sprites drawn one at a time are four draws and four pipeline
-    // bindings; here they differ only in their vertices, so they are one.
+    // Four sprites, one draw. This was the whole reason the call existed when
+    // it was written: a loop over `draw_vertices` was four draws then. Batches
+    // merge adjacent draws that differ in nothing now, so that loop would also
+    // come to one -- what the call still saves is building each sprite's quad
+    // and its coordinates, which is where the axes get transposed.
     let mut canvas = Canvas::new(SIZE);
     canvas
         .draw_atlas(
