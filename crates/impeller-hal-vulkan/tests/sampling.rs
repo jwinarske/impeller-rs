@@ -52,6 +52,7 @@ fn image_material() -> Material {
         alpha: 1.0,
         tile: TileMode::Clamp,
         source: [0.0, 0.0, 1.0, 1.0],
+        tint: [1.0, 1.0, 1.0, 1.0],
     }
 }
 

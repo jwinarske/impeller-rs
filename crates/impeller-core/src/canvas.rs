@@ -807,6 +807,7 @@ impl Canvas {
                 alpha,
                 tile,
                 source,
+                tint,
             } => {
                 // Texture coordinates run from zero to one across the
                 // destination rectangle, so the mapping is: undo the transform
@@ -848,6 +849,7 @@ impl Canvas {
                     slot: self.slot_for(TextureSource::Image(*slot)),
                     alpha: *alpha,
                     source: [source.left, source.top, source.right, source.bottom],
+                    tint: tint.to_array(),
                     tile: *tile,
                 }
             }
@@ -1274,6 +1276,7 @@ impl Canvas {
             alpha: frame.paint.alpha,
             tile: TileMode::Clamp,
             source: [0.0, 0.0, 1.0, 1.0],
+            tint: [1.0, 1.0, 1.0, 1.0],
         };
         let paint = RenderPaint {
             material,

@@ -128,9 +128,11 @@ vec4 sample_image(vec2 clip_1) {
             texel = vec4(0.0);
         }
     }
-    vec4 _e84 = texel;
-    float _e88 = _push_constant_binding_fs.geometry.z;
-    return (_e84 * _e88);
+    vec4 tint = _push_constant_binding_fs.stops[1];
+    vec4 premultiplied = vec4((tint.xyz * tint.w), tint.w);
+    vec4 _e93 = texel;
+    float _e98 = _push_constant_binding_fs.geometry.z;
+    return ((_e93 * premultiplied) * _e98);
 }
 
 float coverage_of(float distance_, float per_pixel, float width) {
@@ -169,9 +171,9 @@ vec4 rounded_rect_coverage(vec2 clip_2) {
     float width_2 = length(gradient);
     float _e25 = _push_constant_binding_fs.params.w;
     float _e26 = coverage_of(_e15, max(width_2, 1e-6), _e25);
-    vec4 tint = _push_constant_binding_fs.stops[0];
-    float alpha = (tint.w * _e26);
-    return vec4((tint.xyz * alpha), alpha);
+    vec4 tint_1 = _push_constant_binding_fs.stops[0];
+    float alpha = (tint_1.w * _e26);
+    return vec4((tint_1.xyz * alpha), alpha);
 }
 
 vec4 ellipse_coverage(vec2 clip_3) {
@@ -195,9 +197,9 @@ vec4 ellipse_coverage(vec2 clip_3) {
     }
     float _e37 = stroke;
     float _e38 = coverage_of(implicit, per_pixel_1, _e37);
-    vec4 tint_1 = _push_constant_binding_fs.stops[0];
-    float alpha_1 = (tint_1.w * _e38);
-    return vec4((tint_1.xyz * alpha_1), alpha_1);
+    vec4 tint_2 = _push_constant_binding_fs.stops[0];
+    float alpha_1 = (tint_2.w * _e38);
+    return vec4((tint_2.xyz * alpha_1), alpha_1);
 }
 
 vec4 blur_along_axis(vec2 clip_4) {
@@ -300,9 +302,9 @@ void main() {
     if ((kind > 4.5)) {
         vec4 _e119 = textureLod(_group_0_binding_0_fs, vec2(in_.uv), 0.0);
         float coverage = _e119.x;
-        vec4 tint_2 = _push_constant_binding_fs.stops[0];
-        float alpha_2 = (tint_2.w * coverage);
-        _fs2p_location0 = vec4((tint_2.xyz * alpha_2), alpha_2);
+        vec4 tint_3 = _push_constant_binding_fs.stops[0];
+        float alpha_2 = (tint_3.w * coverage);
+        _fs2p_location0 = vec4((tint_3.xyz * alpha_2), alpha_2);
         return;
     }
     vec4 _e130 = color;

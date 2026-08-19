@@ -2232,6 +2232,87 @@ fn a_gradient_with_many_stops_agrees_with_one_that_fits() {
 }
 
 #[test]
+fn a_tint_recolors_an_image_and_keeps_it_premultiplied() {
+    let Some(mut ctx) = context() else { return };
+    // The reason a tint exists: one monochrome sheet, every state's color. The
+    // image here is white at full and half alpha, which is what an antialiased
+    // icon's interior and edge look like, and the two together are what catches
+    // a tint that multiplies color without accounting for its own alpha.
+    let size = Extent2D::new(2, 1);
+    let mut icon = vec![0u8; 2 * 4];
+    icon[0..4].copy_from_slice(&[255, 255, 255, 255]);
+    // Premultiplied: half alpha means half color too.
+    icon[4..8].copy_from_slice(&[128, 128, 128, 128]);
+    let mut image = ctx
+        .create_image(size, PixelFormat::Rgba8Unorm)
+        .expect("image");
+    ctx.write_image(&mut image, &icon).expect("upload");
+
+    let draw = |ctx: &mut Context, image: &_, tint: Color, texel: f32| {
+        let mut canvas = Canvas::new(SIZE);
+        // Transparent rather than opaque black, so what comes back is the
+        // source's own premultiplied color. Over an opaque background the
+        // destination's alpha survives compositing and the result reads 255
+        // whatever the source did, which says nothing about the tint -- the
+        // first version of this test asserted on exactly that number.
+        canvas.clear(Color::linear(0.0, 0.0, 0.0, 0.0));
+        canvas
+            .draw_rect(
+                Rect::from_size(128.0, 128.0),
+                &Paint::image(0, Rect::from_size(128.0, 128.0))
+                    .with_source_pixels(Rect::new(texel, 0.0, texel + 1.0, 1.0), size)
+                    .with_tint(tint)
+                    .with_anti_alias(false),
+            )
+            .expect("icon");
+        let mut surface = ctx
+            .create_surface(SIZE, PixelFormat::Rgba8Unorm)
+            .expect("surface");
+        ctx.draw_with_images(&mut surface, &canvas.finish(), &[image])
+            .expect("draw");
+        let pixels = ctx.read(&mut surface).expect("read");
+        ctx.destroy_surface(surface);
+        pixel(&pixels, 64, 64)
+    };
+
+    // White is the identity, so an image that never mentions a tint is
+    // unchanged by having one.
+    let plain = draw(&mut ctx, &image, Color::WHITE, 0.0);
+    assert_eq!(
+        plain,
+        [255, 255, 255, 255],
+        "a white tint changed the image"
+    );
+
+    // A red tint on the opaque texel gives red at full alpha.
+    let red = draw(&mut ctx, &image, Color::linear(1.0, 0.0, 0.0, 1.0), 0.0);
+    assert_eq!(red, [255, 0, 0, 255], "an opaque texel tinted red");
+
+    // The same tint on the half-covered texel gives red at half alpha, and --
+    // this is the part worth asserting -- its color does not exceed its alpha,
+    // which is what premultiplied means and what a tint applied without regard
+    // to its own alpha would break.
+    let edge = draw(&mut ctx, &image, Color::linear(1.0, 0.0, 0.0, 1.0), 1.0);
+    assert!(
+        edge[0].abs_diff(128) <= 2 && edge[3].abs_diff(128) <= 2,
+        "a tinted half-covered texel came back {edge:?}"
+    );
+    assert!(
+        edge[0] <= edge[3] + 1,
+        "the tint left color above alpha, so the result is not premultiplied: {edge:?}"
+    );
+
+    // A tint carrying its own alpha scales coverage as well as color, which is
+    // what makes it a generalization of the alpha setting rather than a rival.
+    let faded = draw(&mut ctx, &image, Color::linear(1.0, 0.0, 0.0, 0.5), 0.0);
+    assert!(
+        faded[0].abs_diff(128) <= 2 && faded[3].abs_diff(128) <= 2,
+        "a half-alpha tint came back {faded:?}"
+    );
+    ctx.destroy_image(image);
+}
+
+#[test]
 fn a_sprite_can_be_drawn_from_a_sheet_by_naming_its_texels() {
     let Some(mut ctx) = context() else { return };
     // What a sprite sheet is for, through the API a caller actually uses: they

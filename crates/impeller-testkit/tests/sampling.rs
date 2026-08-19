@@ -65,6 +65,7 @@ fn full_target_mapping() -> Material {
         alpha: 1.0,
         tile: TileMode::Clamp,
         source: [0.0, 0.0, 1.0, 1.0],
+        tint: [1.0, 1.0, 1.0, 1.0],
     }
 }
 
@@ -250,6 +251,7 @@ fn a_source_rectangle_draws_only_that_part_of_the_image() {
         alpha: 1.0,
         tile: TileMode::Clamp,
         source,
+        tint: [1.0, 1.0, 1.0, 1.0],
     };
 
     for (name, source, want) in [
@@ -297,6 +299,7 @@ fn a_repeated_source_rectangle_tiles_the_piece_rather_than_the_sheet() {
             alpha: 1.0,
             tile: TileMode::Repeat,
             source: [0.0, 0.0, 0.5, 0.5],
+            tint: [1.0, 1.0, 1.0, 1.0],
         },
     );
     // Every repetition is that one quadrant, so the whole target is its color.
@@ -323,6 +326,7 @@ fn the_tile_modes_differ_outside_the_image() {
         alpha: 1.0,
         tile,
         source: [0.0, 0.0, 1.0, 1.0],
+        tint: [1.0, 1.0, 1.0, 1.0],
     };
 
     let clamp = render::<VulkanHal>(&mut ctx, quarter(TileMode::Clamp));
@@ -467,6 +471,7 @@ fn a_rendered_target_can_be_sampled_by_a_later_pass() {
                 alpha: 1.0,
                 tile: TileMode::Clamp,
                 source: [0.0, 0.0, 1.0, 1.0],
+                tint: [1.0, 1.0, 1.0, 1.0],
             },
             BlendMode::Src,
         )

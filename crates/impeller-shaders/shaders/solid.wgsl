@@ -222,7 +222,14 @@ fn sample_image(clip: vec2<f32>) -> vec4<f32> {
             texel = vec4<f32>(0.0);
         }
     }
-    return texel * paint.geometry.z;
+    // The tint, stated straight and premultiplied here so it can scale a texel
+    // that already is: the color is multiplied by the tint's alpha as well as
+    // by its color, which is what keeps the product premultiplied instead of
+    // merely close. A white opaque tint is the identity, which is what every
+    // image that never mentions one carries.
+    let tint = paint.stops[1];
+    let premultiplied = vec4<f32>(tint.rgb * tint.a, tint.a);
+    return texel * premultiplied * paint.geometry.z;
 }
 
 /// Narrow a field to its own outline, where the paint asked for one.

@@ -78,6 +78,8 @@ pub enum Shader {
         /// with [`Paint::with_source_pixels`] if you would rather state it in
         /// texels and hand over the size you uploaded.
         source: Rect,
+        /// Multiplies the sampled color. White changes nothing.
+        tint: Color,
     },
     SweepGradient {
         center: Vec2,
@@ -268,6 +270,7 @@ impl Paint {
                 alpha: 1.0,
                 tile: TileMode::default(),
                 source: Rect::new(0.0, 0.0, 1.0, 1.0),
+                tint: Color::WHITE,
             },
             ..Default::default()
         }
@@ -321,6 +324,22 @@ impl Paint {
             source.right / w,
             source.bottom / h,
         ))
+    }
+
+    /// Multiply an image paint's sampled color. Ignored by other paints.
+    ///
+    /// What turns one monochrome icon sheet into every state a control has:
+    /// upload the shapes once as white on transparent, and tint per draw. A
+    /// white tint is the identity, which is what an image that never mentions
+    /// one already carries.
+    ///
+    /// Composes with everything else on the paint, so a tinted sprite from a
+    /// sheet is one call for the piece and one for the color.
+    pub fn with_tint(mut self, tint: Color) -> Self {
+        if let Shader::Image { tint: at, .. } = &mut self.shader {
+            *at = tint;
+        }
+        self
     }
 
     /// Scale an image paint's sampled color. Ignored by other paints.

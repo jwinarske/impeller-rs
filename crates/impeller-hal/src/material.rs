@@ -235,6 +235,20 @@ pub enum Material {
         /// selected piece rather than the whole sheet -- which is the only
         /// reading of "tile this sprite" that means anything.
         source: [f32; 4],
+        /// Straight color the sampled texel is multiplied by; white changes
+        /// nothing.
+        ///
+        /// What turns one monochrome icon sheet into every state a control has.
+        /// A generalization of `alpha` rather than a rival to it: a tint of
+        /// `[1, 1, 1, a]` is exactly that scaling, and both are applied because
+        /// removing the narrower one would break callers for no gain.
+        ///
+        /// Straight rather than premultiplied because that is how a caller
+        /// states a color, and the shader premultiplies it before multiplying a
+        /// texel that already is -- scaling color by the tint's alpha as well,
+        /// which is what keeps the result premultiplied rather than merely
+        /// close to it.
+        tint: [f32; 4],
     },
     /// A rounded rectangle evaluated per fragment rather than tessellated.
     ///
@@ -510,12 +524,14 @@ impl Material {
             alpha,
             tile,
             source,
+            tint,
             ..
         } = self
         {
-            // Into the stop colors, which an image has none of. Four floats
+            // Into the stop colors, which an image has none of. Eight floats
             // that would otherwise travel as zeros on every image draw.
             out[layout::STOPS..layout::STOPS + 4].copy_from_slice(source);
+            out[layout::STOPS + 4..layout::STOPS + 8].copy_from_slice(tint);
             out[layout::GEOMETRY] = origin[0];
             out[layout::GEOMETRY + 1] = origin[1];
             out[layout::GEOMETRY + 2] = *alpha;
