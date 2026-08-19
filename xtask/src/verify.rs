@@ -47,6 +47,11 @@ pub struct Outcome {
     /// and the panic message is the difference between a fix and another push
     /// to find out. Both were learned that way.
     pub failures: Vec<Failure>,
+    /// Test binaries whose summary line never arrived.
+    ///
+    /// Non-zero means the reading of the run is incomplete, whatever the
+    /// counts say -- see the note in `parse`.
+    pub lost: usize,
     /// Where the harness's whole output was written, when it could be.
     pub log: Option<String>,
     pub skips: Vec<Skip>,
@@ -87,6 +92,7 @@ pub fn run(extra: &[String]) -> Outcome {
         Err(e) => {
             eprintln!("could not run the suite: {e}");
             return Outcome {
+                lost: 0,
                 passed: 0,
                 failed: 0,
                 failures: Vec::new(),
@@ -130,6 +136,20 @@ pub fn run(extra: &[String]) -> Outcome {
 fn parse(text: &str, broke: bool) -> Outcome {
     let mut passed = 0;
     let mut failed = 0;
+    // Every test binary cargo starts, and every summary line one of them
+    // printed. They have to match.
+    //
+    // Counting them is not pedantry. Test binaries run in parallel and write
+    // to one pipe, so a line can be cut in half by another binary's output --
+    // and a summary line lost that way takes a whole binary's tally with it,
+    // silently. That happened: one run of a tree that has six hundred and
+    // forty-one tests reported six hundred and twenty-nine, and the run either
+    // side of it reported the right number. An undercount is the harmless
+    // version. The same loss on a binary that *failed* would report no
+    // failures at all, which is a false pass, and this is what makes that
+    // impossible to miss.
+    let mut binaries = 0usize;
+    let mut summaries = 0usize;
     let mut failures: Vec<Failure> = Vec::new();
     // Collected separately and joined afterwards, because the two are not in
     // the order they read in. Under `--nocapture` a panic is written when it
@@ -197,7 +217,15 @@ fn parse(text: &str, broke: bool) -> Outcome {
                 }
             }
         }
+        // `cargo test` announces each binary before running it. Doc-test runs
+        // announce themselves differently and print a summary too, so both
+        // forms count.
+        let trimmed = line.trim_start();
+        if trimmed.starts_with("Running ") || trimmed.starts_with("Doc-tests ") {
+            binaries += 1;
+        }
         if let Some(rest) = line.trim().strip_prefix("test result: ") {
+            summaries += 1;
             // "ok. 12 passed; 0 failed; ..."
             let mut fields = rest.split_whitespace();
             let _verdict = fields.next();
@@ -223,10 +251,15 @@ fn parse(text: &str, broke: bool) -> Outcome {
     }
     reasons.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
 
+    // Reported as a break rather than as a failure, because that is what it
+    // is: the run may have been fine and the reading of it was not, and the
+    // two want different responses.
+    let broke = broke || summaries < binaries;
     Outcome {
         passed,
         failed,
         failures,
+        lost: binaries.saturating_sub(summaries),
         log: None,
         skips: reasons
             .into_iter()
@@ -242,6 +275,15 @@ pub fn text(outcome: &Outcome) -> String {
         "{} passed, {} failed\n",
         outcome.passed, outcome.failed
     ));
+    if outcome.lost > 0 {
+        out.push_str(&format!(
+            "    {} test binar{} said nothing at all, so this count is short by \
+             however many tests they held -- and would be short by their \
+             failures too.\n",
+            outcome.lost,
+            if outcome.lost == 1 { "y" } else { "ies" }
+        ));
+    }
     for failure in &outcome.failures {
         out.push_str(&format!("    FAILED  {}\n", failure.name));
         if failure.detail.is_empty() {
@@ -372,5 +414,48 @@ test result: FAILED. 1 passed; 1 failed; 0 ignored; 0 measured; 1 filtered out;
         let outcome = parse(text, false);
         assert_eq!(outcome.skips.len(), 1, "one reason, two machines");
         assert_eq!(outcome.skips[0].count, 2);
+    }
+}
+
+#[cfg(test)]
+mod lost_summary_tests {
+    use super::*;
+
+    #[test]
+    fn a_binary_whose_summary_never_arrived_is_reported_rather_than_subtracted() {
+        // Two binaries announced, one summary printed -- which is what a line
+        // cut in half by another binary's output leaves behind. The count that
+        // survives is honest about being partial rather than quietly smaller.
+        let text = "\
+     Running tests/one.rs (target/debug/deps/one)
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out;
+     Running tests/two.rs (target/debug/deps/two)
+";
+        let outcome = parse(text, false);
+        assert_eq!(outcome.passed, 4);
+        assert_eq!(outcome.lost, 1);
+        assert!(
+            outcome.broke,
+            "an unreadable run must not be reported as a clean one"
+        );
+        assert!(text_of(&outcome).contains("said nothing at all"));
+    }
+
+    #[test]
+    fn a_complete_run_reports_nothing_lost() {
+        let text = "\
+     Running tests/one.rs (target/debug/deps/one)
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out;
+     Doc-tests impeller
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out;
+";
+        let outcome = parse(text, false);
+        assert_eq!(outcome.passed, 5);
+        assert_eq!(outcome.lost, 0);
+        assert!(!outcome.broke);
+    }
+
+    fn text_of(outcome: &Outcome) -> String {
+        super::text(outcome)
     }
 }

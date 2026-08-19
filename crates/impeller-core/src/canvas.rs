@@ -1448,6 +1448,98 @@ impl Canvas {
     /// its side has no straight edge left, and the field reduces exactly to the
     /// distance from the center less the radius. So a circle costs two
     /// triangles and needs no shader of its own, where four cubics flattened to
+    /// The shadow an object at `elevation` casts, under one light.
+    ///
+    /// The rule rather than the picture, which is why this is a call and not a
+    /// blurred draw a caller assembles: the whole point of an elevation is
+    /// that everything at the same height casts a consistent shadow, and
+    /// consistency is what a rule spread across call sites loses first.
+    ///
+    /// The model is a single light above and behind the viewer, which is what
+    /// Impeller uses and what makes a raised object's shadow fall downward on
+    /// screen. Three things follow from the elevation and nothing else: the
+    /// shadow is offset downward by it, blurred in proportion to it, and drawn
+    /// at a quarter of the stated colour's alpha.
+    ///
+    /// `elevation` is in the same units the canvas draws in. Impeller scales
+    /// it by a device pixel ratio first, which is a framework concept rather
+    /// than a rendering one; a caller who has one should apply it here.
+    ///
+    /// An opaque occluder hides the part of its own shadow that lies beneath
+    /// it, so nothing is drawn there. `transparent_occluder` says the object
+    /// will not hide it, and the shadow is drawn whole.
+    pub fn draw_shadow(
+        &mut self,
+        path: &Path,
+        color: Color,
+        elevation: f32,
+        transparent_occluder: bool,
+    ) -> Result<&mut Self> {
+        if !elevation.is_finite() || elevation <= 0.0 || color.is_invisible() {
+            // Nothing at ground level: an object resting on the surface casts
+            // no shadow, which is the same answer as an invisible one.
+            return Ok(self);
+        }
+
+        let sigma = LIGHT_RATIO * elevation;
+        let shade = Color::linear(
+            color.to_array()[0],
+            color.to_array()[1],
+            color.to_array()[2],
+            color.to_array()[3] * SHADOW_ALPHA,
+        );
+        let paint = Paint::fill(shade).with_mask_blur(sigma);
+
+        if transparent_occluder {
+            // Nothing will cover it, so the whole shadow is part of the
+            // picture and no layer is needed to hold anything back.
+            self.save();
+            self.translate(0.0, elevation);
+            let failure = self.draw_path(path, &paint).err();
+            self.restore();
+            return match failure {
+                Some(e) => Err(e),
+                None => Ok(self),
+            };
+        }
+
+        // The part of the shadow the object will cover is spent, so it is
+        // taken out. What covers it is the object where it actually sits, not
+        // the shadow's own outline -- those are the same shape at different
+        // places, and removing the wrong one leaves a crescent of shadow
+        // showing above the object and takes a crescent out below it.
+        //
+        // So this cannot be the outer mask blur style, which removes the shape
+        // it blurred. The shadow is blurred whole and the object's own outline
+        // is punched out of it afterwards, inside a layer that confines the
+        // punch to this shadow rather than to everything already drawn.
+        let bounds = self.filter_bounds(path, &paint);
+        let reach = blur_reach(sigma);
+        let held = Rect::new(
+            bounds.left - reach,
+            bounds.top - reach,
+            bounds.right + reach,
+            bounds.bottom + elevation + reach,
+        );
+        self.save_layer_bounds(Layer::opacity(1.0), held);
+
+        self.save();
+        self.translate(0.0, elevation);
+        let mut failure = self.draw_path(path, &paint).err();
+        self.restore();
+
+        if failure.is_none() {
+            let cutter =
+                Paint::fill(Color::linear(1.0, 1.0, 1.0, 1.0)).with_blend(BlendMode::DstOut);
+            failure = self.draw_path(path, &cutter).err();
+        }
+        self.restore();
+        match failure {
+            Some(e) => Err(e),
+            None => Ok(self),
+        }
+    }
+
     /// a tolerance cost vertices in proportion to how large it is drawn.
     pub fn draw_circle(&mut self, center: Vec2, radius: f32, paint: &Paint) -> Result<&mut Self> {
         // NaN named rather than caught by a negated comparison, which reads as
@@ -2138,6 +2230,24 @@ fn circle_path(center: Vec2, radius: f32) -> Path {
         .close();
     b.build()
 }
+
+/// How far a shadow's blur spreads per unit of elevation.
+///
+/// The light's radius over its height, which is the ratio that decides how
+/// quickly a shadow softens as its caster rises. Impeller writes the same
+/// quantity as `800 / 600` -- and in C++ those are integer literals, so the
+/// constant there evaluates to one rather than to the one and a third its own
+/// comment describes. This uses the ratio the comment states, so a shadow here
+/// is a third wider at the same elevation. Recorded rather than matched
+/// silently: replicating an apparent typo and correcting one are both
+/// decisions, and neither should be made without saying so.
+const LIGHT_RATIO: f32 = 800.0 / 600.0;
+
+/// What fraction of the stated colour's alpha a shadow is drawn at.
+///
+/// A quarter, matching Impeller. A shadow is a suggestion of occlusion rather
+/// than an absence of light, and at full alpha it reads as a hole.
+const SHADOW_ALPHA: f32 = 0.25;
 
 /// How far past its content a blur of this deviation reaches.
 ///

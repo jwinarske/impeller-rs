@@ -230,6 +230,28 @@ fn record_node(canvas: &mut Canvas, node: &Node, anti_alias: bool) -> Result<()>
             canvas.restore();
             result?;
         }
+        Node::Shadow(shadow) => {
+            canvas.save();
+            canvas.concat(shadow.transform.to_affine());
+            let path = shadow.shape.to_path();
+            let mut result = canvas
+                .draw_shadow(
+                    &path,
+                    color_of(shadow.color),
+                    shadow.elevation,
+                    shadow.transparent_occluder,
+                )
+                .map(|_| ());
+            if result.is_ok() && shadow.with_caster {
+                // The object itself, which is what makes the shadow legible:
+                // an outer shadow with nothing on top is a picture of a hole.
+                result = canvas
+                    .draw_path(&path, &Paint::fill(Color::linear(1.0, 1.0, 1.0, 1.0)))
+                    .map(|_| ());
+            }
+            canvas.restore();
+            result?;
+        }
         Node::Draw(item) => {
             canvas.save();
             canvas.concat(item.transform.to_affine());

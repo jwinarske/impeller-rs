@@ -92,6 +92,20 @@ pub struct MeshSpec {
     pub transform: Transform,
 }
 
+/// A shape's shadow, and whether the shape will cover it.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ShadowSpec {
+    pub shape: Shape,
+    pub color: [f32; 4],
+    /// How far above the surface the caster sits, in the canvas's own units.
+    pub elevation: f32,
+    /// Whether the caster will fail to hide the part beneath it.
+    pub transparent_occluder: bool,
+    pub transform: Transform,
+    /// Draw the caster on top afterwards, which is what a shadow is for.
+    pub with_caster: bool,
+}
+
 /// One piece of the fixture sheet, placed.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct SpriteSpec {
@@ -499,6 +513,8 @@ pub enum Node {
     Mesh(Box<MeshSpec>),
     /// Pieces of the fixture sheet, each placed and tinted on its own.
     Atlas(Box<AtlasSpec>),
+    /// The shadow a shape at some elevation casts.
+    Shadow(Box<ShadowSpec>),
     /// A group rendered into a target of its own and composited back.
     ///
     /// `bounds` is the region the group promises to stay inside, in the space
@@ -559,7 +575,7 @@ impl Node {
             // derivations need from them is asked for separately, by
             // `samples_fixture` and `blends`, which are exhaustive over this
             // enum so that a node kind cannot be added without deciding.
-            Self::Mesh(_) | Self::Atlas(_) => Box::new(std::iter::empty()),
+            Self::Mesh(_) | Self::Atlas(_) | Self::Shadow(_) => Box::new(std::iter::empty()),
             Self::Layer { children, .. } => Box::new(children.iter().flat_map(Node::items)),
         }
     }
@@ -567,7 +583,7 @@ impl Node {
     fn items_mut(&mut self) -> Box<dyn Iterator<Item = &mut Item> + '_> {
         match self {
             Self::Draw(item) => Box::new(std::iter::once(item.as_mut())),
-            Self::Mesh(_) | Self::Atlas(_) => Box::new(std::iter::empty()),
+            Self::Mesh(_) | Self::Atlas(_) | Self::Shadow(_) => Box::new(std::iter::empty()),
             Self::Layer { children, .. } => Box::new(children.iter_mut().flat_map(Node::items_mut)),
         }
     }
@@ -575,7 +591,7 @@ impl Node {
     /// Whether this subtree composites a group at all.
     fn has_layer(&self) -> bool {
         match self {
-            Self::Draw(_) | Self::Mesh(_) | Self::Atlas(_) => false,
+            Self::Draw(_) | Self::Mesh(_) | Self::Atlas(_) | Self::Shadow(_) => false,
             Self::Layer { .. } => true,
         }
     }
@@ -592,6 +608,7 @@ impl Node {
             Self::Mesh(mesh) => matches!(mesh.fill, Fill::Image { .. }),
             // A sprite batch is pieces of the sheet by definition.
             Self::Atlas(_) => true,
+            Self::Shadow(_) => false,
             Self::Layer { children, .. } => children.iter().any(Node::samples_fixture),
         }
     }
@@ -602,6 +619,8 @@ impl Node {
             Self::Draw(item) => Box::new(std::iter::once(item.blend)),
             Self::Mesh(mesh) => Box::new(std::iter::once(mesh.blend)),
             Self::Atlas(atlas) => Box::new(std::iter::once(atlas.blend)),
+            // A shadow blends against what is under it and nothing else.
+            Self::Shadow(_) => Box::new(std::iter::once(BlendMode::SrcOver)),
             Self::Layer {
                 layer, children, ..
             } => {
@@ -612,7 +631,7 @@ impl Node {
 
     fn has_bounded_layer(&self) -> bool {
         match self {
-            Self::Draw(_) | Self::Mesh(_) | Self::Atlas(_) => false,
+            Self::Draw(_) | Self::Mesh(_) | Self::Atlas(_) | Self::Shadow(_) => false,
             Self::Layer {
                 bounds, children, ..
             } => bounds.is_some() || children.iter().any(Node::has_bounded_layer),
@@ -628,7 +647,7 @@ impl Node {
     /// bounded-equals-unbounded comparison cannot be asked of these.
     fn filters_its_backdrop(&self) -> bool {
         match self {
-            Self::Draw(_) | Self::Mesh(_) | Self::Atlas(_) => false,
+            Self::Draw(_) | Self::Mesh(_) | Self::Atlas(_) | Self::Shadow(_) => false,
             Self::Layer {
                 layer, children, ..
             } => layer.backdrop_blur > 0.0 || children.iter().any(Node::filters_its_backdrop),

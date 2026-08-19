@@ -87,7 +87,7 @@ reason.
 | `drawAtlas`, `drawRawAtlas` | yes | `draw_atlas`, one draw for the whole batch, each sprite with its own transform and color | `an_atlas_tints_each_sprite_on_its_own_in_one_draw` |
 | `drawPoints`, `drawRawPoints` | no | | |
 | `drawDRRect` | no | | |
-| `drawShadow` | no | — the elevation-to-shadow rule, not just a blurred shape | |
+| `drawShadow` | yes | `draw_shadow`: offset, blur and alpha all from the elevation, under one light | `a_shadow_falls_below_what_casts_it_and_widens_with_elevation` |
 | `drawRSuperellipse` | no | | |
 | `drawPicture` | no | — a recording here is tessellated, not a command list; see below | |
 | `clipRect` | yes | `clip_rect` | `clipped-circle`, `shape-clip-and-scissor-together` |
@@ -137,9 +137,9 @@ above it or not at all:
 
 ## Where that leaves it
 
-Of forty-seven rows across `Canvas` and `Paint`: twenty-six exist, six are
-partial, seven are expressible by a caller who assembles them, seven are
-absent, and one is out of scope. Counting them is the least interesting thing
+Of forty-seven rows across `Canvas` and `Paint`: twenty-seven exist, six are
+partial, seven are expressible by a caller who assembles them, six are absent,
+and one is out of scope. Counting them is the least interesting thing
 about the table -- the absences are not equal, and a reader deciding whether
 this renderer is usable should look at which ones rather than how many.
 
@@ -185,8 +185,8 @@ build them:
    shader pipeline that compiles at runtime rather than at build time, which is
    a different arrangement from the one here.
 
-`drawShadow`, `drawRSuperellipse` and `clipRSuperellipse` are shapes with rules
-attached rather than rendering problems, and are cheap once somebody needs them.
+`drawRSuperellipse` and `clipRSuperellipse` are shapes with rules attached
+rather than rendering problems, and are cheap once somebody needs them.
 
 ## What this table does not tell you
 

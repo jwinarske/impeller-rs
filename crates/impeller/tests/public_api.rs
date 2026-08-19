@@ -6389,3 +6389,124 @@ fn the_two_halves_of_a_blur_add_up_to_the_whole_of_it() {
         worst_at / 128
     );
 }
+
+/// A card, and a shadow beneath it at the given elevation.
+fn shadow_probe(ctx: &mut Context, elevation: f32, transparent: bool, draw_card: bool) -> Vec<u8> {
+    let mut canvas = Canvas::new(SIZE);
+    canvas.clear(Color::linear(0.9, 0.9, 0.92, 1.0));
+    let card = {
+        let mut b = PathBuilder::new();
+        b.move_to(Vec2::new(40.0, 40.0))
+            .line_to(Vec2::new(88.0, 40.0))
+            .line_to(Vec2::new(88.0, 80.0))
+            .line_to(Vec2::new(40.0, 80.0))
+            .close();
+        b.build()
+    };
+    canvas
+        .draw_shadow(
+            &card,
+            Color::linear(0.0, 0.0, 0.0, 1.0),
+            elevation,
+            transparent,
+        )
+        .expect("shadow");
+    if draw_card {
+        canvas
+            .draw_path(&card, &Paint::fill(Color::linear(1.0, 1.0, 1.0, 1.0)))
+            .expect("card");
+    }
+    render(ctx, canvas)
+}
+
+#[test]
+fn a_shadow_falls_below_what_casts_it_and_widens_with_elevation() {
+    // The whole content of an elevation: an object further from the surface
+    // throws its shadow further and softer. Both have to move together, or the
+    // number means nothing beyond "more blur".
+    let Some(mut ctx) = context() else { return };
+
+    let low = shadow_probe(&mut ctx, 3.0, false, true);
+    let high = shadow_probe(&mut ctx, 12.0, false, true);
+
+    // Just below the card, where a shadow lands and where the higher one must
+    // be darker because it reaches further.
+    let below_low = pixel(&low, 64, 88)[0] as i32;
+    let below_high = pixel(&high, 64, 88)[0] as i32;
+    assert!(
+        below_high < below_low,
+        "raising the object should darken the ground below it: {below_low} then {below_high}"
+    );
+
+    // Above the card there is no light behind the object, so nothing falls
+    // there at either elevation.
+    let above_low = pixel(&low, 64, 30)[0] as i32;
+    let above_high = pixel(&high, 64, 30)[0] as i32;
+    assert!(
+        above_low > 220 && above_high > 220,
+        "the light is above, so nothing should fall above the object: {above_low}, {above_high}"
+    );
+
+    // Beside the card, where the offset does not reach and only the blur can.
+    // Without this the test passes on a shadow whose softness ignores the
+    // elevation entirely, since moving it down alone darkens the ground below.
+    let beside_low = pixel(&low, 30, 60)[0] as i32;
+    let beside_high = pixel(&high, 30, 60)[0] as i32;
+    assert!(
+        beside_high < beside_low - 8,
+        "raising the object should spread its shadow sideways too: {beside_low} then {beside_high}"
+    );
+}
+
+#[test]
+fn an_object_resting_on_the_surface_casts_no_shadow() {
+    let Some(mut ctx) = context() else { return };
+    let flat = shadow_probe(&mut ctx, 0.0, false, false);
+    let first = &flat[0..4];
+    assert!(
+        flat.chunks_exact(4).all(|texel| texel == first),
+        "an elevation of zero should leave the ground untouched"
+    );
+}
+
+#[test]
+fn an_opaque_occluder_is_not_given_a_shadow_it_would_hide() {
+    // The part of a shadow its caster will cover is spent, and this is the
+    // flag saying whether it will. What covers it is the object where it
+    // actually sits rather than the shadow's own outline -- the same shape in
+    // two places -- so removing the wrong one leaves a crescent showing above
+    // the object and takes one out below it.
+    let Some(mut ctx) = context() else { return };
+
+    let opaque = shadow_probe(&mut ctx, 10.0, false, false);
+    let transparent = shadow_probe(&mut ctx, 10.0, true, false);
+
+    // Well inside the card, and well inside the offset shadow too, so the
+    // shadow is at full strength there rather than on its own soft edge.
+    let under_opaque = pixel(&opaque, 64, 70)[0] as i32;
+    let under_transparent = pixel(&transparent, 64, 70)[0] as i32;
+    // The ground itself, taken from a corner nothing reaches. Compared against
+    // rather than a threshold, because "nothing was drawn" and "something
+    // brighter than the threshold was drawn" are different claims and only the
+    // first one is this test's -- punching the shadow out with the wrong blend
+    // paints white there and passes any upper bound.
+    let ground = pixel(&opaque, 4, 4)[0] as i32;
+    assert!(
+        (under_opaque - ground).abs() <= 2,
+        "an opaque occluder should leave the ground as it was: {under_opaque} against {ground}"
+    );
+    assert!(
+        under_transparent < 190,
+        "a transparent one should: {under_transparent}"
+    );
+
+    // And below the card, past where it sits, both must show the shadow --
+    // the punch takes out the object's own area and nothing more.
+    for (name, pixels) in [("opaque", &opaque), ("transparent", &transparent)] {
+        let below = pixel(pixels, 64, 86)[0] as i32;
+        assert!(
+            below < 200,
+            "{name}: the shadow past the object should survive: {below}"
+        );
+    }
+}

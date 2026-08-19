@@ -34,8 +34,8 @@
 //! scene here with no counterpart there would be visible as one.
 
 use crate::scene::{
-    AtlasSpec, Fill, Item, LayerSpec, MeshSpec, Node, Scene, SpriteSpec, Stop, StrokeSpec,
-    Transform,
+    AtlasSpec, Fill, Item, LayerSpec, MeshSpec, Node, Scene, ShadowSpec, SpriteSpec, Stop,
+    StrokeSpec, Transform,
 };
 use crate::shape::Shape;
 use impeller_core::{MaskBlurStyle, VertexMode};
@@ -71,6 +71,7 @@ pub fn catalog() -> Vec<Scene> {
     scenes.extend(vertices());
     scenes.extend(atlas_scenes());
     scenes.extend(blur());
+    scenes.extend(shadow());
     scenes
 }
 
@@ -1653,4 +1654,108 @@ fn blur() -> Vec<Scene> {
     ));
 
     scenes
+}
+
+fn shadow_plate(name: &'static str, spec: ShadowSpec) -> Scene {
+    // A pale ground, because a shadow is a darkening and the plates elsewhere
+    // are drawn on a dark one where it would be invisible.
+    Scene::tree(name, vec![Node::Shadow(Box::new(spec))])
+        .with_background([230.0 / 255.0, 230.0 / 255.0, 235.0 / 255.0, 1.0])
+        .with_samples(4)
+}
+
+fn caster(shape: Shape) -> ShadowSpec {
+    ShadowSpec {
+        shape,
+        color: [0.0, 0.0, 0.0, 1.0],
+        elevation: 8.0,
+        transparent_occluder: false,
+        transform: Transform::default(),
+        with_caster: true,
+    }
+}
+
+/// `aiks_dl_shadow_unittests.cc`.
+///
+/// Most of that file checks an optimization for convex shadows -- one scene
+/// per winding and shape kind, asserting the fast path was taken. This
+/// renderer has no such optimization and the pictures are the same either way,
+/// so what comes across is the shapes rather than the pairs.
+fn shadow() -> Vec<Scene> {
+    vec![
+        shadow_plate(
+            "shadow/draw-shadow-can-optimize-clockwise-rect",
+            caster(Shape::Rect {
+                min: [36.0, 36.0],
+                max: [92.0, 84.0],
+            }),
+        ),
+        shadow_plate(
+            "shadow/draw-shadow-can-optimize-clockwise-circle",
+            caster(Shape::Circle {
+                center: [64.0, 60.0],
+                radius: 30.0,
+            }),
+        ),
+        shadow_plate(
+            "shadow/draw-shadow-can-optimize-clockwise-uniform-round-rect",
+            caster(Shape::RoundedRect {
+                min: [32.0, 36.0],
+                max: [96.0, 84.0],
+                radius: 14.0,
+            }),
+        ),
+        shadow_plate(
+            "shadow/draw-shadow-can-optimize-clockwise-oval",
+            caster(Shape::Oval {
+                min: [26.0, 42.0],
+                max: [102.0, 80.0],
+            }),
+        ),
+        shadow_plate(
+            "shadow/can-draw-rotated-convex-shadow",
+            ShadowSpec {
+                transform: Transform {
+                    rotate: 0.45,
+                    translate: [14.0, -18.0],
+                    ..Transform::default()
+                },
+                ..caster(Shape::Rect {
+                    min: [36.0, 36.0],
+                    max: [92.0, 84.0],
+                })
+            },
+        ),
+        shadow_plate(
+            "shadow/can-draw-nonuniform-scale-convex-shadow",
+            ShadowSpec {
+                transform: Transform {
+                    scale: [1.4, 0.7],
+                    translate: [-26.0, 26.0],
+                    ..Transform::default()
+                },
+                ..caster(Shape::RoundedRect {
+                    min: [32.0, 36.0],
+                    max: [96.0, 84.0],
+                    radius: 12.0,
+                })
+            },
+        ),
+        shadow_plate(
+            "shadow/transparent-shadow-produces-correct-color",
+            ShadowSpec {
+                // Nothing drawn on top, and the part beneath the caster kept:
+                // the two together are what the flag is for, and the picture
+                // is the whole blurred shape rather than a ring.
+                transparent_occluder: true,
+                with_caster: false,
+                color: [0.1, 0.2, 0.6, 1.0],
+                elevation: 10.0,
+                ..caster(Shape::Circle {
+                    center: [64.0, 60.0],
+                    radius: 30.0,
+                })
+            },
+        ),
+    ]
 }
