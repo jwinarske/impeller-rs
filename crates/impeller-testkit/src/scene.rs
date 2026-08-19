@@ -1092,6 +1092,33 @@ pub fn corpus() -> Vec<Scene> {
                 },
             )],
         ),
+        // The two together: more stops than a material carries, tiled. Each
+        // half of this is covered alone, which is the arrangement in which a
+        // composition bug lives -- and the ramp is sampled through a
+        // clamp-to-edge sampler, so a repeating one is where a wrong address
+        // mode would show as a soft band at every period.
+        Scene::new(
+            "gradient-many-stops-repeated",
+            vec![Item::filled(
+                Shape::Rect {
+                    min: [4.0, 4.0],
+                    max: [124.0, 124.0],
+                },
+                Fill::LinearGradient {
+                    start: [4.0, 0.0],
+                    end: [44.0, 0.0],
+                    stops: vec![
+                        Stop::new(RED, 0.0),
+                        Stop::new([1.0, 1.0, 0.0, 1.0], 0.2),
+                        Stop::new(GREEN, 0.4),
+                        Stop::new([0.0, 1.0, 1.0, 1.0], 0.6),
+                        Stop::new(BLUE, 0.8),
+                        Stop::new([1.0, 0.0, 1.0, 1.0], 1.0),
+                    ],
+                    tile: TileMode::Repeat,
+                },
+            )],
+        ),
         Scene::new(
             "gradient-tiled-clamp",
             vec![tiled_gradient_item(TileMode::Clamp)],

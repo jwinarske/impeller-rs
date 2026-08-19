@@ -2232,6 +2232,93 @@ fn a_gradient_with_many_stops_agrees_with_one_that_fits() {
 }
 
 #[test]
+fn a_tiled_gradient_tiles_the_same_whether_or_not_its_stops_fit() {
+    let Some(mut ctx) = context() else { return };
+    // Tiling folds the parameter before anything reads a color, and the two
+    // ways of reading one -- walking the stops, sampling a baked ramp -- sit
+    // behind that fold. So they should compose, and each was tested without the
+    // other, which is the arrangement in which a composition bug survives.
+    //
+    // The ramp is sampled through a clamp-to-edge sampler, which is the part
+    // worth checking rather than assuming: a repeating gradient asks for the
+    // last color at the end of each period and the first at the start of the
+    // next, and clamping is what gives that instead of blending across the
+    // seam. Getting it wrong would show as a soft band at every period, only
+    // on the ramp path, only when repeating.
+    let ramp_stops = |n: usize| -> Vec<GradientStop> {
+        // Collinear, so the picture does not depend on how many there are --
+        // only on which path carries them.
+        (0..n)
+            .map(|i| {
+                let t = i as f32 / (n - 1) as f32;
+                GradientStop::new(Color::linear(1.0 - t, 0.0, t, 1.0), t)
+            })
+            .collect()
+    };
+
+    let render_with = |ctx: &mut Context, stops: Vec<GradientStop>, tile: TileMode| {
+        let mut canvas = Canvas::new(SIZE);
+        canvas.clear(Color::BLACK);
+        canvas
+            .draw_rect(
+                Rect::from_size(128.0, 128.0),
+                &Paint::fill(Color::WHITE).with_anti_alias(false),
+            )
+            .expect("ground");
+        canvas
+            .draw_rect(
+                Rect::from_size(128.0, 128.0),
+                // A ramp spanning a quarter, so three quarters of the picture
+                // is whatever the tile mode says.
+                &Paint::linear_gradient(Vec2::ZERO, Vec2::new(32.0, 0.0), stops)
+                    .with_tile_mode(tile)
+                    .with_blend(BlendMode::SrcOver)
+                    .with_anti_alias(false),
+            )
+            .expect("gradient");
+        render(ctx, canvas)
+    };
+
+    for tile in [
+        TileMode::Clamp,
+        TileMode::Repeat,
+        TileMode::Mirror,
+        TileMode::Decal,
+    ] {
+        let walked = render_with(&mut ctx, ramp_stops(MAX_STOPS), tile);
+        let sampled = render_with(&mut ctx, ramp_stops(MAX_STOPS + 3), tile);
+        let mut worst = 0i32;
+        for x in 0..128u32 {
+            let a = pixel(&walked, x, 64);
+            let b = pixel(&sampled, x, 64);
+            for channel in 0..4 {
+                worst = worst.max((a[channel] as i32 - b[channel] as i32).abs());
+            }
+        }
+        assert!(
+            worst <= 4,
+            "{tile:?}: the two paths disagree by {worst}, which is more than rounding"
+        );
+    }
+
+    // And the tiling actually happened on the ramp path, rather than both
+    // paths agreeing because neither tiled. Two ramps along, repeating is back
+    // at the first color where clamping holds the last.
+    let repeated = render_with(&mut ctx, ramp_stops(MAX_STOPS + 3), TileMode::Repeat);
+    let clamped = render_with(&mut ctx, ramp_stops(MAX_STOPS + 3), TileMode::Clamp);
+    let at = pixel(&repeated, 64, 64);
+    assert!(
+        at[0] > 200 && at[2] < 60,
+        "a repeating ramp did not begin again, got {at:?}"
+    );
+    let held = pixel(&clamped, 64, 64);
+    assert!(
+        held[2] > 200 && held[0] < 60,
+        "a clamped ramp did not hold its end, got {held:?}"
+    );
+}
+
+#[test]
 fn a_gradient_with_many_stops_places_each_one_where_it_was_asked_for() {
     let Some(mut ctx) = context() else { return };
     // The agreement test above uses stops that lie on the line, so it would
