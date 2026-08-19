@@ -155,6 +155,19 @@ pub struct Paint {
     ///
     /// Ignored by a fill, which has no length to measure along.
     pub dash: Option<Dash>,
+    /// Blur the shape's coverage before filling it, in device pixels.
+    ///
+    /// What a soft shadow is made of: the same shape, softened, drawn behind
+    /// the thing casting it. Zero for none.
+    ///
+    /// Only a solid color. Blurring coverage and then filling is the same
+    /// picture as filling and then blurring exactly when the fill does not
+    /// vary, because a blur is linear -- `blur(C·α)` is `C·blur(α)` for a
+    /// constant `C` and not for anything else. So a solid paint is drawn
+    /// through a blurred layer, which is that identity used, and a gradient or
+    /// an image is refused rather than given the other picture and called this
+    /// one.
+    pub mask_blur: f32,
     pub blend: BlendMode,
     /// Whether to antialias this shape's edges.
     ///
@@ -170,6 +183,7 @@ impl Default for Paint {
             shader: Shader::Solid(Color::BLACK),
             style: Style::Fill,
             dash: None,
+            mask_blur: 0.0,
             blend: BlendMode::SrcOver,
             anti_alias: true,
         }
@@ -241,6 +255,19 @@ impl Paint {
             },
             ..Default::default()
         }
+    }
+
+    /// Blur the shape's coverage, for a shadow or a glow.
+    ///
+    /// Ignored unless finite and positive. Applies to a fill or a stroke alike
+    /// -- what is blurred is whatever coverage the shape produces.
+    pub fn with_mask_blur(mut self, sigma: f32) -> Self {
+        self.mask_blur = if sigma.is_finite() && sigma > 0.0 {
+            sigma
+        } else {
+            0.0
+        };
+        self
     }
 
     /// Dash this paint's stroke, or clear an existing pattern with `None`.

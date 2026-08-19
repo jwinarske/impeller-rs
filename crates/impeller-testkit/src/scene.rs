@@ -68,6 +68,12 @@ pub struct StrokeSpec {
     pub dash: Option<(Vec<f32>, f32)>,
 }
 
+/// How a scene item softens its own coverage, if it does.
+///
+/// On the item rather than the stroke, because a fill can be blurred too --
+/// which is what a shadow under a solid shape is.
+pub type MaskBlur = f32;
+
 impl StrokeSpec {
     pub fn new(width: f32) -> Self {
         Self {
@@ -174,6 +180,8 @@ fn tiled_gradient_item(tile: TileMode) -> Item {
 /// One thing to draw.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Item {
+    /// Blur this item's coverage before filling it. Zero for none.
+    pub mask_blur: MaskBlur,
     pub shape: Shape,
     /// Stroke the shape rather than filling it.
     pub stroke: Option<StrokeSpec>,
@@ -195,6 +203,7 @@ pub struct Item {
 impl Item {
     pub fn fill(shape: Shape, color: [f32; 4]) -> Self {
         Self {
+            mask_blur: 0.0,
             shape,
             stroke: None,
             transform: Transform::default(),
@@ -221,6 +230,7 @@ impl Item {
     /// A shape filled with any fill.
     pub fn filled(shape: Shape, fill: Fill) -> Self {
         Self {
+            mask_blur: 0.0,
             shape,
             stroke: None,
             transform: Transform::default(),
@@ -233,6 +243,7 @@ impl Item {
 
     pub fn stroke(shape: Shape, spec: StrokeSpec, color: [f32; 4]) -> Self {
         Self {
+            mask_blur: 0.0,
             shape,
             stroke: Some(spec),
             transform: Transform::default(),
@@ -245,6 +256,12 @@ impl Item {
 
     pub fn with_blend(mut self, blend: BlendMode) -> Self {
         self.blend = blend;
+        self
+    }
+
+    /// Soften this item's coverage, which is what a shadow is.
+    pub fn with_mask_blur(mut self, sigma: f32) -> Self {
+        self.mask_blur = sigma;
         self
     }
 
@@ -1299,6 +1316,39 @@ pub fn corpus() -> Vec<Scene> {
                 ),
             ],
         ),
+        // A shadow, which is what a mask blur is for: the same shape softened
+        // and drawn behind the thing casting it. Both are here because the
+        // point is the relationship -- a soft copy offset under a hard one --
+        // and either alone would be a blurred rectangle.
+        Scene::new(
+            "mask-blur-shadow",
+            vec![
+                Item::filled(
+                    Shape::RoundedRect {
+                        min: [30.0, 34.0],
+                        max: [102.0, 82.0],
+                        radius: 12.0,
+                    },
+                    Fill::Solid([0.0, 0.0, 0.0, 0.55]),
+                )
+                .with_mask_blur(6.0)
+                .with_blend(BlendMode::SrcOver),
+                Item::filled(
+                    Shape::RoundedRect {
+                        min: [26.0, 26.0],
+                        max: [98.0, 74.0],
+                        radius: 12.0,
+                    },
+                    Fill::Solid(WHITE),
+                )
+                .with_blend(BlendMode::SrcOver),
+            ],
+        )
+        // A light ground, because a dark shadow on the corpus's black default
+        // is a shadow nobody can see. The first version of this scene was
+        // exactly that: correct, compared across backends, and blank to look
+        // at.
+        .with_background([0.82, 0.84, 0.88, 1.0]),
         Scene::new(
             "stroke-dashed",
             vec![

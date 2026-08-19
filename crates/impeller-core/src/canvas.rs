@@ -907,6 +907,9 @@ impl Canvas {
         if !paint.is_visible() || path.is_empty() {
             return Ok(self);
         }
+        if paint.mask_blur > 0.0 {
+            return self.draw_masked(path, paint);
+        }
         if paint.anti_alias {
             self.anti_alias = true;
         }
@@ -1082,6 +1085,63 @@ impl Canvas {
                     ramp: ramp_slot,
                 }
             }
+        }
+    }
+
+    /// Draw a shape through a blurred layer, which is what a mask blur is.
+    ///
+    /// Blurring coverage and then filling equals filling and then blurring
+    /// exactly when the fill is constant, since a blur is linear. That identity
+    /// is the whole implementation: a bounded layer, blurred, with the shape
+    /// drawn into it. It also means the machinery is one already tested rather
+    /// than a second blur written beside the first.
+    ///
+    /// The bounds are the shape's, widened by how far the blur reaches. A
+    /// caller doing this by hand has to know that reach, which is exactly the
+    /// part that is easy to get wrong and shows as a shadow with a straight
+    /// edge where it was cut off.
+    fn draw_masked(&mut self, path: &Path, paint: &Paint) -> Result<&mut Self> {
+        if !matches!(paint.shader, Shader::Solid(_)) {
+            // See `Paint::mask_blur`: for anything that varies, the two orders
+            // are different pictures, and drawing one while the caller asked
+            // for the other is the substitution this renderer refuses
+            // elsewhere.
+            return Err(Error::Unsupported(
+                "a mask blur takes a solid color; draw into a blurred layer for anything else",
+            ));
+        }
+        let bounds = path.bounds();
+        // A stroke reaches half its width past the path, which the bounds have
+        // to include. How far the blur reaches is *not* added here: opening a
+        // bounded layer with a blur already widens the region by that, and it
+        // is the right place for it -- the layer knows its own sigma, and a
+        // second copy of the rule here would be a second thing to keep right.
+        // Removing this line changed no test, which is how the duplication was
+        // found.
+        let reach = match &paint.style {
+            Style::Stroke(stroke) if stroke.width.is_finite() => stroke.width / 2.0,
+            _ => 0.0,
+        };
+        // The geometry crate's rectangle, which is min/max rather than the
+        // canvas's edges, so it is widened and then restated.
+        let bounds = Rect::new(
+            bounds.min.x - reach,
+            bounds.min.y - reach,
+            bounds.max.x + reach,
+            bounds.max.y + reach,
+        );
+        self.save_layer_bounds(Layer::opacity(1.0).with_blur(paint.mask_blur), bounds);
+        // Without the mask, or this would open a layer inside itself forever.
+        let inner = paint.clone().with_mask_blur(0.0);
+        // The result is discarded to end the borrow before restoring, and
+        // taken up again after: the layer has to be closed whether the draw
+        // inside it succeeded or not, or every later draw lands in a layer
+        // nobody composites.
+        let failure = self.draw_path(path, &inner).err();
+        self.restore();
+        match failure {
+            Some(e) => Err(e),
+            None => Ok(self),
         }
     }
 
@@ -1623,6 +1683,12 @@ fn analytic_stroke(paint: &Paint) -> Option<f32> {
     // is most able to hide -- the result looks like a stroke, because it is
     // one.
     if paint.dash.as_ref().is_some_and(|dash| dash.is_usable()) {
+        return None;
+    }
+    // A mask blur is a layer around the draw, and a distance field evaluated on
+    // a quad is not a shape that can be put inside one and blurred: the quad is
+    // larger than the shape and the layer would blur its edges too.
+    if paint.mask_blur > 0.0 {
         return None;
     }
     match &paint.style {

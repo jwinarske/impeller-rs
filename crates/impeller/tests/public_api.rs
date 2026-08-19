@@ -2232,6 +2232,126 @@ fn a_gradient_with_many_stops_agrees_with_one_that_fits() {
     assert!(right[2] > 200 && right[0] < 60, "right end {right:?}");
 }
 
+#[gtest]
+fn a_mask_blur_softens_a_shape_and_matches_a_blurred_layer() {
+    let Some(mut ctx) = context() else { return };
+    // A mask blur is defined as blurring coverage and then filling. It is
+    // implemented as filling into a blurred layer, which is the opposite order
+    // — and the two are the same picture only because a blur is linear and the
+    // fill is constant: blur(C·a) is C·blur(a) for a constant C.
+    //
+    // That identity is the whole justification, so it is what gets asserted.
+    // The same shape, same sigma, one through the mask blur and one through a
+    // layer written out by hand, must agree.
+    let sigma = 6.0;
+    let shape = Rect::new(40.0, 40.0, 88.0, 88.0);
+    let color = Color::linear(1.0, 0.4, 0.1, 1.0);
+
+    let mut masked = Canvas::new(SIZE);
+    masked.clear(Color::BLACK);
+    masked
+        .draw_rect(shape, &Paint::fill(color).with_mask_blur(sigma))
+        .expect("mask blur");
+    let masked = render(&mut ctx, masked);
+
+    let mut layered = Canvas::new(SIZE);
+    layered.clear(Color::BLACK);
+    // The same bounds the mask blur computes: the shape, widened by the blur's
+    // reach. A tighter bound would cut the tail off square.
+    let reach = sigma * 3.0;
+    layered.save_layer_bounds(
+        Layer::opacity(1.0).with_blur(sigma),
+        Rect::new(
+            shape.left - reach,
+            shape.top - reach,
+            shape.right + reach,
+            shape.bottom + reach,
+        ),
+    );
+    layered
+        .draw_rect(shape, &Paint::fill(color))
+        .expect("shape");
+    layered.restore();
+    let layered = render(&mut ctx, layered);
+
+    let worst = masked
+        .iter()
+        .zip(&layered)
+        .map(|(a, b)| (*a as i32 - *b as i32).abs())
+        .max()
+        .unwrap_or(0);
+    expect_that!(
+        worst,
+        le(1),
+        "a mask blur and a blurred layer of the same shape differ by {worst}"
+    );
+
+    // And it actually blurred: the shape's own edge is soft, and light reaches
+    // beyond where the shape ends.
+    let edge = pixel(&masked, 88, 64);
+    expect_true!(
+        edge[0] > 8 && edge[0] < 247,
+        "the edge is not soft: {edge:?}"
+    );
+    // And it reaches past where the shape ends, which is checked against the
+    // same shape drawn without the blur rather than against a threshold: two
+    // sigma out the value is single digits, and a number picked by eye there is
+    // a number that passes or fails for reasons about the picking.
+    let mut sharp = Canvas::new(SIZE);
+    sharp.clear(Color::BLACK);
+    sharp
+        .draw_rect(shape, &Paint::fill(color).with_anti_alias(false))
+        .expect("sharp");
+    let sharp = render(&mut ctx, sharp);
+    let (beyond, control) = (pixel(&masked, 100, 64), pixel(&sharp, 100, 64));
+    expect_that!(
+        control[0],
+        eq(0),
+        "the control should not reach here at all"
+    );
+    expect_true!(
+        beyond[0] > control[0],
+        "nothing reached past the shape: {beyond:?} against {control:?}"
+    );
+}
+
+#[gtest]
+fn a_mask_blur_on_a_gradient_is_refused_rather_than_reordered() {
+    let Some(mut ctx) = context() else { return };
+    // The identity above holds for a constant fill and not otherwise, so a
+    // gradient asked for one thing would be given the other. Refusing is the
+    // same choice this renderer makes for a blend mode a device cannot do.
+    let _ = &mut ctx;
+    let mut canvas = Canvas::new(SIZE);
+    canvas.clear(Color::BLACK);
+    let refused = canvas.draw_rect(
+        Rect::new(16.0, 16.0, 112.0, 112.0),
+        &Paint::linear_gradient(
+            Vec2::ZERO,
+            Vec2::new(128.0, 0.0),
+            vec![
+                GradientStop::new(Color::WHITE, 0.0),
+                GradientStop::new(Color::BLACK, 1.0),
+            ],
+        )
+        .with_mask_blur(4.0),
+    );
+    expect_true!(
+        refused.is_err(),
+        "a mask blur on a gradient should be refused"
+    );
+    // A solid one of the same size is not.
+    expect_true!(
+        canvas
+            .draw_rect(
+                Rect::new(16.0, 16.0, 112.0, 112.0),
+                &Paint::fill(Color::WHITE).with_mask_blur(4.0)
+            )
+            .is_ok(),
+        "a solid mask blur should be accepted"
+    );
+}
+
 #[test]
 fn a_backdrop_blur_softens_what_is_behind_the_layer_and_nothing_else() {
     let Some(mut ctx) = context() else { return };

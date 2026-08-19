@@ -83,6 +83,7 @@ fn paint_for(item: &Item, anti_alias: bool) -> Paint {
             Some(spec) => Style::Stroke(spec.to_style()),
             None => Style::Fill,
         },
+        mask_blur: item.mask_blur,
         dash: item.stroke.as_ref().and_then(|spec| {
             spec.dash
                 .as_ref()
