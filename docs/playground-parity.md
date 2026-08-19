@@ -45,7 +45,7 @@ drifts from what it inventories is worse than none.
 | File | Scenes there | Here | Blocked on |
 |---|---|---|---|
 | `aiks_dl_basic_unittests.cc` | ~85 | 27 | superellipses, perspective, subpass optimizations |
-| `aiks_dl_path_unittests.cc` | ~31 | 9 | conics, difference-of-rounded-rects |
+| `aiks_dl_path_unittests.cc` | ~31 | 12 | difference-of-rounded-rects, perspective |
 | `aiks_dl_gradient_unittests.cc` | ~40 | 17 | dithering |
 | `aiks_dl_clip_unittests.cc` | ~5 | 3 | difference clips |
 | `aiks_dl_opacity_unittests.cc` | ~3 | 2 | subpass collapse |
@@ -59,7 +59,7 @@ drifts from what it inventories is worse than none.
 | `aiks_dl_runtime_effect_unittests.cc` | — | 0 | runtime effects |
 | `aiks_dl_unittests.cc` | ~39 | 0 | mostly internal optimizations and picture round-trips |
 
-The catalog holds one hundred and twenty-one scenes of roughly four hundred,
+The catalog holds one hundred and twenty-four scenes of roughly four hundred,
 and the proportion is less interesting than which ones: the arithmetic of drawing is largely covered, and
 what is missing is either a capability this renderer does not have or a thing
 the scene model cannot describe.
@@ -70,8 +70,7 @@ Three different kinds of obstacle, worth separating because only one of them is
 about the renderer.
 
 **Capabilities this renderer lacks.** Round superellipses. Runtime effects. Perspective transforms, which the
-transform type is affine and two-dimensional by design. Dithering. Conic path
-segments. These are the rows of `docs/parity.md`, and the scenes
+transform type is affine and two-dimensional by design. Dithering. These are the rows of `docs/parity.md`, and the scenes
 that need them arrive when the row does.
 
 **Things the scene model could not describe.** This category is empty now, and

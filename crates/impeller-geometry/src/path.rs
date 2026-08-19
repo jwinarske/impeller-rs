@@ -327,6 +327,73 @@ impl PathBuilder {
         self
     }
 
+    /// Append a rational quadratic -- a conic -- through one control point.
+    ///
+    /// The curve a circular arc actually is, and the one a font or an SVG
+    /// hands over. `weight` is the control point's pull: one is an ordinary
+    /// quadratic, less than one is elliptical, more is hyperbolic, and
+    /// `sqrt(2)/2` with the control at the corner of a square is exactly a
+    /// quarter circle.
+    ///
+    /// # Why this becomes quadratics here rather than surviving as a verb
+    ///
+    /// A conic of weight one *is* a quadratic, and splitting a conic in half
+    /// moves its weight toward one -- quadratically, so a handful of splits
+    /// puts it within a thousandth. So this subdivides until the weight is
+    /// near enough and emits ordinary quadratics, which every part of this
+    /// crate and the tessellator already understand.
+    ///
+    /// The alternative is a verb of its own, converted during flattening where
+    /// the transform's scale is known. That is what a renderer does when it
+    /// wants an absolute error in device pixels. What is bought here instead
+    /// is a *relative* error: the approximation is a fixed fraction of the
+    /// curve's own size, so it stays correct at every scale the path is later
+    /// drawn at, and nothing downstream has to learn a fifth verb.
+    ///
+    /// A weight that is zero or negative or not finite describes no curve, and
+    /// gives the straight line between the ends.
+    pub fn conic_to(&mut self, ctrl: Vec2, to: Vec2, weight: f32) -> &mut Self {
+        self.ensure_started();
+        let from = self.current.unwrap_or(ctrl);
+        if !weight.is_finite() || weight <= 0.0 || !ctrl.is_finite() || !to.is_finite() {
+            return self.line_to(to);
+        }
+        self.push_conic(from, ctrl, to, weight, 0);
+        self
+    }
+
+    /// Split until the weight is near one, then emit a quadratic.
+    fn push_conic(&mut self, from: Vec2, ctrl: Vec2, to: Vec2, weight: f32, depth: u32) {
+        // A thousandth of the way from one is close enough that the quadratic
+        // and the conic differ by well under a thousandth of the curve's own
+        // extent, which no rasterizer this feeds can show.
+        //
+        // The depth cap is not expected to be reached: the weight halves its
+        // distance from one roughly every split, so even a wildly hyperbolic
+        // conic converges in a handful. It is here because a bound that cannot
+        // be reached costs nothing and a recursion without one is a stack
+        // overflow waiting for an input nobody thought of.
+        const NEAR_ONE: f32 = 1e-3;
+        const MAX_DEPTH: u32 = 6;
+        if (weight - 1.0).abs() <= NEAR_ONE || depth >= MAX_DEPTH {
+            self.quad_to(ctrl, to);
+            return;
+        }
+
+        // De Casteljau for a rational quadratic, at the halfway parameter. The
+        // denominators are the weights the same construction gives the control
+        // points, which is why the midpoint is not the average of three
+        // points.
+        let scale = 1.0 / (1.0 + weight);
+        let left_ctrl = (from + ctrl * weight) * scale;
+        let right_ctrl = (ctrl * weight + to) * scale;
+        let mid = (from + ctrl * (2.0 * weight) + to) * (0.5 * scale);
+        let split_weight = ((1.0 + weight) * 0.5).sqrt();
+
+        self.push_conic(from, left_ctrl, mid, split_weight, depth + 1);
+        self.push_conic(mid, right_ctrl, to, split_weight, depth + 1);
+    }
+
     pub fn cubic_to(&mut self, c0: Vec2, c1: Vec2, to: Vec2) -> &mut Self {
         self.ensure_started();
         self.verbs.push(Verb::CubicTo);
@@ -740,5 +807,103 @@ mod tests {
             count(std::f32::consts::TAU),
             count(std::f32::consts::TAU * 3.0)
         );
+    }
+}
+
+#[cfg(test)]
+mod conic_tests {
+    use super::*;
+
+    fn points_of(path: &Path) -> Vec<Vec2> {
+        crate::flatten::flatten(path, 0.01)
+            .into_iter()
+            .flatten()
+            .collect()
+    }
+
+    #[test]
+    fn a_conic_of_weight_one_is_the_quadratic_it_already_was() {
+        // The identity the whole conversion rests on. If these differ, the
+        // subdivision is not preserving the curve it was given.
+        let mut conic = PathBuilder::new();
+        conic.move_to(Vec2::new(0.0, 0.0)).conic_to(
+            Vec2::new(50.0, 100.0),
+            Vec2::new(100.0, 0.0),
+            1.0,
+        );
+        let mut quad = PathBuilder::new();
+        quad.move_to(Vec2::new(0.0, 0.0))
+            .quad_to(Vec2::new(50.0, 100.0), Vec2::new(100.0, 0.0));
+
+        assert_eq!(points_of(&conic.build()), points_of(&quad.build()));
+    }
+
+    #[test]
+    fn a_conic_of_the_circular_weight_traces_a_circle() {
+        // The reason conics exist. A quadratic cannot be a circular arc and a
+        // cubic can only approximate one; a conic of weight `sqrt(2)/2`, with
+        // its control point at the corner of the square the arc spans, is one
+        // exactly. So every flattened point has to sit on the circle, and how
+        // far any of them strays is the whole error of this conversion.
+        const R: f32 = 100.0;
+        let mut b = PathBuilder::new();
+        b.move_to(Vec2::new(R, 0.0)).conic_to(
+            Vec2::new(R, R),
+            Vec2::new(0.0, R),
+            std::f32::consts::FRAC_1_SQRT_2,
+        );
+        let points = points_of(&b.build());
+        assert!(points.len() > 8, "a quarter turn should not be two lines");
+
+        let worst = points
+            .iter()
+            .map(|p| (p.length() - R).abs())
+            .fold(0.0f32, f32::max);
+        // A hundredth of a pixel on a hundred-pixel radius, which is a part in
+        // ten thousand and below what the flattening tolerance itself permits.
+        assert!(
+            worst < 0.05,
+            "the arc strays {worst} from the circle it is supposed to be"
+        );
+    }
+
+    #[test]
+    fn a_weight_that_describes_no_curve_gives_the_line_between_the_ends() {
+        for weight in [0.0, -1.0, f32::NAN, f32::INFINITY] {
+            let mut b = PathBuilder::new();
+            b.move_to(Vec2::new(0.0, 0.0)).conic_to(
+                Vec2::new(50.0, 100.0),
+                Vec2::new(100.0, 0.0),
+                weight,
+            );
+            let points = points_of(&b.build());
+            assert_eq!(
+                points,
+                vec![Vec2::new(0.0, 0.0), Vec2::new(100.0, 0.0)],
+                "a weight of {weight} should give a straight line"
+            );
+        }
+    }
+
+    #[test]
+    fn a_hyperbolic_conic_still_converges_and_stays_inside_its_hull() {
+        // Weights above one pull the curve toward the control point rather
+        // than away, and the subdivision has to converge from that side too. A
+        // rational quadratic never leaves the triangle its three points make,
+        // whatever the weight, which is what says the conversion did not
+        // overshoot.
+        let (a, c, e) = (
+            Vec2::new(0.0, 0.0),
+            Vec2::new(50.0, 100.0),
+            Vec2::new(100.0, 0.0),
+        );
+        let mut b = PathBuilder::new();
+        b.move_to(a).conic_to(c, e, 8.0);
+        for p in points_of(&b.build()) {
+            assert!(
+                p.y >= -0.01 && p.y <= c.y + 0.01 && p.x >= -0.01 && p.x <= e.x + 0.01,
+                "{p:?} is outside the triangle its own control points make"
+            );
+        }
     }
 }

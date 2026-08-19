@@ -599,6 +599,50 @@ fn path() -> Vec<Scene> {
             .collect(),
         ),
         plate(
+            "path/can-render-filled-conic-paths",
+            vec![Item::fill(
+                Shape::Conic {
+                    start: [16.0, 104.0],
+                    ctrl: [64.0, 8.0],
+                    end: [112.0, 104.0],
+                    weight: std::f32::consts::FRAC_1_SQRT_2,
+                },
+                BLUE,
+            )],
+        ),
+        plate(
+            "path/can-render-stroked-conic-paths",
+            vec![Item::stroke(
+                Shape::Conic {
+                    start: [16.0, 104.0],
+                    ctrl: [64.0, 8.0],
+                    end: [112.0, 104.0],
+                    weight: std::f32::consts::FRAC_1_SQRT_2,
+                },
+                StrokeSpec {
+                    cap: LineCap::Round,
+                    ..StrokeSpec::new(8.0)
+                },
+                WHITE,
+            )],
+        ),
+        plate(
+            "path/can-render-tight-conic-path",
+            vec![Item::stroke(
+                // A weight well above one pulls the curve hard toward the
+                // control point, which is where a subdivision that stops too
+                // early shows a corner.
+                Shape::Conic {
+                    start: [24.0, 100.0],
+                    ctrl: [64.0, 4.0],
+                    end: [104.0, 100.0],
+                    weight: 9.0,
+                },
+                StrokeSpec::new(5.0),
+                YELLOW,
+            )],
+        ),
+        plate(
             "path/solid-strokes-render-correctly",
             (0..5)
                 .map(|i| {

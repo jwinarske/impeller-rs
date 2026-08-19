@@ -73,6 +73,18 @@ pub enum Shape {
         /// Join the ends through the center, making a slice rather than a ring.
         through_center: bool,
     },
+    /// An open conic -- a rational quadratic -- which is the curve a circular
+    /// arc actually is.
+    ///
+    /// Distinct from [`Self::Cubic`] in what it can be exactly rather than
+    /// approximately: at a weight of `sqrt(2)/2`, with the control point at
+    /// the corner, this is a quarter circle and no polynomial curve is.
+    Conic {
+        start: [f32; 2],
+        ctrl: [f32; 2],
+        end: [f32; 2],
+        weight: f32,
+    },
     /// An open cubic, for curve and stroke coverage.
     Cubic {
         start: [f32; 2],
@@ -207,6 +219,18 @@ impl Shape {
                         Vec2::new(cx + r, cy),
                     )
                     .close();
+            }
+            Self::Conic {
+                start,
+                ctrl,
+                end,
+                weight,
+            } => {
+                b.move_to(Vec2::from(*start)).conic_to(
+                    Vec2::from(*ctrl),
+                    Vec2::from(*end),
+                    *weight,
+                );
             }
             Self::Cubic { start, c0, c1, end } => {
                 b.move_to(Vec2::from(*start)).cubic_to(
