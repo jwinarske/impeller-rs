@@ -11,6 +11,7 @@
 //! - `gallery` -- render every corpus scene onto one sheet, because no
 //!   comparison in the suite can see a scene both implementations get wrong the
 //!   same way.
+//! - `gate` -- everything that has to pass before a commit, as one exit code.
 //!
 //! Planned:
 //!
@@ -32,6 +33,7 @@
 
 mod drm;
 mod gallery;
+mod gate;
 mod report;
 mod verify;
 
@@ -46,6 +48,9 @@ Commands:
                     are passed to cargo test.
   gallery [path]    Render every corpus scene onto one sheet to look at.
                     Defaults to corpus.ppm.
+  gate              Lint, format, build, the feature matrix and the suite,
+                    stopping at the first failure. Exits non-zero if any step
+                    did not pass.
   help              This text.
 ";
 
@@ -120,6 +125,11 @@ fn main() {
                     eprintln!("{e}");
                     std::process::exit(1);
                 }
+            }
+        }
+        Some("gate") => {
+            if !gate::run() {
+                std::process::exit(1);
             }
         }
         Some("verify") => {
