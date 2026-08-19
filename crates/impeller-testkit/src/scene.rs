@@ -304,6 +304,9 @@ pub struct LayerSpec {
     pub blur: f32,
     pub alpha: f32,
     pub blend: BlendMode,
+    /// Standard deviation of a blur over what lies behind the group, in device
+    /// pixels. Zero for none.
+    pub backdrop_blur: f32,
 }
 
 impl Default for LayerSpec {
@@ -312,6 +315,7 @@ impl Default for LayerSpec {
             blur: 0.0,
             alpha: 1.0,
             blend: BlendMode::SrcOver,
+            backdrop_blur: 0.0,
         }
     }
 }
@@ -331,6 +335,11 @@ impl LayerSpec {
 
     pub fn with_blur(mut self, blur: f32) -> Self {
         self.blur = blur;
+        self
+    }
+
+    pub fn with_backdrop_blur(mut self, blur: f32) -> Self {
+        self.backdrop_blur = blur;
         self
     }
 }
@@ -428,6 +437,22 @@ impl Node {
         }
     }
 
+    /// Whether any layer here filters what is behind it.
+    ///
+    /// Such a layer's bounds are not an optimization. They decide which part of
+    /// the target is filtered, so stripping them changes the picture rather
+    /// than only the allocation -- an unbounded backdrop blur covers the frame
+    /// and blurs all of it. That is correct for both, and it is why the
+    /// bounded-equals-unbounded comparison cannot be asked of these.
+    fn filters_its_backdrop(&self) -> bool {
+        match self {
+            Self::Draw(_) => false,
+            Self::Layer {
+                layer, children, ..
+            } => layer.backdrop_blur > 0.0 || children.iter().any(Node::filters_its_backdrop),
+        }
+    }
+
     fn unbound(&mut self) {
         if let Self::Layer {
             bounds, children, ..
@@ -486,6 +511,11 @@ impl Scene {
     }
 
     /// Whether any group in this scene was told the region it covers.
+    /// Whether any layer in this scene filters what is behind it.
+    pub fn filters_its_backdrop(&self) -> bool {
+        self.items.iter().any(Node::filters_its_backdrop)
+    }
+
     pub fn has_bounded_layer(&self) -> bool {
         self.items.iter().any(Node::has_bounded_layer)
     }
@@ -1547,6 +1577,64 @@ pub fn corpus() -> Vec<Scene> {
                     .into(),
                 ],
             )],
+        ),
+        // The other blur: what is behind the group rather than the group
+        // itself. The backdrop here is a hard-edged pattern, because the whole
+        // question is whether those edges are soft inside the panel and sharp
+        // outside it -- a scene of gradients would be blurred and unblurred
+        // alike.
+        //
+        // Bounded, so the layer covers the panel rather than the frame, which
+        // is what a frosted panel is and also what exercises the mapping
+        // between a cut backdrop and a smaller target.
+        Scene::tree(
+            "layer-backdrop-blurred",
+            vec![
+                Item::fill(
+                    Shape::Rect {
+                        min: [0.0, 0.0],
+                        max: [64.0, 128.0],
+                    },
+                    RED,
+                )
+                .into(),
+                Item::fill(
+                    Shape::Rect {
+                        min: [64.0, 0.0],
+                        max: [128.0, 128.0],
+                    },
+                    BLUE,
+                )
+                .into(),
+                Item::fill(
+                    Shape::Circle {
+                        center: [64.0, 64.0],
+                        radius: 22.0,
+                    },
+                    GREEN,
+                )
+                .into(),
+                Node::Layer {
+                    layer: LayerSpec::default().with_backdrop_blur(5.0),
+                    bounds: Some([16.0, 40.0, 112.0, 88.0]),
+                    transform: Transform::default(),
+                    // Composited, not the corpus default of `Src`. The layer
+                    // starts out holding the filtered backdrop, and a sheet
+                    // that replaces rather than blends erases it -- leaving a
+                    // scene that renders identically with the filter on and
+                    // off, which is how this was found.
+                    children: vec![Item::fill(
+                        Shape::RoundedRect {
+                            min: [16.0, 40.0],
+                            max: [112.0, 88.0],
+                            radius: 10.0,
+                        },
+                        [1.0, 1.0, 1.0, 0.25],
+                    )
+                    .with_blend(BlendMode::SrcOver)
+                    .into()],
+                },
+            ],
         ),
         // Layers. Everything below here needs the scene to be a tree, and none
         // of it could be said at all while a scene was a flat list of items --

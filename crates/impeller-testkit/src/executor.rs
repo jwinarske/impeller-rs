@@ -155,6 +155,7 @@ fn record_node(canvas: &mut Canvas, node: &Node, anti_alias: bool) -> Result<()>
                 blur: layer.blur,
                 alpha: layer.alpha,
                 blend: layer.blend,
+                backdrop_blur: layer.backdrop_blur,
             };
             match bounds {
                 Some(bounds) => canvas.save_layer_bounds(layer, rect_of(*bounds)),

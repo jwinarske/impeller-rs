@@ -19,7 +19,8 @@ through KMS with no compositor present.
 > pattern measured along the path so it follows a curve rather than its chord.
 > Paths take elliptical arcs, which is what a progress ring and a pie slice are
 > made of. Save layers give a subtree its own target, so group
-> opacity and layer-wide blend modes work and nest. A glyph atlas packs
+> opacity and layer-wide blend modes work and nest, and a layer can blur what is
+> behind it -- frosted glass, not just a soft shadow. A glyph atlas packs
 > caller-supplied single-channel coverage, evicts what a frame stops using,
 > grows when it has nothing to evict, and draws a run of any length as one
 > draw; bring your own rasterizer. Windowed presentation works on both backends

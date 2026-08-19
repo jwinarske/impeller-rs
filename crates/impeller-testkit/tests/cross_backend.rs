@@ -153,6 +153,12 @@ fn a_bounded_layer_renders_like_a_full_size_one_on_every_backend() {
     // against the same scene with its bounds stripped rather than against
     // stored values, so it keeps holding as both change.
     //
+    // With one exception, which this test found rather than anticipated: a
+    // layer that filters its backdrop is not merely allocating when it states
+    // bounds. The bounds are the region that gets filtered, so stripping them
+    // blurs the whole frame instead of a panel of it. Both are right, and they
+    // are different pictures, so the comparison has nothing to say about them.
+    //
     // Per backend rather than only on the first. An offset that a full-size
     // layer hides is exactly the kind of thing the two could differ on, since
     // one encodes a pass into a command buffer and the other rebinds a
@@ -165,7 +171,11 @@ fn a_bounded_layer_renders_like_a_full_size_one_on_every_backend() {
     }
 
     let mut checked = 0;
-    for scene in corpus().into_iter().filter(Scene::has_bounded_layer) {
+    for scene in corpus()
+        .into_iter()
+        .filter(Scene::has_bounded_layer)
+        .filter(|scene| !scene.filters_its_backdrop())
+    {
         let unbounded = scene.unbounded();
         // Stripping has to have done something, or the two renders are the
         // same recording and the comparison below is vacuous.

@@ -440,6 +440,28 @@ fade it" rather than "fade each shape in it": two overlapping half-transparent
 shapes drawn directly show where they cross, and the same pair inside a
 half-transparent layer does not.
 
+**A backdrop filter cuts the pass rather than reading it.** Frosted glass asks
+for the one thing the rule above forbids: a layer whose starting content is the
+target it is about to draw into. So the pass stops. Everything drawn into that
+target so far becomes a pass of its own, what follows begins by drawing that
+pass back in, and the layer is seeded with a filtered copy of it. Three extra
+passes and one full-target copy per filter, which is the honest price of not
+having the machinery to sample an attachment being written — and it is paid only
+by a layer that asks.
+
+That price is why the bounds of such a layer stop being an optimization. For
+every other layer they say only where the content is and the picture is the same
+without them; here they are the region filtered, so a frosted panel states its
+bounds and the same layer without them blurs the whole frame. Both are
+meaningful and they are different pictures, which is a distinction the API
+documents rather than resolves.
+
+The filtered copy is seeded with `Src` and the layer's own content composites
+over it. A caller who replaces instead of blending erases the backdrop and gets
+a layer that renders identically with the filter on and off — which is how the
+first corpus scene for this was written, and what it now carries a comment
+about.
+
 Passes are stored in the order they finish and executed in that order, which is
 already correct rather than something to sort: a layer is filed when it is
 restored, necessarily before the draw that composites it. Each pass carries its

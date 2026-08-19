@@ -2232,6 +2232,80 @@ fn a_gradient_with_many_stops_agrees_with_one_that_fits() {
 }
 
 #[test]
+fn a_backdrop_blur_softens_what_is_behind_the_layer_and_nothing_else() {
+    let Some(mut ctx) = context() else { return };
+    // Frosted glass, which is the other blur. A layer blur softens the layer's
+    // own content; this softens what is already on the target and hands the
+    // result to the layer to draw over.
+    //
+    // The scene is a hard vertical edge -- black left, white right -- so
+    // "blurred" means something checkable: at the edge, a blur produces
+    // intermediate values, and no amount of drawing an unblurred copy does.
+    let draw = |ctx: &mut Context, sigma: f32| {
+        let mut canvas = Canvas::new(SIZE);
+        canvas.clear(Color::BLACK);
+        canvas
+            .draw_rect(
+                Rect::new(64.0, 0.0, 128.0, 128.0),
+                &Paint::fill(Color::WHITE).with_anti_alias(false),
+            )
+            .expect("edge");
+        // A panel over the middle band only, so the top and bottom of the same
+        // edge are left alone and can be compared against.
+        canvas.save_layer_bounds(
+            Layer::opacity(1.0).with_backdrop_blur(sigma),
+            Rect::new(0.0, 48.0, 128.0, 80.0),
+        );
+        canvas.restore();
+        render(ctx, canvas)
+    };
+
+    let plain = draw(&mut ctx, 0.0);
+    let frosted = draw(&mut ctx, 6.0);
+
+    // Without a backdrop blur the edge is hard: one column black, the next
+    // white, nothing between.
+    let hard = |pixels: &[u8], y: u32| {
+        (56u32..72)
+            .map(|x| pixel(pixels, x, y))
+            .filter(|p| p[0] > 8 && p[0] < 247)
+            .count()
+    };
+    assert_eq!(hard(&plain, 64), 0, "the control edge is not hard");
+
+    // Inside the panel it is soft.
+    let soft = hard(&frosted, 64);
+    assert!(
+        soft >= 8,
+        "the backdrop was not blurred: {soft} intermediate columns at the edge"
+    );
+
+    // Outside the panel the same edge is untouched, which is what says the
+    // filter is confined to the layer rather than applied to the frame.
+    assert_eq!(
+        hard(&frosted, 16),
+        0,
+        "the backdrop blur reached above the layer"
+    );
+    assert_eq!(
+        hard(&frosted, 112),
+        0,
+        "the backdrop blur reached below the layer"
+    );
+
+    // And what was behind is still behind: far from the edge the panel shows
+    // the backdrop's own colors rather than clearing them away.
+    assert!(
+        pixel(&frosted, 4, 64)[0] < 8,
+        "the left of the panel is not black"
+    );
+    assert!(
+        pixel(&frosted, 124, 64)[0] > 247,
+        "the right of the panel is not white"
+    );
+}
+
+#[test]
 fn a_tint_recolors_an_image_and_keeps_it_premultiplied() {
     let Some(mut ctx) = context() else { return };
     // The reason a tint exists: one monochrome sheet, every state's color. The

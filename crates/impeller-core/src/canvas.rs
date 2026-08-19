@@ -299,6 +299,28 @@ pub struct Layer {
     pub alpha: f32,
     /// How the finished layer meets what was underneath it.
     pub blend: BlendMode,
+    /// Blur what is already on the target before the layer draws over it.
+    ///
+    /// This is the other blur, and the difference is which image is filtered.
+    /// [`Self::blur`] softens the layer's own content, which is what a shadow
+    /// is. This softens what is *behind* it and hands the result to the layer
+    /// as its starting content, which is what frosted glass is: a panel that
+    /// obscures rather than one that is itself indistinct.
+    ///
+    /// Zero for none, and it costs nothing when zero. When it is not zero it
+    /// costs a copy of the target and two blur passes over it, because reading
+    /// what a pass is writing is not something this renderer can do -- see the
+    /// architecture note on cutting a pass.
+    ///
+    /// # Bounds stop being an optimization
+    ///
+    /// For every other layer, [`Canvas::save_layer_bounds`] only says where the
+    /// content is, and the picture is the same either way. For this one the
+    /// bounds are the region that gets filtered: a frosted panel is a bounded
+    /// layer, and the same layer without bounds blurs the whole frame and
+    /// composites the whole frame back. Both are meaningful and they are
+    /// different pictures, so state the bounds when you mean a panel.
+    pub backdrop_blur: f32,
 }
 
 impl Default for Layer {
@@ -307,6 +329,7 @@ impl Default for Layer {
             blur: 0.0,
             alpha: 1.0,
             blend: BlendMode::SrcOver,
+            backdrop_blur: 0.0,
         }
     }
 }
@@ -329,6 +352,19 @@ impl Layer {
     /// Anything at or below zero, or not a number, means no blur rather than an
     /// error: a caller animating a shadow's softness to nothing should get the
     /// sharp thing, not a refusal at the end of the animation.
+    /// Blur the backdrop this layer is drawn over.
+    ///
+    /// Ignored unless finite and positive, on the same terms as
+    /// [`Self::with_blur`]: a sigma that is not a length describes no blur.
+    pub fn with_backdrop_blur(mut self, sigma: f32) -> Self {
+        self.backdrop_blur = if sigma.is_finite() && sigma > 0.0 {
+            sigma
+        } else {
+            0.0
+        };
+        self
+    }
+
     pub fn with_blur(mut self, sigma: f32) -> Self {
         self.blur = if sigma.is_finite() && sigma > 0.0 {
             sigma
@@ -535,6 +571,119 @@ impl Canvas {
     /// which costs some work in the layer and keeps a stencil clip from having
     /// to be rebuilt in a second target.
     pub fn save_layer(&mut self, layer: Layer) -> &mut Self {
+        let pending = self.open_layer(layer);
+        self.seed_backdrop(pending);
+        self
+    }
+
+    /// Push the layer frame, and cut the backdrop out if one was asked for.
+    ///
+    /// Returns what the layer's target must be seeded with once its size is
+    /// settled, which is why this is separate from the seeding: a bounded layer
+    /// does not know its own target until after the frame exists, and the seed
+    /// has to land in the target the content will draw into.
+    fn open_layer(&mut self, layer: Layer) -> Option<(usize, Target)> {
+        let parent = self.target;
+        let filtered = (layer.backdrop_blur > 0.0).then(|| {
+            let cut = self.cut_pass();
+            self.blur_passes(cut, parent, layer.backdrop_blur)
+        });
+        self.push_layer_frame(layer);
+        filtered.map(|index| (index, parent))
+    }
+
+    /// End the current target's pass here, and answer which pass now holds it.
+    ///
+    /// The architecture's rule is that a pass cannot sample the attachment it
+    /// is writing, which is exactly what a backdrop filter asks for. So the
+    /// pass stops: everything drawn into this target so far becomes a pass of
+    /// its own, and what follows begins by drawing that pass back in.
+    ///
+    /// The redraw is the cost, one full-target copy per backdrop filter, and it
+    /// is not avoidable without the machinery the rule exists for the absence
+    /// of. It is a `Src` blit covering the whole target, so it reproduces what
+    /// was cut exactly rather than compositing with it.
+    fn cut_pass(&mut self) -> usize {
+        let target = self.target;
+        let batch = std::mem::take(&mut self.batch);
+        let sources = std::mem::take(&mut self.sources);
+        // The clear belongs to the half that starts from nothing. A layer's
+        // target clears to transparent and the frame's to its background; after
+        // the cut neither clears again, since the redraw below covers every
+        // pixel with `Src`.
+        let clear = if self.in_layer() {
+            Some([0.0; 4])
+        } else {
+            self.background.take().map(|c| c.to_array())
+        };
+        self.finished.push(Pass {
+            batch,
+            descriptor: PassDescriptor {
+                clear,
+                samples: self.pass_samples(),
+            },
+            sources,
+            extent: target.extent,
+        });
+        let index = self.finished.len() - 1;
+        self.draw_whole_pass(index, target, target, BlendMode::Src);
+        index
+    }
+
+    /// Whether a layer is open, which decides what a cut pass clears to.
+    fn in_layer(&self) -> bool {
+        self.stack.iter().any(|state| state.layer.is_some())
+    }
+
+    /// Draw a finished pass, sized for `source`, across the whole of `into`.
+    ///
+    /// `into` is a rectangle of `source`: the same target when a pass is being
+    /// redrawn after a cut, and a sub-rectangle of it when a bounded layer is
+    /// seeded with a backdrop. The mapping is the inverse of the one a layer
+    /// composite uses, and reduces to the full-texture mapping when the two are
+    /// the same size, which is what makes the unbounded case share this code.
+    fn draw_whole_pass(&mut self, pass: usize, source: Target, into: Target, blend: BlendMode) {
+        let slot = self.slot_for(TextureSource::Layer(pass));
+        let offset = into.origin - source.origin;
+        let (iw, ih) = (into.extent.width as f32, into.extent.height as f32);
+        let (sw, sh) = (source.extent.width as f32, source.extent.height as f32);
+        let material = Material::Image {
+            origin: [-1.0 - 2.0 * offset.x / iw, 1.0 + 2.0 * offset.y / ih],
+            to_local: [0.5 * iw / sw, 0.0, 0.0, -0.5 * ih / sh],
+            slot,
+            alpha: 1.0,
+            tile: TileMode::Clamp,
+            source: [0.0, 0.0, 1.0, 1.0],
+            tint: [1.0, 1.0, 1.0, 1.0],
+        };
+        let paint = RenderPaint {
+            material,
+            blend,
+            // Neither clipped nor stencilled: this is the target's own content
+            // being restored or seeded, not something the caller drew, and a
+            // clip in force belongs to what comes after it.
+            clip: None,
+            stencil: ClipState::UNCLIPPED,
+        };
+        let whole = into.path();
+        let _ = self
+            .renderer
+            .fill_into(&mut self.batch, &whole, Affine2::IDENTITY, &paint);
+    }
+
+    /// Put the filtered backdrop under the layer's own content.
+    ///
+    /// `Src`, because it is the layer's starting image rather than something
+    /// composited onto it, and the layer's target was cleared to transparent.
+    fn seed_backdrop(&mut self, pending: Option<(usize, Target)>) {
+        let Some((pass, parent)) = pending else {
+            return;
+        };
+        let into = self.target;
+        self.draw_whole_pass(pass, parent, into, BlendMode::Src);
+    }
+
+    fn push_layer_frame(&mut self, layer: Layer) {
         self.stack.push(SavedState {
             transform: self.transform,
             clip: self.clip,
@@ -548,7 +697,6 @@ impl Canvas {
         });
         self.clip = None;
         self.depth = 0;
-        self
     }
 
     /// Open a layer that only needs to cover `bounds`.
@@ -572,6 +720,11 @@ impl Canvas {
     /// back to a full-size layer, that being a case where a smaller target
     /// would be a guess and guessing wrong loses drawing.
     ///
+    /// A layer that filters its backdrop is the exception to all of this: for
+    /// it the bounds are not an optimization but the region filtered, so
+    /// omitting them filters the whole target rather than merely allocating
+    /// more of one. See [`Layer::backdrop_blur`].
+    ///
     /// Under a rotation the region becomes a quadrilateral, and the target is
     /// the box around it. That covers more than the caller promised, which is
     /// the safe direction: a target is an allocation rather than a clip the
@@ -581,7 +734,11 @@ impl Canvas {
     /// there the box would admit pixels the caller asked to remove.
     pub fn save_layer_bounds(&mut self, layer: Layer, bounds: Rect) -> &mut Self {
         let blur = layer.blur;
-        self.save_layer(layer);
+        // Opened without seeding, because the seed has to land in the target
+        // the content will draw into and that target is decided below. A
+        // backdrop drawn into the full-size target and then narrowed would be
+        // the wrong region of the wrong image.
+        let pending = self.open_layer(layer);
         let (min, max) = transformed_bounds(
             &self.transform,
             Vec2::new(bounds.left, bounds.top),
@@ -609,12 +766,16 @@ impl Canvas {
             .ceil()
             .min(parent.origin.y + parent.extent.height as f32);
         if !(right > left && bottom > top) {
+            // The layer keeps the full-size target it was opened with, so the
+            // backdrop is seeded across that instead.
+            self.seed_backdrop(pending);
             return self;
         }
         self.aim_at(Target {
             origin: Vec2::new(left, top),
             extent: Extent2D::new((right - left) as u32, (bottom - top) as u32),
         });
+        self.seed_backdrop(pending);
         self
     }
 
