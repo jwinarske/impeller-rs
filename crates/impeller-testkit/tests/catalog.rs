@@ -143,6 +143,18 @@ fn catalog_names_say_which_file_they_came_from() {
         .collect();
     assert!(stray.is_empty(), "catalog scenes with no topic: {stray:?}");
 
+    // A plate showing something this renderer has and Impeller's playground
+    // does not would break the one property the naming carries: that a name
+    // leads back to the test it mirrors. There was such a plate briefly --
+    // nearest sampling, which has no counterpart there -- and it was removed
+    // rather than named around, because a catalog that is a mirror plus some
+    // extras is not a mirror. Anything of ours worth looking at belongs in the
+    // corpus or in a live scene.
+    assert!(
+        !catalog().iter().any(|s| s.name.ends_with("-nearest")),
+        "a catalog plate is showing something the original has no test for"
+    );
+
     // And no two scenes share a name, which would make one of them
     // unreachable from the playground and hide it from the sweep above.
     let mut names: Vec<&str> = catalog().iter().map(|s| s.name).collect();

@@ -20,7 +20,7 @@ use impeller_core::{
     Canvas, Color, GradientStop, Layer, Paint, Recording, Rect, Shader, Style, Vec2,
 };
 use impeller_geometry::dash::Dash;
-use impeller_hal::{Hal, HalContext, Result};
+use impeller_hal::{Hal, HalContext, PixelFormat, Result, TextureDescriptor};
 
 fn color_of(c: [f32; 4]) -> Color {
     Color::linear(c[0], c[1], c[2], c[3])
@@ -75,6 +75,24 @@ fn paint_for(item: &Item, anti_alias: bool) -> Paint {
             end_angle: *end_angle,
             stops: stops_of(stops),
             tile: *tile,
+        },
+        Fill::Image {
+            rect,
+            source,
+            tile,
+            sampling,
+            alpha,
+            tint,
+        } => Shader::Image {
+            // Slot zero, always: a scene names no textures, and the executor
+            // supplies exactly one.
+            slot: crate::fixture::SLOT,
+            rect: Rect::new(rect[0], rect[1], rect[2], rect[3]),
+            alpha: *alpha,
+            tile: *tile,
+            source: Rect::new(source[0], source[1], source[2], source[3]),
+            tint: color_of(*tint),
+            sampling: *sampling,
         },
         Fill::ConicalGradient {
             start_center,
@@ -217,7 +235,25 @@ where
     H::Context: HalContext<Hal = H>,
 {
     let recording = record_scene(scene)?;
-    let pixels = impeller_core::render_offscreen::<H>(ctx, &recording, &[])?;
+    // Uploaded per scene that asks for it rather than held by the caller,
+    // which keeps every consumer of this function -- the window, the
+    // comparison, the sheet renderer -- from having to know that some scenes
+    // sample a texture. A scene that does not ask allocates nothing.
+    let pixels = if scene.samples_fixture() {
+        let mut sheet = ctx.create_texture(&TextureDescriptor::offscreen(
+            crate::fixture::SIZE,
+            PixelFormat::Rgba8Unorm,
+        ))?;
+        let result = ctx
+            .write_texture(&mut sheet, &crate::fixture::pixels())
+            .and_then(|()| impeller_core::render_offscreen::<H>(ctx, &recording, &[&sheet]));
+        // Released whether the draw worked or not: a scene that fails to
+        // render must not leak a texture into every later scene's device.
+        ctx.destroy_texture(sheet);
+        result?
+    } else {
+        impeller_core::render_offscreen::<H>(ctx, &recording, &[])?
+    };
     Ok(Image::new(scene.size.width, scene.size.height, pixels))
 }
 

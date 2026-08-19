@@ -9,8 +9,8 @@ use crate::shape::Shape;
 use glam::{Affine2, Vec2};
 use impeller_geometry::stroke::{LineCap, LineJoin, StrokeStyle};
 use impeller_geometry::FillRule;
-use impeller_hal::ColorFilter;
 use impeller_hal::{BlendMode, Extent2D, TileMode};
+use impeller_hal::{ColorFilter, Sampling};
 
 /// An affine transform, as data.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -148,6 +148,25 @@ pub enum Fill {
         stops: Vec<Stop>,
         /// What fills the directions the arc does not cover.
         tile: TileMode,
+    },
+    /// A piece of the fixture sheet, mapped onto a rectangle.
+    ///
+    /// There is one texture a scene can name, and it does not name it: the
+    /// executor uploads [`crate::fixture`] when a scene needs it and supplies
+    /// it as slot zero. A scene that carried a texture handle would be a
+    /// scene that could not be written down without a device, which is the
+    /// one property this format exists to keep.
+    Image {
+        /// Where in the scene the sheet lands, as `[left, top, right, bottom]`.
+        rect: [f32; 4],
+        /// Which part of the sheet to read, from zero to one in each axis.
+        source: [f32; 4],
+        tile: TileMode,
+        sampling: Sampling,
+        /// Scales the sampled color.
+        alpha: f32,
+        /// Multiplies the sampled color. White changes nothing.
+        tint: [f32; 4],
     },
     /// A gradient between two circles, reaching its last stop on the second.
     ConicalGradient {
@@ -652,6 +671,17 @@ impl Scene {
         } else {
             crate::image::Tolerance::EXACT
         }
+    }
+
+    /// Whether any item in this scene samples the fixture sheet.
+    ///
+    /// Derived rather than declared, for the same reason the tolerance and the
+    /// capability requirement are: a flag written alongside the scene is one
+    /// that can be forgotten, and forgetting this one means a draw refused for
+    /// naming a texture nobody supplied.
+    pub fn samples_fixture(&self) -> bool {
+        self.items()
+            .any(|item| matches!(item.fill, Fill::Image { .. }))
     }
 
     /// Whether a device can render this scene at all.

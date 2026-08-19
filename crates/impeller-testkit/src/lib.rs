@@ -15,6 +15,7 @@
 
 pub mod catalog;
 pub mod executor;
+pub mod fixture;
 pub mod image;
 pub mod scene;
 pub mod shape;

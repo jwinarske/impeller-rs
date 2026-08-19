@@ -37,7 +37,7 @@ use crate::scene::{Fill, Item, LayerSpec, Node, Scene, Stop, StrokeSpec, Transfo
 use crate::shape::Shape;
 use impeller_geometry::stroke::{LineCap, LineJoin};
 use impeller_geometry::FillRule;
-use impeller_hal::{BlendMode, ColorFilter, TileMode};
+use impeller_hal::{BlendMode, ColorFilter, Sampling, TileMode};
 
 const WHITE: [f32; 4] = [1.0, 1.0, 1.0, 1.0];
 const RED: [f32; 4] = [1.0, 0.0, 0.0, 1.0];
@@ -63,6 +63,7 @@ pub fn catalog() -> Vec<Scene> {
     scenes.extend(clip());
     scenes.extend(opacity());
     scenes.extend(blend());
+    scenes.extend(image());
     scenes
 }
 
@@ -1161,4 +1162,153 @@ fn blend() -> Vec<Scene> {
     ));
 
     scenes
+}
+
+/// The whole sheet, in the destination it is usually drawn into.
+const SHEET: [f32; 4] = [16.0, 16.0, 112.0, 112.0];
+/// All of it.
+const ALL: [f32; 4] = [0.0, 0.0, 1.0, 1.0];
+
+fn sheet(rect: [f32; 4], source: [f32; 4], tile: TileMode, sampling: Sampling) -> Fill {
+    Fill::Image {
+        rect,
+        source,
+        tile,
+        sampling,
+        alpha: 1.0,
+        tint: WHITE,
+    }
+}
+
+/// The texture scenes from `aiks_dl_basic_unittests.cc`.
+///
+/// Kept apart from the rest of that file's plates only because they are the
+/// ones that need the fixture, which is worth being able to see in one place.
+fn image() -> Vec<Scene> {
+    let whole = Shape::Rect {
+        min: [0.0, 0.0],
+        max: [128.0, 128.0],
+    };
+    // A destination smaller than the shape it fills, so every tile mode has
+    // something outside it to act on.
+    let quarter: [f32; 4] = [40.0, 40.0, 88.0, 88.0];
+
+    vec![
+        plate(
+            "basic/can-render-image",
+            vec![Item::filled(
+                Shape::Rect {
+                    min: [16.0, 16.0],
+                    max: [112.0, 112.0],
+                },
+                sheet(SHEET, ALL, TileMode::Clamp, Sampling::Linear),
+            )],
+        ),
+        plate(
+            "basic/can-render-tiled-texture-clamp",
+            vec![Item::filled(
+                whole.clone(),
+                sheet(quarter, ALL, TileMode::Clamp, Sampling::Linear),
+            )],
+        ),
+        plate(
+            "basic/can-render-tiled-texture-repeat",
+            vec![Item::filled(
+                whole.clone(),
+                sheet(quarter, ALL, TileMode::Repeat, Sampling::Linear),
+            )],
+        ),
+        plate(
+            "basic/can-render-tiled-texture-mirror",
+            vec![Item::filled(
+                whole.clone(),
+                sheet(quarter, ALL, TileMode::Mirror, Sampling::Linear),
+            )],
+        ),
+        plate(
+            "basic/can-render-tiled-texture-decal",
+            vec![Item::filled(
+                whole.clone(),
+                sheet(quarter, ALL, TileMode::Decal, Sampling::Linear),
+            )],
+        ),
+        plate(
+            "basic/can-render-tiled-texture-clamp-with-translate",
+            vec![Item::filled(
+                whole.clone(),
+                sheet(quarter, ALL, TileMode::Clamp, Sampling::Linear),
+            )
+            // The mapping travels with the item, so the clamped edges move
+            // with it rather than staying where the rectangle was written.
+            .with_transform(Transform {
+                translate: [18.0, -12.0],
+                ..Transform::default()
+            })],
+        ),
+        plate(
+            "basic/can-render-image-rect",
+            vec![Item::filled(
+                Shape::Rect {
+                    min: [16.0, 16.0],
+                    max: [112.0, 112.0],
+                },
+                // One quadrant of the sheet across the whole destination,
+                // which is what a sprite out of a sheet is.
+                sheet(
+                    SHEET,
+                    [0.0, 0.0, 0.5, 0.5],
+                    TileMode::Clamp,
+                    Sampling::Linear,
+                ),
+            )],
+        ),
+        plate(
+            "basic/draw-image-rect-src-outside-bounds",
+            vec![Item::filled(
+                Shape::Rect {
+                    min: [16.0, 16.0],
+                    max: [112.0, 112.0],
+                },
+                // A source running past the sheet's own edge, which clamping
+                // has to answer without reading anything that is not there.
+                sheet(
+                    SHEET,
+                    [0.5, 0.5, 1.6, 1.6],
+                    TileMode::Clamp,
+                    Sampling::Linear,
+                ),
+            )],
+        ),
+        plate(
+            "basic/can-render-inverted-image-with-color-filter",
+            vec![Item::filled(
+                Shape::Rect {
+                    min: [16.0, 16.0],
+                    max: [112.0, 112.0],
+                },
+                sheet(SHEET, ALL, TileMode::Clamp, Sampling::Linear),
+            )
+            .with_color_filter(ColorFilter::matrix([
+                -1.0, 0.0, 0.0, 0.0, 1.0, //
+                0.0, -1.0, 0.0, 0.0, 1.0, //
+                0.0, 0.0, -1.0, 0.0, 1.0, //
+                0.0, 0.0, 0.0, 1.0, 0.0,
+            ]))],
+        ),
+        plate(
+            "basic/image-color-source-effect-transform",
+            vec![Item::filled(
+                Shape::Circle {
+                    center: [64.0, 64.0],
+                    radius: 52.0,
+                },
+                sheet(SHEET, ALL, TileMode::Repeat, Sampling::Linear),
+            )
+            .with_transform(Transform {
+                rotate: 0.6,
+                scale: [1.3, 0.8],
+                ..Transform::default()
+            })],
+        ),
+    ]
 }

@@ -44,7 +44,7 @@ drifts from what it inventories is worse than none.
 
 | File | Scenes there | Here | Blocked on |
 |---|---|---|---|
-| `aiks_dl_basic_unittests.cc` | ~85 | 17 | superellipses, perspective, images, subpass optimizations |
+| `aiks_dl_basic_unittests.cc` | ~85 | 27 | superellipses, perspective, subpass optimizations |
 | `aiks_dl_path_unittests.cc` | ~31 | 9 | conics, difference-of-rounded-rects |
 | `aiks_dl_gradient_unittests.cc` | ~40 | 17 | dithering |
 | `aiks_dl_clip_unittests.cc` | ~5 | 3 | difference clips |
@@ -52,14 +52,14 @@ drifts from what it inventories is worse than none.
 | `aiks_dl_blend_unittests.cc` | ~79 | 34 | framebuffer fetch, wide gamut, subpass collapse |
 | `aiks_dl_blur_unittests.cc` | ~59 | 0 | mask blur styles: inner, outer and solid |
 | `aiks_dl_vertices_unittests.cc` | ~16 | 0 | the scene model cannot describe a mesh |
-| `aiks_dl_atlas_unittests.cc` | ~15 | 0 | the scene model cannot carry a texture |
+| `aiks_dl_atlas_unittests.cc` | ~15 | 0 | the scene model cannot describe a sprite batch |
 | `aiks_dl_shadow_unittests.cc` | ~30 | 0 | `drawShadow` |
 | `aiks_dl_primitive_shape_unittests.cc` | ~2 | 0 | one is a playground harness, one is a hairline skew |
 | `aiks_dl_text_unittests.cc` | — | 0 | text shaping and font parsing, out of scope |
 | `aiks_dl_runtime_effect_unittests.cc` | — | 0 | runtime effects |
 | `aiks_dl_unittests.cc` | ~39 | 0 | mostly internal optimizations and picture round-trips |
 
-The catalog holds eighty-two scenes of roughly four hundred, and the proportion
+The catalog holds ninety-two scenes of roughly four hundred, and the proportion
 is less interesting than which ones: the arithmetic of drawing is largely covered, and
 what is missing is either a capability this renderer does not have or a thing
 the scene model cannot describe.
@@ -77,12 +77,19 @@ Conic path segments. These are the rows of `docs/parity.md`, and the scenes
 that need them arrive when the row does.
 
 **Things the scene model cannot describe**, which is a testkit limitation and
-not a renderer one. A scene is a list of shapes with fills; it cannot name a
-mesh or a texture. Both exist in the renderer and have their own tests, and the
-playground's live scenes show them — but neither can be a plate here until the
-model can say so, which is what keeps `aiks_dl_vertices` and `aiks_dl_atlas` at
-nothing between them. That is about thirty scenes, and the cheapest tranche
-left.
+not a renderer one. A scene is a list of shapes with fills, so it cannot name a
+mesh or a sprite batch. Both exist in the renderer and have their own tests,
+and the playground's live scenes show them — but neither can be a plate here
+until the model can say so, which is what keeps `aiks_dl_vertices` and
+`aiks_dl_atlas` at nothing between them. That is about thirty scenes, and the
+cheapest tranche left.
+
+A texture was on this list until the model learned to name one. It does not
+name a *handle*: a scene has to be writable without a device, which is what
+lets one list serve a window, a headless comparison and a board at the end of a
+cable. It says it samples an image, and the executor uploads a single fixture
+and binds it — for the scenes that ask, and allocating nothing for the ones
+that do not.
 
 This category was larger when it was first written, and wrongly so: it claimed
 a colour filter stated as a blend was among them. It was not. A filter is a
