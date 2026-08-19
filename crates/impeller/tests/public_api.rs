@@ -7,9 +7,9 @@
 //! works.
 
 use impeller::{
-    Atlas, BackendPreference, BlendMode, Canvas, Color, Context, Coverage, Extent2D, GlyphKey,
-    GradientStop, Layer, Paint, Path, PathBuilder, PixelFormat, PositionedGlyph, Rect, Result,
-    TileMode, Vec2, MAX_STOPS,
+    Atlas, BackendPreference, BlendMode, Canvas, Color, Context, Coverage, Dash, Extent2D,
+    GlyphKey, GradientStop, Layer, Paint, Path, PathBuilder, PixelFormat, PositionedGlyph, Rect,
+    Result, TileMode, Vec2, MAX_STOPS,
 };
 
 const SIZE: Extent2D = Extent2D {
@@ -2229,6 +2229,103 @@ fn a_gradient_with_many_stops_agrees_with_one_that_fits() {
     let right = pixel(&sampled, 124, 64);
     assert!(left[0] > 200 && left[2] < 60, "left end {left:?}");
     assert!(right[2] > 200 && right[0] < 60, "right end {right:?}");
+}
+
+#[test]
+fn a_dashed_stroke_draws_less_than_a_solid_one_and_leaves_real_gaps() {
+    let Some(mut ctx) = context() else { return };
+    let draw = |ctx: &mut Context, dash: Option<Dash>| {
+        let mut canvas = Canvas::new(SIZE);
+        canvas.clear(Color::BLACK);
+        canvas
+            .draw_line(
+                Vec2::new(0.0, 64.0),
+                Vec2::new(128.0, 64.0),
+                &Paint::stroke(Color::WHITE, 8.0)
+                    .with_dash(dash)
+                    .with_anti_alias(false),
+            )
+            .expect("line");
+        render(ctx, canvas)
+    };
+    let lit = |pixels: &[u8]| {
+        pixels
+            .chunks_exact(4)
+            .filter(|texel| texel[0] > 128)
+            .count()
+    };
+
+    let solid = draw(&mut ctx, None);
+    // Sixteen on, sixteen off across a hundred and twenty-eight: four dashes.
+    let dashed = draw(&mut ctx, Some(Dash::new(vec![16.0, 16.0], 0.0)));
+
+    let (whole, cut) = (lit(&solid), lit(&dashed));
+    assert!(whole > 0, "the solid line drew nothing to compare against");
+    // Half, give or take the ends of each dash.
+    let ratio = cut as f32 / whole as f32;
+    assert!(
+        (0.4..0.6).contains(&ratio),
+        "a half-on pattern drew {ratio} of the line"
+    );
+
+    // The gaps are gaps rather than a dimmer line, which is what a pattern
+    // applied to coverage instead of to geometry would produce.
+    assert_eq!(
+        pixel(&dashed, 24, 64),
+        [0, 0, 0, 255],
+        "the first gap is not empty"
+    );
+    assert!(pixel(&dashed, 8, 64)[0] > 200, "the first dash is missing");
+
+    // Phase moves the pattern rather than changing how much is drawn: what was
+    // a gap becomes a dash.
+    let shifted = draw(&mut ctx, Some(Dash::new(vec![16.0, 16.0], 16.0)));
+    assert!(
+        pixel(&shifted, 24, 64)[0] > 200,
+        "a phase of one interval should put a dash where the gap was"
+    );
+    assert_eq!(
+        pixel(&shifted, 8, 64),
+        [0, 0, 0, 255],
+        "and a gap where the dash was"
+    );
+}
+
+#[test]
+fn a_dashed_rounded_rectangle_dashes_rather_than_drawing_solid() {
+    let Some(mut ctx) = context() else { return };
+    // A rounded rectangle stroke is normally evaluated per fragment from a
+    // distance field, which describes a continuous outline and has no notion of
+    // a position along it. A dash therefore has to send the shape back to
+    // tessellation, and if it does not, the outline draws solid and the pattern
+    // is silently ignored -- a bug that looks exactly like a working stroke.
+    let draw = |ctx: &mut Context, dash: Option<Dash>| {
+        let mut canvas = Canvas::new(SIZE);
+        canvas.clear(Color::BLACK);
+        canvas
+            .draw_rrect(
+                Rect::new(16.0, 16.0, 112.0, 112.0),
+                16.0,
+                &Paint::stroke(Color::WHITE, 6.0).with_dash(dash),
+            )
+            .expect("rrect");
+        render(ctx, canvas)
+    };
+    let lit = |pixels: &[u8]| {
+        pixels
+            .chunks_exact(4)
+            .filter(|texel| texel[0] > 128)
+            .count()
+    };
+
+    let solid = lit(&draw(&mut ctx, None));
+    let dashed = lit(&draw(&mut ctx, Some(Dash::new(vec![10.0, 10.0], 0.0))));
+    assert!(solid > 0, "the solid outline drew nothing");
+    let ratio = dashed as f32 / solid as f32;
+    assert!(
+        (0.35..0.65).contains(&ratio),
+        "the dashed outline drew {ratio} of the solid one, so the pattern was ignored"
+    );
 }
 
 #[test]

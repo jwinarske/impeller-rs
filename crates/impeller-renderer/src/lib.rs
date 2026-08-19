@@ -6,6 +6,7 @@
 //! depends on it.
 
 use glam::{Affine2, Vec2};
+use impeller_geometry::dash::{dash_path, Dash};
 use impeller_geometry::stroke::StrokeStyle;
 use impeller_geometry::tessellate::{Tessellator, VertexBuffers};
 use impeller_geometry::transform::{
@@ -197,9 +198,24 @@ impl Renderer {
         &mut self,
         path: &Path,
         style: &StrokeStyle,
+        dash: Option<&Dash>,
         transform: Affine2,
     ) -> ClipGeometry<'_> {
         let path_tolerance = path_space_tolerance(self.tolerance, &transform);
+        // Cut before stroking, so each dash is stroked as its own subpath and
+        // gets its own caps. Here rather than in the caller because the
+        // tolerance a dash is measured against is the one this line computes:
+        // dashing a curve means walking its flattening, and walking a different
+        // flattening from the one the stroke uses would put the dashes
+        // fractionally off the line they lie on.
+        let cut;
+        let path = match dash {
+            Some(dash) if dash.is_usable() => {
+                cut = dash_path(path, dash, path_tolerance);
+                &cut
+            }
+            _ => path,
+        };
         let projection = self.projection();
         let buffers = self.tessellator.stroke(path, style, path_tolerance);
         Self::to_clip_space(&mut self.clip_space, buffers, transform, projection)
@@ -236,10 +252,11 @@ impl Renderer {
         batch: &mut Batch,
         path: &Path,
         style: &StrokeStyle,
+        dash: Option<&Dash>,
         transform: Affine2,
         paint: &Paint,
     ) -> Result<()> {
-        let geo = self.stroke_path(path, style, transform);
+        let geo = self.stroke_path(path, style, dash, transform);
         let positions = geo.positions();
         let indices = geo.indices.to_vec();
         batch.push_with(

@@ -3,6 +3,7 @@
 use crate::canvas::Rect;
 use crate::color::Color;
 use glam::Vec2;
+use impeller_geometry::dash::Dash;
 use impeller_geometry::stroke::StrokeStyle;
 use impeller_hal::{BlendMode, TileMode};
 
@@ -135,6 +136,17 @@ pub enum Style {
 pub struct Paint {
     pub shader: Shader,
     pub style: Style,
+    /// Cut a stroke into a dash pattern before drawing it.
+    ///
+    /// On the paint rather than inside [`Style::Stroke`] for two reasons. It
+    /// keeps the geometry crate's stroke description a small copyable value,
+    /// which the tessellator wants and a pattern of arbitrary length would
+    /// end. And it says what it is: a dashed stroke is a stroke of a different
+    /// path, so this describes what happens to the path on the way in rather
+    /// than how the outline is built.
+    ///
+    /// Ignored by a fill, which has no length to measure along.
+    pub dash: Option<Dash>,
     pub blend: BlendMode,
     /// Whether to antialias this shape's edges.
     ///
@@ -149,6 +161,7 @@ impl Default for Paint {
         Self {
             shader: Shader::Solid(Color::BLACK),
             style: Style::Fill,
+            dash: None,
             blend: BlendMode::SrcOver,
             anti_alias: true,
         }
@@ -220,6 +233,18 @@ impl Paint {
             },
             ..Default::default()
         }
+    }
+
+    /// Dash this paint's stroke, or clear an existing pattern with `None`.
+    ///
+    /// The lengths are in the space the shape is drawn in, so a pattern scales
+    /// with the canvas transform along with the line it cuts. A pattern that
+    /// cannot be walked -- empty, negative, or summing to zero -- draws the
+    /// line whole rather than drawing nothing, since an undashed line leads
+    /// back to the pattern and an absent one leads nowhere.
+    pub fn with_dash(mut self, dash: impl Into<Option<Dash>>) -> Self {
+        self.dash = dash.into();
+        self
     }
 
     /// A stroke of the given width, with default caps and joins.

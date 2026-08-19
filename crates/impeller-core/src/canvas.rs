@@ -776,6 +776,7 @@ impl Canvas {
                 &mut self.batch,
                 path,
                 stroke,
+                paint.dash.as_ref(),
                 self.transform,
                 &render_paint,
             )?,
@@ -1445,6 +1446,16 @@ fn analytic_stroke(paint: &Paint) -> Option<f32> {
     // the two -- and in the corner of a rounded rectangle that gap is most of
     // the corner. Tessellating covers only the shape and has no such gap.
     if !paint.blend.respects_coverage() {
+        return None;
+    }
+    // A distance field describes a continuous outline and has no notion of a
+    // position along it, so a dashed stroke cannot be expressed this way at
+    // all. Falling back to tessellation is what makes the dash appear; without
+    // this the rounded rectangle and the circle would draw a solid outline and
+    // silently ignore the pattern, which is the shape of bug the analytic path
+    // is most able to hide -- the result looks like a stroke, because it is
+    // one.
+    if paint.dash.as_ref().is_some_and(|dash| dash.is_usable()) {
         return None;
     }
     match &paint.style {

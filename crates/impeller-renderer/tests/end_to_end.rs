@@ -219,7 +219,7 @@ fn a_stroked_line_covers_a_band_of_the_requested_width() {
     let mut r = Renderer::new();
     r.begin_frame(TARGET, TOLERANCE);
     let style = StrokeStyle::new(8.0).with_cap(LineCap::Butt);
-    let geo = r.stroke_path(&path, &style, Affine2::IDENTITY);
+    let geo = r.stroke_path(&path, &style, None, Affine2::IDENTITY);
     let positions = geo.positions();
     let indices = geo.indices.to_vec();
     let img = render(&mut ctx, &positions, &indices);

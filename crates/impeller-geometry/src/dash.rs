@@ -1,0 +1,333 @@
+//! Cutting a path into the pieces a dash pattern leaves behind.
+//!
+//! # Why this is a path transform rather than a stroke option
+//!
+//! A dashed stroke is a stroke of a different path. Cutting first and stroking
+//! the pieces gives every dash its own caps and gives the joins that survive
+//! the cut the same treatment they would have had, which is what a reader
+//! expects and what SVG and PostScript specify. The alternative — teaching the
+//! stroker to skip — would have to decide what a join means when one of its two
+//! segments is not drawn, and there is no answer to that which is not simply
+//! this one arrived at more expensively.
+//!
+//! It also means dashing composes with everything already here for free: the
+//! result is a path, so it tessellates, transforms, clips and antialiases by
+//! the same code as any other.
+//!
+//! # What a pattern means
+//!
+//! Lengths alternate drawn and skipped, starting drawn, and repeat. An odd
+//! number of them repeats to an even one, so `[5]` is five on and five off —
+//! the SVG rule, and the one that makes a single number mean something obvious
+//! rather than nothing. The phase advances the starting position into the
+//! pattern, which is how a marching-ants animation is made without rebuilding
+//! anything.
+//!
+//! Measurement is along the flattened path, so a dash on a curve is as accurate
+//! as the flattening tolerance makes it. That is the same accuracy the stroke
+//! itself has, so a dash cannot be more wrong than the line it lies on.
+
+use crate::flatten::flatten;
+use crate::path::{Path, PathBuilder};
+use glam::Vec2;
+
+/// A dash pattern: alternating drawn and skipped lengths, and where to start.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Dash {
+    /// Alternating drawn and skipped lengths, starting with a drawn one.
+    ///
+    /// In the same space the path is in, so a pattern travels through the
+    /// canvas transform with the geometry rather than staying fixed on screen.
+    pub intervals: Vec<f32>,
+    /// How far into the pattern the path starts.
+    ///
+    /// Wrapped into one period, so any value is meaningful and an animation can
+    /// simply keep adding to it.
+    pub phase: f32,
+}
+
+impl Dash {
+    pub fn new(intervals: Vec<f32>, phase: f32) -> Self {
+        Self { intervals, phase }
+    }
+
+    /// Whether this pattern describes something that can be walked.
+    ///
+    /// A pattern of nothing, of negative lengths, or of lengths that sum to
+    /// zero has no period to advance through, and walking one would not
+    /// terminate. Such a pattern is treated as no pattern at all: the path is
+    /// drawn whole, which is the one behavior that cannot surprise anybody who
+    /// got here by computing an interval that came out zero.
+    pub fn is_usable(&self) -> bool {
+        !self.intervals.is_empty()
+            && self.intervals.iter().all(|v| v.is_finite() && *v >= 0.0)
+            && self.intervals.iter().sum::<f32>() > 0.0
+            && self.phase.is_finite()
+    }
+
+    /// The intervals as an even-length cycle, which is what walking wants.
+    fn cycle(&self) -> Vec<f32> {
+        if self.intervals.len() % 2 == 0 {
+            self.intervals.clone()
+        } else {
+            // `[5]` becomes `[5, 5]`, and `[4, 2, 1]` becomes `[4, 2, 1, 4, 2,
+            // 1]`: repeating the whole list is what makes an odd pattern
+            // alternate rather than stall on one phase.
+            let mut doubled = self.intervals.clone();
+            doubled.extend_from_slice(&self.intervals);
+            doubled
+        }
+    }
+}
+
+/// Cut `path` into the drawn pieces of `dash`.
+///
+/// `tolerance` is the flattening tolerance in the path's own space, the same
+/// one the tessellator would use, so the dashes lie on the curve as closely as
+/// the curve itself is drawn.
+///
+/// An unusable pattern returns the path unchanged rather than nothing: a caller
+/// whose interval arithmetic produced a zero gets an undashed line, which is
+/// visibly wrong in a way that leads back to the pattern, where an empty result
+/// is invisible and leads nowhere.
+pub fn dash_path(path: &Path, dash: &Dash, tolerance: f32) -> Path {
+    if !dash.is_usable() {
+        return path.clone();
+    }
+    let cycle = dash.cycle();
+    let period: f32 = cycle.iter().sum();
+
+    let mut builder = PathBuilder::new().with_fill_rule(path.fill_rule());
+    for polyline in flatten(path, tolerance) {
+        if polyline.len() < 2 {
+            continue;
+        }
+        walk(&polyline, &cycle, period, dash.phase, &mut builder);
+    }
+    builder.build()
+}
+
+/// Walk one polyline, emitting the drawn runs.
+///
+/// The state is a position in the pattern rather than a distance travelled,
+/// because that is what has to survive from one segment to the next: a dash
+/// crossing a vertex is one dash, and rebuilding the phase from total distance
+/// at each vertex would accumulate the error of every segment before it.
+fn walk(points: &[Vec2], cycle: &[f32], period: f32, phase: f32, out: &mut PathBuilder) {
+    // Where in the cycle the path begins, as an index and a remainder.
+    let mut remaining = phase.rem_euclid(period);
+    let mut index = 0usize;
+    while remaining >= cycle[index] {
+        remaining -= cycle[index];
+        index = (index + 1) % cycle.len();
+        // A cycle of positive total length cannot spin here forever, and
+        // `is_usable` is what guarantees that before we arrive.
+    }
+    // How much of the current interval is left to travel.
+    let mut left = cycle[index] - remaining;
+    // Even indices are drawn, odd are skipped.
+    let mut drawing = index % 2 == 0;
+    let mut pen_down = false;
+
+    for pair in points.windows(2) {
+        let (from, to) = (pair[0], pair[1]);
+        let segment = to - from;
+        let length = segment.length();
+        if !length.is_finite() || length <= 0.0 {
+            continue;
+        }
+        let mut travelled = 0.0f32;
+        while length - travelled > left {
+            // The interval ends inside this segment.
+            travelled += left;
+            let at = from + segment * (travelled / length);
+            if drawing {
+                if !pen_down {
+                    out.move_to(from + segment * ((travelled - left) / length));
+                }
+                out.line_to(at);
+                pen_down = false;
+            }
+            index = (index + 1) % cycle.len();
+            drawing = !drawing;
+            left = cycle[index];
+            // A zero-length interval would leave `left` at zero and spin here.
+            // The pattern's total is positive, so at most one interval in a row
+            // can be zero, and stepping past it makes progress.
+            if left <= 0.0 {
+                index = (index + 1) % cycle.len();
+                drawing = !drawing;
+                left = cycle[index];
+            }
+        }
+        // The rest of the segment lies inside the current interval.
+        let rest = length - travelled;
+        if drawing {
+            if !pen_down {
+                out.move_to(from + segment * (travelled / length));
+                pen_down = true;
+            }
+            out.line_to(to);
+        } else {
+            pen_down = false;
+        }
+        left -= rest;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A horizontal line of the given length, starting at the origin.
+    fn line(length: f32) -> Path {
+        let mut builder = PathBuilder::new();
+        builder.move_to(Vec2::ZERO);
+        builder.line_to(Vec2::new(length, 0.0));
+        builder.build()
+    }
+
+    /// Total length of every segment in a path of straight lines.
+    fn drawn_length(path: &Path) -> f32 {
+        flatten(path, 0.25)
+            .iter()
+            .flat_map(|line| line.windows(2))
+            .map(|pair| (pair[1] - pair[0]).length())
+            .sum()
+    }
+
+    #[test]
+    fn a_pattern_draws_half_of_an_even_line() {
+        // Ten on, ten off, across a hundred: five dashes of ten.
+        let dashed = dash_path(&line(100.0), &Dash::new(vec![10.0, 10.0], 0.0), 0.25);
+        assert!(
+            (drawn_length(&dashed) - 50.0).abs() < 0.01,
+            "drew {} of a hundred",
+            drawn_length(&dashed)
+        );
+        assert_eq!(flatten(&dashed, 0.25).len(), 5, "expected five dashes");
+    }
+
+    #[test]
+    fn an_odd_pattern_repeats_to_alternate() {
+        // `[10]` means ten on and ten off, not ten on forever. Without the
+        // doubling this draws the whole line, which is the bug the SVG rule
+        // exists to prevent.
+        let dashed = dash_path(&line(100.0), &Dash::new(vec![10.0], 0.0), 0.25);
+        assert!(
+            (drawn_length(&dashed) - 50.0).abs() < 0.01,
+            "drew {}",
+            drawn_length(&dashed)
+        );
+    }
+
+    #[test]
+    fn the_phase_moves_the_pattern_along_the_line() {
+        // Started ten in, the first gap is where the first dash was, so the
+        // line begins with a gap and ends with one more dash-worth drawn at the
+        // far end. The total stays half either way; what changes is where.
+        let plain = dash_path(&line(100.0), &Dash::new(vec![10.0, 10.0], 0.0), 0.25);
+        let shifted = dash_path(&line(100.0), &Dash::new(vec![10.0, 10.0], 10.0), 0.25);
+        let first_of = |p: &Path| flatten(p, 0.25)[0][0].x;
+        assert!(first_of(&plain) < 0.01, "unshifted should start at zero");
+        assert!(
+            (first_of(&shifted) - 10.0).abs() < 0.01,
+            "a phase of ten should start ten along, not at {}",
+            first_of(&shifted)
+        );
+    }
+
+    #[test]
+    fn a_phase_beyond_one_period_wraps() {
+        // Any phase is meaningful, so an animation can keep adding to it
+        // without ever reaching a value that behaves differently.
+        let once = dash_path(&line(100.0), &Dash::new(vec![10.0, 10.0], 5.0), 0.25);
+        let again = dash_path(&line(100.0), &Dash::new(vec![10.0, 10.0], 25.0), 0.25);
+        assert_eq!(
+            flatten(&once, 0.25).len(),
+            flatten(&again, 0.25).len(),
+            "a phase one period further should repeat"
+        );
+    }
+
+    #[test]
+    fn a_dash_crossing_a_corner_stays_one_dash() {
+        // Two segments meeting at a right angle, with a dash long enough to
+        // span the join. Cutting per segment instead of carrying the phase
+        // across would end the dash at the corner and start another, which
+        // shows as a break exactly where a stroke is most visible.
+        let mut builder = PathBuilder::new();
+        builder.move_to(Vec2::ZERO);
+        builder.line_to(Vec2::new(10.0, 0.0));
+        builder.line_to(Vec2::new(10.0, 10.0));
+        let dashed = dash_path(&builder.build(), &Dash::new(vec![30.0, 5.0], 0.0), 0.25);
+        assert_eq!(
+            flatten(&dashed, 0.25).len(),
+            1,
+            "the dash was cut at the corner"
+        );
+        assert!((drawn_length(&dashed) - 20.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn an_unusable_pattern_draws_the_path_whole() {
+        // Each of these has no period to advance through. Drawing the line
+        // undashed is visibly wrong in a way that leads back to the pattern;
+        // drawing nothing is invisible and leads nowhere.
+        for intervals in [vec![], vec![0.0, 0.0], vec![-4.0, 2.0], vec![f32::NAN]] {
+            let dashed = dash_path(&line(100.0), &Dash::new(intervals.clone(), 0.0), 0.25);
+            assert!(
+                (drawn_length(&dashed) - 100.0).abs() < 0.01,
+                "{intervals:?} should draw the whole line, drew {}",
+                drawn_length(&dashed)
+            );
+        }
+    }
+
+    #[test]
+    fn a_zero_length_interval_inside_a_usable_pattern_terminates() {
+        // Reachable: a caller computing intervals can produce a zero among
+        // nonzero ones, and the walk has to step over it rather than stand on
+        // it. This test exists to fail by hanging rather than by asserting.
+        let dashed = dash_path(
+            &line(100.0),
+            &Dash::new(vec![10.0, 0.0, 5.0, 5.0], 0.0),
+            0.25,
+        );
+        assert!(drawn_length(&dashed) > 0.0);
+        assert!(drawn_length(&dashed) < 100.0);
+    }
+
+    #[test]
+    fn a_pattern_longer_than_the_path_draws_what_it_reaches() {
+        // The first dash covers everything, so the line is drawn whole -- and
+        // the opposite, where the path begins inside a gap that outlasts it,
+        // draws nothing at all.
+        let covered = dash_path(&line(10.0), &Dash::new(vec![100.0, 100.0], 0.0), 0.25);
+        assert!((drawn_length(&covered) - 10.0).abs() < 0.01);
+
+        let skipped = dash_path(&line(10.0), &Dash::new(vec![100.0, 100.0], 100.0), 0.25);
+        assert_eq!(drawn_length(&skipped), 0.0, "a line inside a gap drew");
+    }
+
+    #[test]
+    fn a_curve_is_dashed_along_its_length_rather_than_its_chord() {
+        // A quarter circle of radius ten has an arc length of about 15.7,
+        // against a chord of about 14.1. Dashing it half on and half off should
+        // draw about half the arc, which is enough to tell the two apart.
+        let mut builder = PathBuilder::new();
+        builder.move_to(Vec2::new(10.0, 0.0));
+        builder.cubic_to(
+            Vec2::new(10.0, 5.523),
+            Vec2::new(5.523, 10.0),
+            Vec2::new(0.0, 10.0),
+        );
+        let arc = std::f32::consts::FRAC_PI_2 * 10.0;
+        let dashed = dash_path(&builder.build(), &Dash::new(vec![1.0, 1.0], 0.0), 0.05);
+        let drawn = drawn_length(&dashed);
+        assert!(
+            (drawn - arc / 2.0).abs() < 0.5,
+            "drew {drawn} of an arc of {arc}"
+        );
+    }
+}

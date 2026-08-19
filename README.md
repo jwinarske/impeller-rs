@@ -13,7 +13,8 @@ through KMS with no compositor present.
 > backends for rectangles and arbitrary paths, nests, and antialiases with the
 > shapes it confines. Images can be uploaded and drawn as a paint, with clamp,
 > repeat, mirror and decal tiling, and gradients tile the same four ways past
-> their own extent and take any number of color stops. Save layers give a subtree its own target, so group
+> their own extent and take any number of color stops. Strokes dash, with the
+> pattern measured along the path so it follows a curve rather than its chord. Save layers give a subtree its own target, so group
 > opacity and layer-wide blend modes work and nest. A glyph atlas packs
 > caller-supplied single-channel coverage, evicts what a frame stops using,
 > grows when it has nothing to evict, and draws a run of any length as one

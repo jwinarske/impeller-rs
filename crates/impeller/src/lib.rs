@@ -34,9 +34,10 @@ pub use context::{Context, Image, Surface};
 
 // The drawing API, so an application depends on this crate alone.
 pub use impeller_core::{
-    Affine2, Atlas, AtlasError, AtlasRect, BlendMode, Canvas, Color, Coverage, Extent2D, FillRule,
-    GlyphKey, GradientStop, Layer, LineCap, LineJoin, Paint, Path, PathBuilder, PixelFormat,
-    PositionedGlyph, Recording, Rect, Shader, StrokeStyle, Style, TileMode, Vec2, MAX_STOPS,
+    Affine2, Atlas, AtlasError, AtlasRect, BlendMode, Canvas, Color, Coverage, Dash, Extent2D,
+    FillRule, GlyphKey, GradientStop, Layer, LineCap, LineJoin, Paint, Path, PathBuilder,
+    PixelFormat, PositionedGlyph, Recording, Rect, Shader, StrokeStyle, Style, TileMode, Vec2,
+    MAX_STOPS,
 };
 pub use impeller_hal::{BlendFactor, Capabilities, Error, Result};
 

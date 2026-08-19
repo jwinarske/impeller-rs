@@ -18,6 +18,7 @@
 //! it is where most of the draw calls in a real interface land -- rather than
 //! something that exists.
 
+pub mod dash;
 pub mod flatten;
 pub mod path;
 pub mod stroke;

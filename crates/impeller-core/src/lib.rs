@@ -26,6 +26,7 @@ pub use paint::{GradientStop, Paint, Shader, Style};
 
 // Geometry a caller builds paths with, re-exported so an application needs one
 // dependency rather than three.
+pub use impeller_geometry::dash::Dash;
 pub use impeller_geometry::stroke::{LineCap, LineJoin, StrokeStyle};
 pub use impeller_geometry::{FillRule, Path, PathBuilder};
 pub use impeller_hal::{BlendMode, Extent2D, PixelFormat, TileMode, MAX_STOPS};

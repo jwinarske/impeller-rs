@@ -55,12 +55,17 @@ impl Transform {
 }
 
 /// A stroke's parameters, as data.
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct StrokeSpec {
     pub width: f32,
     pub cap: LineCap,
     pub join: LineJoin,
     pub miter_limit: f32,
+    /// Alternating drawn and skipped lengths, and where in them to start.
+    ///
+    /// Empty for a solid stroke, which is what every scene predating dashes
+    /// wants and what `new` gives.
+    pub dash: Option<(Vec<f32>, f32)>,
 }
 
 impl StrokeSpec {
@@ -70,10 +75,17 @@ impl StrokeSpec {
             cap: LineCap::Butt,
             join: LineJoin::Miter,
             miter_limit: 4.0,
+            dash: None,
         }
     }
 
-    pub fn to_style(self) -> StrokeStyle {
+    /// The same stroke, cut by a dash pattern.
+    pub fn dashed(mut self, intervals: Vec<f32>, phase: f32) -> Self {
+        self.dash = Some((intervals, phase));
+        self
+    }
+
+    pub fn to_style(&self) -> StrokeStyle {
         StrokeStyle {
             width: self.width,
             cap: self.cap,
@@ -917,6 +929,7 @@ pub fn corpus() -> Vec<Scene> {
                         cap: LineCap::Round,
                         join: LineJoin::Round,
                         miter_limit: 4.0,
+                        dash: None,
                     },
                     GREEN,
                 ),
@@ -1176,6 +1189,7 @@ pub fn corpus() -> Vec<Scene> {
                     cap: LineCap::Round,
                     join: LineJoin::Round,
                     miter_limit: 4.0,
+                    dash: None,
                 },
                 WHITE,
             )],
@@ -1216,6 +1230,35 @@ pub fn corpus() -> Vec<Scene> {
         // the point where the two edges would meet, a bevel cuts straight
         // across, and a round arcs between. Nothing else in the corpus varies
         // this -- the scene that used to be named for it states one value.
+        // Dashes, on a straight run and around a curve. The curve is the half
+        // worth comparing between backends: a dash is measured along the
+        // flattened path, so a backend flattening differently would place the
+        // dashes differently, and nothing else in the corpus would notice.
+        Scene::new(
+            "stroke-dashed",
+            vec![
+                Item::stroke(
+                    Shape::Polyline(vec![[12.0, 24.0], [116.0, 24.0]]),
+                    StrokeSpec::new(8.0).dashed(vec![14.0, 8.0], 0.0),
+                    RED,
+                ),
+                // The same pattern started inside its own gap, so the two lines
+                // are offset against each other rather than merely repeated.
+                Item::stroke(
+                    Shape::Polyline(vec![[12.0, 48.0], [116.0, 48.0]]),
+                    StrokeSpec::new(8.0).dashed(vec![14.0, 8.0], 14.0),
+                    GREEN,
+                ),
+                Item::stroke(
+                    Shape::Circle {
+                        center: [64.0, 92.0],
+                        radius: 28.0,
+                    },
+                    StrokeSpec::new(6.0).dashed(vec![10.0, 6.0], 0.0),
+                    BLUE,
+                ),
+            ],
+        ),
         Scene::new(
             "stroke-joins",
             vec![
@@ -1235,6 +1278,7 @@ pub fn corpus() -> Vec<Scene> {
                         cap: LineCap::Butt,
                         join,
                         miter_limit: 8.0,
+                        dash: None,
                     },
                     color,
                 )
@@ -1262,6 +1306,7 @@ pub fn corpus() -> Vec<Scene> {
                         cap,
                         join: LineJoin::Miter,
                         miter_limit: 4.0,
+                        dash: None,
                     },
                     color,
                 )
@@ -1433,6 +1478,7 @@ pub fn corpus() -> Vec<Scene> {
                     cap: LineCap::Butt,
                     join: LineJoin::Round,
                     miter_limit: 4.0,
+                    dash: None,
                 },
                 GREEN,
             )],

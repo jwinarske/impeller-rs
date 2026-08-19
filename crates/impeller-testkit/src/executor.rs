@@ -19,6 +19,7 @@ use crate::shape::Shape;
 use impeller_core::{
     Canvas, Color, GradientStop, Layer, Paint, Recording, Rect, Shader, Style, Vec2,
 };
+use impeller_geometry::dash::Dash;
 use impeller_hal::{Hal, HalContext, Result};
 
 fn color_of(c: [f32; 4]) -> Color {
@@ -82,6 +83,11 @@ fn paint_for(item: &Item, anti_alias: bool) -> Paint {
             Some(spec) => Style::Stroke(spec.to_style()),
             None => Style::Fill,
         },
+        dash: item.stroke.as_ref().and_then(|spec| {
+            spec.dash
+                .as_ref()
+                .map(|(intervals, phase)| Dash::new(intervals.clone(), *phase))
+        }),
         blend: item.blend,
         anti_alias,
     }
