@@ -11,6 +11,7 @@ glam = { workspace = true }
 impeller-core = { workspace = true }
 impeller-geometry = { workspace = true }
 impeller-hal = { workspace = true }
+impeller-shaders = { workspace = true }
 impeller-renderer = { workspace = true }
 
 [dev-dependencies]

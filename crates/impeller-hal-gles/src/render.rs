@@ -350,6 +350,10 @@ impl GlesContext {
             // `None` means the scissor test is off, which is how the pass
             // started and what an unclipped draw wants.
             let mut scissor: Option<Scissor> = None;
+            // Which program is bound, tracked like the blend and the scissor:
+            // a run of draws sharing one costs a single call, and switching is
+            // the direct analogue of binding a different pipeline.
+            let mut bound_program: Option<Option<u32>> = None;
             let mut stencil_state: Option<ClipState> = None;
             let mut bound_texture: Option<Option<u32>> = None;
             for (index, draw) in batch.draws().iter().enumerate() {
@@ -407,6 +411,21 @@ impl GlesContext {
                         gl.uniform_1_i32(Some(location), 0);
                     }
                     bound_texture = Some(wanted);
+                }
+
+                let wanted = draw.material.program();
+                if bound_program != Some(wanted) {
+                    let object =
+                        match wanted {
+                            Some(id) => *self.runtime_programs.get(id as usize).ok_or(
+                                Error::Unsupported(
+                                    "a draw names a runtime program that was never registered",
+                                ),
+                            )?,
+                            None => program.program,
+                        };
+                    gl.use_program(Some(object));
+                    bound_program = Some(wanted);
                 }
 
                 // One block for the whole batch, rebound to this draw's range.
@@ -847,6 +866,73 @@ fn gl_blend_factor(factor: impeller_hal::BlendFactor) -> u32 {
         BlendFactor::DstAlpha => glow::DST_ALPHA,
         BlendFactor::OneMinusDstAlpha => glow::ONE_MINUS_DST_ALPHA,
         BlendFactor::DstColor => glow::DST_COLOR,
+    }
+}
+
+/// Link a caller's fragment source against this renderer's vertex stage.
+///
+/// The vertex stage is not the caller's, for the same reason it is not on the
+/// other backend: an effect replaces what a fragment does with a paint, not
+/// how geometry reaches clip space. What it shares beyond that is the paint's
+/// uniform block, bound to the same point, so the same buffer serves both.
+pub(crate) fn build_runtime_program(gl: &glow::Context, fragment: &str) -> Result<glow::Program> {
+    // SAFETY: a context is current; every object is deleted on the failure
+    // paths below.
+    unsafe {
+        let program = gl
+            .create_program()
+            .map_err(|e| gl_err("create_program", &e))?;
+        let mut shaders = Vec::new();
+        for (stage, source) in [
+            (glow::VERTEX_SHADER, impeller_shaders::SOLID_VS_GLSL),
+            (glow::FRAGMENT_SHADER, fragment),
+        ] {
+            let shader = match gl.create_shader(stage) {
+                Ok(s) => s,
+                Err(e) => {
+                    cleanup(gl, program, &shaders);
+                    return Err(gl_err("create_shader", &e));
+                }
+            };
+            gl.shader_source(shader, source);
+            gl.compile_shader(shader);
+            if !gl.get_shader_compile_status(shader) {
+                let log = gl.get_shader_info_log(shader);
+                gl.delete_shader(shader);
+                cleanup(gl, program, &shaders);
+                // A caller's source rather than this project's, so the log is
+                // the whole of what they have to go on.
+                return Err(Error::Backend {
+                    backend: "gles",
+                    detail: format!("a runtime program failed to compile: {log}"),
+                });
+            }
+            gl.attach_shader(program, shader);
+            shaders.push(shader);
+        }
+        gl.link_program(program);
+        if !gl.get_program_link_status(program) {
+            let log = gl.get_program_info_log(program);
+            cleanup(gl, program, &shaders);
+            return Err(Error::Backend {
+                backend: "gles",
+                detail: format!("a runtime program failed to link: {log}"),
+            });
+        }
+        for shader in &shaders {
+            gl.detach_shader(program, *shader);
+            gl.delete_shader(*shader);
+        }
+        // The paint's block, at the same binding point the built-in program
+        // uses, so one buffer feeds both.
+        let block = gl
+            .get_uniform_block_index(program, PAINT_BLOCK)
+            .ok_or(Error::Backend {
+                backend: "gles",
+                detail: format!("a runtime program has no {PAINT_BLOCK} uniform block"),
+            })?;
+        gl.uniform_block_binding(program, block, PAINT_BINDING);
+        Ok(program)
     }
 }
 

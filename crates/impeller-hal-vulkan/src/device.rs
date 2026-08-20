@@ -217,6 +217,14 @@ pub struct VulkanContext {
     descriptor_layout: Option<vk::DescriptorSetLayout>,
     /// Built on the first batch, like the sampling layout above it.
     material_layout: Option<vk::DescriptorSetLayout>,
+    /// Fragment modules a caller registered, by the index they were given.
+    ///
+    /// Kept by the context rather than travelling with a batch because
+    /// registering one leads to a pipeline, and a pipeline outlives every draw
+    /// that uses it. The payload is kept rather than the module: a module is
+    /// consumed by pipeline creation, and the same program may be needed again
+    /// for a different blend, sample count or clip role.
+    runtime_programs: Vec<Vec<u32>>,
     /// `minUniformBufferOffsetAlignment`, which sets the stride between one
     /// draw's paint and the next.
     uniform_alignment: u64,
@@ -479,6 +487,7 @@ impl VulkanContext {
             capabilities,
             descriptor_layout: None,
             material_layout: None,
+            runtime_programs: Vec::new(),
             uniform_alignment,
             sampler: None,
             placeholder: None,
@@ -498,6 +507,31 @@ impl VulkanContext {
     ///
     /// Lazy like the sampling layout beside it, and for the same reason: a
     /// context that never records a batch should build nothing.
+    /// Register a caller's fragment program and return the name for it.
+    ///
+    /// Nothing is built here. A pipeline needs a render pass, a blend mode and
+    /// a sample count that only a draw knows, so the payload is kept and the
+    /// pipelines appear as the combinations actually used do.
+    pub fn register_program(&mut self, program: &impeller_hal::RuntimeProgram) -> Result<u32> {
+        if program.spirv.is_empty() {
+            return Err(impeller_hal::Error::Unsupported(
+                "a runtime program needs a SPIR-V fragment module for this backend",
+            ));
+        }
+        self.runtime_programs.push(program.spirv.clone());
+        Ok((self.runtime_programs.len() - 1) as u32)
+    }
+
+    /// The payload a program was registered with.
+    pub(crate) fn runtime_program(&self, id: u32) -> Result<&[u32]> {
+        self.runtime_programs
+            .get(id as usize)
+            .map(Vec::as_slice)
+            .ok_or(impeller_hal::Error::Unsupported(
+                "a draw names a runtime program that was never registered",
+            ))
+    }
+
     pub(crate) fn material_layout(&mut self) -> Result<vk::DescriptorSetLayout> {
         if self.material_layout.is_none() {
             self.material_layout = Some(crate::materials::create_layout(&self.device)?);

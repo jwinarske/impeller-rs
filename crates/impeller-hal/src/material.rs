@@ -119,6 +119,13 @@ pub mod kind {
     pub const MESH: f32 = 10.0;
 }
 
+/// How many floats a runtime effect may take.
+///
+/// The whole material block, because an effect replaces the shader that would
+/// have read it as a material. A caller writing an effect declares the same
+/// std140 block and reads these as their own.
+pub const RUNTIME_FLOATS: usize = MATERIAL_FLOATS;
+
 /// How a texture is read between its texels.
 ///
 /// Not two samplers. The same argument that keeps tile modes in the shader
@@ -502,6 +509,17 @@ pub enum Material {
         /// [`Material::LinearGradient`].
         tile: TileMode,
     },
+    /// A caller's own fragment program, with the floats it reads.
+    ///
+    /// The program is named rather than carried: registering one builds a
+    /// pipeline, which is expensive and outlives any draw, so a context holds
+    /// them and a material names which. The floats travel in the same uniform
+    /// block every other material uses, which is what lets an effect exist
+    /// without a second descriptor set.
+    Runtime {
+        program: u32,
+        uniforms: Vec<f32>,
+    },
     /// A texture, sampled at coordinates the vertices carry.
     ///
     /// Deliberately not [`Material::Image`] with a switch on where its
@@ -717,6 +735,9 @@ impl Material {
             // What the texture holds is unknown here, so only a zero alpha
             // makes an image provably invisible.
             Self::Image { alpha, .. } | Self::Mesh { alpha, .. } => *alpha <= 0.0,
+            // What a caller's program draws is unknowable from here, so the
+            // only honest answer is that it might draw something.
+            Self::Runtime { .. } => false,
             // A blur of nothing is nothing, but the pass still has to run: what
             // it samples is not knowable from here.
             Self::Blur { .. } => false,
@@ -748,7 +769,10 @@ impl Material {
             | Self::RadialGradient { ramp, .. }
             | Self::SweepGradient { ramp, .. }
             | Self::ConicalGradient { ramp, .. } => *ramp,
-            Self::Solid(_) | Self::RoundedRect { .. } | Self::Ellipse { .. } => None,
+            Self::Solid(_)
+            | Self::RoundedRect { .. }
+            | Self::Ellipse { .. }
+            | Self::Runtime { .. } => None,
         }
     }
 
@@ -761,7 +785,8 @@ impl Material {
             | Self::Glyph { .. }
             | Self::Blur { .. }
             | Self::RoundedRect { .. }
-            | Self::Ellipse { .. } => &[],
+            | Self::Ellipse { .. }
+            | Self::Runtime { .. } => &[],
             Self::LinearGradient { stops, .. }
             | Self::RadialGradient { stops, .. }
             | Self::SweepGradient { stops, .. }
@@ -862,6 +887,15 @@ impl Material {
             return out;
         }
 
+        if let Self::Runtime { uniforms, .. } = self {
+            // Straight into the block, in the order the caller wrote them. No
+            // kind is set: nothing in the shared shader will read this, and a
+            // caller's program does not branch on one.
+            let count = uniforms.len().min(RUNTIME_FLOATS);
+            out[..count].copy_from_slice(&uniforms[..count]);
+            return out;
+        }
+
         if let Self::Mesh {
             alpha,
             tint,
@@ -928,7 +962,8 @@ impl Material {
             | Self::Glyph { .. }
             | Self::Blur { .. }
             | Self::RoundedRect { .. }
-            | Self::Ellipse { .. } => {
+            | Self::Ellipse { .. }
+            | Self::Runtime { .. } => {
                 unreachable!("handled above")
             }
             Self::LinearGradient {
@@ -1002,6 +1037,17 @@ impl Material {
             }
         }
         out
+    }
+
+    /// The caller's program this draws with, where it uses one.
+    ///
+    /// `None` is every material the built-in shader draws, which is all of
+    /// them but one.
+    pub fn program(&self) -> Option<u32> {
+        match self {
+            Self::Runtime { program, .. } => Some(*program),
+            _ => None,
+        }
     }
 
     /// Which shader variant this needs, for keying a pipeline.

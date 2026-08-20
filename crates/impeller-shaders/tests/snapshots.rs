@@ -90,9 +90,16 @@ fn check(name: &str, contents: &str) {
 fn the_translated_glsl_is_what_it_was() {
     check("solid.vert.glsl", impeller_shaders::SOLID_VS_GLSL);
     check("solid.frag.glsl", impeller_shaders::SOLID_FS_GLSL);
+    // The stand-in for a caller's own program is snapshotted for a different
+    // reason from the renderer's shader. Nothing ships it, but every test of
+    // the runtime-effect path rests on what it translates to -- so a
+    // translator change that altered it would move the ground under those
+    // tests rather than under anything a user sees.
+    check("effect.frag.glsl", impeller_shaders::EFFECT_FS_GLSL);
 }
 
 #[test]
 fn the_translated_spirv_is_what_it_was() {
     check("solid.spv.txt", &digest(impeller_shaders::SOLID_SPV));
+    check("effect.spv.txt", &digest(impeller_shaders::EFFECT_SPV));
 }

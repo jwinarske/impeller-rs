@@ -181,9 +181,13 @@ build them:
    wants that should re-record. The pass model has the other half of the
    question: a nested recording arrives with its own passes and its own
    texture table, and merging those is about numbering slots.
-3. **Runtime effects** — user fragment shaders. The largest by far: it needs a
-   shader pipeline that compiles at runtime rather than at build time, which is
-   a different arrangement from the one here.
+3. **Runtime effects** — user fragment shaders. Described here for a long time
+   as needing a shader pipeline that compiles at run time, which was wrong.
+   Flutter compiles these ahead of time and ships one already-compiled payload
+   per backend; what happens at run time is that a pipeline is built from a
+   module the engine did not know about when it was built. So what this needs
+   is a pipeline cache that can hold more than one program and a way to
+   register one — not a compiler. `docs/architecture.md` has the design.
 
 `drawRSuperellipse` and `clipRSuperellipse` were once described here as shapes
 with rules attached, cheap once somebody needed them. That was wrong, and the

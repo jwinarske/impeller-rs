@@ -448,6 +448,7 @@ dependencies = [
  "impeller-hal-gles",
  "impeller-hal-vulkan",
  "impeller-renderer",
+ "impeller-shaders",
 ]
 
 [[package]]

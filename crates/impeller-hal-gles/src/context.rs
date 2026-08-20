@@ -55,6 +55,13 @@ pub struct GlesContext {
     egl_extensions: HashSet<String>,
     gl_extensions: HashSet<String>,
     program: Option<crate::render::SolidProgram>,
+    /// Fragment programs a caller registered, by the index they were given.
+    ///
+    /// Linked when registered rather than at first use, unlike the other
+    /// backend: a GL program is the whole of what a draw needs, where a
+    /// pipeline there also needs a render pass and a blend mode that only a
+    /// draw knows.
+    pub(crate) runtime_programs: Vec<glow::Program>,
     /// A one-pixel opaque white texture, bound where a draw samples nothing.
     ///
     /// Created on first use rather than eagerly, so a context that only ever
@@ -225,6 +232,7 @@ impl GlesContext {
             egl_extensions,
             gl_extensions,
             program: None,
+            runtime_programs: Vec::new(),
             placeholder: None,
             debug,
         })
@@ -305,6 +313,19 @@ impl GlesContext {
         Ok(texture)
     }
 
+    /// Link a caller's fragment program and return the name for it.
+    pub fn register_program(&mut self, program: &impeller_hal::RuntimeProgram) -> Result<u32> {
+        if program.glsl_es.is_empty() {
+            return Err(impeller_hal::Error::Unsupported(
+                "a runtime program needs GLSL ES source for this backend",
+            ));
+        }
+        // SAFETY: a context is current for this context's whole life.
+        let linked = crate::render::build_runtime_program(&self.gl, &program.glsl_es)?;
+        self.runtime_programs.push(linked);
+        Ok((self.runtime_programs.len() - 1) as u32)
+    }
+
     pub(crate) fn program(&self) -> Option<&crate::render::SolidProgram> {
         self.program.as_ref()
     }
@@ -374,6 +395,12 @@ impl Drop for GlesContext {
                 self.gl.delete_buffer(program.vertices);
                 self.gl.delete_buffer(program.indices);
                 self.gl.delete_buffer(program.paints);
+            }
+        }
+        // SAFETY: the same context is still current.
+        unsafe {
+            for program in std::mem::take(&mut self.runtime_programs) {
+                self.gl.delete_program(program);
             }
         }
         // Unbind before destroying, or the driver keeps the context alive and

@@ -949,6 +949,47 @@ per submission and bound a range at a time. MSAA uses multisampled renderbuffers
 
 GLES 2.0 is permanently out of scope; the feature gap is too large.
 
+## Runtime effects
+
+**A runtime effect is not a shader compiled at run time.** This document and
+the parity table both said it was, and both were wrong. Flutter compiles these
+ahead of time with `impellerc` and ships the result in the asset bundle: the
+payload is one already-compiled blob per backend — `sksl`, `metal`, `opengles`,
+`opengles3`, `vulkan` — carried in a flatbuffer as bytes, with the uniform
+names and descriptor layouts alongside. What happens at run time is that the
+engine builds a *pipeline* from a module it did not know about when it was
+built.
+
+That is a much smaller problem than runtime translation, and it is the one this
+renderer will solve. A caller hands over the payloads their own build produced;
+nothing here compiles anything, and no shader toolchain enters this build or
+this binary.
+
+**Why not accept WGSL and translate on load.** It is tempting, because one
+source of truth is this project's rule everywhere else and the translator is
+already a build dependency. It is declined for the first version because it
+would link a shader translator into every application that draws a rectangle,
+and because it makes the loading path do work whose failures a caller cannot
+see until run time. A caller who wants one source can run the same translation
+in their own build, which is what the reference implementation's toolchain does
+and what this project's own build does.
+
+**The interface is the paint's own uniform block.** A runtime effect declares
+the same std140 block every material uses and reads the floats a caller packed
+into it. That is fifty-six floats, which is what a material already costs, and
+it buys a first version with no new descriptor set, no new binding, and no
+change to how a draw's uniforms reach the shader. An effect wanting more than
+that, or wanting textures of its own, is a second version and a second
+descriptor set — worth doing once something needs it rather than before.
+
+**A program is a pipeline, not a material kind.** Every material today shares
+one fragment shader and picks its behaviour by branching on a kind. A runtime
+effect replaces that shader, so it is a property of the pipeline instead: the
+pipeline key names the program, the context holds the registered ones, and a
+draw carries which it uses. This is the first thing in this renderer to make
+the pipeline cache hold more than one program, which is also why it is the
+change that has to be got right rather than the shader that runs.
+
 ## Presentation
 
 Presentation owns pacing. WSI targets pace via swapchain acquire semantics; DRM

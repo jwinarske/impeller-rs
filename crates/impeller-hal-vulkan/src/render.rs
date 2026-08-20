@@ -52,6 +52,13 @@ pub(crate) struct PipelineKey {
     pub(crate) samples: u32,
     /// The stencil attachment's format, or `None` where the pass has none.
     pub(crate) stencil: Option<vk::Format>,
+    /// Which fragment program this pipeline runs.
+    ///
+    /// `None` is the built-in shader every material shares. `Some` names a
+    /// caller's, registered with the context -- which is the whole of what a
+    /// runtime effect is here: a pipeline built from a module this renderer
+    /// did not know about when it was built.
+    pub(crate) program: Option<u32>,
     /// What this pipeline does with the stencil.
     ///
     /// The value compared against is dynamic state rather than part of the key,
@@ -185,6 +192,7 @@ impl VulkanContext {
             self.ensure_pipeline(
                 PipelineKey {
                     format,
+                    program: draw.material.program(),
                     blend: draw.blend,
                     samples: pass.samples,
                     stencil: stencil_format,
@@ -402,6 +410,7 @@ impl VulkanContext {
                         .pipeline_cache()
                         .pipeline(PipelineKey {
                             format,
+                            program: draw.material.program(),
                             blend: draw.blend,
                             samples: pass.samples,
                             stencil: stencil_format,
@@ -560,6 +569,7 @@ impl VulkanContext {
             self.ensure_pipeline(
                 PipelineKey {
                     format,
+                    program: draw.material.program(),
                     blend: draw.blend,
                     samples: 1,
                     stencil: stencil_format,
@@ -691,6 +701,7 @@ impl VulkanContext {
                 self.pipeline_cache()
                     .pipeline(PipelineKey {
                         format,
+                        program: draw.material.program(),
                         blend: draw.blend,
                         samples: 1,
                         stencil: stencil_format,
@@ -808,7 +819,13 @@ impl VulkanContext {
                 l
             }
         };
-        let pipeline = build_pipeline(&device, key, render_pass, layout)?;
+        // Cloned out of the registry before building, because the build needs
+        // the device mutably and a borrowed payload would hold the context.
+        let fragment = match key.program {
+            Some(id) => Some(self.runtime_program(id)?.to_vec()),
+            None => None,
+        };
+        let pipeline = build_pipeline(&device, key, render_pass, layout, fragment.as_deref())?;
         self.pipeline_cache_mut().pipelines.insert(key, pipeline);
         Ok(())
     }
@@ -1068,10 +1085,26 @@ fn build_pipeline(
     key: PipelineKey,
     render_pass: vk::RenderPass,
     layout: vk::PipelineLayout,
+    fragment: Option<&[u32]>,
 ) -> Result<vk::Pipeline> {
+    // The vertex stage is always this renderer's own: a runtime effect
+    // replaces what a fragment does with a paint, not how geometry reaches
+    // clip space, and letting it replace the latter would mean every effect
+    // restating a convention it has no reason to know.
     let module_info = vk::ShaderModuleCreateInfo::default().code(impeller_shaders::SOLID_SPV);
     let module = unsafe { device.create_shader_module(&module_info, None) }
         .map_err(|e| backend_err("create_shader_module", e))?;
+    let fragment_module = match fragment {
+        Some(code) => {
+            let info = vk::ShaderModuleCreateInfo::default().code(code);
+            Some(
+                unsafe { device.create_shader_module(&info, None) }
+                    .map_err(|e| backend_err("create_shader_module", e))?,
+            )
+        }
+        None => None,
+    };
+    let fs_module = fragment_module.unwrap_or(module);
 
     let vs_name = c"vs_main";
     let fs_name = c"fs_main";
@@ -1082,7 +1115,7 @@ fn build_pipeline(
             .name(vs_name),
         vk::PipelineShaderStageCreateInfo::default()
             .stage(vk::ShaderStageFlags::FRAGMENT)
-            .module(module)
+            .module(fs_module)
             .name(fs_name),
     ];
 
@@ -1242,8 +1275,11 @@ fn build_pipeline(
     let created =
         unsafe { device.create_graphics_pipelines(vk::PipelineCache::null(), &[info], None) };
 
-    // The shader module is only needed during creation.
+    // The shader modules are only needed during creation.
     unsafe { device.destroy_shader_module(module, None) };
+    if let Some(fragment) = fragment_module {
+        unsafe { device.destroy_shader_module(fragment, None) };
+    }
 
     match created {
         Ok(pipelines) => Ok(pipelines[0]),

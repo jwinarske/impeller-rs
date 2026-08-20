@@ -49,9 +49,25 @@ pub use blend::{BlendFactor, BlendFactors, BlendMode};
 pub use capabilities::{Capabilities, DmaBufSupport, SampleCounts, SyncSupport};
 pub use error::{Error, Result};
 pub use format::{Extent2D, FormatModifierSet, Fourcc, Modifier, PixelFormat};
+/// A caller's fragment program, in the forms each backend can take one.
+///
+/// Both are given because a program is registered once and drawn on whichever
+/// backend the context happens to be, and neither payload can be derived from
+/// the other here: nothing in this workspace translates shaders at run time,
+/// by the decision recorded in the architecture document. A caller's build
+/// produces both, which is what the reference implementation's toolchain does
+/// and what this project's own build does.
+#[derive(Debug, Clone)]
+pub struct RuntimeProgram {
+    /// A SPIR-V fragment module, for Vulkan.
+    pub spirv: Vec<u32>,
+    /// A GLSL ES 300 fragment source, for GLES.
+    pub glsl_es: String,
+}
+
 pub use material::{
     ColorFilter, ColorForm, Material, MaterialVariant, Sampling, Stop, TileMode, MATERIAL_FLOATS,
-    MAX_STOPS,
+    MAX_STOPS, RUNTIME_FLOATS,
 };
 pub use resource::{BufferDescriptor, BufferUsage, TextureDescriptor, TextureUsage};
 pub use scissor::Scissor;
