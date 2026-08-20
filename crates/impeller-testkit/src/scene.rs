@@ -7,7 +7,7 @@
 
 use crate::shape::Shape;
 use glam::{Affine2, Vec2};
-use impeller_core::{MaskBlurStyle, VertexMode};
+use impeller_core::{ImageFilter, MaskBlurStyle, VertexMode};
 use impeller_geometry::stroke::{LineCap, LineJoin, StrokeStyle};
 use impeller_geometry::FillRule;
 use impeller_hal::{BlendMode, Extent2D, TileMode};
@@ -284,6 +284,8 @@ pub struct Item {
     pub mask_blur: MaskBlur,
     /// Which part of the blurred coverage survives.
     pub mask_blur_style: MaskBlurStyle,
+    /// Filter what this item drew, rather than the colour it computed.
+    pub image_filter: ImageFilter,
     pub shape: Shape,
     /// Stroke the shape rather than filling it.
     pub stroke: Option<StrokeSpec>,
@@ -330,6 +332,7 @@ impl Item {
         Self {
             mask_blur: 0.0,
             mask_blur_style: MaskBlurStyle::Normal,
+            image_filter: ImageFilter::None,
             shape,
             stroke: None,
             transform: Transform::default(),
@@ -359,6 +362,7 @@ impl Item {
         Self {
             mask_blur: 0.0,
             mask_blur_style: MaskBlurStyle::Normal,
+            image_filter: ImageFilter::None,
             shape,
             stroke: None,
             transform: Transform::default(),
@@ -374,6 +378,7 @@ impl Item {
         Self {
             mask_blur: 0.0,
             mask_blur_style: MaskBlurStyle::Normal,
+            image_filter: ImageFilter::None,
             shape,
             stroke: Some(spec),
             transform: Transform::default(),
@@ -391,6 +396,12 @@ impl Item {
     }
 
     /// Soften this item's coverage, which is what a shadow is.
+    /// Filter what this item drew. See [`ImageFilter`].
+    pub fn with_image_filter(mut self, filter: ImageFilter) -> Self {
+        self.image_filter = filter;
+        self
+    }
+
     /// Keep only the part of the blurred coverage the style names.
     ///
     /// Separate from [`Self::with_mask_blur`] rather than an argument to it,
@@ -460,6 +471,12 @@ pub struct LayerSpec {
     /// Standard deviation of a blur over the finished group, in device pixels.
     /// Zero for none.
     pub blur: f32,
+    /// Transform the finished group on the way back, resampling it.
+    ///
+    /// Distinct from the transform beside a layer node, which moves what goes
+    /// into the group. Conflating the two would make a group redraw where it
+    /// should resample.
+    pub matrix: Option<Transform>,
     pub alpha: f32,
     pub blend: BlendMode,
     /// Standard deviation of a blur over what lies behind the group, in device
@@ -471,6 +488,7 @@ impl Default for LayerSpec {
     fn default() -> Self {
         Self {
             blur: 0.0,
+            matrix: None,
             alpha: 1.0,
             blend: BlendMode::SrcOver,
             backdrop_blur: 0.0,

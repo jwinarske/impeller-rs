@@ -38,7 +38,7 @@ use crate::scene::{
     StrokeSpec, Transform,
 };
 use crate::shape::Shape;
-use impeller_core::{MaskBlurStyle, VertexMode};
+use impeller_core::{Affine2, ImageFilter, MaskBlurStyle, Vec2, VertexMode};
 use impeller_geometry::stroke::{LineCap, LineJoin};
 use impeller_geometry::FillRule;
 use impeller_hal::{BlendMode, ColorFilter, Sampling, TileMode};
@@ -75,6 +75,7 @@ pub fn catalog() -> Vec<Scene> {
     scenes.extend(blur_variants());
     scenes.extend(layers());
     scenes.extend(runtime_effect());
+    scenes.extend(image_filters());
     scenes
 }
 
@@ -2128,5 +2129,112 @@ fn runtime_effect() -> Vec<Scene> {
                 ..Transform::default()
             })],
         ),
+    ]
+}
+
+/// A matrix that magnifies about a point and puts the result somewhere.
+///
+/// A filter's matrix acts on the finished image in device pixels, so a bare
+/// scale magnifies about the frame's own corner and throws the result off the
+/// plate. Composing the move in is what makes the picture, and it is the part
+/// a caller reading `from_scale` would not think to do.
+fn magnify(about: Vec2, factor: f32, to: Vec2) -> Affine2 {
+    Affine2::from_translation(to)
+        * Affine2::from_scale(Vec2::splat(factor))
+        * Affine2::from_translation(-about)
+}
+
+/// The matrix image filter scenes, from the basic and base files.
+///
+/// What they show is the distinction between filtering a finished image and
+/// drawing under a transform, which is the only reason both exist. A plate
+/// cannot state that on its own -- both put the shape in the same place -- so
+/// each of these is drawn beside the other, and the difference is in how the
+/// edges and the interior arrived rather than in where they are.
+fn image_filters() -> Vec<Scene> {
+    let card = Shape::RoundedRect {
+        min: [8.0, 8.0],
+        max: [40.0, 40.0],
+        radius: 6.0,
+    };
+    vec![
+        plate(
+            "basic/matrix-image-filter-magnify",
+            vec![
+                // The same card twice: once resampled to twice its size, once
+                // drawn at twice its size, side by side so a reader comparing
+                // the two edges compares them in one picture.
+                //
+                // The filter magnifies about the device origin, so putting the
+                // result somewhere means composing the move into the matrix --
+                // not into the item's transform, which would move the source
+                // and then magnify the move as well.
+                Item::filled(card.clone(), ramp()).with_image_filter(ImageFilter::Matrix {
+                    transform: magnify(Vec2::new(24.0, 24.0), 2.0, Vec2::new(36.0, 64.0)),
+                }),
+                Item::filled(card.clone(), ramp())
+                    .with_blend(BlendMode::SrcOver)
+                    .with_transform(Transform {
+                        scale: [2.0, 2.0],
+                        translate: [44.0, 16.0],
+                        ..Transform::default()
+                    }),
+            ],
+        ),
+        plate(
+            "basic/massive-scaling-matrix-image-filter",
+            vec![Item::fill(
+                Shape::Rect {
+                    min: [60.0, 60.0],
+                    max: [68.0, 68.0],
+                },
+                YELLOW,
+            )
+            // Twelve times, which magnifies eight pixels to almost the plate.
+            // A resample this large is where the layer's own resolution stops
+            // being an implementation detail and becomes the picture.
+            .with_image_filter(ImageFilter::Matrix {
+                transform: magnify(Vec2::splat(64.0), 12.0, Vec2::splat(64.0)),
+            })],
+        ),
+        Scene::tree(
+            "dl/matrix-save-layer-filter",
+            vec![Node::Layer {
+                layer: LayerSpec {
+                    // The group is resampled on the way back rather than its
+                    // contents drawn larger, which is what a matrix filter on
+                    // a save layer means.
+                    matrix: Some(Transform {
+                        scale: [2.0, 2.0],
+                        translate: [-32.0, -32.0],
+                        ..Transform::default()
+                    }),
+                    ..LayerSpec::default()
+                },
+                bounds: Some([32.0, 32.0, 96.0, 96.0]),
+                transform: Transform::default(),
+                children: vec![
+                    Node::Draw(Box::new(Item::fill(
+                        Shape::Circle {
+                            center: [56.0, 56.0],
+                            radius: 18.0,
+                        },
+                        RED,
+                    ))),
+                    Node::Draw(Box::new(
+                        Item::fill(
+                            Shape::Circle {
+                                center: [76.0, 76.0],
+                                radius: 18.0,
+                            },
+                            BLUE,
+                        )
+                        .with_blend(BlendMode::SrcOver),
+                    )),
+                ],
+            }],
+        )
+        .with_background(DARK)
+        .with_samples(4),
     ]
 }

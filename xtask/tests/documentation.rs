@@ -274,3 +274,66 @@ fn the_playground_inventory_counts_the_catalog_correctly() {
          Adding one means saying so, or the inventory stops being an inventory."
     );
 }
+
+#[test]
+fn the_playground_inventory_counts_each_file_correctly() {
+    // The total alone is too forgiving a check: a per-file number drifted by
+    // twelve while the total stayed right, because the two were edited
+    // separately and only one of them was under test. Every number that
+    // describes this repository is checked here, so the table cannot be
+    // partially true.
+    let by_topic = |topic: &str| {
+        impeller_testkit::catalog()
+            .iter()
+            .filter(|scene| {
+                scene
+                    .name
+                    .split_once('/')
+                    .is_some_and(|(prefix, _)| prefix == topic)
+            })
+            .count()
+    };
+    // The C++ file each topic mirrors. Files with no counterpart here --
+    // text, primitive shapes -- are absent because they have nothing to
+    // check; the total test still covers what they would contribute.
+    let mirrors = [
+        ("aiks_dl_basic_unittests.cc", "basic"),
+        ("aiks_dl_path_unittests.cc", "path"),
+        ("aiks_dl_gradient_unittests.cc", "gradient"),
+        ("aiks_dl_clip_unittests.cc", "clip"),
+        ("aiks_dl_opacity_unittests.cc", "opacity"),
+        ("aiks_dl_blend_unittests.cc", "blend"),
+        ("aiks_dl_blur_unittests.cc", "blur"),
+        ("aiks_dl_vertices_unittests.cc", "vertices"),
+        ("aiks_dl_atlas_unittests.cc", "atlas"),
+        ("aiks_dl_shadow_unittests.cc", "shadow"),
+        ("aiks_dl_unittests.cc", "dl"),
+        ("aiks_dl_runtime_effect_unittests.cc", "effect"),
+    ];
+    let doc = doc("playground-parity.md");
+    let mut counted = 0;
+    for (file, topic) in mirrors {
+        let row = doc
+            .lines()
+            .find(|line| line.starts_with(&format!("| `{file}` |")))
+            .unwrap_or_else(|| panic!("docs/playground-parity.md has no row for {file}"));
+        let stated: usize = row
+            .split('|')
+            .nth(3)
+            .and_then(|cell| cell.trim().parse().ok())
+            .unwrap_or_else(|| panic!("the {file} row does not state a count: {row}"));
+        let actual = by_topic(topic);
+        assert_eq!(
+            stated, actual,
+            "docs/playground-parity.md says {stated} scenes mirror {file}, \
+             but the catalog holds {actual} under {topic}/"
+        );
+        counted += actual;
+    }
+    let total = impeller_testkit::catalog().len();
+    assert_eq!(
+        counted, total,
+        "the catalog holds {total} scenes but only {counted} fall under a topic \
+         the inventory names, so some scene is uncounted by the table"
+    );
+}

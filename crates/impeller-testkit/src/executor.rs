@@ -154,7 +154,7 @@ fn paint_for(item: &Item, anti_alias: bool) -> Paint {
         // layer opened and composited, which produces the same recording
         // whatever draws it -- and the passes that recording contains are
         // already compared, by the scenes that blur a layer directly.
-        image_filter: impeller_core::ImageFilter::None,
+        image_filter: item.image_filter,
         style: match &item.stroke {
             Some(spec) => Style::Stroke(spec.to_style()),
             None => Style::Fill,
@@ -321,7 +321,7 @@ fn record_node(canvas: &mut Canvas, node: &Node, anti_alias: bool) -> Result<()>
                 // group, which is a different thing, and conflating the two
                 // would make every existing scene resample where it used to
                 // redraw.
-                matrix: None,
+                matrix: layer.matrix.map(|m| m.to_affine()),
                 backdrop_blur: layer.backdrop_blur,
             };
             match bounds {
