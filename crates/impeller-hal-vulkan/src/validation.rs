@@ -142,7 +142,7 @@ pub(crate) fn messenger_create_info<'a>() -> vk::DebugUtilsMessengerCreateInfoEX
 /// the test around it is written, so that is where the check goes.
 ///
 /// Derefs to the context, so code that takes a [`VulkanContext`] is unchanged.
-pub struct Validated(crate::VulkanContext);
+pub struct Validated(std::mem::ManuallyDrop<crate::VulkanContext>);
 
 impl Validated {
     /// A context with the layer requested, or whatever went wrong instead.
@@ -151,7 +151,7 @@ impl Validated {
             device,
             validation: true,
         })
-        .map(Self)
+        .map(|ctx| Self(std::mem::ManuallyDrop::new(ctx)))
     }
 }
 
@@ -171,24 +171,38 @@ impl std::ops::DerefMut for Validated {
 
 impl Drop for Validated {
     fn drop(&mut self) {
+        // The context is dropped here rather than after this body, which is
+        // what the `ManuallyDrop` is for and the whole reason this is written
+        // the awkward way. A field's drop runs after its owner's, so checking
+        // the log from here in the ordinary arrangement checks everything the
+        // context did *except* its own teardown -- and a Vulkan object
+        // outliving its device is reported at `vkDestroyDevice`, inside that
+        // teardown. That gap is not hypothetical: a descriptor set layout
+        // leaked on every device in this workspace for as long as the material
+        // set has existed, with every validated test green.
+        //
+        // The log is behind an `Arc`, so a handle taken before the context goes
+        // is still readable after it.
+        let panicking = std::thread::panicking();
+        let active = self.0.validation_active();
+        let log = self.0.validation_log();
+        // SAFETY: this is the only place the context is dropped, `Drop::drop`
+        // runs once, and nothing reads the field afterward.
+        unsafe { std::mem::ManuallyDrop::drop(&mut self.0) };
+
         // A test that is already failing keeps its own message: panicking here
         // while the first panic unwinds aborts the process and loses it.
-        if std::thread::panicking() {
+        if panicking {
             return;
         }
-        if !self.0.validation_active() {
+        if !active {
             // Said rather than passed over. The layer being absent means the
             // work ran with nothing checking its API use, which is a gap in
             // what the run covered even where every pixel matched.
             eprintln!("skipping: the validation layer is unavailable, so API use went unchecked");
             return;
         }
-        let errors: Vec<_> = self
-            .0
-            .validation_messages()
-            .into_iter()
-            .filter(|message| message.severity == ValidationSeverity::Error)
-            .collect();
+        let errors = log.errors();
         assert!(errors.is_empty(), "validation errors: {errors:?}");
     }
 }

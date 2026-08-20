@@ -264,6 +264,19 @@ impl GlesContext {
     }
 
     /// Whether the driver has reported no errors.
+    /// A handle on the log that outlives this context.
+    ///
+    /// The same shape as the other backend's, and for the same reason: a check
+    /// that reads the log through the context cannot cover what the context
+    /// does on its way out. Here that is the deletion of its own program,
+    /// buffers and placeholder, which happen while the context is still current
+    /// and so can still raise something the callback sees.
+    pub fn debug_log(&self) -> std::sync::Arc<crate::debug::DebugLog> {
+        self.debug
+            .clone()
+            .unwrap_or_else(|| std::sync::Arc::new(crate::debug::DebugLog::default()))
+    }
+
     pub fn debug_clean(&self) -> bool {
         self.debug.as_ref().is_none_or(|log| log.is_clean())
     }

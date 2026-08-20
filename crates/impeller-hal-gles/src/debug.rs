@@ -130,7 +130,7 @@ pub unsafe fn install(gl: &mut glow::Context, log: Arc<DebugLog>) -> bool {
 /// Derefs to the context, so code that takes a [`GlesContext`] is unchanged.
 ///
 /// [`GlesContext`]: crate::GlesContext
-pub struct Validated(crate::GlesContext);
+pub struct Validated(std::mem::ManuallyDrop<crate::GlesContext>);
 
 impl Validated {
     /// A context with debug output requested, or whatever went wrong instead.
@@ -139,7 +139,7 @@ impl Validated {
             target,
             debug: true,
         })
-        .map(Self)
+        .map(|ctx| Self(std::mem::ManuallyDrop::new(ctx)))
     }
 }
 
@@ -159,21 +159,38 @@ impl std::ops::DerefMut for Validated {
 
 impl Drop for Validated {
     fn drop(&mut self) {
+        // Dropped here rather than after this body, matching the other backend
+        // and for a reason that holds on this one too. A context deletes its
+        // program, its buffers and its placeholder while it is still current,
+        // so an error raised by any of those reaches the debug callback -- and
+        // a check written in the ordinary arrangement runs before all of it.
+        //
+        // What does not carry over is the fault that motivated it there. GL has
+        // no object tracking, so nothing reports an object outliving its
+        // context; destroying the EGL context releases what it owns and there
+        // is no undefined behavior to report. This covers the deletions
+        // themselves, which is less, and is what there is.
+        let panicking = std::thread::panicking();
+        let active = self.0.debug_active();
+        let log = self.0.debug_log();
+        // SAFETY: this is the only place the context is dropped, `Drop::drop`
+        // runs once, and nothing reads the field afterward.
+        unsafe { std::mem::ManuallyDrop::drop(&mut self.0) };
+
         // A test that is already failing keeps its own message: panicking here
         // while the first panic unwinds aborts the process and loses it.
-        if std::thread::panicking() {
+        if panicking {
             return;
         }
-        if !self.0.debug_active() {
+        if !active {
             eprintln!("skipping: this driver reports no diagnostics, so API use went unchecked");
             return;
         }
-        let errors = self
-            .0
-            .debug_messages()
+        let errors: Vec<_> = log
+            .messages()
             .into_iter()
             .filter(|message| message.severity == DebugSeverity::Error)
-            .collect::<Vec<_>>();
+            .collect();
         assert!(errors.is_empty(), "driver reported errors: {errors:?}");
     }
 }

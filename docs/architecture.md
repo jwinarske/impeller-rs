@@ -1705,9 +1705,23 @@ long as the material set has existed, with the suite green throughout, and it
 was found by running the layer by hand rather than by anything here.
 
 The log is behind an `Arc` already, so the fix is an accessor that hands out a
-clone and a test that holds one across the drop. The messenger is destroyed
-after the device rather than before, which was already true and is what makes
-those reports reach the callback at all.
+clone. The messenger is destroyed after the device rather than before, which was
+already true and is what makes those reports reach the callback at all.
+
+Where that clone is read decides how much it covers. A dedicated test that holds
+one across a drop covers one context. Putting it in the `Validated` wrapper's
+own drop covers every context in the suite -- but only if the context is
+destroyed *before* the check rather than after, and a field is dropped after its
+owner's `Drop::drop` returns. So the wrapper holds the context in a
+`ManuallyDrop`, destroys it explicitly, and reads the log afterward. That is the
+whole reason for an awkward construction in a type that is otherwise a newtype,
+and it is the difference between one test asserting this and every validated
+test asserting it: with the leak reinstated, an ordinary drawing test in the
+Vulkan backend fails with the layer's own message.
+
+The GLES wrapper is written the same way, and there the deletions it covers are
+its own -- program, buffers, placeholder -- which happen while the context is
+still current and so can still raise something the callback sees.
 
 The test has to draw before it drops. The objects worth checking are the ones a
 context builds lazily -- the leaking layout is created on the first draw that
