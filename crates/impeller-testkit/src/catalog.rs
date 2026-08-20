@@ -72,6 +72,8 @@ pub fn catalog() -> Vec<Scene> {
     scenes.extend(atlas_scenes());
     scenes.extend(blur());
     scenes.extend(shadow());
+    scenes.extend(blur_variants());
+    scenes.extend(layers());
     scenes
 }
 
@@ -1801,5 +1803,275 @@ fn shadow() -> Vec<Scene> {
                 })
             },
         ),
+    ]
+}
+
+/// Overlapping shapes, for the scenes that group things.
+fn pair() -> Vec<Node> {
+    vec![
+        Node::Draw(Box::new(Item::fill(
+            Shape::Circle {
+                center: [50.0, 64.0],
+                radius: 30.0,
+            },
+            RED,
+        ))),
+        Node::Draw(Box::new(
+            Item::fill(
+                Shape::Circle {
+                    center: [82.0, 64.0],
+                    radius: 30.0,
+                },
+                BLUE,
+            )
+            .with_blend(BlendMode::SrcOver),
+        )),
+    ]
+}
+
+fn grouped(name: &'static str, layer: LayerSpec, bounds: Option<[f32; 4]>) -> Scene {
+    Scene::tree(
+        name,
+        vec![Node::Layer {
+            layer,
+            bounds,
+            transform: Transform::default(),
+            children: pair(),
+        }],
+    )
+    .with_background(DARK)
+    .with_samples(4)
+}
+
+/// The rest of `aiks_dl_blur_unittests.cc` that needs no capability this
+/// renderer lacks.
+///
+/// The file's mask-blur variants are the same shape drawn at each style
+/// against translucent and opaque colours, which is precisely what the styles
+/// were built for. What is still missing from it wants a mask blur over a
+/// gradient -- refused here, because blurring coverage and then filling is a
+/// different picture from blurring the result unless the fill is constant --
+/// or backdrop filters identified by a key across layers.
+fn blur_variants() -> Vec<Scene> {
+    let disc = |color: [f32; 4]| {
+        Item::fill(
+            Shape::Circle {
+                center: [64.0, 64.0],
+                radius: 32.0,
+            },
+            color,
+        )
+        .with_blend(BlendMode::SrcOver)
+    };
+    let translucent = [1.0, 0.4, 0.2, 0.5];
+    let opaque = [1.0, 0.4, 0.2, 1.0];
+
+    let mut scenes = vec![
+        plate(
+            "blur/mask-blur-variant-test-normal-translucent",
+            vec![disc(translucent).with_mask_blur(6.0)],
+        ),
+        plate(
+            "blur/mask-blur-variant-test-normal-translucent-zero-sigma",
+            vec![disc(translucent).with_mask_blur(0.0)],
+        ),
+        plate(
+            "blur/mask-blur-variant-test-solid-translucent",
+            vec![disc(translucent)
+                .with_mask_blur(6.0)
+                .with_mask_blur_style(MaskBlurStyle::Solid)],
+        ),
+        plate(
+            "blur/mask-blur-variant-test-solid-opaque",
+            vec![disc(opaque)
+                .with_mask_blur(6.0)
+                .with_mask_blur_style(MaskBlurStyle::Solid)],
+        ),
+        plate(
+            "blur/mask-blur-variant-test-inner-translucent",
+            vec![disc(translucent)
+                .with_mask_blur(6.0)
+                .with_mask_blur_style(MaskBlurStyle::Inner)],
+        ),
+        plate(
+            "blur/mask-blur-variant-test-outer-translucent",
+            vec![disc(translucent)
+                .with_mask_blur(6.0)
+                .with_mask_blur_style(MaskBlurStyle::Outer)],
+        ),
+        plate(
+            "blur/blur-has-no-edge",
+            vec![
+                // Larger than the plate, so the halo is cut by the frame. A
+                // bounded layer sized to its content alone puts a straight
+                // edge where the blur should simply continue past the view.
+                Item::fill(
+                    Shape::Rect {
+                        min: [-40.0, 40.0],
+                        max: [168.0, 88.0],
+                    },
+                    WHITE,
+                )
+                .with_mask_blur(10.0),
+            ],
+        ),
+        plate(
+            "blur/gaussian-blur-one-dimension",
+            vec![
+                // A shape thin in one axis and long in the other, where a blur
+                // that ran the same distance both ways would swallow it.
+                Item::fill(
+                    Shape::Rect {
+                        min: [12.0, 60.0],
+                        max: [116.0, 68.0],
+                    },
+                    WHITE,
+                )
+                .with_mask_blur(5.0),
+            ],
+        ),
+        plate(
+            "blur/solid-color-ovals-mask-blur-tiny-sigma",
+            vec![Item::fill(
+                Shape::Oval {
+                    min: [16.0, 44.0],
+                    max: [112.0, 84.0],
+                },
+                WHITE,
+            )
+            .with_mask_blur(0.4)],
+        ),
+    ];
+
+    // Single-sampled, and not by preference. A backdrop filter has to read
+    // what is already in the target, and a multisampled pass here must clear
+    // rather than preserve -- preserving would need a resolved buffer copied
+    // back into a multisampled one. So the two do not compose, and a scene
+    // asking for both is refused by the backend rather than drawn wrongly.
+    scenes.push(
+        grouped(
+            "blur/can-render-backdrop-blur",
+            LayerSpec::default().with_backdrop_blur(6.0),
+            Some([24.0, 44.0, 104.0, 84.0]),
+        )
+        .with_samples(1),
+    );
+    scenes.push(
+        grouped(
+            "blur/can-render-backdrop-blur-huge-sigma",
+            LayerSpec::default().with_backdrop_blur(40.0),
+            Some([24.0, 44.0, 104.0, 84.0]),
+        )
+        .with_samples(1),
+    );
+    scenes.push(grouped(
+        "blur/can-render-bounded-blur",
+        LayerSpec::default().with_blur(6.0),
+        Some([16.0, 32.0, 112.0, 96.0]),
+    ));
+    scenes
+}
+
+/// `aiks_dl_unittests.cc` and `aiks_dl_opacity_unittests.cc`, for the scenes
+/// about grouping rather than about any one shape.
+fn layers() -> Vec<Scene> {
+    vec![
+        grouped("dl/can-save-layer-standalone", LayerSpec::default(), None),
+        grouped(
+            "dl/translucent-save-layer-draws-correctly",
+            LayerSpec {
+                alpha: 0.45,
+                ..LayerSpec::default()
+            },
+            None,
+        ),
+        grouped(
+            "dl/can-perform-save-layer-with-bounds",
+            LayerSpec::default(),
+            // Bounds narrower than the contents, which is the case a target
+            // smaller than the frame exists for and the one where a wrong
+            // origin shows as a shift rather than as a crop.
+            Some([40.0, 40.0, 100.0, 90.0]),
+        ),
+        grouped(
+            "dl/can-render-destructive-save-layer",
+            LayerSpec {
+                // Replaces rather than composites, so the group erases what is
+                // under it including the ground.
+                blend: BlendMode::Src,
+                ..LayerSpec::default()
+            },
+            Some([24.0, 34.0, 108.0, 94.0]),
+        ),
+        Scene::tree(
+            "dl/sibling-save-layer-bounds-are-respected",
+            vec![
+                Node::Layer {
+                    layer: LayerSpec {
+                        alpha: 0.6,
+                        ..LayerSpec::default()
+                    },
+                    bounds: Some([8.0, 8.0, 64.0, 64.0]),
+                    transform: Transform::default(),
+                    children: vec![Node::Draw(Box::new(Item::fill(
+                        Shape::Rect {
+                            min: [0.0, 0.0],
+                            max: [128.0, 128.0],
+                        },
+                        RED,
+                    )))],
+                },
+                // A second group beside it: each is confined to its own
+                // bounds, and one leaking into the other is what this catches.
+                Node::Layer {
+                    layer: LayerSpec {
+                        alpha: 0.6,
+                        ..LayerSpec::default()
+                    },
+                    bounds: Some([64.0, 64.0, 120.0, 120.0]),
+                    transform: Transform::default(),
+                    children: vec![Node::Draw(Box::new(
+                        Item::fill(
+                            Shape::Rect {
+                                min: [0.0, 0.0],
+                                max: [128.0, 128.0],
+                            },
+                            BLUE,
+                        )
+                        .with_blend(BlendMode::SrcOver),
+                    ))],
+                },
+            ],
+        )
+        .with_background(DARK)
+        .with_samples(4),
+        Scene::tree(
+            "dl/can-render-tiny-overlapping-subpasses",
+            (0..6)
+                .map(|i| {
+                    let x = 20.0 + i as f32 * 15.0;
+                    Node::Layer {
+                        layer: LayerSpec {
+                            alpha: 0.7,
+                            ..LayerSpec::default()
+                        },
+                        bounds: Some([x, 50.0, x + 22.0, 78.0]),
+                        transform: Transform::default(),
+                        children: vec![Node::Draw(Box::new(
+                            Item::fill(
+                                Shape::Circle {
+                                    center: [x + 11.0, 64.0],
+                                    radius: 12.0,
+                                },
+                                [0.3 + 0.12 * i as f32, 0.9 - 0.1 * i as f32, 1.0, 1.0],
+                            )
+                            .with_blend(BlendMode::SrcOver),
+                        ))],
+                    }
+                })
+                .collect(),
+        )
+        .with_background(DARK)
+        .with_samples(4),
     ]
 }

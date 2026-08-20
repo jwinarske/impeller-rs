@@ -59,8 +59,8 @@ drifts from what it inventories is worse than none.
 | `aiks_dl_runtime_effect_unittests.cc` | — | 0 | runtime effects |
 | `aiks_dl_unittests.cc` | ~39 | 0 | mostly internal optimizations and picture round-trips |
 
-The catalog holds one hundred and twenty-four scenes of roughly four hundred,
-and the proportion is less interesting than which ones: the arithmetic of drawing is largely covered, and
+The catalog holds one hundred and forty-two scenes of roughly four hundred, and
+the proportion is less interesting than which ones: the arithmetic of drawing is largely covered, and
 what is missing is either a capability this renderer does not have or a thing
 the scene model cannot describe.
 
