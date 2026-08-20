@@ -1750,6 +1750,32 @@ context builds lazily -- the leaking layout is created on the first draw that
 needs a material -- so a context that never drew would pass while the fault was
 live.
 
+**The workstation cannot run everything the suite can test, and the command
+that closes the gap says which device it chose.** Neither device here offers
+advanced blending -- not the discrete part through Vulkan, not the same part
+through GLES -- so every scene needing it is skipped locally and runs only on
+the hosted runner, which has no GPU and uses Mesa's CPU drivers. That is not a
+reduced mode: lavapipe and llvmpipe are conformant, and the runner covers
+strictly more than this machine does.
+
+The consequence is that a failure only the runner can see is one this machine
+cannot reproduce, and one of those has already happened. A check on whether a
+catalog scene drew anything compared every pixel against the first, which reads
+a correctly-uniform picture as blank -- and the plate that produces one needs
+advanced blending, so it was skipped here and stayed wrong for twenty-seven
+commits while every local run went green.
+
+`cargo xtask gate --software` and `cargo xtask verify --software` select the CPU
+drivers, and they set *both* variables or neither. Setting only the Vulkan one
+is the obvious half and gives a differently wrong answer rather than a partial
+one: the cross-backend comparison then holds a software rasterizer against a
+hardware one and reports every antialiased edge as a disagreement. The ICD
+manifest is found rather than named, because its architecture suffix differs
+between distributions and CI already got that wrong once by hardcoding Fedora's,
+and the match is on the driver's short name with a test that none of the dozen
+other manifests in that directory answers to -- selecting radeon's would run
+against hardware while announcing that it had not.
+
 **The suite runs with the validation layer installed for every context, not
 only the ones that ask for it.** A context that asks installs a debug messenger
 and routes what the layer says into a log its own tests assert on. A context

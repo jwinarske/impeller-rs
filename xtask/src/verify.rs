@@ -84,8 +84,20 @@ fn normalize(line: &str) -> String {
     }
 }
 
-pub fn run(extra: &[String]) -> Outcome {
+/// Run the suite, with any variables the caller wants in the child's
+/// environment.
+///
+/// The environment is a parameter rather than something decided here, and every
+/// caller passes it even when it is empty. What the suite ran against is the
+/// single most important fact about a run of it, so a function that chose the
+/// device for you would be the wrong place to look when the answer surprises
+/// someone -- and an empty slice at the call site is where a reader finds out
+/// that nothing was chosen.
+pub fn run_with_env(extra: &[String], env: &[(&str, String)]) -> Outcome {
     let mut command = Command::new(env!("CARGO"));
+    for (key, value) in env {
+        command.env(key, value);
+    }
     command.arg("test").arg("--workspace");
     // Every target runs even after one fails, because this is a census: a run
     // that stops at the first failing binary reports the skips of the targets

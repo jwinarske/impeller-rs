@@ -35,6 +35,7 @@ mod drm;
 mod gallery;
 mod gate;
 mod report;
+mod software;
 mod verify;
 
 const USAGE: &str = "\
@@ -46,11 +47,15 @@ Commands:
   drm               Whether this machine can run the direct-scanout lane.
   verify            Run the suite and report what did not run. Extra arguments
                     are passed to cargo test.
+                    --software  run against Mesa's CPU drivers instead of this
+                    machine's, which is what CI uses and covers scenes the
+                    hardware here reports as unavailable.
   gallery [path]    Render every corpus scene onto one sheet to look at.
                     Defaults to corpus.ppm.
   gate              Lint, format, build, the feature matrix and the suite,
                     stopping at the first failure. Exits non-zero if any step
                     did not pass.
+                    --software  as for verify, above.
   help              This text.
 ";
 
@@ -128,12 +133,30 @@ fn main() {
             }
         }
         Some("gate") => {
-            if !gate::run() {
+            if !gate::run(rest.iter().any(|a| a == "--software")) {
                 std::process::exit(1);
             }
         }
         Some("verify") => {
-            let outcome = verify::run(&rest);
+            let software = rest.iter().any(|a| a == "--software");
+            let passed: Vec<String> = rest.into_iter().filter(|a| a != "--software").collect();
+            let env = if software {
+                match software::environment() {
+                    Ok(env) => {
+                        for (key, value) in &env {
+                            eprintln!("{key}={value}");
+                        }
+                        env
+                    }
+                    Err(why) => {
+                        eprintln!("{why}");
+                        std::process::exit(1);
+                    }
+                }
+            } else {
+                Vec::new()
+            };
+            let outcome = verify::run_with_env(&passed, &env);
             print!("{}", verify::text(&outcome));
             if outcome.broke || outcome.failed > 0 {
                 std::process::exit(1);

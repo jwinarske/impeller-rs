@@ -78,7 +78,27 @@ const STEPS: &[Step] = &[
 const FEATURES: &[&str] = &["vulkan", "gles", "vulkan,gles,drm"];
 
 /// Run the gate. Returns whether everything passed.
-pub fn run() -> bool {
+pub fn run(software: bool) -> bool {
+    // Resolved before anything is built, so a missing driver is reported in a
+    // second rather than after a full compile.
+    let env = if software {
+        match crate::software::environment() {
+            Ok(env) => {
+                println!("== on the CPU implementations of both APIs ==");
+                for (key, value) in &env {
+                    println!("   {key}={value}");
+                }
+                env
+            }
+            Err(why) => {
+                eprintln!("{why}");
+                return false;
+            }
+        }
+    } else {
+        Vec::new()
+    };
+
     for step in STEPS {
         if !step_passed(step.what, step.program, step.args, step.env) {
             return false;
@@ -105,7 +125,7 @@ pub fn run() -> bool {
     // the census exists to make visible, and it is worth reading even when the
     // gate is about to say yes.
     println!("== suite, with the skips named ==");
-    let outcome = crate::verify::run(&[]);
+    let outcome = crate::verify::run_with_env(&[], &env);
     print!("{}", crate::verify::text(&outcome));
     !(outcome.broke || outcome.failed > 0)
 }
