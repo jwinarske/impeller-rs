@@ -6891,3 +6891,188 @@ fn a_runtime_effect_can_read_a_texture_the_caller_supplied() {
         );
     }
 }
+
+/// A twelve-by-twelve image of nine distinct four-texel blocks.
+///
+/// Built for the nine-patch test and not shared with the others, because what
+/// it has to show is different: each of the nine pieces must read one block
+/// and no other, so a piece drawn in the wrong place or stretched when it
+/// should not be shows as a colour where another belongs. The quadrant image
+/// cannot do that -- with four regions, two of the nine pieces read the same
+/// colour and a stretched corner is indistinguishable from a correct edge.
+fn nine_region_image() -> Vec<u8> {
+    const BLOCKS: [[u8; 3]; 9] = [
+        [220, 40, 40],
+        [40, 200, 60],
+        [50, 90, 230],
+        [230, 200, 40],
+        [200, 60, 200],
+        [60, 200, 200],
+        [255, 140, 40],
+        [130, 130, 130],
+        [255, 255, 255],
+    ];
+    let mut out = vec![0u8; 12 * 12 * 4];
+    for y in 0..12usize {
+        for x in 0..12usize {
+            let block = (y / 4) * 3 + (x / 4);
+            let i = (y * 12 + x) * 4;
+            out[i..i + 3].copy_from_slice(&BLOCKS[block]);
+            out[i + 3] = 255;
+        }
+    }
+    out
+}
+
+#[test]
+fn a_nine_patch_stretches_its_middle_and_keeps_its_corners() {
+    // The whole content of a nine-patch, and the part a test has to work at:
+    // that the corners *keep their size*. Sampling inside a corner proves
+    // nothing, because a corner stretched across a third of the frame still
+    // has its own colour at its own end. So this samples just past where the
+    // corner should stop, and requires the edge's colour there.
+    let Some(mut ctx) = context() else { return };
+    let mut image = ctx
+        .create_image(Extent2D::new(12, 12), PixelFormat::Rgba8Unorm)
+        .expect("image");
+    ctx.write_image(&mut image, &nine_region_image())
+        .expect("upload");
+
+    let mut canvas = Canvas::new(SIZE);
+    canvas.clear(Color::BLACK);
+    canvas
+        .draw_image_nine(
+            0,
+            Extent2D::new(12, 12),
+            // The middle third, so each fixed edge is four texels.
+            Rect::new(4.0, 4.0, 8.0, 8.0),
+            Rect::new(8.0, 8.0, 120.0, 120.0),
+            &Paint::fill(Color::WHITE).with_anti_alias(false),
+        )
+        .expect("nine patch");
+
+    let mut surface = ctx
+        .create_surface(SIZE, PixelFormat::Rgba8Unorm)
+        .expect("surface");
+    ctx.draw_with_images(&mut surface, &canvas.finish(), &[&image])
+        .expect("draw");
+    let pixels = ctx.read(&mut surface).expect("read");
+    ctx.destroy_surface(surface);
+    ctx.destroy_image(image);
+
+    // Four texels of twelve, unstretched, so each corner occupies four pixels
+    // of the destination: eight to twelve, and a hundred and sixteen to a
+    // hundred and twenty.
+    assert_eq!(
+        pixel(&pixels, 10, 10),
+        [220, 40, 40, 255],
+        "the top-left corner keeps its own block"
+    );
+    assert_eq!(
+        pixel(&pixels, 118, 10),
+        [50, 90, 230, 255],
+        "the top-right corner keeps its own"
+    );
+    assert_eq!(
+        pixel(&pixels, 10, 118),
+        [255, 140, 40, 255],
+        "and the bottom-left"
+    );
+
+    // Just past where the corner ends. A corner that stretched would still be
+    // its own colour here, which is exactly what this rejects.
+    assert_eq!(
+        pixel(&pixels, 40, 10),
+        [40, 200, 60, 255],
+        "past the corner is the top edge, stretched along one axis only"
+    );
+    assert_eq!(
+        pixel(&pixels, 10, 40),
+        [230, 200, 40, 255],
+        "and down the side is the left edge"
+    );
+    assert_eq!(
+        pixel(&pixels, 64, 64),
+        [200, 60, 200, 255],
+        "the middle stretches both ways"
+    );
+}
+
+#[test]
+fn a_nine_patch_centre_outside_the_image_is_refused() {
+    let mut canvas = Canvas::new(SIZE);
+    assert!(
+        canvas
+            .draw_image_nine(
+                0,
+                Extent2D::new(4, 4),
+                Rect::new(1.0, 1.0, 9.0, 9.0),
+                Rect::from_size(128.0, 128.0),
+                &Paint::fill(Color::WHITE),
+            )
+            .is_err(),
+        "a centre reaching past the image leaves no nine pieces to draw"
+    );
+}
+
+#[test]
+fn drawing_the_paint_fills_the_clip_rather_than_the_target() {
+    // What distinguishes this from a rectangle a caller writes. The clip is in
+    // force and a transform is too, so the rectangle they would need is the
+    // clip's bounds carried back through it -- and getting that wrong is
+    // invisible until something is rotated.
+    let Some(mut ctx) = context() else { return };
+    let mut canvas = Canvas::new(SIZE);
+    canvas.clear(Color::BLACK);
+    canvas.clip_rect(Rect::new(32.0, 32.0, 96.0, 96.0)).unwrap();
+    canvas.save();
+    // A transform that *shrinks*, which is the direction that catches the
+    // mistake. Filling the target's own rectangle as though it were in the
+    // caller's coordinates covers half of it under this and passes under a
+    // scale that grows -- so a test written with the other one asserts
+    // nothing.
+    canvas.scale(0.5, 0.5);
+    canvas
+        .draw_paint(&Paint::fill(Color::linear(1.0, 1.0, 1.0, 1.0)).with_anti_alias(false))
+        .expect("paint");
+    canvas.restore();
+    let pixels = render(&mut ctx, canvas);
+
+    assert_eq!(
+        pixel(&pixels, 64, 64),
+        [255, 255, 255, 255],
+        "inside the clip should be filled whatever the transform"
+    );
+    assert_eq!(
+        pixel(&pixels, 16, 64),
+        [0, 0, 0, 255],
+        "and nothing outside it"
+    );
+    assert_eq!(pixel(&pixels, 64, 16), [0, 0, 0, 255], "on either axis");
+}
+
+#[test]
+fn drawing_a_colour_blends_where_clearing_replaces() {
+    // `clear` replaces the whole target and ignores the clip; this is a draw,
+    // so it blends and obeys what is in force. Two calls that look alike and
+    // are not, which is why both exist.
+    let Some(mut ctx) = context() else { return };
+    let mut canvas = Canvas::new(SIZE);
+    canvas.clear(Color::linear(1.0, 0.0, 0.0, 1.0));
+    canvas.clip_rect(Rect::new(0.0, 0.0, 64.0, 128.0)).unwrap();
+    canvas
+        .draw_color(Color::linear(0.0, 0.0, 1.0, 0.5), BlendMode::SrcOver)
+        .expect("colour");
+    let pixels = render(&mut ctx, canvas);
+
+    let mixed = pixel(&pixels, 32, 64);
+    assert!(
+        mixed[0] > 100 && mixed[2] > 100,
+        "half-transparent blue over red should be both, got {mixed:?}"
+    );
+    assert_eq!(
+        pixel(&pixels, 96, 64),
+        [255, 0, 0, 255],
+        "outside the clip the ground is untouched"
+    );
+}

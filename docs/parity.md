@@ -38,9 +38,9 @@ color filters and image filters all live inside Impeller's own display-list
 directory, so what those rows say is said about this renderer and is not an
 artifact of measuring too high. `drawParagraph` is the clear case in the other direction — the
 framework lays out a paragraph and the engine sees glyph runs, which is why it
-is marked out of scope rather than missing. `drawImageNine` and `drawShadow` are
-plausibly decomposed above Impeller as well; I have not confirmed either, and
-have not claimed otherwise in their rows.
+is marked out of scope rather than missing. `drawShadow` is plausibly decomposed above
+Impeller as well; I have not confirmed that, and have not claimed otherwise in
+its row.
 
 ## How to read it
 
@@ -79,9 +79,9 @@ reason.
 | `drawArc` | via | `PathBuilder::arc` then `draw_path` | `arc-ring-and-slice` |
 | `drawImage` | yes | `Paint::image` | `an_image_paint_draws_a_texture_through_the_api` |
 | `drawImageRect` | yes | `Paint::with_source_pixels` | `a_sprite_can_be_drawn_from_a_sheet_by_naming_its_texels` |
-| `drawImageNine` | no | — nine draws with source rects would do it, but that is the caller writing the operation | |
-| `drawPaint` | via | a rect covering the target | |
-| `drawColor` | via | `clear` for a whole target; otherwise a rect with a blend | `transparent-background` |
+| `drawImageNine` | yes | `draw_image_nine`: corners kept, edges stretched along one axis, middle along both | `a_nine_patch_stretches_its_middle_and_keeps_its_corners` |
+| `drawPaint` | yes | `draw_paint`, which fills the clip rather than the target — not a rectangle a caller can easily write once a transform is in force | `drawing_the_paint_fills_the_clip_rather_than_the_target` |
+| `drawColor` | yes | `draw_color`, which blends and obeys the clip where `clear` replaces and ignores it | `drawing_a_colour_blends_where_clearing_replaces` |
 | `drawParagraph` | out of scope | shaping and layout are not this project's; `draw_glyphs` takes a positioned run and an atlas | glyph tests |
 | `drawVertices` | yes | `draw_vertices`, with positions, texture coordinates and per-vertex colors | `a_mesh_interpolates_the_colours_its_vertices_carry` |
 | `drawAtlas`, `drawRawAtlas` | yes | `draw_atlas`, one draw for the whole batch, each sprite with its own transform and color | `an_atlas_tints_each_sprite_on_its_own_in_one_draw` |
@@ -137,8 +137,8 @@ above it or not at all:
 
 ## Where that leaves it
 
-Of forty-seven rows across `Canvas` and `Paint`: thirty-one exist, four are
-partial, seven are expressible by a caller who assembles them, four are absent,
+Of forty-seven rows across `Canvas` and `Paint`: thirty-four exist, four are
+partial, five are expressible by a caller who assembles them, three are absent,
 and one is out of scope. Counting them is the least interesting thing
 about the table -- the absences are not equal, and a reader deciding whether
 this renderer is usable should look at which ones rather than how many.

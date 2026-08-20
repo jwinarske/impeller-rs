@@ -2117,6 +2117,143 @@ impl Canvas {
         self.draw_path(&b.build(), paint)
     }
 
+    /// Fill everything the clip still admits.
+    ///
+    /// `dart:ui` calls this `drawPaint`. What it fills is the clip rather than
+    /// the target, which is why it is a call and not a rectangle a caller
+    /// writes: the rectangle they would need is the clip's bounds carried back
+    /// through the current transform, and getting that wrong is invisible
+    /// until a transform is in force.
+    ///
+    /// The bounds are conservative, so this may cover more than the clip
+    /// admits -- and the clip then removes the excess, which is what makes a
+    /// superset the safe direction to be wrong in.
+    pub fn draw_paint(&mut self, paint: &Paint) -> Result<&mut Self> {
+        let bounds = self.local_clip_bounds();
+        if bounds.is_empty() {
+            return Ok(self);
+        }
+        self.draw_rect(bounds, paint)
+    }
+
+    /// Fill everything the clip admits with one color.
+    ///
+    /// `dart:ui` calls this `drawColor`. Distinct from [`Self::clear`], which
+    /// replaces the whole target and ignores the clip: this is a draw, so it
+    /// blends and it obeys what is in force.
+    pub fn draw_color(&mut self, color: Color, blend: BlendMode) -> Result<&mut Self> {
+        self.draw_paint(&Paint::fill(color).with_blend(blend))
+    }
+
+    /// Draw an image stretched by its middle, keeping its corners.
+    ///
+    /// `dart:ui` calls this `drawImageNine`, and it is the shape every
+    /// resizable panel with a border is made of. `center` is the part of the
+    /// image, in texels, that may stretch; what surrounds it is divided into
+    /// eight pieces that stretch along one axis or neither.
+    ///
+    /// A caller could write the nine draws. The reason not to leave them to it
+    /// is the rule rather than the arithmetic: which pieces stretch in which
+    /// direction is the whole of what a nine-patch means, and nine call sites
+    /// are nine chances to stretch a corner.
+    ///
+    /// The paint supplies the blend, the filters and whether the edges are
+    /// antialiased; its shader is replaced, since each of the nine pieces
+    /// needs its own. A caller wanting the whole thing faded should draw it
+    /// into a layer, which is what fading a group means everywhere else here.
+    ///
+    /// A center reaching an edge leaves pieces of no width or height, and
+    /// those are skipped rather than drawn empty. A center outside the image
+    /// entirely is refused, since there is no reading of it that leaves nine
+    /// pieces.
+    pub fn draw_image_nine(
+        &mut self,
+        slot: u32,
+        size: Extent2D,
+        center: Rect,
+        into: Rect,
+        paint: &Paint,
+    ) -> Result<&mut Self> {
+        if size.width == 0 || size.height == 0 || into.is_empty() {
+            return Ok(self);
+        }
+        let (w, h) = (size.width as f32, size.height as f32);
+        if center.left < 0.0
+            || center.top < 0.0
+            || center.right > w
+            || center.bottom > h
+            || center.right < center.left
+            || center.bottom < center.top
+        {
+            return Err(Error::Unsupported(
+                "a nine-patch centre must lie within the image it divides",
+            ));
+        }
+
+        // The three spans along each axis, in texels and then in the
+        // destination. The outer two keep their size and the middle takes
+        // whatever is left, which is the whole of the rule.
+        let source_x = [0.0, center.left, center.right, w];
+        let source_y = [0.0, center.top, center.bottom, h];
+        let left_keep = center.left;
+        let right_keep = w - center.right;
+        let top_keep = center.top;
+        let bottom_keep = h - center.bottom;
+        // A destination too small to hold both fixed edges would give the
+        // middle a negative size, so the edges are scaled down together rather
+        // than one of them overrunning the other.
+        let squeeze_x = ((into.right - into.left) / (left_keep + right_keep)).min(1.0);
+        let squeeze_y = ((into.bottom - into.top) / (top_keep + bottom_keep)).min(1.0);
+        let dest_x = [
+            into.left,
+            into.left + left_keep * squeeze_x,
+            into.right - right_keep * squeeze_x,
+            into.right,
+        ];
+        let dest_y = [
+            into.top,
+            into.top + top_keep * squeeze_y,
+            into.bottom - bottom_keep * squeeze_y,
+            into.bottom,
+        ];
+
+        for row in 0..3 {
+            for column in 0..3 {
+                let source = Rect::new(
+                    source_x[column] / w,
+                    source_y[row] / h,
+                    source_x[column + 1] / w,
+                    source_y[row + 1] / h,
+                );
+                let destination = Rect::new(
+                    dest_x[column],
+                    dest_y[row],
+                    dest_x[column + 1],
+                    dest_y[row + 1],
+                );
+                if source.is_empty() || destination.is_empty() {
+                    continue;
+                }
+                // The paint supplies everything except the shader: its
+                // blend, its filters, whether it antialiases. The shader is
+                // this piece's own, because each of the nine reads a different
+                // part of the image into a different place, which is the only
+                // thing that distinguishes them.
+                let piece = paint.clone().with_shader(Shader::Image {
+                    slot,
+                    rect: destination,
+                    alpha: 1.0,
+                    tile: TileMode::Clamp,
+                    source,
+                    tint: Color::WHITE,
+                    sampling: Sampling::Linear,
+                });
+                self.draw_rect(destination, &piece)?;
+            }
+        }
+        Ok(self)
+    }
+
     pub fn draw_line(&mut self, from: Vec2, to: Vec2, paint: &Paint) -> Result<&mut Self> {
         let mut b = PathBuilder::new();
         b.move_to(from).line_to(to);
