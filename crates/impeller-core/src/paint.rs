@@ -310,6 +310,30 @@ impl ImageFilter {
         }
     }
 
+    /// The outermost filter that is not itself a composition, and everything
+    /// that has to run before it.
+    ///
+    /// A chain is applied innermost first, so drawing one means peeling from
+    /// the other end: open a layer for the outermost, and hand the remainder
+    /// back to be drawn inside it. The remainder is a filter in its own right,
+    /// which is what lets the caller recurse without knowing how deep it is.
+    ///
+    /// Recursive on the *outer* half, and that is the whole point. A first
+    /// version took `outer` to be a leaf and returned it directly, which is
+    /// true for anything `compose` builds left to right and false the moment a
+    /// caller composes two compositions -- `compose(compose(a, b), c)` was
+    /// refused as an unimplemented filter, having been assembled entirely out
+    /// of implemented ones.
+    pub(crate) fn peel(&self) -> (ImageFilter, ImageFilter) {
+        match self {
+            Self::Compose { outer, inner } => {
+                let (outermost, rest) = outer.peel();
+                (outermost, Self::compose(rest, (**inner).clone()))
+            }
+            leaf => (leaf.clone(), Self::None),
+        }
+    }
+
     /// The region of device pixels a target must cover for this filter to run
     /// over content occupying `min`..`max`.
     ///

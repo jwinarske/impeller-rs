@@ -1462,11 +1462,8 @@ impl Canvas {
         // A chain of filters is a stack of layers, and this builds the stack
         // one frame at a time rather than all at once -- which keeps the
         // single-filter case exactly what it was, with the remainder `None`.
-        let (outermost, rest) = match &paint.image_filter {
-            ImageFilter::Compose { outer, inner } => (outer.as_ref(), inner.as_ref().clone()),
-            other => (other, ImageFilter::None),
-        };
-        let layer = match *outermost {
+        let (outermost, rest) = paint.image_filter.peel();
+        let layer = match outermost {
             ImageFilter::Blur { sigma } => Layer::opacity(1.0).with_blur(sigma),
             ImageFilter::Matrix { transform } => Layer::opacity(1.0).with_matrix(transform),
             ImageFilter::Dilate { radius_x, radius_y } => {
@@ -1475,9 +1472,12 @@ impl Canvas {
             ImageFilter::Erode { radius_x, radius_y } => {
                 Layer::opacity(1.0).with_morphology(Morphology::erode(radius_x, radius_y))
             }
-            // `is_identity` kept `None` out, and `compose` never puts a
-            // composition in the outer half without this method reaching its
-            // own halves on the way down.
+            // `is_identity` kept `None` out, and `peel` recurses through the
+            // outer half until it reaches something that is not a composition,
+            // so neither of these can arrive here. They were reachable when
+            // peeling took the outer half to be a leaf: composing two
+            // compositions was then refused as unimplemented, having been built
+            // out of nothing but implemented filters.
             ImageFilter::None | ImageFilter::Compose { .. } => {
                 return Err(Error::Unsupported("this image filter is not implemented"))
             }

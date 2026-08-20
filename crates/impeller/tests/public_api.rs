@@ -8701,3 +8701,50 @@ fn no_shader_puts_a_pixel_down_under_a_collapsed_transform() {
         );
     }
 }
+
+#[test]
+fn a_composition_may_hold_a_composition_in_either_half() {
+    // `compose` builds a binary tree, and nothing stops a caller from putting a
+    // composition on either side of one. Both trees below hold the same three
+    // filters in the same order, so both have to give the same picture -- they
+    // differ only in how the caller happened to bracket them, and bracketing is
+    // not something a renderer gets an opinion about.
+    //
+    // This is a regression test with a specific history. Drawing a chain peels
+    // the outermost filter and recurses on the rest, and the first version took
+    // the outer half to be a leaf -- true for anything composed left to right,
+    // false the moment two compositions are composed. The left-bracketed form
+    // was refused as an unimplemented image filter, having been assembled out
+    // of nothing but implemented ones.
+    let Some(mut ctx) = context() else { return };
+
+    let dilate = |radius: f32| ImageFilter::Dilate {
+        radius_x: radius,
+        radius_y: 0.0,
+    };
+    // Three radii summing to fourteen, all distinct, so a chain that dropped
+    // or repeated one lands somewhere the right answer does not.
+    let (a, b, c) = (dilate(4.0), dilate(8.0), dilate(2.0));
+
+    let flat = ImageFilter::compose(a.clone(), ImageFilter::compose(b.clone(), c.clone()));
+    let nested = ImageFilter::compose(ImageFilter::compose(a, b), c);
+
+    let span = |ctx: &mut Context, filter: ImageFilter| {
+        let pixels = filtered_square(ctx, Rect::new(48.0, 48.0, 80.0, 80.0), filter);
+        lit_span(&pixels, true, 64)
+    };
+    let right_bracketed = span(&mut ctx, flat);
+    let left_bracketed = span(&mut ctx, nested);
+
+    // Forty-eight to seventy-nine, grown by fourteen each way.
+    assert_eq!(
+        right_bracketed,
+        Some((34, 93)),
+        "three dilations of four, eight and two should reach fourteen each way"
+    );
+    assert_eq!(
+        left_bracketed, right_bracketed,
+        "the same three filters bracketed the other way gave a different \
+         picture, so how the caller nested them changed what was drawn"
+    );
+}
