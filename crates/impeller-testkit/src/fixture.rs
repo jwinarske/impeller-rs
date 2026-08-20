@@ -56,3 +56,31 @@ pub fn pixels() -> Vec<u8> {
     }
     out
 }
+
+/// The one fragment program a scene can name.
+///
+/// The same reasoning as the sheet above. A scene is data that can be written
+/// down without a device, so it cannot hold a program any more than it can
+/// hold a texture: it says it uses the effect, and the executor registers this
+/// and names it. One rather than a table, because what a picture of an effect
+/// has to show is that a caller's program ran and produced the caller's
+/// picture, and one program that draws something no material here draws shows
+/// that as well as twenty would.
+///
+/// It reads two colours from the first two stop slots and a threshold from the
+/// first geometry slot, and splits the frame vertically between them.
+pub fn effect() -> impeller_hal::RuntimeProgram {
+    impeller_hal::RuntimeProgram {
+        spirv: impeller_shaders::EFFECT_SPV.to_vec(),
+        glsl_es: impeller_shaders::EFFECT_FS_GLSL.to_string(),
+    }
+}
+
+/// Lay two colours and a threshold out where [`effect`] reads them.
+pub fn effect_uniforms(left: [f32; 4], right: [f32; 4], threshold: f32) -> Vec<f32> {
+    let mut out = vec![0.0; impeller_hal::RUNTIME_FLOATS];
+    out[0..4].copy_from_slice(&left);
+    out[4..8].copy_from_slice(&right);
+    out[impeller_hal::material::layout::GEOMETRY] = threshold;
+    out
+}

@@ -518,6 +518,16 @@ impl VulkanContext {
                 "a runtime program needs a SPIR-V fragment module for this backend",
             ));
         }
+        // The same payload gives the same name back. See the trait's note:
+        // a program leads to pipelines keyed by it, so a caller registering
+        // one per frame would grow the cache without bound.
+        if let Some(existing) = self
+            .runtime_programs
+            .iter()
+            .position(|held| held.as_slice() == program.spirv.as_slice())
+        {
+            return Ok(existing as u32);
+        }
         self.runtime_programs.push(program.spirv.clone());
         Ok((self.runtime_programs.len() - 1) as u32)
     }

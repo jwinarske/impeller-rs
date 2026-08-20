@@ -128,7 +128,7 @@ fn catalog_names_say_which_file_they_came_from() {
     // The name is the only link back to the test each scene mirrors, so it
     // carries the topic its file is named for. A scene that does not is one
     // whose original nobody can find.
-    const TOPICS: [&str; 11] = [
+    const TOPICS: [&str; 12] = [
         "basic/",
         "path/",
         "gradient/",
@@ -140,6 +140,7 @@ fn catalog_names_say_which_file_they_came_from() {
         "blur/",
         "shadow/",
         "dl/",
+        "effect/",
     ];
     let stray: Vec<&str> = catalog()
         .iter()

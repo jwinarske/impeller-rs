@@ -56,11 +56,11 @@ drifts from what it inventories is worse than none.
 | `aiks_dl_shadow_unittests.cc` | ~30 | 7 | a convex-shadow optimization this renderer does not have, and perspective |
 | `aiks_dl_primitive_shape_unittests.cc` | ~2 | 0 | one is a playground harness, one is a hairline skew |
 | `aiks_dl_text_unittests.cc` | — | 0 | text shaping and font parsing, out of scope |
-| `aiks_dl_runtime_effect_unittests.cc` | — | 0 | runtime effects |
+| `aiks_dl_runtime_effect_unittests.cc` | — | 3 | bounded by having one fixture program rather than by the renderer |
 | `aiks_dl_unittests.cc` | ~39 | 0 | mostly internal optimizations and picture round-trips |
 
-The catalog holds one hundred and forty-two scenes of roughly four hundred, and
-the proportion is less interesting than which ones: the arithmetic of drawing is largely covered, and
+The catalog holds one hundred and forty-five scenes of roughly four hundred,
+and the proportion is less interesting than which ones: the arithmetic of drawing is largely covered, and
 what is missing is either a capability this renderer does not have or a thing
 the scene model cannot describe.
 
@@ -69,9 +69,11 @@ the scene model cannot describe.
 Three different kinds of obstacle, worth separating because only one of them is
 about the renderer.
 
-**Capabilities this renderer lacks.** Runtime effects. Perspective transforms, which the
-transform type is affine and two-dimensional by design. Dithering. These are the rows of `docs/parity.md`, and the scenes
-that need them arrive when the row does.
+**Capabilities this renderer lacks.** An effect's own textures — a caller's
+program gets the material's uniform block and nothing else. Perspective
+transforms, which the transform type is affine and two-dimensional by design.
+Dithering. These are the rows of `docs/parity.md`, and the scenes that need
+them arrive when the row does.
 
 **Things the scene model could not describe.** This category is empty now, and
 what was in it is worth keeping because of how it was closed rather than that
@@ -86,6 +88,13 @@ the other two, and they are their own kinds of node rather than kinds of item,
 because an item is a shape with a fill and everything that follows from that —
 a stroke, a clip built from its outline, a transform applied to its path — and
 a mesh has none of them.
+
+A caller's fragment program joined on the same terms and for the same reason. A
+scene says it uses the fixture effect and the executor registers it, because a
+program cannot be written down without a device any more than a texture can.
+Registering the same payload twice gives the same name back, which is what lets
+a caller with nowhere to keep an index — every caller that renders a list of
+scenes — register before each one without building a pipeline per scene.
 
 The lesson worth carrying is about the derivations. What a scene needs from a
 device, what tolerance it earns, whether it samples the fixture: all three are

@@ -74,6 +74,7 @@ pub fn catalog() -> Vec<Scene> {
     scenes.extend(shadow());
     scenes.extend(blur_variants());
     scenes.extend(layers());
+    scenes.extend(runtime_effect());
     scenes
 }
 
@@ -2073,5 +2074,59 @@ fn layers() -> Vec<Scene> {
         )
         .with_background(DARK)
         .with_samples(4),
+    ]
+}
+
+/// `aiks_dl_runtime_effect_unittests.cc`.
+///
+/// That file's scenes are a caller's shaders doing things no material does --
+/// which is the whole category, so what can be shown here is bounded by the
+/// one fixture program rather than by the renderer. What these plates
+/// establish is that a caller's program reaches the picture at all, through a
+/// shape, through a transform, and beside the built-in shader.
+fn runtime_effect() -> Vec<Scene> {
+    let effect = |threshold: f32| Fill::RuntimeEffect {
+        uniforms: crate::fixture::effect_uniforms(RED, BLUE, threshold),
+    };
+    vec![
+        plate(
+            "effect/can-render-runtime-effect",
+            vec![Item::filled(
+                Shape::Rect {
+                    min: [8.0, 8.0],
+                    max: [120.0, 120.0],
+                },
+                effect(0.0),
+            )],
+        ),
+        plate(
+            "effect/runtime-effect-can-precompile",
+            vec![Item::filled(
+                // A shape rather than the frame, so what is outside it shows
+                // that the program filled geometry rather than everything.
+                Shape::Circle {
+                    center: [64.0, 64.0],
+                    radius: 46.0,
+                },
+                effect(-0.25),
+            )],
+        ),
+        plate(
+            "effect/runtime-effect-with-transform",
+            vec![Item::filled(
+                Shape::Rect {
+                    min: [24.0, 40.0],
+                    max: [104.0, 88.0],
+                },
+                effect(0.0),
+            )
+            // The shape turns; the split does not, because it is computed from
+            // the fragment's place in clip space and a caller's program owes
+            // nothing to a transform it was never given.
+            .with_transform(Transform {
+                rotate: 0.4,
+                ..Transform::default()
+            })],
+        ),
     ]
 }

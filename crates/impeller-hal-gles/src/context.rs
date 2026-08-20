@@ -62,6 +62,8 @@ pub struct GlesContext {
     /// pipeline there also needs a render pass and a blend mode that only a
     /// draw knows.
     pub(crate) runtime_programs: Vec<glow::Program>,
+    /// The source each was linked from, so registering it again is recognised.
+    runtime_sources: Vec<String>,
     /// A one-pixel opaque white texture, bound where a draw samples nothing.
     ///
     /// Created on first use rather than eagerly, so a context that only ever
@@ -233,6 +235,7 @@ impl GlesContext {
             gl_extensions,
             program: None,
             runtime_programs: Vec::new(),
+            runtime_sources: Vec::new(),
             placeholder: None,
             debug,
         })
@@ -320,9 +323,20 @@ impl GlesContext {
                 "a runtime program needs GLSL ES source for this backend",
             ));
         }
+        // The same source gives the same name back, so a caller with nowhere
+        // to keep an index does not link a program per frame. The source is
+        // kept beside the object to answer that.
+        if let Some(existing) = self
+            .runtime_sources
+            .iter()
+            .position(|held| held == &program.glsl_es)
+        {
+            return Ok(existing as u32);
+        }
         // SAFETY: a context is current for this context's whole life.
         let linked = crate::render::build_runtime_program(&self.gl, &program.glsl_es)?;
         self.runtime_programs.push(linked);
+        self.runtime_sources.push(program.glsl_es.clone());
         Ok((self.runtime_programs.len() - 1) as u32)
     }
 

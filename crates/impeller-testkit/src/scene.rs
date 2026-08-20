@@ -211,6 +211,14 @@ pub enum Fill {
         /// What fills the directions the arc does not cover.
         tile: TileMode,
     },
+    /// The fixture fragment program, with the floats it reads.
+    ///
+    /// A scene names no program for the same reason it names no texture: it
+    /// has to be writable without a device. It says it uses the one fixture
+    /// effect, and the executor registers it.
+    RuntimeEffect {
+        uniforms: Vec<f32>,
+    },
     /// A piece of the fixture sheet, mapped onto a rectangle.
     ///
     /// There is one texture a scene can name, and it does not name it: the
@@ -602,6 +610,15 @@ impl Node {
     /// alone, which was correct while every node was one; a node kind that
     /// sampled a texture and was not an item would have been missed silently,
     /// and the draw refused for naming a texture nobody supplied.
+    fn uses_effect(&self) -> bool {
+        match self {
+            Self::Draw(item) => matches!(item.fill, Fill::RuntimeEffect { .. }),
+            Self::Mesh(mesh) => matches!(mesh.fill, Fill::RuntimeEffect { .. }),
+            Self::Atlas(_) | Self::Shadow(_) => false,
+            Self::Layer { children, .. } => children.iter().any(Node::uses_effect),
+        }
+    }
+
     fn samples_fixture(&self) -> bool {
         match self {
             Self::Draw(item) => matches!(item.fill, Fill::Image { .. }),
@@ -805,6 +822,11 @@ impl Scene {
     /// naming a texture nobody supplied.
     pub fn samples_fixture(&self) -> bool {
         self.items.iter().any(Node::samples_fixture)
+    }
+
+    /// Whether any item in this scene is drawn by the fixture program.
+    pub fn uses_effect(&self) -> bool {
+        self.items.iter().any(Node::uses_effect)
     }
 
     /// Whether a device can render this scene at all.

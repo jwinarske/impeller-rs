@@ -48,6 +48,10 @@ impl HalContext for GlesContext {
         GlesContext::destroy_texture(self, texture)
     }
 
+    fn register_program(&mut self, program: &impeller_hal::RuntimeProgram) -> Result<u32> {
+        GlesContext::register_program(self, program)
+    }
+
     fn submit_batch(
         &mut self,
         target: &mut GlesTexture,

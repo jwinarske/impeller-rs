@@ -138,6 +138,16 @@ pub trait HalContext {
     /// Release a texture and its memory.
     fn destroy_texture(&mut self, texture: <Self::Hal as Hal>::Texture);
 
+    /// Register a caller's fragment program and return the name for it.
+    ///
+    /// Registering the same payload twice gives the same name back rather than
+    /// a second entry. That is not a convenience: a program leads to pipelines
+    /// keyed by it, so registering one repeatedly would multiply the pipeline
+    /// cache by the number of times a caller happened to ask -- and a caller
+    /// with no place to cache an index, which is every caller that renders a
+    /// list of scenes, would do exactly that.
+    fn register_program(&mut self, program: &RuntimeProgram) -> Result<u32>;
+
     /// Draw a batch into a target.
     ///
     /// A descriptor that preserves rather than clears composes several batches

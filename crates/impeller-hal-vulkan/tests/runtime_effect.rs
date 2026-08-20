@@ -190,3 +190,16 @@ fn a_built_in_material_still_draws_beside_a_registered_one() {
     assert_eq!(pixel(&pixels, 4, 16), [255, 0, 0, 255], "the effect's half");
     assert_eq!(pixel(&pixels, 24, 16), [0, 255, 0, 255], "the built-in one");
 }
+
+#[test]
+fn registering_one_program_twice_gives_one_program() {
+    // A caller rendering a list of scenes has nowhere to keep an index, so it
+    // registers before each. If that produced a new name each time, every
+    // pipeline keyed by the program would be built again -- a cache growing
+    // with the frame count, which is the shape of leak nothing notices until
+    // it is large.
+    let Some(mut ctx) = context() else { return };
+    let first = ctx.register_program(&program()).expect("first");
+    let second = ctx.register_program(&program()).expect("second");
+    assert_eq!(first, second, "the same payload should be the same program");
+}

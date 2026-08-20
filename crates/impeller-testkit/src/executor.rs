@@ -77,6 +77,15 @@ fn shader_for(fill: &Fill) -> Shader {
             stops: stops_of(stops),
             tile: *tile,
         },
+        Fill::RuntimeEffect { uniforms } => Shader::RuntimeEffect {
+            // Program zero, always: a scene names no program, and the
+            // executor registers exactly one. Registering is idempotent, so
+            // this is the same index every time whatever else a caller has
+            // registered before it -- provided they registered this one first,
+            // which the executor does.
+            program: 0,
+            uniforms: uniforms.clone(),
+        },
         Fill::Image {
             rect,
             source,
@@ -343,6 +352,17 @@ where
     // which keeps every consumer of this function -- the window, the
     // comparison, the sheet renderer -- from having to know that some scenes
     // sample a texture. A scene that does not ask allocates nothing.
+    // Registered before anything is drawn and before the sheet, so the index
+    // the scenes name is the one it gets. Idempotent, so a list of scenes
+    // costs one program rather than one per scene.
+    if scene.uses_effect() {
+        let id = ctx.register_program(&crate::fixture::effect())?;
+        if id != 0 {
+            return Err(impeller_hal::Error::Unsupported(
+                "the fixture effect was not the first program registered with this context",
+            ));
+        }
+    }
     let pixels = if scene.samples_fixture() {
         let mut sheet = ctx.create_texture(&TextureDescriptor::offscreen(
             crate::fixture::SIZE,

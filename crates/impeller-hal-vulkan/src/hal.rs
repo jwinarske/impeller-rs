@@ -50,6 +50,10 @@ impl HalContext for VulkanContext {
         VulkanContext::destroy_texture(self, texture)
     }
 
+    fn register_program(&mut self, program: &impeller_hal::RuntimeProgram) -> Result<u32> {
+        VulkanContext::register_program(self, program)
+    }
+
     fn submit_batch(
         &mut self,
         target: &mut VulkanTexture,
