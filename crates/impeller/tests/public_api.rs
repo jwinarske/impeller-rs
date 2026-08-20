@@ -8238,3 +8238,112 @@ fn a_mip_chain_has_one_level_per_halving_of_the_longer_axis() {
     );
     assert_eq!(mip_levels_for(Extent2D::new(1, 8)), 4, "either way round");
 }
+
+#[test]
+fn a_blur_is_measured_in_the_targets_axes_not_the_layers_own() {
+    // A blur runs on a finished layer, in the target's pixels, after the
+    // transform has already placed everything. Blurring in the layer's own
+    // coordinates instead and letting the composite scale the result would look
+    // right under a rotation -- an isotropic kernel turned is still isotropic --
+    // and would be visibly wrong under a scale that is not uniform.
+    //
+    // So the transform here is both. A near-point source is drawn under a scale
+    // of two by a half and a rotation, which makes the layer's axes and the
+    // target's disagree by a factor of four and points them elsewhere. What
+    // comes back has to be a round halo: the kernel itself, since the source is
+    // small next to the sigma.
+    let Some(mut ctx) = context() else { return };
+
+    const SIGMA: f32 = 5.0;
+    let mut canvas = Canvas::new(SIZE);
+    canvas.clear(Color::linear(0.0, 0.0, 0.0, 1.0));
+    canvas.save_layer_bounds(
+        Layer::opacity(1.0).with_blur(SIGMA),
+        Rect::new(0.0, 0.0, 128.0, 128.0),
+    );
+    canvas.translate(64.0, 64.0);
+    canvas.scale(2.0, 0.5);
+    canvas.rotate(0.6);
+    canvas
+        .draw_rect(
+            Rect::new(-3.0, -3.0, 3.0, 3.0),
+            &Paint::fill(Color::linear(1.0, 1.0, 1.0, 1.0)),
+        )
+        .expect("drew");
+    canvas.restore();
+    let pixels = render(&mut ctx, canvas);
+
+    // How far from the center the halo stays above a threshold, along a ray.
+    let reach = |dx: i32, dy: i32| {
+        (1..60)
+            .find(|k| pixel(&pixels, (64 + dx * k) as u32, (64 + dy * k) as u32)[0] < 24)
+            .unwrap_or(60)
+    };
+    let (right, left, down, up) = (reach(1, 0), reach(-1, 0), reach(0, 1), reach(0, -1));
+    assert!(
+        (right - left).abs() <= 2 && (down - up).abs() <= 2,
+        "the halo should be centered: right {right}, left {left}, down {down}, up {up}"
+    );
+    assert!(
+        (right - down).abs() <= 2 && (left - up).abs() <= 2,
+        "the halo should reach the same distance horizontally and vertically. \
+         A blur taken in the layer's own coordinates would come out four times \
+         wider than tall here. Got right {right}, down {down}"
+    );
+    // What this does not say is anything about the shape of the kernel: a box
+    // blur over the same reach is round enough at any one threshold to pass
+    // every assertion above. That is a separate question and has its own test.
+}
+
+#[test]
+fn a_blur_falls_off_like_a_gaussian_rather_than_like_a_box() {
+    // The isotropy test above measures where the halo ends, and a box blur over
+    // the same reach ends in the same place -- so it passes that test, as a
+    // mutation confirmed. What separates the two kernels is the shape of the
+    // falloff between the center and that end, and the shape is checkable
+    // without knowing the source's total brightness: the ratio between two
+    // distances depends only on sigma.
+    //
+    // A Gaussian at five and ten pixels stands in the ratio exp((100 - 25) over
+    // twice sigma squared), which for a sigma of five is about four and a half.
+    // Uniform weights over the same reach give a ratio of one: the profile
+    // across a line convolved with a box is flat until the box runs out, which
+    // is what a box blur of a line looks like and is nothing like a curve.
+    let Some(mut ctx) = context() else { return };
+
+    const SIGMA: f32 = 5.0;
+    let mut canvas = Canvas::new(SIZE);
+    canvas.clear(Color::linear(0.0, 0.0, 0.0, 1.0));
+    canvas.save_layer_bounds(
+        Layer::opacity(1.0).with_blur(SIGMA),
+        Rect::new(0.0, 0.0, 128.0, 128.0),
+    );
+    // A thin line rather than a point. A point spread over a sigma of five
+    // leaves nothing an eight-bit target can measure ten pixels out -- one
+    // level, where the quantization is half of that. A line spreads in one axis
+    // only, so the profile across it is the kernel's own and bright enough to
+    // take a ratio from.
+    canvas
+        .draw_rect(
+            Rect::new(63.0, 0.0, 65.0, 128.0),
+            &Paint::fill(Color::linear(1.0, 1.0, 1.0, 1.0)).with_anti_alias(false),
+        )
+        .expect("drew");
+    canvas.restore();
+    let pixels = render(&mut ctx, canvas);
+
+    let near = pixel(&pixels, 64 + 5, 64)[0] as f32;
+    let far = pixel(&pixels, 64 + 10, 64)[0] as f32;
+    assert!(
+        far > 1.0,
+        "the sample at ten pixels is {far}, too dark to take a ratio from"
+    );
+    let ratio = near / far;
+    let gaussian = (((10.0f32).powi(2) - (5.0f32).powi(2)) / (2.0 * SIGMA * SIGMA)).exp();
+    assert!(
+        (ratio - gaussian).abs() < 1.2,
+        "the falloff from five pixels to ten is a ratio of {ratio:.2}, where a \
+         Gaussian of sigma {SIGMA} gives {gaussian:.2}. Uniform weights over \
+         the same reach give one -- a flat profile rather than a curve."
+    );
+}

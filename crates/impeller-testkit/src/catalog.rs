@@ -2157,6 +2157,70 @@ fn blur_variants() -> Vec<Scene> {
         LayerSpec::default().with_blur(6.0),
         Some([16.0, 32.0, 112.0, 96.0]),
     ));
+    scenes.push(
+        Scene::tree(
+            "blur/blur-under-a-rotated-scale",
+            // A blur is a device-space filter over a finished layer: it runs on
+            // the target, in the target's own axes, after the transform has
+            // already placed everything. A rotation alone cannot show that --
+            // an isotropic blur in the shape's own space is still isotropic
+            // after being turned -- so the transform here scales unevenly as
+            // well. Blurred in the shape's space and then scaled, the halo
+            // would come out four times wider than tall and turned with the
+            // shape; blurred on the target it is the same distance every way.
+            vec![Node::Layer {
+                layer: LayerSpec::default().with_blur(5.0),
+                bounds: Some([0.0, 0.0, 128.0, 128.0]),
+                transform: Transform {
+                    scale: [2.0, 0.5],
+                    rotate: 0.6,
+                    translate: [64.0, 64.0],
+                },
+                children: vec![Node::Draw(Box::new(Item::fill(
+                    Shape::Rect {
+                        min: [-3.0, -3.0],
+                        max: [3.0, 3.0],
+                    },
+                    WHITE,
+                )))],
+            }],
+        )
+        .with_background(DARK)
+        .with_samples(4),
+    );
+    scenes.push(
+        Scene::tree(
+            "blur/blur-under-rotation-and-clip",
+            // Both at once, which is the combination worth its own plate. The
+            // clip is stated in the rotated space the shape is drawn in and
+            // cuts the disc in half there; the blur then runs over the layer
+            // the clip has already cut, so the straight edge is softened along
+            // with the curved one. That is what blurring a group means, and it
+            // is the opposite picture from clipping a blurred result -- where
+            // the cut would stay hard and the halo would stop dead at it.
+            vec![Node::Layer {
+                layer: LayerSpec::default().with_blur(5.0),
+                bounds: Some([0.0, 0.0, 128.0, 128.0]),
+                transform: Transform {
+                    rotate: 0.6,
+                    translate: [64.0, 64.0],
+                    ..Transform::default()
+                },
+                children: vec![Node::Draw(Box::new(
+                    Item::fill(
+                        Shape::Circle {
+                            center: [0.0, 0.0],
+                            radius: 40.0,
+                        },
+                        WHITE,
+                    )
+                    .with_clip([-40.0, -40.0, 0.0, 40.0]),
+                ))],
+            }],
+        )
+        .with_background(DARK)
+        .with_samples(4),
+    );
     scenes
 }
 
