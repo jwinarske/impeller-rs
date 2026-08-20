@@ -8522,3 +8522,182 @@ fn a_radial_gradient_of_no_radius_under_decal_draws_nothing() {
         "the ground should show through, not a gradient: got {ground:?}"
     );
 }
+#[test]
+fn no_shader_puts_a_pixel_down_under_a_collapsed_transform() {
+    // Every shader but the solid one resolves itself into a matrix, and gets
+    // that matrix by inverting something built from the canvas transform. A
+    // transform with a zero scale makes it singular, and the inversion answers
+    // a singular matrix with the identity -- which is a plausible mapping the
+    // caller never asked for. That exact substitution produced a wrong picture
+    // for a radial gradient of no radius, so the question is whether a singular
+    // *transform* can reach the same place.
+    //
+    // It cannot, and the reason is worth having a test for rather than an
+    // argument: the geometry is transformed by the same matrix, so a shape
+    // under a collapsed transform has no area and covers no pixel. The mapping
+    // is never consulted.
+    //
+    // The neighbouring `a_collapsed_transform_leaves_nothing_reachable` asks a
+    // different question about the same transform -- what the canvas *reports*
+    // as reachable, rather than what it draws -- and one can hold while the
+    // other does not.
+    //
+    // Worth knowing what does and does not fail this, since the obvious
+    // mutation does not. Changing what a singular inversion falls back to
+    // changes nothing here, because the geometry has already collapsed by then.
+    // What fails it is the shape not collapsing: building the quad for a
+    // fragment-evaluated shape without applying the transform to it puts the
+    // whole frame down, because the mapping the fragments then consult is the
+    // substituted identity. What this pins is that nothing draws anyway -- from
+    // an antialiased edge along the degenerate line, or from a coordinate that
+    // came out as NaN and compared its way into coverage.
+    let Some(mut ctx) = context() else { return };
+
+    let stops = vec![
+        GradientStop::new(Color::linear(1.0, 1.0, 1.0, 1.0), 0.0),
+        GradientStop::new(Color::linear(0.0, 1.0, 0.0, 1.0), 1.0),
+    ];
+    let shaders: Vec<(&str, Shader)> = vec![
+        ("solid", Shader::Solid(Color::linear(1.0, 0.0, 0.0, 1.0))),
+        (
+            "linear",
+            Shader::LinearGradient {
+                start: Vec2::ZERO,
+                end: Vec2::new(128.0, 128.0),
+                stops: stops.clone(),
+                tile: TileMode::Clamp,
+            },
+        ),
+        (
+            "radial",
+            Shader::RadialGradient {
+                center: Vec2::new(64.0, 64.0),
+                radius: 40.0,
+                stops: stops.clone(),
+                tile: TileMode::Clamp,
+            },
+        ),
+        (
+            "sweep",
+            Shader::SweepGradient {
+                center: Vec2::new(64.0, 64.0),
+                start_angle: 0.0,
+                end_angle: std::f32::consts::TAU,
+                stops: stops.clone(),
+                tile: TileMode::Clamp,
+            },
+        ),
+        (
+            "conical",
+            Shader::ConicalGradient {
+                start_center: Vec2::new(40.0, 64.0),
+                start_radius: 0.0,
+                end_center: Vec2::new(64.0, 64.0),
+                end_radius: 50.0,
+                stops,
+                tile: TileMode::Clamp,
+            },
+        ),
+    ];
+
+    // One axis collapsed each way, and both at once. The one-axis cases matter
+    // separately: a matrix singular in one direction still has a well-defined
+    // image, and an implementation guarding only on a determinant of exactly
+    // zero in both axes would let them through.
+    for (name, shader) in shaders {
+        for (how, transform) in [
+            ("scale(0, 1)", Affine2::from_scale(Vec2::new(0.0, 1.0))),
+            ("scale(1, 0)", Affine2::from_scale(Vec2::new(1.0, 0.0))),
+            ("scale(0, 0)", Affine2::from_scale(Vec2::ZERO)),
+        ] {
+            let mut canvas = Canvas::new(SIZE);
+            canvas.clear(Color::linear(0.0, 0.0, 0.0, 1.0));
+            canvas.save();
+            canvas.concat(transform);
+            let _ = canvas.draw_rect(
+                Rect::from_size(128.0, 128.0),
+                &Paint::fill(Color::linear(1.0, 1.0, 1.0, 1.0)).with_shader(shader.clone()),
+            );
+            canvas.restore();
+            let pixels = render(&mut ctx, canvas);
+
+            let lit = pixels
+                .chunks_exact(4)
+                .filter(|texel| *texel != [0, 0, 0, 255])
+                .count();
+            assert_eq!(
+                lit, 0,
+                "a {name} paint under {how} put {lit} pixel(s) on the frame, \
+                 where the shape it was drawn with has no area at all"
+            );
+        }
+    }
+
+    // The shapes that do not go through tessellation at all. A circle, a
+    // rounded rectangle and an analytically stroked outline are drawn as a quad
+    // whose fragments work out their own coverage from the same inverted
+    // matrix, so for these the mapping is not merely consulted -- it is the
+    // whole of what decides which pixels are covered. Nothing above reaches
+    // them, because everything above is a filled rectangle.
+    for (kind, how, transform) in [
+        (
+            "circle",
+            "scale(0, 1)",
+            Affine2::from_scale(Vec2::new(0.0, 1.0)),
+        ),
+        (
+            "circle",
+            "scale(1, 0)",
+            Affine2::from_scale(Vec2::new(1.0, 0.0)),
+        ),
+        ("circle", "scale(0, 0)", Affine2::from_scale(Vec2::ZERO)),
+        (
+            "rounded rect",
+            "scale(0, 1)",
+            Affine2::from_scale(Vec2::new(0.0, 1.0)),
+        ),
+        (
+            "rounded rect",
+            "scale(1, 0)",
+            Affine2::from_scale(Vec2::new(1.0, 0.0)),
+        ),
+        (
+            "stroked circle",
+            "scale(0, 1)",
+            Affine2::from_scale(Vec2::new(0.0, 1.0)),
+        ),
+        (
+            "stroked circle",
+            "scale(0, 0)",
+            Affine2::from_scale(Vec2::ZERO),
+        ),
+    ] {
+        let mut canvas = Canvas::new(SIZE);
+        canvas.clear(Color::linear(0.0, 0.0, 0.0, 1.0));
+        canvas.save();
+        canvas.concat(transform);
+        let white = Color::linear(1.0, 1.0, 1.0, 1.0);
+        let _ = match kind {
+            "circle" => canvas.draw_circle(Vec2::new(64.0, 64.0), 40.0, &Paint::fill(white)),
+            "rounded rect" => canvas.draw_rrect(
+                Rect::new(20.0, 20.0, 108.0, 108.0),
+                16.0,
+                &Paint::fill(white),
+            ),
+            _ => canvas.draw_circle(Vec2::new(64.0, 64.0), 40.0, &Paint::stroke(white, 8.0)),
+        };
+        canvas.restore();
+        let pixels = render(&mut ctx, canvas);
+
+        let lit = pixels
+            .chunks_exact(4)
+            .filter(|texel| *texel != [0, 0, 0, 255])
+            .count();
+        assert_eq!(
+            lit, 0,
+            "a {kind} under {how} put {lit} pixel(s) on the frame, and that \
+             shape's coverage is computed from the inverted mapping rather \
+             than from tessellated geometry"
+        );
+    }
+}
