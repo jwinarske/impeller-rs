@@ -1501,6 +1501,28 @@ every fragment walks, which is the cost specialization would remove.
   compile-time assertion rather than a test, and the size stated here is
   checked against it.
 
+**A degenerate gradient takes the limit of the real one, not whatever the
+arithmetic falls out as.** A radial gradient's radius is folded into the matrix
+that maps a clip position into the gradient's own space, so the shader measures
+against unit distance and never sees a radius. A radius of nothing makes that
+matrix singular, and the inversion answers a singular matrix with the identity
+-- which is the right answer for an inversion and the wrong one here, because
+the identity is *a* radius: one clip unit. A gradient asked to have no extent
+came out spanning half the target, and would have spanned a different distance
+on a target of another size. Nothing failed; it drew a plausible picture nobody
+asked for, which is the failure this document keeps warning about.
+
+The answer is the limit of the shrinking gradient. Every point but the center
+runs off the end of the ramp, so clamp settles on the last stop and decal draws
+nothing, because past the end is where decal draws nothing. Repeat and mirror
+have no limit -- the parameter oscillates faster and faster -- and take clamp's
+answer, since a stable colour is worth more than an arbitrary one that shimmers.
+
+The limit rather than a refusal, on the same reasoning that makes a mask blur of
+zero the sharp shape and a morphology of zero the unfiltered one: a caller
+animating a value down to nothing should arrive somewhere, not have the thing
+disappear on the last frame.
+
 **A gradient locates itself from an interpolated clip position, not from the
 fragment coordinate builtin.** That builtin's origin differs between the two
 graphics APIs, so using it would run gradients in opposite directions on each

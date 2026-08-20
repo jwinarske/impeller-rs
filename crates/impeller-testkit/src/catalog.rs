@@ -1022,6 +1022,130 @@ fn gradient() -> Vec<Scene> {
             )],
         ),
         plate(
+            "gradient/conical-concentric-circles",
+            // The two circles share a centre, which makes the cone a plain
+            // radial gradient. Worth its own plate because it is the case the
+            // general solution degenerates to: the quadratic that locates a
+            // point along the cone loses its linear term when the centres
+            // coincide, so an implementation that always divides by it fails
+            // exactly here and nowhere else.
+            vec![Item::filled(
+                band.clone(),
+                Fill::ConicalGradient {
+                    start_center: [64.0, 64.0],
+                    start_radius: 12.0,
+                    end_center: [64.0, 64.0],
+                    end_radius: 56.0,
+                    stops: vec![Stop::new(WHITE, 0.0), Stop::new(BLUE, 1.0)],
+                    tile: TileMode::Clamp,
+                },
+            )],
+        ),
+        plate(
+            "gradient/conical-with-the-focus-on-the-edge",
+            // The starting point sitting exactly on the ending circle, which is
+            // where the cone opens into a half-plane: the region the gradient
+            // covers stops being bounded and the far side of the shape is
+            // outside it altogether. The classic hard case, and the one where a
+            // discriminant that should be zero comes out slightly negative.
+            vec![Item::filled(
+                band.clone(),
+                Fill::ConicalGradient {
+                    start_center: [20.0, 64.0],
+                    start_radius: 0.0,
+                    end_center: [64.0, 64.0],
+                    end_radius: 44.0,
+                    stops: vec![Stop::new(YELLOW, 0.0), Stop::new(BLUE, 1.0)],
+                    tile: TileMode::Clamp,
+                },
+            )],
+        ),
+        plate(
+            "gradient/conical-with-separate-circles",
+            // Neither circle containing the other, so the cone is a genuine
+            // cone with a region outside it that no parameter reaches. What
+            // fills that region is the tile mode's business, and decal is the
+            // mode that makes the boundary visible rather than smearing the
+            // last stop across it.
+            vec![Item::filled(
+                band.clone(),
+                Fill::ConicalGradient {
+                    start_center: [36.0, 46.0],
+                    start_radius: 10.0,
+                    end_center: [86.0, 86.0],
+                    end_radius: 22.0,
+                    stops: vec![Stop::new(WHITE, 0.0), Stop::new(RED, 1.0)],
+                    tile: TileMode::Decal,
+                },
+            )
+            // Over the ground rather than replacing it, which every other plate
+            // here can skip and this one cannot: outside the cone the material
+            // is transparent, and the default `Src` would write that
+            // transparency into the frame instead of letting the ground show.
+            // The boundary is the whole subject, so it has to be visible.
+            .with_blend(BlendMode::SrcOver)],
+        ),
+        plate(
+            "gradient/linear-with-a-zero-length-axis",
+            // Start and end at the same point. There is no direction to project
+            // onto and the projection divides by the axis's own length, so this
+            // is the gradient equivalent of a repeated point in a stroked path.
+            // Every pixel has to land on one end of the ramp or the other --
+            // one flat colour, not a division by zero.
+            vec![Item::filled(
+                band.clone(),
+                Fill::LinearGradient {
+                    start: [64.0, 64.0],
+                    end: [64.0, 64.0],
+                    stops: vec![Stop::new(WHITE, 0.0), Stop::new(BLUE, 1.0)],
+                    tile: TileMode::Clamp,
+                },
+            )],
+        ),
+        plate(
+            "gradient/radial-with-a-zero-radius",
+            // The same degeneracy on the other family, and the one that found a
+            // fault. Folding the radius into the mapping makes a radius of
+            // nothing a singular matrix, and inverting a singular matrix gives
+            // the identity -- which invented a radius of one clip unit, so the
+            // gradient came out spanning half the plate and would have changed
+            // with the plate's size. It now settles on the last stop, which is
+            // where the real thing goes as the radius shrinks.
+            vec![Item::filled(
+                band.clone(),
+                Fill::RadialGradient {
+                    center: [64.0, 64.0],
+                    radius: 0.0,
+                    stops: vec![Stop::new(WHITE, 0.0), Stop::new(GREEN, 1.0)],
+                    tile: TileMode::Clamp,
+                },
+            )],
+        ),
+        plate(
+            "gradient/stops-sharing-an-offset-make-a-hard-edge",
+            // Two stops at the same position, which is how a caller asks for a
+            // band rather than a blend. The interpolation between them spans no
+            // distance, so anything dividing by the gap between neighbouring
+            // stops divides by zero -- and the picture that says it went wrong
+            // is a smear where there should be a line.
+            vec![Item::filled(
+                band.clone(),
+                Fill::LinearGradient {
+                    start: [12.0, 12.0],
+                    end: [116.0, 116.0],
+                    stops: vec![
+                        Stop::new(WHITE, 0.0),
+                        Stop::new(WHITE, 0.45),
+                        Stop::new(RED, 0.45),
+                        Stop::new(RED, 0.7),
+                        Stop::new(BLUE, 0.7),
+                        Stop::new(BLUE, 1.0),
+                    ],
+                    tile: TileMode::Clamp,
+                },
+            )],
+        ),
+        plate(
             "gradient/can-render-gradient-decal-with-background",
             vec![
                 Item::fill(band.clone(), [0.25, 0.25, 0.3, 1.0]),

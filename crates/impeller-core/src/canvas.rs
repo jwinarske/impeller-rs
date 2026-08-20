@@ -1321,6 +1321,37 @@ impl Canvas {
                 if !center_clip.is_finite() || !scaled.is_finite() {
                     return Material::Solid([0.0; 4]);
                 }
+                // A radius of nothing folds to a singular mapping, and the
+                // inversion below answers a singular matrix with the identity.
+                // That is the right answer for an inversion and the wrong one
+                // here: it invents a radius of one clip unit, so a gradient the
+                // caller asked to have no extent comes out spanning half the
+                // target and changing with the target's size.
+                //
+                // What it should be is the limit of the real thing. As the
+                // radius shrinks, every point but the center runs off the end
+                // of the ramp -- so under clamp it settles on the last stop,
+                // and under decal it leaves, because past the end is where
+                // decal draws nothing. Repeat and mirror have no limit at all,
+                // the parameter oscillating faster and faster, and they take
+                // the same answer as clamp because a stable colour is worth
+                // more than an arbitrary one that shimmers.
+                //
+                // The limit rather than a refusal, on the same reasoning that
+                // makes a mask blur of zero the sharp shape: a caller animating
+                // a radius down to nothing should arrive somewhere, not have
+                // the gradient disappear at the last frame.
+                if !radius.is_finite() || *radius <= 0.0 {
+                    if matches!(tile, TileMode::Decal) {
+                        return Material::Solid([0.0; 4]);
+                    }
+                    let last = stops
+                        .iter()
+                        .max_by(|a, b| a.offset.total_cmp(&b.offset))
+                        .map(|s| s.color.to_array())
+                        .unwrap_or([0.0; 4]);
+                    return Material::solid(last);
+                }
                 let ramp_slot = self.ramp_for(stops);
                 Material::RadialGradient {
                     center: [center_clip.x, center_clip.y],

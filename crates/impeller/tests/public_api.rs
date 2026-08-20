@@ -11,8 +11,8 @@ use impeller::{
     Affine2, Atlas, BackendPreference, BlendMode, Canvas, Color, ColorFilter, Context, Coverage,
     Dash, Extent2D, GlyphKey, GradientStop, ImageFilter, Layer, LineCap, MaskBlurStyle, Morphology,
     Paint, Path, PathBuilder, PixelFormat, PointMode, PositionedGlyph, Rect, Result, Sampling,
-    SourceRect, Sprite, StrokeStyle, Style, TileMode, Vec2, VertexMode, Vertices, MAX_STOPS,
-    MORPHOLOGY_TAPS, RUNTIME_FLOATS,
+    Shader, SourceRect, Sprite, StrokeStyle, Style, TileMode, Vec2, VertexMode, Vertices,
+    MAX_STOPS, MORPHOLOGY_TAPS, RUNTIME_FLOATS,
 };
 
 const SIZE: Extent2D = Extent2D {
@@ -8433,5 +8433,92 @@ fn a_transparent_occluder_keeps_the_shadow_under_the_caster_and_nothing_else() {
         dark < light,
         "a transparent occluder should leave the middle shadowed, but it reads \
          {dark} against {light} for an opaque one"
+    );
+}
+
+#[test]
+fn a_radial_gradient_of_no_radius_settles_on_the_stop_it_was_heading_for() {
+    // The radius is folded into a matrix so the shader measures against unit
+    // distance and never sees it. A radius of nothing makes that matrix
+    // singular, and inverting a singular matrix gives the identity -- correct
+    // for an inversion and wrong here, because the identity is *a* radius: one
+    // clip unit. A gradient asked to have no extent came out spanning half the
+    // target, and would have spanned a different distance on a target of a
+    // different size.
+    //
+    // What it should be is the limit of the real thing. As the radius shrinks
+    // every point but the centre runs off the end of the ramp, so under clamp
+    // it settles on the last stop. The limit rather than a refusal, on the same
+    // reasoning that makes a mask blur of zero the sharp shape: a caller
+    // animating a radius to nothing should arrive somewhere.
+    let Some(mut ctx) = context() else { return };
+
+    let stops = [
+        GradientStop::new(Color::linear(1.0, 1.0, 1.0, 1.0), 0.0),
+        GradientStop::new(Color::linear(0.0, 1.0, 0.0, 1.0), 1.0),
+    ];
+    let mut canvas = Canvas::new(SIZE);
+    canvas.clear(Color::linear(0.0, 0.0, 0.0, 1.0));
+    canvas
+        .draw_rect(
+            Rect::from_size(128.0, 128.0),
+            &Paint::fill(Color::linear(1.0, 1.0, 1.0, 1.0))
+                .with_shader(Shader::RadialGradient {
+                    center: Vec2::new(64.0, 64.0),
+                    radius: 0.0,
+                    stops: stops.to_vec(),
+                    tile: TileMode::Clamp,
+                })
+                .with_anti_alias(false),
+        )
+        .expect("gradient");
+    let pixels = render(&mut ctx, canvas);
+
+    // Every pixel the last stop, including ones far from the centre -- which is
+    // exactly where an invented radius would have left something else.
+    for (x, y) in [(2u32, 2u32), (64, 64), (126, 126), (2, 126), (100, 30)] {
+        assert_eq!(
+            pixel(&pixels, x, y),
+            [0, 255, 0, 255],
+            "at ({x}, {y}) a radius of zero should be the last stop everywhere"
+        );
+    }
+}
+
+#[test]
+fn a_radial_gradient_of_no_radius_under_decal_draws_nothing() {
+    // The other half of the same limit, and it goes the other way. Decal draws
+    // nothing past the end of the ramp, and a radius of nothing puts every
+    // point past it -- so the shape disappears rather than filling. Both
+    // answers are the limit of the same shrinking gradient; which one it is
+    // depends on what the tile mode says about being past the end.
+    let Some(mut ctx) = context() else { return };
+
+    let stops = [
+        GradientStop::new(Color::linear(1.0, 1.0, 1.0, 1.0), 0.0),
+        GradientStop::new(Color::linear(0.0, 1.0, 0.0, 1.0), 1.0),
+    ];
+    let mut canvas = Canvas::new(SIZE);
+    canvas.clear(Color::linear(0.2, 0.0, 0.0, 1.0));
+    canvas
+        .draw_rect(
+            Rect::from_size(128.0, 128.0),
+            &Paint::fill(Color::linear(1.0, 1.0, 1.0, 1.0))
+                .with_shader(Shader::RadialGradient {
+                    center: Vec2::new(64.0, 64.0),
+                    radius: 0.0,
+                    stops: stops.to_vec(),
+                    tile: TileMode::Decal,
+                })
+                .with_blend(BlendMode::SrcOver)
+                .with_anti_alias(false),
+        )
+        .expect("gradient");
+    let pixels = render(&mut ctx, canvas);
+
+    let ground = pixel(&pixels, 64, 64);
+    assert_eq!(
+        ground[0], 51,
+        "the ground should show through, not a gradient: got {ground:?}"
     );
 }
