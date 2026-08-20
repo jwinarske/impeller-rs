@@ -7667,3 +7667,199 @@ fn a_morphology_radius_is_a_whole_number_of_texels() {
         "six tenths is one texel, applied and allowed for in the bounds"
     );
 }
+
+#[test]
+fn composing_two_filters_applies_the_inner_one_first() {
+    // The order `dart:ui` states, and the one the names suggest once the pair
+    // is pictured nested: the inner filter is the one closer to what was drawn.
+    // Here the composition is two dilations, which add -- so the order is not
+    // what this test is about; the sum is. Order gets its own test below, where
+    // the two halves do not commute.
+    let Some(mut ctx) = context() else { return };
+
+    let pixels = filtered_square(
+        &mut ctx,
+        Rect::new(48.0, 48.0, 80.0, 80.0),
+        ImageFilter::compose(
+            ImageFilter::Dilate {
+                radius_x: 8.0,
+                radius_y: 8.0,
+            },
+            ImageFilter::Dilate {
+                radius_x: 4.0,
+                radius_y: 4.0,
+            },
+        ),
+    );
+
+    assert_eq!(
+        lit_span(&pixels, true, 64),
+        Some((36, 91)),
+        "twelve each way, which is the two radii together. Twelve from one side \
+         only would mean the outer layer cropped what the inner one grew."
+    );
+}
+
+#[test]
+fn composing_a_move_covers_both_where_it_drew_and_where_it_landed() {
+    // A matrix filter moves the finished image where every other filter grows
+    // it in place, which is what makes it the case that pins how a composition
+    // sizes its layers. A layer's target is clipped to its parent's, so the
+    // outer layer has to cover both where the inner filter put things and where
+    // the shape was drawn: the inner layer draws the square where it was
+    // written, and its composite is what moves it. Sized for the moved region
+    // alone the square is cropped before the matrix ever runs, which is what
+    // happened the first time this was written.
+    //
+    // The two orders give the same extent here, deliberately -- reaching it
+    // both ways is the point. Which order actually ran is a different question,
+    // and has its own test.
+    let Some(mut ctx) = context() else { return };
+
+    let move_right = ImageFilter::Matrix {
+        transform: Affine2::from_translation(Vec2::new(32.0, 0.0)),
+    };
+    let grow = ImageFilter::Dilate {
+        radius_x: 8.0,
+        radius_y: 0.0,
+    };
+
+    // Moved, then grown.
+    let after = filtered_square(
+        &mut ctx,
+        Rect::new(24.0, 48.0, 56.0, 80.0),
+        ImageFilter::compose(grow.clone(), move_right.clone()),
+    );
+    assert_eq!(
+        lit_span(&after, true, 64),
+        Some((48, 95)),
+        "moved to 56..87 and then grown by eight each way"
+    );
+
+    // Grown, then moved: the same extent, arrived at the other way round, which
+    // says the outer layer covered the moved region rather than the drawn one.
+    let before = filtered_square(
+        &mut ctx,
+        Rect::new(24.0, 48.0, 56.0, 80.0),
+        ImageFilter::compose(move_right, grow),
+    );
+    assert_eq!(
+        lit_span(&before, true, 64),
+        Some((48, 95)),
+        "grown to 16..63 and then moved right by thirty-two"
+    );
+}
+
+#[test]
+fn composing_with_a_filter_that_does_nothing_is_the_other_filter() {
+    // Every composition costs a layer, and a layer that copies an image and
+    // changes nothing is a copy nobody asked for. The pair is folded when
+    // either half is an identity, which also means a caller composing in a loop
+    // does not build a chain of them.
+    let plain = ImageFilter::Blur { sigma: 4.0 };
+    assert_eq!(
+        ImageFilter::compose(plain.clone(), ImageFilter::None),
+        plain,
+        "an inner filter that does nothing leaves the outer one alone"
+    );
+    assert_eq!(
+        ImageFilter::compose(ImageFilter::None, plain.clone()),
+        plain,
+        "and so does an outer one"
+    );
+    assert!(
+        ImageFilter::compose(ImageFilter::None, ImageFilter::None).is_identity(),
+        "two of them are still nothing"
+    );
+    // A radius below half a texel rounds to nothing, so it folds too -- the
+    // identity test is the filter's own, not a comparison against `None`.
+    assert_eq!(
+        ImageFilter::compose(
+            plain.clone(),
+            ImageFilter::Dilate {
+                radius_x: 0.2,
+                radius_y: 0.2
+            }
+        ),
+        plain,
+        "a radius that rounds to no texels is a filter that does nothing"
+    );
+}
+
+#[test]
+fn composing_an_erosion_with_a_dilation_depends_on_which_runs_first() {
+    // The textbook pair, and the reason it is worth having: the same two
+    // filters in the two orders are two different operations with names of
+    // their own. Eroding and then dilating is an opening, which removes
+    // anything thinner than twice the radius and leaves the rest about where it
+    // was. Dilating and then eroding is a closing, which keeps it.
+    //
+    // A shape with a thin spike answers both at once. Under an opening the
+    // spike is gone and the block survives; under a closing they both survive.
+    // Nothing about the extent of the block distinguishes the orders, which is
+    // why a test that only measured that could not see the difference -- and
+    // did not, the first time.
+    let Some(mut ctx) = context() else { return };
+
+    const RADIUS: f32 = 5.0;
+    // A block from 32 to 96, with a spike eight pixels tall reaching out to
+    // 112. Eight is under twice the radius, so an opening takes it.
+    let mut builder = PathBuilder::new();
+    builder
+        .move_to(Vec2::new(32.0, 32.0))
+        .line_to(Vec2::new(96.0, 32.0))
+        .line_to(Vec2::new(96.0, 60.0))
+        .line_to(Vec2::new(112.0, 60.0))
+        .line_to(Vec2::new(112.0, 68.0))
+        .line_to(Vec2::new(96.0, 68.0))
+        .line_to(Vec2::new(96.0, 96.0))
+        .line_to(Vec2::new(32.0, 96.0))
+        .close();
+    let spiked = builder.build();
+
+    let erode = ImageFilter::Erode {
+        radius_x: RADIUS,
+        radius_y: RADIUS,
+    };
+    let dilate = ImageFilter::Dilate {
+        radius_x: RADIUS,
+        radius_y: RADIUS,
+    };
+
+    let draw = |ctx: &mut Context, filter: ImageFilter| {
+        let mut canvas = Canvas::new(SIZE);
+        canvas.clear(Color::linear(0.0, 0.0, 0.0, 1.0));
+        canvas
+            .draw_path(
+                &spiked,
+                &Paint::fill(Color::linear(1.0, 1.0, 1.0, 1.0))
+                    .with_anti_alias(false)
+                    .with_image_filter(filter),
+            )
+            .expect("drew");
+        render(ctx, canvas)
+    };
+
+    // Opening: erode first, so the erosion is the inner half.
+    let opened = draw(
+        &mut ctx,
+        ImageFilter::compose(dilate.clone(), erode.clone()),
+    );
+    let (left, right) = lit_span(&opened, true, 64).expect("the block survives an opening");
+    assert_eq!(left, 32, "an opening leaves the block where it was");
+    assert!(
+        right < 100,
+        "the spike is thinner than twice the radius and an opening should have \
+         taken it, but the row still reaches {right}"
+    );
+
+    // Closing: dilate first.
+    let closed = draw(&mut ctx, ImageFilter::compose(erode, dilate));
+    let (left, right) = lit_span(&closed, true, 64).expect("the block survives a closing");
+    assert_eq!(left, 32, "a closing leaves the block where it was too");
+    assert!(
+        right > 105,
+        "a closing keeps the spike, and this row should still reach past 105. \
+         Reaching {right} means the erosion ran first, which is an opening."
+    );
+}

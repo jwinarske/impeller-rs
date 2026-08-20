@@ -641,6 +641,30 @@ side, because every sample reaching past it would come back as more of the
 shape. Only a dilation widens the layer's bounds, for the same reason: an
 erosion never puts anything where there was nothing.
 
+**A chain of image filters is a stack of layers, peeled one at a time.**
+`ImageFilter::Compose` holds two filters, so a paint can carry a chain of any
+depth. Building the whole stack at once would mean walking the chain in the
+recorder and opening every layer before drawing anything; instead the draw peels
+the outermost filter, opens its layer, and hands the remainder back to the same
+entry point, which lands here again if anything is left. The single-filter case
+is then exactly what it was, with the remainder empty.
+
+What that leaves to get right is how wide each layer is opened. A layer's target
+is clipped to its parent's, so the outer layer has to cover everything the rest
+of the chain needs -- and that is not one question but two. A blur or a dilation
+grows the image in place, so its output contains its input and the distinction
+never shows. A matrix filter *moves* the image, and the inner layer draws the
+shape where it was written: the composite is what moves it. A target sized for
+where the filter put things crops the content before the filter ever runs. So
+the region is followed through the chain as a region, taking the union at each
+step, rather than padded out by a margin.
+
+The region is followed in device pixels rather than in the caller's
+coordinates. Every filter's reach is a length in device pixels, and mapping one
+back through the transform to have it mapped forward again is not the identity
+under a scale -- the bounds are floored and ceiled at the end, and a reach
+divided and remultiplied is the same length only if nothing rounds.
+
 **A recording is submitted, not just a batch.** A frame with layers is several
 passes, and for a while the presentation paths took a batch — so such a frame
 could be rendered offscreen and never displayed. The layer passes are

@@ -118,7 +118,7 @@ reason.
 | `blendMode` | yes | `with_blend`, all of Porter-Duff and the fifteen advanced modes where the device offers them | `advanced-blend-*` |
 | `shader` | yes | linear, radial, sweep and conical gradients, images, and a caller's own fragment program | `a_caller_can_fill_a_shape_with_their_own_fragment_program` |
 | `colorFilter` | yes | `with_color_filter`: a color matrix, the sRGB transfer function in either direction, and any blend against a constant that is affine in what it blends. Not the advanced blend modes, which the paint's own blend mode covers | `the_gamma_filter_follows_the_curve_at_both_ends_of_it` |
-| `imageFilter` | partial | `with_image_filter`: a blur, a matrix, dilate and erode, applied to what the paint drew rather than to the colour it computed. Not compose, which needs a filter to nest inside another | `dilating_grows_a_shape_by_the_radius_on_every_side` |
+| `imageFilter` | yes | `with_image_filter`: a blur, a matrix, dilate, erode and any composition of them, applied to what the paint drew rather than to the colour it computed | `composing_an_erosion_with_a_dilation_depends_on_which_runs_first` |
 | `maskFilter` | yes | `with_mask_blur` and `with_mask_blur_style`: a blur of a shape's coverage in all four styles. Solid colors only, since the identity it rests on holds for nothing else | `each_mask_blur_style_keeps_the_part_of_the_blur_it_names` |
 | `filterQuality` | partial | `with_sampling`: linear and nearest. `medium` and `high` are mipmapped and bicubic, and neither exists here to select | `nearest_sampling_reads_one_texel_where_linear_blends_two` |
 | `invertColors` | via | a color filter whose matrix negates each channel and adds one | |
@@ -137,7 +137,7 @@ above it or not at all:
 
 ## Where that leaves it
 
-Of forty-seven rows across `Canvas` and `Paint`: thirty-five exist, three are
+Of forty-seven rows across `Canvas` and `Paint`: thirty-six exist, two are
 partial, five are expressible by a caller who assembles them, three are absent,
 and one is out of scope. Counting them is the least interesting thing
 about the table -- the absences are not equal, and a reader deciding whether

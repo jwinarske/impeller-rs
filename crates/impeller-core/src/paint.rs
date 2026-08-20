@@ -5,6 +5,7 @@ use crate::color::Color;
 use glam::{Affine2, Vec2};
 use impeller_geometry::dash::Dash;
 use impeller_geometry::stroke::StrokeStyle;
+use impeller_geometry::transform::transformed_bounds;
 use impeller_hal::{BlendMode, Extent2D, TileMode};
 use impeller_hal::{ColorFilter, Sampling};
 
@@ -219,7 +220,7 @@ pub enum MaskBlurStyle {
 /// refuses anything else. This blurs the result, which is defined for every
 /// paint and is what `dart:ui` means by an image filter. For a solid color the
 /// two agree, and there is a test that says so.
-#[derive(Debug, Clone, Copy, PartialEq, Default)]
+#[derive(Debug, Clone, PartialEq, Default)]
 pub enum ImageFilter {
     #[default]
     None,
@@ -246,6 +247,23 @@ pub enum ImageFilter {
     /// `ImageFilter.erode`, and the dual of [`Self::Dilate`]: what one does to
     /// a shape the other does to the space around it.
     Erode { radius_x: f32, radius_y: f32 },
+    /// Filter with `inner`, then filter that result with `outer`.
+    ///
+    /// `ImageFilter.compose`, and the reason this type is not `Copy`: a filter
+    /// that holds filters cannot be a fixed size without a bound on the depth,
+    /// and `dart:ui` puts no bound on it.
+    ///
+    /// A caller can already nest [`Canvas::save_layer`] calls to the same
+    /// effect, and did before this existed. What this adds is that the bounds
+    /// come out right without being worked out by hand: the outer layer has to
+    /// be opened wide enough to hold whatever the inner one grew to, which
+    /// means knowing how far each filter in the chain reaches.
+    ///
+    /// [`Canvas::save_layer`]: crate::Canvas::save_layer
+    Compose {
+        outer: Box<ImageFilter>,
+        inner: Box<ImageFilter>,
+    },
 }
 
 impl ImageFilter {
@@ -266,6 +284,66 @@ impl ImageFilter {
             // sample the filter could take, so it is not a filter.
             Self::Dilate { radius_x, radius_y } | Self::Erode { radius_x, radius_y } => {
                 Morphology::dilate(*radius_x, *radius_y).is_identity()
+            }
+            // Composing two filters that each change nothing changes nothing,
+            // and costs two layers to say so.
+            Self::Compose { outer, inner } => outer.is_identity() && inner.is_identity(),
+        }
+    }
+
+    /// Filter with `inner` first and then with `outer`.
+    ///
+    /// The order `dart:ui` states, which is the order the names suggest once
+    /// you picture them nested: the inner filter is the one closer to what was
+    /// drawn. A composition where either half does nothing is the other half,
+    /// since the layer it would have taken is a copy of an image.
+    pub fn compose(outer: ImageFilter, inner: ImageFilter) -> Self {
+        if inner.is_identity() {
+            return outer;
+        }
+        if outer.is_identity() {
+            return inner;
+        }
+        Self::Compose {
+            outer: Box::new(outer),
+            inner: Box::new(inner),
+        }
+    }
+
+    /// The region of device pixels a target must cover for this filter to run
+    /// over content occupying `min`..`max`.
+    ///
+    /// Both what goes in and what comes out, which is not the same question for
+    /// every filter and is the one that matters. A blur or a dilation only
+    /// grows, so its output contains its input and the distinction is invisible
+    /// -- the case that makes it visible is a matrix, which *moves* the image.
+    /// A composition puts the inner filter's layer inside the outer one's
+    /// target, and a layer's target is clipped to its parent's, so a target
+    /// sized only for where a matrix filter put things would crop the content
+    /// before the matrix ever ran: the inner layer draws the shape where it was
+    /// written and the composite is what moves it.
+    ///
+    /// Erosion is left alone rather than shrunk. Covering more than the result
+    /// needs costs a little memory; covering less loses drawing.
+    pub(crate) fn covering(&self, min: Vec2, max: Vec2) -> (Vec2, Vec2) {
+        match self {
+            Self::None | Self::Erode { .. } => (min, max),
+            Self::Blur { sigma } => {
+                let reach = Vec2::splat(crate::canvas::blur_reach(*sigma));
+                (min - reach, max + reach)
+            }
+            Self::Dilate { radius_x, radius_y } => {
+                let radius = Morphology::dilate(*radius_x, *radius_y).radius;
+                let reach = Vec2::new(radius[0], radius[1]);
+                (min - reach, max + reach)
+            }
+            Self::Matrix { transform } => {
+                let (moved_min, moved_max) = transformed_bounds(transform, min, max);
+                (min.min(moved_min), max.max(moved_max))
+            }
+            Self::Compose { outer, inner } => {
+                let (min, max) = inner.covering(min, max);
+                outer.covering(min, max)
             }
         }
     }

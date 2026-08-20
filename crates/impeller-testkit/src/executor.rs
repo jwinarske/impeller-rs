@@ -154,7 +154,7 @@ fn paint_for(item: &Item, anti_alias: bool) -> Paint {
         // layer opened and composited, which produces the same recording
         // whatever draws it -- and the passes that recording contains are
         // already compared, by the scenes that blur a layer directly.
-        image_filter: item.image_filter,
+        image_filter: item.image_filter.clone(),
         style: match &item.stroke {
             Some(spec) => Style::Stroke(spec.to_style()),
             None => Style::Fill,

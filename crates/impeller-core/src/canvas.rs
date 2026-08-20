@@ -958,17 +958,32 @@ impl Canvas {
     /// [`Self::clip_rect`] does with the same box, and for the same reason —
     /// there the box would admit pixels the caller asked to remove.
     pub fn save_layer_bounds(&mut self, layer: Layer, bounds: Rect) -> &mut Self {
+        let (min, max) = transformed_bounds(
+            &self.transform,
+            Vec2::new(bounds.left, bounds.top),
+            Vec2::new(bounds.right, bounds.bottom),
+        );
+        self.save_layer_device_bounds(layer, min, max)
+    }
+
+    /// A bounded layer whose region is already in device pixels.
+    ///
+    /// The same thing [`Self::save_layer_bounds`] does, minus the transform.
+    /// Every filter's reach is a length in device pixels, so a caller that has
+    /// already worked out where a filtered result will land -- which composing
+    /// two filters requires, since the inner one's growth has to fit inside the
+    /// outer one's target -- has device coordinates in hand and would only be
+    /// mapping them backward to have them mapped forward again. Under a scale
+    /// the round trip is not the identity: a reach of eight device pixels
+    /// divided by the scale and multiplied by it again is eight only if nothing
+    /// rounds, and the bounds are floored and ceiled at the end.
+    fn save_layer_device_bounds(&mut self, layer: Layer, min: Vec2, max: Vec2) -> &mut Self {
         let reach = layer.reach();
         // Opened without seeding, because the seed has to land in the target
         // the content will draw into and that target is decided below. A
         // backdrop drawn into the full-size target and then narrowed would be
         // the wrong region of the wrong image.
         let pending = self.open_layer(layer);
-        let (min, max) = transformed_bounds(
-            &self.transform,
-            Vec2::new(bounds.left, bounds.top),
-            Vec2::new(bounds.right, bounds.bottom),
-        );
         // A blur reaches past what it was given. The caller states where the
         // content is, which is the question they can answer; how far a blur
         // carries it is this renderer's arithmetic, and a target sized to the
@@ -1411,7 +1426,16 @@ impl Canvas {
     /// so takes a solid color, while filtering a result is defined whatever
     /// produced it. What is paid for that is a target of its own.
     fn draw_filtered(&mut self, path: &Path, paint: &Paint) -> Result<&mut Self> {
-        let layer = match paint.image_filter {
+        // One filter is peeled off here and the rest is handed back to
+        // `draw_path`, which lands in this method again if anything is left.
+        // A chain of filters is a stack of layers, and this builds the stack
+        // one frame at a time rather than all at once -- which keeps the
+        // single-filter case exactly what it was, with the remainder `None`.
+        let (outermost, rest) = match &paint.image_filter {
+            ImageFilter::Compose { outer, inner } => (outer.as_ref(), inner.as_ref().clone()),
+            other => (other, ImageFilter::None),
+        };
+        let layer = match *outermost {
             ImageFilter::Blur { sigma } => Layer::opacity(1.0).with_blur(sigma),
             ImageFilter::Matrix { transform } => Layer::opacity(1.0).with_matrix(transform),
             ImageFilter::Dilate { radius_x, radius_y } => {
@@ -1420,17 +1444,29 @@ impl Canvas {
             ImageFilter::Erode { radius_x, radius_y } => {
                 Layer::opacity(1.0).with_morphology(Morphology::erode(radius_x, radius_y))
             }
-            // `is_identity` kept `None` out, and every other kind is handled.
-            ImageFilter::None => {
+            // `is_identity` kept `None` out, and `compose` never puts a
+            // composition in the outer half without this method reaching its
+            // own halves on the way down.
+            ImageFilter::None | ImageFilter::Compose { .. } => {
                 return Err(Error::Unsupported("this image filter is not implemented"))
             }
         };
         let bounds = self.filter_bounds(path, paint);
-        self.save_layer_bounds(layer, bounds);
-        // Without the filter, or this would open a layer inside itself
-        // forever. The mask blur, if there is one, is left on: it applies to
-        // the drawing this filter is filtering.
-        let inner = paint.clone().with_image_filter(ImageFilter::None);
+        // In device pixels, because that is where a filter's reach is measured.
+        // The outer layer has to cover everything the rest of the chain needs,
+        // both what goes into it and what comes out -- a layer's target is
+        // clipped to its parent's, so a target sized for the result alone would
+        // crop the content before the inner filter ever ran.
+        let (min, max) = transformed_bounds(
+            &self.transform,
+            Vec2::new(bounds.left, bounds.top),
+            Vec2::new(bounds.right, bounds.bottom),
+        );
+        let (min, max) = rest.covering(min, max);
+        self.save_layer_device_bounds(layer, min, max);
+        // The mask blur, if there is one, is left on: it applies to the drawing
+        // this filter is filtering.
+        let inner = paint.clone().with_image_filter(rest);
         let failure = self.draw_path(path, &inner).err();
         self.restore();
         match failure {
@@ -2860,7 +2896,7 @@ const SHADOW_ALPHA: f32 = 0.25;
 /// and a mask blur style that combines the blurred coverage with the shape's
 /// own has to size the layer holding both by the same rule -- which it did not
 /// at first, and the halo was cut off square at the shape's own bounds.
-fn blur_reach(sigma: f32) -> f32 {
+pub(crate) fn blur_reach(sigma: f32) -> f32 {
     if sigma > 0.0 {
         (sigma * 3.0).ceil()
     } else {
