@@ -423,6 +423,18 @@ pub struct Layer {
     ///
     /// `None` for no morphology, which is the default and costs nothing.
     pub morphology: Option<Morphology>,
+    /// Recolor the finished group on its way back.
+    ///
+    /// What `dart:ui` means by the `colorFilter` on the paint `saveLayer`
+    /// takes, and the same distinction group opacity has: filtering each shape
+    /// and compositing the results differs from filtering the composite
+    /// wherever two of them overlap, because a filter is not linear in general.
+    ///
+    /// It is also the only way to filter what a caller's own fragment program
+    /// drew. A runtime effect is a whole pipeline rather than a material this
+    /// renderer's shader evaluates, so there is nowhere in it to apply a
+    /// matrix -- the filter has to act on the image the program produced.
+    pub color_filter: ColorFilter,
 }
 
 impl Default for Layer {
@@ -434,6 +446,7 @@ impl Default for Layer {
             matrix: None,
             backdrop_blur: 0.0,
             morphology: None,
+            color_filter: ColorFilter::None,
         }
     }
 }
@@ -454,6 +467,12 @@ impl Layer {
 
     pub fn with_blend(mut self, blend: BlendMode) -> Self {
         self.blend = blend;
+        self
+    }
+
+    /// Recolor the finished group on its way back. See [`Self::color_filter`].
+    pub fn with_color_filter(mut self, filter: ColorFilter) -> Self {
+        self.color_filter = filter;
         self
     }
 
@@ -1154,6 +1173,20 @@ impl Canvas {
         if !paint.image_filter.is_identity() {
             return self.draw_filtered(path, paint);
         }
+        // A color filter is normally arithmetic in this renderer's own fragment
+        // shader, which a runtime effect replaces outright -- there is nowhere
+        // in a caller's program to put the matrix, and the program is what runs.
+        // Left alone, the filter was accepted and silently did nothing, which
+        // is the shape of failure this codebase least wants: no error, no
+        // effect, and a caller with no way to tell.
+        //
+        // So the filter is applied to the image the program drew instead, which
+        // is what it means anyway. It costs a layer, which is what every other
+        // filter that acts on a finished image already costs.
+        if matches!(paint.shader, Shader::RuntimeEffect { .. }) && !paint.color_filter.is_identity()
+        {
+            return self.draw_effect_filtered(path, paint);
+        }
         if paint.mask_blur > 0.0 {
             return self.draw_masked(path, paint);
         }
@@ -1456,6 +1489,47 @@ impl Canvas {
     /// blur is only the same picture as this when the fill does not vary, and
     /// so takes a solid color, while filtering a result is defined whatever
     /// produced it. What is paid for that is a target of its own.
+    /// A caller's program drawn into a layer, and the layer recolored.
+    ///
+    /// The bounds are the path's own, widened by a stroke where there is one.
+    /// Nothing here reaches past that: a color filter moves colors rather than
+    /// pixels, so the region it can affect is the region that was drawn.
+    fn draw_effect_filtered(&mut self, path: &Path, paint: &Paint) -> Result<&mut Self> {
+        let bounds = self.filter_bounds(path, paint);
+        let (min, max) = transformed_bounds(
+            &self.transform,
+            Vec2::new(bounds.left, bounds.top),
+            Vec2::new(bounds.right, bounds.bottom),
+        );
+        self.save_layer_device_bounds(
+            Layer::opacity(1.0)
+                .with_color_filter(paint.color_filter)
+                // The blend belongs to the composite, not to the draw inside.
+                // That is what `saveLayer` means by taking a paint, and it is
+                // the only placement that gives the right answer for a blend
+                // reading its destination: inside the layer the destination is
+                // transparent black, so a mode like `Multiply` applied there
+                // would come out empty and then be composited over the frame it
+                // was supposed to darken.
+                .with_blend(paint.blend),
+            min,
+            max,
+        );
+        // Without the filter, or this would open a layer inside itself forever,
+        // and over an empty layer rather than through the caller's blend, which
+        // the composite above now carries.
+        let inner = paint
+            .clone()
+            .with_color_filter(ColorFilter::None)
+            .with_blend(BlendMode::SrcOver);
+        let failure = self.draw_path(path, &inner).err();
+        self.restore();
+        match failure {
+            Some(e) => Err(e),
+            None => Ok(self),
+        }
+    }
+
     fn draw_filtered(&mut self, path: &Path, paint: &Paint) -> Result<&mut Self> {
         // One filter is peeled off here and the rest is handed back to
         // `draw_path`, which lands in this method again if anything is left.
@@ -1494,10 +1568,23 @@ impl Canvas {
             Vec2::new(bounds.right, bounds.bottom),
         );
         let (min, max) = rest.covering(min, max);
-        self.save_layer_device_bounds(layer, min, max);
+        // The caller's blend rides the outermost composite. Left on the draw
+        // inside, it was applied against the layer's own transparent black --
+        // so a mode that reads its destination found nothing there, and the
+        // result was composited over the frame it was meant to combine with.
+        // `Plus` over a cyan ground gave the source unchanged instead of the
+        // sum, for every image filter, since filters were added.
+        //
+        // Only the outermost, which is why the inner paint is neutral: peeling
+        // a chain opens a layer per link, and a blend carried down would be
+        // applied once per link rather than once.
+        self.save_layer_device_bounds(layer.with_blend(paint.blend), min, max);
         // The mask blur, if there is one, is left on: it applies to the drawing
         // this filter is filtering.
-        let inner = paint.clone().with_image_filter(rest);
+        let inner = paint
+            .clone()
+            .with_image_filter(rest)
+            .with_blend(BlendMode::SrcOver);
         let failure = self.draw_path(path, &inner).err();
         self.restore();
         match failure {
@@ -1541,13 +1628,30 @@ impl Canvas {
             ));
         }
         let bounds = self.filter_bounds(path, paint);
-        // Without the mask, or this would open a layer inside itself forever.
-        let inner = paint.clone().with_mask_blur(0.0);
+        // Without the mask, or this would open a layer inside itself forever --
+        // and with the caller's blend taken off, because it belongs to the
+        // composite that puts the finished mask on the frame rather than to a
+        // draw inside a layer that starts empty. Left on, a mode reading its
+        // destination found transparent black there, and `Plus` over a cyan
+        // ground gave the source unchanged instead of the sum.
+        //
+        // The style's own blends below are a different thing and stay: they
+        // combine the shape with its blur *within* the layer, which is exactly
+        // where a destination-reading mode is supposed to look.
+        let inner = paint
+            .clone()
+            .with_mask_blur(0.0)
+            .with_blend(BlendMode::SrcOver);
 
         // The blurred coverage alone is the whole picture for the default
         // style, so it needs one layer and no second draw.
         if paint.mask_blur_style == MaskBlurStyle::Normal {
-            self.save_layer_bounds(Layer::opacity(1.0).with_blur(paint.mask_blur), bounds);
+            self.save_layer_bounds(
+                Layer::opacity(1.0)
+                    .with_blur(paint.mask_blur)
+                    .with_blend(paint.blend),
+                bounds,
+            );
             // The result is discarded to end the borrow before restoring, and
             // taken up again after: the layer has to be closed whether the
             // draw inside it succeeded or not, or every later draw lands in a
@@ -1584,7 +1688,7 @@ impl Canvas {
         );
         let blurred = Layer::opacity(1.0).with_blur(paint.mask_blur);
 
-        self.save_layer_bounds(Layer::opacity(1.0), held);
+        self.save_layer_bounds(Layer::opacity(1.0).with_blend(paint.blend), held);
         let failure = match paint.mask_blur_style {
             // Blur first, then the shape over it. `SrcOver` leaves the blur
             // where the shape is not, and `DstOut` takes the shape out of it
@@ -2551,7 +2655,7 @@ impl Canvas {
         };
         let paint = RenderPaint {
             material,
-            filter: ColorFilter::None,
+            filter: frame.paint.color_filter,
             blend: frame.paint.blend,
             clip: self.clip,
             stencil: ClipState::content(self.depth),

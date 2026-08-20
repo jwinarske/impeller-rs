@@ -654,6 +654,34 @@ side, because every sample reaching past it would come back as more of the
 shape. Only a dilation widens the layer's bounds, for the same reason: an
 erosion never puts anything where there was nothing.
 
+**A filter's blend belongs to the composite, not to the draw inside the
+layer.** Everything that acts on a finished image -- an image filter, a mask
+blur, and now a color filter over a caller's own program -- draws into a layer
+and composites it back. The paint's blend mode has to ride that composite. Left
+on the draw inside, it runs against the layer's own transparent black, so a mode
+that reads its destination finds nothing there and yields the source unchanged,
+which is then composited over the frame it was meant to combine with. `Plus`
+over a cyan ground gave red where it should give white, in all three paths,
+since each was written.
+
+Only the outermost composite carries it. Peeling a chain of filters opens a
+layer per link, and a blend carried down would apply once per link rather than
+once, so the paint handed inward is neutralised to `SrcOver`. The mask blur's
+own style blends are a different thing and stay where they are: those combine
+the shape with its blur *within* the layer, which is exactly where a
+destination-reading mode is supposed to look.
+
+**A color filter over a runtime effect acts on the image, because there is
+nowhere else for it to act.** Every other material is evaluated by this
+renderer's own fragment shader, where a filter is four multiply-adds at the end
+of it. A runtime effect is a whole pipeline: the caller's program is the
+fragment shader, and nothing can be appended to it. So the filter was accepted
+and silently did nothing -- no error, no effect, and no way for a caller to tell
+which. It now draws the program into a layer and filters the composite, which is
+what the filter meant anyway and costs what every other image-acting filter
+costs. `Layer` grew a color filter for it, which `dart:ui` has independently:
+`saveLayer` takes a paint, and that paint's `colorFilter` applies to the group.
+
 **A chain of image filters is a stack of layers, peeled one at a time.**
 `ImageFilter::Compose` holds two filters, so a paint can carry a chain of any
 depth. Building the whole stack at once would mean walking the chain in the

@@ -8748,3 +8748,138 @@ fn a_composition_may_hold_a_composition_in_either_half() {
          picture, so how the caller nested them changed what was drawn"
     );
 }
+
+#[test]
+fn a_colour_filter_recolours_what_a_runtime_effect_drew() {
+    // A color filter is arithmetic in this renderer's own fragment shader, and
+    // a runtime effect replaces that shader outright -- the caller's program is
+    // what runs, and there is nowhere in it to put a matrix. So the filter was
+    // accepted and silently did nothing, which is the shape of failure this
+    // codebase least wants: no error, no effect, and no way for a caller to
+    // tell which of the two happened.
+    //
+    // It is applied to the image the program drew instead, which is what it
+    // means anyway. That costs a layer, which is what every other filter acting
+    // on a finished image already costs.
+    let Some(mut ctx) = context() else { return };
+    let program = ctx
+        .register_program(&impeller::RuntimeProgram {
+            spirv: impeller_shaders::EFFECT_SPV.to_vec(),
+            glsl_es: impeller_shaders::EFFECT_FS_GLSL.to_string(),
+        })
+        .expect("register");
+
+    const R: f32 = 0.2126;
+    const G: f32 = 0.7152;
+    const B: f32 = 0.0722;
+    #[rustfmt::skip]
+    let luminance = ColorFilter::matrix([
+        R, G, B, 0.0, 0.0,
+        R, G, B, 0.0, 0.0,
+        R, G, B, 0.0, 0.0,
+        0.0, 0.0, 0.0, 1.0, 0.0,
+    ]);
+
+    let draw = |ctx: &mut Context, filter: ColorFilter| {
+        let mut canvas = Canvas::new(SIZE);
+        canvas.clear(Color::linear(0.0, 0.0, 0.0, 1.0));
+        canvas
+            .draw_rect(
+                Rect::from_size(128.0, 128.0),
+                &Paint::fill(Color::linear(1.0, 1.0, 1.0, 1.0))
+                    .with_shader(Shader::RuntimeEffect {
+                        program,
+                        uniforms: effect_uniforms(0.5),
+                        image: None,
+                    })
+                    .with_color_filter(filter)
+                    .with_anti_alias(false),
+            )
+            .expect("effect");
+        render(ctx, canvas)
+    };
+
+    // The fixture program draws its first uniform colour, which is pure red.
+    assert_eq!(
+        pixel(&draw(&mut ctx, ColorFilter::None), 64, 64),
+        [255, 0, 0, 255],
+        "the program should draw red without a filter, or this test is measuring \
+         something else"
+    );
+    let filtered = pixel(&draw(&mut ctx, luminance), 64, 64);
+    // Red weighs 0.2126, which is fifty-four of two hundred and fifty-five.
+    assert!(
+        (filtered[0] as i32 - 54).abs() <= 2 && filtered[0] == filtered[1],
+        "the luminance of red is 54 in all three channels, got {filtered:?}. \
+         Unchanged red means the filter was accepted and dropped"
+    );
+}
+
+#[test]
+fn a_filter_blends_where_it_meets_the_frame_not_inside_its_own_layer() {
+    // Every filter that acts on a finished image draws into a layer first, and
+    // the caller's blend mode belongs to the composite that puts that layer on
+    // the frame -- not to the draw inside it. Inside, the destination is the
+    // layer's own transparent black, so a mode that reads its destination finds
+    // nothing there and produces the source unchanged, which is then composited
+    // over the frame it was supposed to combine with.
+    //
+    // That was the behaviour of all three of these paths. `Plus` over a cyan
+    // ground gave red where it should give white, for every image filter, every
+    // mask blur style, and a colour-filtered effect.
+    //
+    // Checked against the unfiltered draw rather than against a constant: what
+    // makes it wrong is that adding a filter changed how the paint met the
+    // frame, and the unfiltered case is what it should still meet it like.
+    let Some(mut ctx) = context() else { return };
+
+    let ground = Color::linear(0.0, 1.0, 1.0, 1.0);
+    let shape = Rect::new(24.0, 24.0, 104.0, 104.0);
+    let draw = |ctx: &mut Context, paint: Paint| {
+        let mut canvas = Canvas::new(SIZE);
+        canvas.clear(ground);
+        canvas.draw_rect(shape, &paint).expect("drew");
+        render(ctx, canvas)
+    };
+    let base = Paint::fill(Color::linear(1.0, 0.0, 0.0, 1.0))
+        .with_blend(BlendMode::Plus)
+        .with_anti_alias(false);
+
+    // Red plus cyan is white, and every one of these has to agree with it at
+    // the middle of the shape, where no filter has moved anything.
+    let unfiltered = pixel(&draw(&mut ctx, base.clone()), 64, 64);
+    assert_eq!(
+        unfiltered,
+        [255, 255, 255, 255],
+        "red under Plus over cyan is white before any filter is involved"
+    );
+
+    for (what, paint) in [
+        (
+            "a blur",
+            base.clone()
+                .with_image_filter(ImageFilter::Blur { sigma: 3.0 }),
+        ),
+        (
+            "a dilation",
+            base.clone().with_image_filter(ImageFilter::Dilate {
+                radius_x: 4.0,
+                radius_y: 4.0,
+            }),
+        ),
+        ("a mask blur", base.clone().with_mask_blur(4.0)),
+        (
+            "a solid mask blur",
+            base.clone()
+                .with_mask_blur(4.0)
+                .with_mask_blur_style(MaskBlurStyle::Solid),
+        ),
+    ] {
+        assert_eq!(
+            pixel(&draw(&mut ctx, paint), 64, 64),
+            unfiltered,
+            "{what} changed how the paint met the frame. Red rather than white \
+             means the blend ran inside the layer, against its transparent black"
+        );
+    }
+}

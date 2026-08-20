@@ -484,6 +484,8 @@ pub struct LayerSpec {
     pub backdrop_blur: f32,
     /// Spread or shrink the finished group. `None` for neither.
     pub morphology: Option<MorphologySpec>,
+    /// Recolor the finished group on its way back.
+    pub color_filter: ColorFilter,
 }
 
 /// A dilation or an erosion of a finished group.
@@ -508,6 +510,7 @@ impl Default for LayerSpec {
             blend: BlendMode::SrcOver,
             backdrop_blur: 0.0,
             morphology: None,
+            color_filter: ColorFilter::None,
         }
     }
 }
