@@ -8347,3 +8347,91 @@ fn a_blur_falls_off_like_a_gaussian_rather_than_like_a_box() {
          the same reach give one -- a flat profile rather than a curve."
     );
 }
+
+#[test]
+fn a_transparent_occluder_keeps_the_shadow_under_the_caster_and_nothing_else() {
+    // `transparentOccluder` says the caster will not hide what is beneath it,
+    // so the shadow there has to survive. With an opaque one the shadow under
+    // the caster is removed, because a solid object covers it and drawing it
+    // would darken what the object is about to paint over -- visible the moment
+    // the caster is translucent, or absent.
+    //
+    // The property worth pinning is that the flag changes *only* that region.
+    // A shadow that came out differently around the edges as well would mean
+    // the flag had changed how the shadow was built rather than what was cut
+    // out of it, and the two are easy to confuse: removing the caster's area
+    // and drawing the shadow at a different offset both leave less shadow under
+    // the caster.
+    let Some(mut ctx) = context() else { return };
+
+    const RADIUS: f32 = 30.0;
+    let mut circle = PathBuilder::new();
+    circle
+        .arc(
+            Vec2::new(64.0, 64.0),
+            Vec2::splat(RADIUS),
+            0.0,
+            std::f32::consts::TAU,
+        )
+        .close();
+    let caster = circle.build();
+
+    // Drawn without the caster on top, or the region in question is covered by
+    // the very shape whose effect is being measured.
+    let draw = |ctx: &mut Context, transparent: bool| {
+        let mut canvas = Canvas::new(SIZE);
+        canvas.clear(Color::linear(0.9, 0.9, 0.92, 1.0));
+        canvas
+            .draw_shadow(
+                &caster,
+                Color::linear(0.0, 0.0, 0.0, 1.0),
+                10.0,
+                transparent,
+            )
+            .expect("shadow");
+        render(ctx, canvas)
+    };
+    let opaque = draw(&mut ctx, false);
+    let transparent = draw(&mut ctx, true);
+
+    let mut changed = 0;
+    let mut furthest: f32 = 0.0;
+    for y in 0..SIZE.height {
+        for x in 0..SIZE.width {
+            if pixel(&opaque, x, y) == pixel(&transparent, x, y) {
+                continue;
+            }
+            changed += 1;
+            let dx = x as f32 - 64.0;
+            let dy = y as f32 - 64.0;
+            furthest = furthest.max((dx * dx + dy * dy).sqrt());
+        }
+    }
+    assert!(
+        changed > 500,
+        "the flag should change the region under the caster, and {changed} \
+         pixels is too few to be that region"
+    );
+    // Measured as a distance rather than counted inside a disc, because the
+    // boundary is where the answer actually is. What is cut out is the caster's
+    // own coverage, and that coverage is antialiased -- a pixel straddling the
+    // edge is partly cut and legitimately differs. Written as "nothing outside
+    // the radius" this failed on sixty-nine such pixels and looked like a
+    // renderer fault; the question worth asking is whether anything differs
+    // further out than the edge itself can reach.
+    assert!(
+        furthest <= RADIUS + 1.5,
+        "the furthest changed pixel is {furthest:.1} from the centre, where the \
+         caster's edge is at {RADIUS}. The flag altered how the shadow was \
+         built rather than only what was cut out of it"
+    );
+
+    // And in the direction that makes it a shadow rather than a hole: the
+    // middle is darker when the occluder will not hide it.
+    let (dark, light) = (pixel(&transparent, 64, 64)[0], pixel(&opaque, 64, 64)[0]);
+    assert!(
+        dark < light,
+        "a transparent occluder should leave the middle shadowed, but it reads \
+         {dark} against {light} for an opaque one"
+    );
+}

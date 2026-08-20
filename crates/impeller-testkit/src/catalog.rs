@@ -2061,6 +2061,87 @@ fn shadow() -> Vec<Scene> {
             }),
         ),
         shadow_plate(
+            "shadow/elevation-sets-how-far-and-how-soft",
+            // Elevation is the one number a caller sets, and it does two things
+            // at once: it moves the shadow and it spreads it. A plate at a
+            // single elevation cannot show either, so this is the middle of a
+            // sweep and the two either side of it are below.
+            ShadowSpec {
+                elevation: 2.0,
+                ..caster(Shape::RoundedRect {
+                    min: [34.0, 40.0],
+                    max: [94.0, 88.0],
+                    radius: 10.0,
+                })
+            },
+        ),
+        shadow_plate(
+            "shadow/elevation-high",
+            ShadowSpec {
+                elevation: 24.0,
+                ..caster(Shape::RoundedRect {
+                    min: [34.0, 40.0],
+                    max: [94.0, 88.0],
+                    radius: 10.0,
+                })
+            },
+        ),
+        shadow_plate(
+            "shadow/shadow-of-a-concave-caster",
+            // Every other caster here is convex, which is what the optimization
+            // Impeller's file is mostly about requires. This renderer has no
+            // such optimization, so a concave caster is not a different path --
+            // but it is a different picture, and one where a shadow built from
+            // a hull rather than from the shape would be obviously wrong: the
+            // notch has to be dark inside.
+            ShadowSpec {
+                elevation: 10.0,
+                ..caster(Shape::Polygon(vec![
+                    [30.0, 34.0],
+                    [98.0, 34.0],
+                    [98.0, 94.0],
+                    [76.0, 94.0],
+                    [76.0, 58.0],
+                    [52.0, 58.0],
+                    [52.0, 94.0],
+                    [30.0, 94.0],
+                ]))
+            },
+        ),
+        shadow_plate(
+            "shadow/shadow-without-its-caster",
+            // The caster left off, so what is drawn is the shadow alone. Every
+            // other plate covers the middle of the shadow with the shape that
+            // cast it, which means the part of the picture under the caster is
+            // never seen -- and that is exactly the part an occluder is
+            // supposed to hide.
+            ShadowSpec {
+                with_caster: false,
+                elevation: 10.0,
+                ..caster(Shape::Circle {
+                    center: [64.0, 64.0],
+                    radius: 30.0,
+                })
+            },
+        ),
+        shadow_plate(
+            "shadow/transparent-occluder-shows-what-is-beneath",
+            // The pair to the plate above: with a transparent occluder the
+            // shadow under the caster is kept, because the caster will not hide
+            // it. Drawn without the caster on top, the two plates differ in the
+            // middle and nowhere else, which is the whole of what the flag
+            // means.
+            ShadowSpec {
+                with_caster: false,
+                transparent_occluder: true,
+                elevation: 10.0,
+                ..caster(Shape::Circle {
+                    center: [64.0, 64.0],
+                    radius: 30.0,
+                })
+            },
+        ),
+        shadow_plate(
             "shadow/can-draw-rotated-convex-shadow",
             ShadowSpec {
                 transform: Transform {
