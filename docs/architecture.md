@@ -1714,6 +1714,31 @@ context builds lazily -- the leaking layout is created on the first draw that
 needs a material -- so a context that never drew would pass while the fault was
 live.
 
+**The suite runs with the validation layer installed for every context, not
+only the ones that ask for it.** A context that asks installs a debug messenger
+and routes what the layer says into a log its own tests assert on. A context
+that does not ask -- which includes every one the public API creates, the path a
+caller actually takes -- had no validation at all, and that is where a leaked
+descriptor set layout hid on every device for as long as the material set has
+existed.
+
+So the census sets the loader variable that installs the layer process-wide.
+Without a messenger the layer writes to stderr, the census already captures
+both streams, and a scan for its objections turns them into a non-zero exit.
+They are counted by their VUID rather than by their text: the layer names the
+device and object involved, both of which differ every run, so counting the raw
+message would report one fault as one per context. Reinstating that leak makes
+the census report a hundred and thirty-nine occurrences of one identifier,
+which is one fault and every context in the suite.
+
+An objection is reported as a *break* rather than as a failure, on the same
+reasoning as a lost summary line: every test may have agreed about the pixels,
+and what the layer saw is about what the process did to the device. A census
+that printed "passed" and stopped would be telling the truth and hiding the
+important part. If the layer is not installed at all the loader ignores the
+variable, which is not a silent pass -- the several tests that need it report a
+skip, and naming skips is what this command is for.
+
 **Every context in the suite reports what the driver said about it.** On
 Vulkan that is the validation layer; on GLES it is `GL_KHR_debug`, which every
 3.2 implementation offers and which is the driver reporting on itself rather

@@ -55,9 +55,21 @@ pub struct Outcome {
     /// Where the harness's whole output was written, when it could be.
     pub log: Option<String>,
     pub skips: Vec<Skip>,
+    /// What the Vulkan validation layer said during the run, deduplicated.
+    ///
+    /// Separate from `failures` because these are not a test's verdict. A
+    /// context that installs a messenger routes what the layer says into a log
+    /// its own tests assert on; a context that does not -- the public API's,
+    /// which is the path a caller takes -- has the layer's output go to stderr
+    /// and reach nobody. Anything here means the run misused Vulkan somewhere,
+    /// whatever the tests decided about the pixels.
+    pub validation: Vec<Skip>,
     /// True where the suite itself came back non-zero.
     pub broke: bool,
 }
+
+/// The loader variable that installs a layer for every context in a process.
+const LAYER_ENV: &str = "VK_LOADER_LAYERS_ENABLE";
 
 /// Everything after the last `(` in a skip line, dropped.
 ///
@@ -83,6 +95,23 @@ pub fn run(extra: &[String]) -> Outcome {
     for arg in extra {
         command.arg(arg);
     }
+    // The validation layer for every context in the run, not only the ones that
+    // ask. The ones that ask install a messenger and route what the layer says
+    // into a log their own tests assert on. The ones that do not -- the public
+    // API's, which is the path a caller actually takes -- had no validation at
+    // all, and a descriptor set layout leaked there on every device for as long
+    // as the material set has existed while this suite stayed green. Without a
+    // messenger the layer writes to stderr, which is already captured below, so
+    // scanning for it is what turns it into a failure.
+    //
+    // A setting already in the environment is left alone: someone debugging one
+    // layer should not have this quietly replace it. And if the layer is not
+    // installed the loader ignores this, which is not a silent pass -- the
+    // several tests that need it report a skip, and naming skips is what this
+    // command is for.
+    if std::env::var_os(LAYER_ENV).is_none() {
+        command.env(LAYER_ENV, "VK_LAYER_KHRONOS_validation");
+    }
     // Uncaptured, which is the whole point: without this the skip lines below
     // never reach the output at all.
     command.arg("--").arg("--nocapture");
@@ -98,6 +127,7 @@ pub fn run(extra: &[String]) -> Outcome {
                 failures: Vec::new(),
                 log: None,
                 skips: Vec::new(),
+                validation: Vec::new(),
                 broke: true,
             };
         }
@@ -254,7 +284,29 @@ fn parse(text: &str, broke: bool) -> Outcome {
     // Reported as a break rather than as a failure, because that is what it
     // is: the run may have been fine and the reading of it was not, and the
     // two want different responses.
-    let broke = broke || summaries < binaries;
+    // The layer repeats itself: the same misuse in a loop, or in one test per
+    // binary, is the same fault stated many times, and a census that printed
+    // each occurrence would bury what it found. Counted by message, like a
+    // skip.
+    let mut complaints: Vec<(String, usize)> = Vec::new();
+    for line in text.lines() {
+        let Some(start) = line.find("Validation Error") else {
+            continue;
+        };
+        // From the marker rather than from the start of the line: under
+        // `--nocapture` a test's own output shares the line with it.
+        let message = normalize_validation(&line[start..]);
+        match complaints.iter_mut().find(|(seen, _)| *seen == message) {
+            Some((_, count)) => *count += 1,
+            None => complaints.push((message, 1)),
+        }
+    }
+    complaints.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
+
+    // Reported as a break rather than as a failure, because that is what it
+    // is: the run may have been fine and the reading of it was not, and the
+    // two want different responses.
+    let broke = broke || summaries < binaries || !complaints.is_empty();
     Outcome {
         passed,
         failed,
@@ -265,8 +317,30 @@ fn parse(text: &str, broke: bool) -> Outcome {
             .into_iter()
             .map(|(reason, count)| Skip { reason, count })
             .collect(),
+        validation: complaints
+            .into_iter()
+            .map(|(reason, count)| Skip { reason, count })
+            .collect(),
         broke,
     }
+}
+
+/// A validation message reduced to what identifies it.
+///
+/// The layer states the handles involved, which differ between runs and would
+/// make one fault look like a dozen. The VUID identifies it where the layer
+/// supplies one; otherwise the message keeps its own text, truncated, since a
+/// message with no VUID is still worth naming.
+fn normalize_validation(message: &str) -> String {
+    if let Some(start) = message.find("VUID-") {
+        let end = message[start..]
+            .find(|c: char| !(c.is_ascii_alphanumeric() || c == '-'))
+            .map(|i| start + i)
+            .unwrap_or(message.len());
+        return message[start..end].to_string();
+    }
+    let trimmed = message.trim();
+    trimmed.chars().take(120).collect()
 }
 
 pub fn text(outcome: &Outcome) -> String {
@@ -314,6 +388,20 @@ pub fn text(outcome: &Outcome) -> String {
             "\nA skip passes, so these are tests that did not run. Some are \n\
              correct -- a device without a capability cannot exercise it -- and \n\
              the ones that are not look exactly the same from here.\n",
+        );
+    }
+    if !outcome.validation.is_empty() {
+        let total: usize = outcome.validation.iter().map(|c| c.count).sum();
+        out.push_str(&format!("\n{total} validation error(s):\n"));
+        for complaint in &outcome.validation {
+            out.push_str(&format!("  {:>3}  {}\n", complaint.count, complaint.reason));
+        }
+        out.push_str(
+            "\nThe Vulkan validation layer objected during this run, whatever \n\
+             the tests decided about the pixels. A context that installs a \n\
+             messenger has its own tests for this; these came from the ones \n\
+             that do not, which is the path a caller takes. The log has each \n\
+             occurrence with its handles.\n",
         );
     }
     out
@@ -457,5 +545,88 @@ test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out;
 
     fn text_of(outcome: &Outcome) -> String {
         super::text(outcome)
+    }
+}
+
+#[cfg(test)]
+mod validation_tests {
+    use super::*;
+
+    /// A run that passed every test while misusing Vulkan throughout.
+    const DIRTY: &str = "\
+     Running tests/public_api.rs (target/debug/deps/public_api-1)
+test a_thing ... Validation Error: [ VUID-vkDestroyDevice-device-05137 ] | MessageID = 0x4872eaa0
+vkDestroyDevice(): For VkDevice 0x7f9d8c159450, VkDescriptorSetLayout 0x80000000008 has not been destroyed.
+ok
+test another ... Validation Error: [ VUID-vkDestroyDevice-device-05137 ] | MessageID = 0x4872eaa0
+vkDestroyDevice(): For VkDevice 0x7f9d8c1ccca0, VkDescriptorSetLayout 0x60000000006 has not been destroyed.
+ok
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.00s
+";
+
+    #[test]
+    fn a_run_that_passed_but_misused_vulkan_does_not_come_back_clean() {
+        // The case this exists for, and the reason it is a break rather than a
+        // failure: every test agreed about the pixels. The layer's objection is
+        // about what the process did to the device, which no assertion here was
+        // watching, and a census that reported "2 passed" and stopped would be
+        // reporting the truth and hiding the important part.
+        let outcome = parse(DIRTY, false);
+        assert_eq!(outcome.passed, 2);
+        assert_eq!(outcome.failed, 0);
+        assert!(
+            outcome.broke,
+            "a run the validation layer objected to must not be reported as clean"
+        );
+        assert_eq!(outcome.validation.len(), 1, "one fault, not one per device");
+        assert_eq!(outcome.validation[0].count, 2);
+        assert_eq!(
+            outcome.validation[0].reason,
+            "VUID-vkDestroyDevice-device-05137"
+        );
+        assert!(text(&outcome).contains("2 validation error(s)"));
+    }
+
+    #[test]
+    fn a_clean_run_says_nothing_about_validation() {
+        let clean = "\
+     Running tests/public_api.rs (target/debug/deps/public_api-1)
+test a_thing ... ok
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.00s
+";
+        let outcome = parse(clean, false);
+        assert!(!outcome.broke);
+        assert!(outcome.validation.is_empty());
+        assert!(
+            !text(&outcome).contains("validation"),
+            "a clean run should not mention it at all"
+        );
+    }
+
+    #[test]
+    fn a_message_with_no_vuid_keeps_its_own_text() {
+        // Not every objection carries an identifier -- the layer emits some of
+        // its own, and a loader or driver message can arrive on the same
+        // stream. Dropping those because they do not match the expected shape
+        // would be the same silence this whole command exists to remove.
+        let message = normalize_validation("Validation Error: something the layer had no VUID for");
+        assert!(
+            message.contains("something the layer had no VUID for"),
+            "got {message:?}"
+        );
+    }
+
+    #[test]
+    fn the_handles_in_a_message_do_not_make_it_a_different_fault() {
+        // The layer states which device and which object, and both differ every
+        // run and every context. Counted by the raw text, one leak in a suite
+        // with sixty contexts would print sixty lines and read as sixty faults.
+        let one = normalize_validation(
+            "Validation Error: [ VUID-vkDestroyDevice-device-05137 ] For VkDevice 0xaaa, VkDescriptorSetLayout 0x111",
+        );
+        let other = normalize_validation(
+            "Validation Error: [ VUID-vkDestroyDevice-device-05137 ] For VkDevice 0xbbb, VkDescriptorSetLayout 0x222",
+        );
+        assert_eq!(one, other);
     }
 }
