@@ -324,6 +324,19 @@ pub struct Layer {
     pub alpha: f32,
     /// How the finished layer meets what was underneath it.
     pub blend: BlendMode,
+    /// Transform the finished layer on the way back, in device pixels.
+    ///
+    /// Distinct from transforming what goes into it, which the canvas's own
+    /// transform already does. This resamples the finished image: magnifying
+    /// through it gives the layer's own pixels enlarged, where drawing the
+    /// same shapes under a larger transform would give them redrawn at the
+    /// larger size. That difference is the whole of what a matrix image filter
+    /// means -- a caller wanting the sharp one already has the transform
+    /// stack.
+    ///
+    /// `None` composites the layer where it was drawn, which is what every
+    /// layer did before this existed.
+    pub matrix: Option<Affine2>,
     /// Blur what is already on the target before the layer draws over it.
     ///
     /// This is the other blur, and the difference is which image is filtered.
@@ -354,12 +367,19 @@ impl Default for Layer {
             blur: 0.0,
             alpha: 1.0,
             blend: BlendMode::SrcOver,
+            matrix: None,
             backdrop_blur: 0.0,
         }
     }
 }
 
 impl Layer {
+    /// Transform the finished layer on the way back. See [`Self::matrix`].
+    pub fn with_matrix(mut self, matrix: Affine2) -> Self {
+        self.matrix = Some(matrix);
+        self
+    }
+
     pub fn opacity(alpha: f32) -> Self {
         Self {
             alpha,
@@ -1296,12 +1316,16 @@ impl Canvas {
     /// so takes a solid color, while filtering a result is defined whatever
     /// produced it. What is paid for that is a target of its own.
     fn draw_filtered(&mut self, path: &Path, paint: &Paint) -> Result<&mut Self> {
-        let ImageFilter::Blur { sigma } = paint.image_filter else {
-            // Nothing else exists to apply, and `is_identity` kept `None` out.
-            return Err(Error::Unsupported("this image filter is not implemented"));
+        let layer = match paint.image_filter {
+            ImageFilter::Blur { sigma } => Layer::opacity(1.0).with_blur(sigma),
+            ImageFilter::Matrix { transform } => Layer::opacity(1.0).with_matrix(transform),
+            // `is_identity` kept `None` out, and every other kind is handled.
+            ImageFilter::None => {
+                return Err(Error::Unsupported("this image filter is not implemented"))
+            }
         };
         let bounds = self.filter_bounds(path, paint);
-        self.save_layer_bounds(Layer::opacity(1.0).with_blur(sigma), bounds);
+        self.save_layer_bounds(layer, bounds);
         // Without the filter, or this would open a layer inside itself
         // forever. The mask blur, if there is one, is left on: it applies to
         // the drawing this filter is filtering.
@@ -2309,6 +2333,36 @@ impl Canvas {
             0.0,
             -0.5 * parent.extent.height as f32 / layer.extent.height as f32,
         ];
+        // A layer asking to be transformed on the way back needs both halves
+        // moved, and moving only the geometry is the mistake worth naming: the
+        // mapping below carries a fragment's clip position to a texel, so
+        // geometry moved without it shows the layer through a window that
+        // moved rather than showing a layer that moved.
+        // A matrix that folds the plane has no inverse, so there is no mapping
+        // saying which texel a fragment reads -- and no geometry either, since
+        // the rectangle collapses to a line. Both halves are dropped together:
+        // dropping only the mapping leaves a layer drawn through a singular
+        // matrix, which is nothing at all, and the fallback would be invisible.
+        let placement = frame.paint.matrix.filter(|matrix| {
+            let projection = self.target.projection();
+            let in_clip = projection * *matrix * projection.inverse();
+            in_clip.is_finite() && in_clip.matrix2.inverse().is_finite()
+        });
+        let (origin, to_local) = match placement {
+            None => (origin, to_local),
+            Some(matrix) => {
+                // The matrix is stated in device pixels; the mapping is in
+                // clip space. So it is carried into clip space, the origin
+                // goes through it, and the axes take its inverse -- which
+                // together say that a fragment reads the texel that landed on
+                // it.
+                let projection = self.target.projection();
+                let in_clip = projection * matrix * projection.inverse();
+                let moved = in_clip.transform_point2(Vec2::from(origin));
+                let axes = Mat2::from_cols_array(&to_local) * in_clip.matrix2.inverse();
+                (moved.into(), axes.to_cols_array())
+            }
+        };
         let material = Material::Image {
             origin,
             to_local,
@@ -2335,9 +2389,12 @@ impl Canvas {
         // would sample outside it, which the clamped sampler answers by
         // smearing the edge texels across the rest of the frame.
         let whole = layer.path();
-        let _ = self
-            .renderer
-            .fill_into(&mut self.batch, &whole, Affine2::IDENTITY, &paint);
+        let _ = self.renderer.fill_into(
+            &mut self.batch,
+            &whole,
+            placement.unwrap_or(Affine2::IDENTITY),
+            &paint,
+        );
     }
 
     /// Blur a finished layer, and answer which pass now holds the result.
@@ -2513,6 +2570,15 @@ fn analytic_stroke(paint: &Paint) -> Option<f32> {
     // a quad is not a shape that can be put inside one and blurred: the quad is
     // larger than the shape and the layer would blur its edges too.
     if paint.mask_blur > 0.0 {
+        return None;
+    }
+    // An image filter is a layer around the draw for the same reason, and this
+    // guard was missing when image filters were added -- so a blurred or moved
+    // circle drew as though neither had been asked for. Nothing failed: the
+    // shape was still a shape, and only a test comparing where it landed said
+    // otherwise. Every route that needs a layer has to be refused here, which
+    // is worth stating as the rule rather than as three cases.
+    if !paint.image_filter.is_identity() {
         return None;
     }
     match &paint.style {

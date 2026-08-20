@@ -7076,3 +7076,164 @@ fn drawing_a_colour_blends_where_clearing_replaces() {
         "outside the clip the ground is untouched"
     );
 }
+
+#[test]
+fn a_layer_matrix_moves_the_finished_image_rather_than_its_contents() {
+    // What a matrix image filter means. The layer is drawn where it was
+    // written and the finished image is moved on the way back, so the shape
+    // arrives somewhere its own coordinates never named.
+    //
+    // Both halves have to move together. Moving the geometry alone shows the
+    // layer through a window that moved -- the shape staying put and being
+    // revealed in a different place -- which is a plausible enough picture
+    // that only a test looking at both places tells them apart.
+    let Some(mut ctx) = context() else { return };
+    let mut canvas = Canvas::new(SIZE);
+    canvas.clear(Color::BLACK);
+    canvas.save_layer_bounds(
+        Layer::opacity(1.0).with_matrix(Affine2::from_translation(Vec2::new(40.0, 0.0))),
+        Rect::new(8.0, 40.0, 56.0, 88.0),
+    );
+    canvas
+        .draw_rect(
+            Rect::new(16.0, 48.0, 48.0, 80.0),
+            &Paint::fill(Color::linear(1.0, 1.0, 1.0, 1.0)).with_anti_alias(false),
+        )
+        .expect("inside");
+    canvas.restore();
+    let pixels = render(&mut ctx, canvas);
+
+    assert_eq!(
+        pixel(&pixels, 72, 64),
+        [255, 255, 255, 255],
+        "the finished layer should have moved by the matrix"
+    );
+    assert_eq!(
+        pixel(&pixels, 32, 64),
+        [0, 0, 0, 255],
+        "and left nothing where it was drawn"
+    );
+}
+
+#[test]
+fn a_layer_matrix_that_folds_the_plane_composites_where_it_was_drawn() {
+    // A scale of zero has no inverse, so there is no mapping that says which
+    // texel a fragment reads. Answering with the layer where it was drawn is
+    // the same answer as no matrix, which is a picture; inverting anyway gives
+    // infinities and samples nothing in particular.
+    let Some(mut ctx) = context() else { return };
+    let mut canvas = Canvas::new(SIZE);
+    canvas.clear(Color::BLACK);
+    canvas.save_layer_bounds(
+        Layer::opacity(1.0).with_matrix(Affine2::from_scale(Vec2::new(0.0, 1.0))),
+        Rect::new(32.0, 32.0, 96.0, 96.0),
+    );
+    canvas
+        .draw_rect(
+            Rect::new(40.0, 40.0, 88.0, 88.0),
+            &Paint::fill(Color::linear(1.0, 1.0, 1.0, 1.0)).with_anti_alias(false),
+        )
+        .expect("inside");
+    canvas.restore();
+    let pixels = render(&mut ctx, canvas);
+
+    assert_eq!(
+        pixel(&pixels, 64, 64),
+        [255, 255, 255, 255],
+        "a matrix with no inverse should leave the layer where it was"
+    );
+}
+
+#[test]
+fn a_matrix_image_filter_moves_what_was_drawn() {
+    // The filter's observable effect: the shape lands where the matrix puts
+    // it, not where its own coordinates say. That is what makes it usable at
+    // all, and it is the half a test can state plainly.
+    //
+    // What this deliberately does not assert is that the result is *softer*
+    // than the same shape drawn under the transform stack. It is -- one
+    // resamples a finished image and the other redraws -- but how much softer
+    // is a property of the sampler rather than of this feature, and an
+    // assertion about it would be a test of filtering quality wearing a
+    // feature's name. The difference is recorded where the filter is defined.
+    let Some(mut ctx) = context() else { return };
+
+    let mut canvas = Canvas::new(SIZE);
+    canvas.clear(Color::BLACK);
+    canvas
+        .draw_circle(
+            Vec2::new(32.0, 32.0),
+            20.0,
+            &Paint::fill(Color::linear(1.0, 1.0, 1.0, 1.0)).with_image_filter(
+                ImageFilter::Matrix {
+                    transform: Affine2::from_scale(Vec2::splat(2.0)),
+                },
+            ),
+        )
+        .expect("filtered");
+    let pixels = render(&mut ctx, canvas);
+
+    // Drawn at (32, 32) with radius twenty, so unfiltered it would cover
+    // twelve to fifty-two. Doubled, it covers twenty-four to a hundred and
+    // four -- so the centre of the frame is inside it and its old position is
+    // not.
+    assert_eq!(
+        pixel(&pixels, 64, 64),
+        [255, 255, 255, 255],
+        "the doubled circle should cover the centre of the frame"
+    );
+    assert_eq!(
+        pixel(&pixels, 100, 64),
+        [255, 255, 255, 255],
+        "and reach where only a doubled one could"
+    );
+    assert_eq!(
+        pixel(&pixels, 14, 32),
+        [0, 0, 0, 255],
+        "and leave where it was written"
+    );
+}
+
+#[test]
+fn an_image_filter_on_a_shape_with_a_fast_path_is_not_quietly_dropped() {
+    // A circle and a rounded rectangle are drawn from a distance field rather
+    // than from triangles, on a route that bypasses the call where filters are
+    // applied. That route refuses a mask blur and did not refuse an image
+    // filter, so a filtered circle drew as though nothing had been asked for.
+    //
+    // Nothing failed when it happened: the shape was still a shape, in the
+    // place its own coordinates named. Only asking where it landed said
+    // otherwise, which is why this test asks about a circle and a rounded
+    // rectangle by name.
+    let Some(mut ctx) = context() else { return };
+
+    for which in ["circle", "rounded rectangle"] {
+        let mut canvas = Canvas::new(SIZE);
+        canvas.clear(Color::BLACK);
+        let paint =
+            Paint::fill(Color::linear(1.0, 1.0, 1.0, 1.0)).with_image_filter(ImageFilter::Matrix {
+                transform: Affine2::from_translation(Vec2::new(48.0, 0.0)),
+            });
+        if which == "circle" {
+            canvas
+                .draw_circle(Vec2::new(32.0, 64.0), 20.0, &paint)
+                .expect("circle");
+        } else {
+            canvas
+                .draw_rrect(Rect::new(12.0, 44.0, 52.0, 84.0), 8.0, &paint)
+                .expect("rrect");
+        }
+        let pixels = render(&mut ctx, canvas);
+
+        assert_eq!(
+            pixel(&pixels, 80, 64),
+            [255, 255, 255, 255],
+            "the {which} should have moved by the filter"
+        );
+        assert_eq!(
+            pixel(&pixels, 32, 64),
+            [0, 0, 0, 255],
+            "and left where it was written"
+        );
+    }
+}

@@ -2,7 +2,7 @@
 
 use crate::canvas::Rect;
 use crate::color::Color;
-use glam::Vec2;
+use glam::{Affine2, Vec2};
 use impeller_geometry::dash::Dash;
 use impeller_geometry::stroke::StrokeStyle;
 use impeller_hal::{BlendMode, Extent2D, TileMode};
@@ -225,6 +225,15 @@ pub enum ImageFilter {
     None,
     /// Blur what was drawn, by a standard deviation in device pixels.
     Blur { sigma: f32 },
+    /// Move what was drawn, in device pixels, by resampling it.
+    ///
+    /// Not the same as drawing under the transform, which is what the canvas's
+    /// own stack does. This draws at the size it was written and then moves
+    /// the finished image, so magnifying gives enlarged pixels where the
+    /// transform stack would give the shape redrawn larger. That difference is
+    /// the reason `dart:ui` has both, and a caller wanting the sharp one
+    /// already has `concat`.
+    Matrix { transform: Affine2 },
 }
 
 impl ImageFilter {
@@ -237,6 +246,9 @@ impl ImageFilter {
             // sigma that is not finite is not a blur, and neither is one that
             // is zero or less.
             Self::Blur { sigma } => !sigma.is_finite() || *sigma <= 0.0,
+            // A matrix that changes nothing is one that costs a layer for
+            // nothing, so it is worth recognising.
+            Self::Matrix { transform } => !transform.is_finite() || *transform == Affine2::IDENTITY,
         }
     }
 }

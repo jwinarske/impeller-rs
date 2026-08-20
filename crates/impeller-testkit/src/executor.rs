@@ -316,6 +316,12 @@ fn record_node(canvas: &mut Canvas, node: &Node, anti_alias: bool) -> Result<()>
                 blur: layer.blur,
                 alpha: layer.alpha,
                 blend: layer.blend,
+                // The scene format has no way to say a group is transformed on
+                // the way back. Its `transform` moves what goes *into* the
+                // group, which is a different thing, and conflating the two
+                // would make every existing scene resample where it used to
+                // redraw.
+                matrix: None,
                 backdrop_blur: layer.backdrop_blur,
             };
             match bounds {

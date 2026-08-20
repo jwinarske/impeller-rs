@@ -118,7 +118,7 @@ reason.
 | `blendMode` | yes | `with_blend`, all of Porter-Duff and the fifteen advanced modes where the device offers them | `advanced-blend-*` |
 | `shader` | yes | linear, radial, sweep and conical gradients, images, and a caller's own fragment program | `a_caller_can_fill_a_shape_with_their_own_fragment_program` |
 | `colorFilter` | partial | `with_color_filter`: a color matrix, and any blend against a constant that is affine in what it blends. Not the advanced blend modes, and not the gamma pair | `colour-filter-luminance` |
-| `imageFilter` | partial | `with_image_filter`: a blur, applied to what the paint drew rather than to the colour it computed. No other filter kind | `an_image_filter_blurs_a_gradient_that_a_mask_blur_refuses` |
+| `imageFilter` | partial | `with_image_filter`: a blur and a matrix, applied to what the paint drew rather than to the colour it computed. Not dilate, erode or compose | `a_matrix_image_filter_moves_what_was_drawn` |
 | `maskFilter` | yes | `with_mask_blur` and `with_mask_blur_style`: a blur of a shape's coverage in all four styles. Solid colors only, since the identity it rests on holds for nothing else | `each_mask_blur_style_keeps_the_part_of_the_blur_it_names` |
 | `filterQuality` | partial | `with_sampling`: linear and nearest. `medium` and `high` are mipmapped and bicubic, and neither exists here to select | `nearest_sampling_reads_one_texel_where_linear_blends_two` |
 | `invertColors` | via | a color filter whose matrix negates each channel and adds one | |
