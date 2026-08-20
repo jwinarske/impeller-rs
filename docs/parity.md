@@ -102,7 +102,7 @@ reason.
 | `skew` | via | `concat` of the affine | |
 | `transform` | partial | `concat` takes a 2D affine; `dart:ui` takes a 4×4 and so admits perspective | |
 | `getTransform` | yes | `transform()` | `save_and_restore_return_the_previous_transform` |
-| `getLocalClipBounds`, `getDestinationClipBounds` | partial | `clip()` gives the device-space scissor; a path clip's bounds are not tracked | |
+| `getLocalClipBounds`, `getDestinationClipBounds` | yes | `local_clip_bounds` and `destination_clip_bounds`, conservative and accounting for scissor and stencil clips alike | `the_clip_bounds_narrow_with_every_kind_of_clip` |
 
 ## Paint
 
@@ -137,7 +137,7 @@ above it or not at all:
 
 ## Where that leaves it
 
-Of forty-seven rows across `Canvas` and `Paint`: twenty-nine exist, six are
+Of forty-seven rows across `Canvas` and `Paint`: thirty exist, five are
 partial, seven are expressible by a caller who assembles them, four are absent,
 and one is out of scope. Counting them is the least interesting thing
 about the table -- the absences are not equal, and a reader deciding whether

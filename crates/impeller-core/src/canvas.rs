@@ -282,6 +282,7 @@ impl Target {
 struct SavedState {
     transform: Affine2,
     clip: Option<Scissor>,
+    clip_bounds: Rect,
     depth: u32,
     /// Set where this save opened a layer, holding what the layer displaced.
     layer: Option<LayerFrame>,
@@ -410,6 +411,13 @@ pub struct Canvas {
     /// means: a clip is fixed at the moment it is applied, and a later
     /// transform moves the shapes drawn inside it without moving the clip.
     clip: Option<Scissor>,
+    /// A rectangle around everything the clip still admits, in device pixels.
+    ///
+    /// Kept beside the scissor rather than derived from it, because a path
+    /// clip narrows what may be drawn without narrowing the scissor at all --
+    /// it goes to the stencil instead. A caller asking what is still reachable
+    /// wants both accounted for, and only this has seen both.
+    clip_bounds: Rect,
     /// How many clips of a shape a scissor cannot express are in force.
     ///
     /// Content draws where the stencil holds this, which is true only where
@@ -452,6 +460,9 @@ impl Canvas {
             batch: Batch::new(),
             transform: Affine2::IDENTITY,
             clip: None,
+            // The whole target to start with, which is what an unclipped
+            // canvas may reach.
+            clip_bounds: Rect::new(0.0, 0.0, extent.width as f32, extent.height as f32),
             depth: 0,
             stack: Vec::new(),
             sources: Vec::new(),
@@ -491,6 +502,64 @@ impl Canvas {
     /// `None` is the whole target.
     pub fn clip(&self) -> Option<Scissor> {
         self.clip
+    }
+
+    /// The region drawing may still reach, in device pixels.
+    ///
+    /// Conservative: it is a rectangle around the clip rather than the clip
+    /// itself, so a path clip reports its bounding box and a rotated
+    /// rectangle reports the axis-aligned box around it. That is what makes it
+    /// useful for the thing it is for -- deciding not to draw something --
+    /// since a caller may skip anything outside it and must not assume
+    /// everything inside it is visible.
+    pub fn destination_clip_bounds(&self) -> Rect {
+        self.clip_bounds
+    }
+
+    /// The same region in the coordinates the caller is currently drawing in.
+    ///
+    /// The device bounds carried back through the transform, which under a
+    /// rotation gives the box around the rotated box and so grows a little
+    /// each time. Conservative in the same direction as everything else here:
+    /// too large is a missed optimization, too small is a missing shape.
+    ///
+    /// A transform that cannot be inverted has collapsed the plane, and
+    /// nothing drawn through it reaches anything; the empty rectangle says so.
+    pub fn local_clip_bounds(&self) -> Rect {
+        let inverse = self.transform.inverse();
+        if !inverse.is_finite() {
+            return Rect::new(0.0, 0.0, 0.0, 0.0);
+        }
+        let (min, max) = transformed_bounds(
+            &inverse,
+            Vec2::new(self.clip_bounds.left, self.clip_bounds.top),
+            Vec2::new(self.clip_bounds.right, self.clip_bounds.bottom),
+        );
+        Rect::new(min.x, min.y, max.x, max.y)
+    }
+
+    /// Narrow the tracked bounds to a rectangle already in device space.
+    fn narrow_bounds(&mut self, min: Vec2, max: Vec2) {
+        let current = self.clip_bounds;
+        self.clip_bounds = Rect::new(
+            current.left.max(min.x),
+            current.top.max(min.y),
+            current.right.min(max.x),
+            current.bottom.min(max.y),
+        );
+        // An intersection that crossed over is empty rather than inside out,
+        // which every consumer of a rectangle here would otherwise have to
+        // check for itself.
+        if self.clip_bounds.right < self.clip_bounds.left
+            || self.clip_bounds.bottom < self.clip_bounds.top
+        {
+            self.clip_bounds = Rect::new(
+                self.clip_bounds.left,
+                self.clip_bounds.top,
+                self.clip_bounds.left,
+                self.clip_bounds.top,
+            );
+        }
     }
 
     /// Narrow the clip to a rectangle in user space.
@@ -535,6 +604,7 @@ impl Canvas {
             Some(existing) => existing.intersect(narrowed),
             None => narrowed,
         });
+        self.narrow_bounds(min, max);
         Ok(self)
     }
 
@@ -569,6 +639,13 @@ impl Canvas {
         self.renderer
             .fill_into(&mut self.batch, path, self.transform, &paint)?;
         self.depth += 1;
+        // A path clip narrows what may be drawn without touching the scissor,
+        // so the tracked rectangle is the only place it is accounted for. Its
+        // bounding box rather than the path: this rectangle is a promise about
+        // what is *outside* it, and a box around a shape keeps that promise.
+        let bounds = path.bounds();
+        let (min, max) = transformed_bounds(&self.transform, bounds.min, bounds.max);
+        self.narrow_bounds(min, max);
         Ok(self)
     }
 
@@ -577,6 +654,7 @@ impl Canvas {
         self.stack.push(SavedState {
             transform: self.transform,
             clip: self.clip,
+            clip_bounds: self.clip_bounds,
             depth: self.depth,
             layer: None,
         });
@@ -717,6 +795,7 @@ impl Canvas {
         self.stack.push(SavedState {
             transform: self.transform,
             clip: self.clip,
+            clip_bounds: self.clip_bounds,
             depth: self.depth,
             layer: Some(LayerFrame {
                 batch: std::mem::take(&mut self.batch),
@@ -866,6 +945,7 @@ impl Canvas {
         };
         self.transform = previous.transform;
         self.clip = previous.clip;
+        self.clip_bounds = previous.clip_bounds;
 
         if let Some(frame) = previous.layer {
             // The clip and stencil are restored before the composite is

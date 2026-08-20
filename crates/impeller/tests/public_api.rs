@@ -6601,3 +6601,117 @@ fn a_double_rounded_rect_is_a_ring_rather_than_two_shapes() {
         "and nothing outside the outer one"
     );
 }
+
+#[test]
+fn the_clip_bounds_narrow_with_every_kind_of_clip() {
+    // What a caller culls against. A scissor and a stencil clip narrow what
+    // may be drawn by quite different means -- one is recorder state, the
+    // other a buffer on the device -- and a caller asking what is still
+    // reachable wants both accounted for.
+    let mut canvas = Canvas::new(SIZE);
+    let whole = canvas.destination_clip_bounds();
+    assert_eq!(
+        (whole.left, whole.top, whole.right, whole.bottom),
+        (0.0, 0.0, 128.0, 128.0),
+        "an unclipped canvas may reach all of its target"
+    );
+
+    canvas.save();
+    canvas.clip_rect(Rect::new(16.0, 16.0, 96.0, 96.0)).unwrap();
+    let after_rect = canvas.destination_clip_bounds();
+    assert_eq!(
+        (
+            after_rect.left,
+            after_rect.top,
+            after_rect.right,
+            after_rect.bottom
+        ),
+        (16.0, 16.0, 96.0, 96.0)
+    );
+
+    // A path clip goes to the stencil and leaves the scissor alone, so the
+    // tracked rectangle is the only thing that sees it.
+    let mut b = PathBuilder::new();
+    b.move_to(Vec2::new(32.0, 32.0))
+        .line_to(Vec2::new(64.0, 32.0))
+        .line_to(Vec2::new(64.0, 64.0))
+        .close();
+    canvas.clip_path(&b.build()).unwrap();
+    let after_path = canvas.destination_clip_bounds();
+    assert_eq!(
+        (
+            after_path.left,
+            after_path.top,
+            after_path.right,
+            after_path.bottom
+        ),
+        (32.0, 32.0, 64.0, 64.0),
+        "a path clip narrows what is reachable even though the scissor is unchanged"
+    );
+
+    canvas.restore();
+    let restored = canvas.destination_clip_bounds();
+    assert_eq!(
+        (restored.left, restored.top, restored.right, restored.bottom),
+        (0.0, 0.0, 128.0, 128.0),
+        "restoring gives back what the save was holding"
+    );
+}
+
+#[test]
+fn the_local_clip_bounds_are_stated_in_the_callers_own_coordinates() {
+    // The same region seen from where the caller is drawing. Under a
+    // translation and a scale it is exact; under a rotation it is the box
+    // around the rotated box, which is larger than the clip and deliberately
+    // so -- too large costs a draw that turns out to be invisible, too small
+    // loses a shape.
+    let mut canvas = Canvas::new(SIZE);
+    canvas.clip_rect(Rect::new(32.0, 32.0, 96.0, 96.0)).unwrap();
+
+    canvas.save();
+    canvas.translate(32.0, 32.0);
+    let local = canvas.local_clip_bounds();
+    assert_eq!(
+        (local.left, local.top, local.right, local.bottom),
+        (0.0, 0.0, 64.0, 64.0),
+        "a translation moves the origin the bounds are stated from"
+    );
+    canvas.restore();
+
+    canvas.save();
+    canvas.scale(2.0, 2.0);
+    let local = canvas.local_clip_bounds();
+    assert_eq!(
+        (local.left, local.top, local.right, local.bottom),
+        (16.0, 16.0, 48.0, 48.0),
+        "a scale changes what a unit is"
+    );
+    canvas.restore();
+
+    canvas.save();
+    canvas.rotate(std::f32::consts::FRAC_PI_4);
+    let local = canvas.local_clip_bounds();
+    // The box around a square turned an eighth of a turn is wider than the
+    // square by a factor of root two, and must contain it.
+    assert!(
+        local.right - local.left > 64.0 * 1.4,
+        "a rotation should give a conservative box, got {}",
+        local.right - local.left
+    );
+    canvas.restore();
+}
+
+#[test]
+fn a_collapsed_transform_leaves_nothing_reachable() {
+    // A scale of zero folds the plane to a line and nothing drawn through it
+    // covers anything. Reporting an enormous rectangle -- which inverting a
+    // singular matrix invites -- would tell a caller to draw everything.
+    let mut canvas = Canvas::new(SIZE);
+    canvas.scale(0.0, 1.0);
+    let local = canvas.local_clip_bounds();
+    assert_eq!(
+        (local.right - local.left, local.bottom - local.top),
+        (0.0, 0.0),
+        "a transform that cannot be inverted reaches nothing"
+    );
+}
