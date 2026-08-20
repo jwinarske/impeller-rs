@@ -986,6 +986,45 @@ fn opacity() -> Vec<Scene> {
     };
     vec![
         Scene::tree(
+            "blur/erode",
+            // Two discs joined by a bar thinner than twice the radius, eroded
+            // as a group rather than one shape at a time. The bar disappears
+            // entirely and the discs shrink, which is the picture that says the
+            // erosion ran over the union: filtering each shape on its own would
+            // give the same discs but is a different operation, and on shapes
+            // that overlapped it would give a different answer.
+            vec![Node::Layer {
+                layer: LayerSpec::eroded(7.0, 7.0),
+                bounds: Some([0.0, 0.0, 128.0, 128.0]),
+                transform: Transform::default(),
+                children: vec![
+                    Node::Draw(Box::new(Item::fill(
+                        Shape::Circle {
+                            center: [40.0, 64.0],
+                            radius: 26.0,
+                        },
+                        WHITE,
+                    ))),
+                    Node::Draw(Box::new(Item::fill(
+                        Shape::Circle {
+                            center: [88.0, 64.0],
+                            radius: 26.0,
+                        },
+                        WHITE,
+                    ))),
+                    Node::Draw(Box::new(Item::fill(
+                        Shape::Rect {
+                            min: [40.0, 60.0],
+                            max: [88.0, 68.0],
+                        },
+                        WHITE,
+                    ))),
+                ],
+            }],
+        )
+        .with_background(DARK)
+        .with_samples(4),
+        Scene::tree(
             "opacity/can-render-group-opacity",
             vec![Node::Layer {
                 // The picture that distinguishes a group's opacity from each
@@ -1947,6 +1986,53 @@ fn blur_variants() -> Vec<Scene> {
                 )
                 .with_mask_blur(10.0),
             ],
+        ),
+        plate(
+            "blur/dilate",
+            // A cross, so that the plate shows what a dilation does to a
+            // concave corner as well as to a convex one: the inner corners
+            // fill in by the radius, which a single rectangle would not show.
+            vec![
+                Item::fill(
+                    Shape::Rect {
+                        min: [40.0, 20.0],
+                        max: [88.0, 108.0],
+                    },
+                    WHITE,
+                )
+                .with_image_filter(ImageFilter::Dilate {
+                    radius_x: 6.0,
+                    radius_y: 6.0,
+                }),
+                Item::fill(
+                    Shape::Rect {
+                        min: [20.0, 40.0],
+                        max: [108.0, 88.0],
+                    },
+                    WHITE,
+                )
+                .with_image_filter(ImageFilter::Dilate {
+                    radius_x: 6.0,
+                    radius_y: 6.0,
+                }),
+            ],
+        ),
+        plate(
+            "blur/dilate-one-axis",
+            // Radii that differ, which is what makes the structuring element a
+            // rectangle rather than a square and the filter two passes rather
+            // than one.
+            vec![Item::fill(
+                Shape::Circle {
+                    center: [64.0, 64.0],
+                    radius: 24.0,
+                },
+                WHITE,
+            )
+            .with_image_filter(ImageFilter::Dilate {
+                radius_x: 24.0,
+                radius_y: 2.0,
+            })],
         ),
         plate(
             "blur/gaussian-blur-one-dimension",

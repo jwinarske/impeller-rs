@@ -9,9 +9,10 @@
 use googletest::prelude::*;
 use impeller::{
     Affine2, Atlas, BackendPreference, BlendMode, Canvas, Color, ColorFilter, Context, Coverage,
-    Dash, Extent2D, GlyphKey, GradientStop, ImageFilter, Layer, LineCap, MaskBlurStyle, Paint,
-    Path, PathBuilder, PixelFormat, PointMode, PositionedGlyph, Rect, Result, Sampling, SourceRect,
-    Sprite, StrokeStyle, Style, TileMode, Vec2, VertexMode, Vertices, MAX_STOPS, RUNTIME_FLOATS,
+    Dash, Extent2D, GlyphKey, GradientStop, ImageFilter, Layer, LineCap, MaskBlurStyle, Morphology,
+    Paint, Path, PathBuilder, PixelFormat, PointMode, PositionedGlyph, Rect, Result, Sampling,
+    SourceRect, Sprite, StrokeStyle, Style, TileMode, Vec2, VertexMode, Vertices, MAX_STOPS,
+    MORPHOLOGY_TAPS, RUNTIME_FLOATS,
 };
 
 const SIZE: Extent2D = Extent2D {
@@ -7388,5 +7389,281 @@ fn the_gamma_filter_curves_colour_and_leaves_alpha_alone() {
          {want}. Curving the premultiplied channel would give {} instead. Got \
          {got:?}",
         (encode_srgb(LINEAR * ALPHA) * 255.0).round() as i32
+    );
+}
+
+/// The inclusive range of columns on row `y` whose red channel reads as lit.
+///
+/// A morphological filter is judged by where its result ends, so almost every
+/// test of one is a question about an extent rather than about a pixel.
+fn lit_span(pixels: &[u8], along_x: bool, fixed: u32) -> Option<(u32, u32)> {
+    let n = if along_x { SIZE.width } else { SIZE.height };
+    let lit: Vec<u32> = (0..n)
+        .filter(|i| {
+            let (x, y) = if along_x { (*i, fixed) } else { (fixed, *i) };
+            pixel(pixels, x, y)[0] > 127
+        })
+        .collect();
+    Some((*lit.first()?, *lit.last()?))
+}
+
+/// A square drawn with one image filter, over black.
+fn filtered_square(ctx: &mut Context, rect: Rect, filter: ImageFilter) -> Vec<u8> {
+    let mut canvas = Canvas::new(SIZE);
+    canvas.clear(Color::linear(0.0, 0.0, 0.0, 1.0));
+    canvas
+        .draw_rect(
+            rect,
+            &Paint::fill(Color::linear(1.0, 1.0, 1.0, 1.0))
+                .with_anti_alias(false)
+                .with_image_filter(filter),
+        )
+        .expect("drew");
+    render(ctx, canvas)
+}
+
+#[test]
+fn dilating_grows_a_shape_by_the_radius_on_every_side() {
+    // The whole of what a dilation means, and the reason its layer has to be
+    // opened wider than the content: each output pixel takes the largest input
+    // within the radius, so a lit pixel spreads exactly that far and no
+    // further. A layer sized to the content alone would cut the growth off at
+    // the bound, which looks like the filter working and stopping early.
+    let Some(mut ctx) = context() else { return };
+
+    const RADIUS: f32 = 8.0;
+    let pixels = filtered_square(
+        &mut ctx,
+        Rect::new(40.0, 40.0, 88.0, 88.0),
+        ImageFilter::Dilate {
+            radius_x: RADIUS,
+            radius_y: RADIUS,
+        },
+    );
+
+    let r = RADIUS as u32;
+    assert_eq!(
+        lit_span(&pixels, true, 64),
+        Some((40 - r, 87 + r)),
+        "the square should grow by {r} to the left and right"
+    );
+    assert_eq!(
+        lit_span(&pixels, false, 64),
+        Some((40 - r, 87 + r)),
+        "and by {r} above and below"
+    );
+}
+
+#[test]
+fn eroding_shrinks_a_shape_by_the_radius_on_every_side() {
+    // The dual, and not merely the same test with a sign flipped: an erosion
+    // takes the smallest sample in reach, so it depends on what lies outside
+    // the shape being nothing rather than being more of the shape.
+    let Some(mut ctx) = context() else { return };
+
+    const RADIUS: f32 = 8.0;
+    let pixels = filtered_square(
+        &mut ctx,
+        Rect::new(40.0, 40.0, 88.0, 88.0),
+        ImageFilter::Erode {
+            radius_x: RADIUS,
+            radius_y: RADIUS,
+        },
+    );
+
+    let r = RADIUS as u32;
+    assert_eq!(
+        lit_span(&pixels, true, 64),
+        Some((40 + r, 87 - r)),
+        "the square should lose {r} from each side"
+    );
+    assert_eq!(
+        lit_span(&pixels, false, 64),
+        Some((40 + r, 87 - r)),
+        "and {r} from the top and bottom"
+    );
+}
+
+#[test]
+fn eroding_eats_an_edge_that_sits_against_the_layers_own_bound() {
+    // What decides how the shader reads past the edge of what it is filtering.
+    // Clamping to the edge is right for a blur -- a weighted average that read
+    // transparent black from outside would darken every border pixel -- and is
+    // wrong here: the samples reaching past this square's left edge would come
+    // back as more of the square, and the smallest of a row of white is white.
+    // The edge would survive an erosion that should have eaten it.
+    let Some(mut ctx) = context() else { return };
+
+    const RADIUS: f32 = 8.0;
+    // Flush against the origin, so its left and top edges are the bound.
+    let pixels = filtered_square(
+        &mut ctx,
+        Rect::new(0.0, 0.0, 64.0, 64.0),
+        ImageFilter::Erode {
+            radius_x: RADIUS,
+            radius_y: RADIUS,
+        },
+    );
+
+    let r = RADIUS as u32;
+    assert_eq!(
+        lit_span(&pixels, true, 32),
+        Some((r, 63 - r)),
+        "the left edge is against the bound and should still be eaten into. \
+         Starting at zero means the filter read the border texel repeated."
+    );
+}
+
+#[test]
+fn a_morphology_reaches_by_its_own_radius_along_each_axis() {
+    // Two radii rather than one because the structuring element is a
+    // rectangle, and a rectangle is why the filter is separable at all.
+    //
+    // The layer is opened by hand, over the whole frame, so that its bounds
+    // cannot be what decides the answer. Through `with_image_filter` the bound
+    // is derived from the radii and would clip a vertical pass that ran when
+    // it should not have -- which is to say the obvious version of this test
+    // passes whether or not the two axes use their own radius, because the
+    // wrong growth is cropped away before anyone can see it.
+    let Some(mut ctx) = context() else { return };
+
+    let mut canvas = Canvas::new(SIZE);
+    canvas.clear(Color::linear(0.0, 0.0, 0.0, 1.0));
+    canvas.save_layer_bounds(
+        Layer::opacity(1.0).with_morphology(Morphology::dilate(12.0, 0.0)),
+        Rect::new(0.0, 0.0, 128.0, 128.0),
+    );
+    canvas
+        .draw_rect(
+            Rect::new(40.0, 40.0, 88.0, 88.0),
+            &Paint::fill(Color::linear(1.0, 1.0, 1.0, 1.0)).with_anti_alias(false),
+        )
+        .expect("drew");
+    canvas.restore();
+    let pixels = render(&mut ctx, canvas);
+
+    assert_eq!(
+        lit_span(&pixels, true, 64),
+        Some((28, 99)),
+        "twelve each way horizontally"
+    );
+    assert_eq!(
+        lit_span(&pixels, false, 64),
+        Some((40, 87)),
+        "and nothing at all vertically. Room to grow was left above and below, \
+         so growth here means the vertical pass took the horizontal radius."
+    );
+}
+
+#[test]
+fn a_radius_past_one_pass_is_split_across_passes_and_stays_exact() {
+    // Dilating by thirty-six takes two passes, because the shader's loop is
+    // bounded. Splitting is exact rather than an approximation: the
+    // structuring elements add under the Minkowski sum, so a pass of
+    // thirty-two followed by one of four reaches thirty-six.
+    //
+    // The alternative -- one pass taking its taps further apart -- is what the
+    // blur does, and would be wrong here. A blur that misses a sample loses a
+    // little smoothness; a maximum that misses a sample is a scallop in the
+    // edge, and the result would not be a dilation by any radius.
+    let Some(mut ctx) = context() else { return };
+
+    let radius = MORPHOLOGY_TAPS as f32 + 4.0;
+    let pixels = filtered_square(
+        &mut ctx,
+        Rect::new(40.0, 40.0, 88.0, 88.0),
+        ImageFilter::Dilate {
+            radius_x: radius,
+            radius_y: 0.0,
+        },
+    );
+
+    let r = radius as u32;
+    assert_eq!(
+        lit_span(&pixels, true, 64),
+        Some((40 - r, 87 + r)),
+        "a radius of {r} should reach {r}, however many passes that takes"
+    );
+}
+
+#[test]
+fn dilating_a_translucent_shape_spreads_its_coverage_with_its_colour() {
+    // Per channel on premultiplied color. Taking the extremum of straight
+    // color instead would spread the color without the alpha that belongs to
+    // it -- a shape's own hue laid over a coverage it never had -- and the ring
+    // the dilation adds would come out at full strength against the half-strength
+    // middle.
+    let Some(mut ctx) = context() else { return };
+
+    const RADIUS: f32 = 8.0;
+    let mut canvas = Canvas::new(SIZE);
+    canvas.clear(Color::linear(0.0, 0.0, 0.0, 1.0));
+    canvas
+        .draw_rect(
+            Rect::new(40.0, 40.0, 88.0, 88.0),
+            &Paint::fill(Color::linear(1.0, 1.0, 1.0, 0.5))
+                .with_anti_alias(false)
+                .with_image_filter(ImageFilter::Dilate {
+                    radius_x: RADIUS,
+                    radius_y: RADIUS,
+                }),
+        )
+        .expect("drew");
+    let pixels = render(&mut ctx, canvas);
+
+    // Half-strength white over black, inside the original square and in the
+    // ring the dilation added.
+    for (x, where_) in [(64, "the middle"), (36, "the ring the dilation added")] {
+        let got = pixel(&pixels, x, 64);
+        assert!(
+            (got[0] as i32 - 128).abs() <= 2,
+            "{where_} should be half-strength white over black, got {got:?}"
+        );
+    }
+    // And nothing past the reach.
+    assert_eq!(
+        pixel(&pixels, 30, 64),
+        [0, 0, 0, 255],
+        "eight pixels is eight pixels"
+    );
+}
+
+#[test]
+fn a_morphology_radius_is_a_whole_number_of_texels() {
+    // A structuring element is a set of sample positions, so there is no half
+    // of one to keep and the radius is rounded. Rounding it here rather than
+    // in the shader is what makes the radius a caller can observe -- through
+    // the bounds a dilated layer takes, which grow by it -- the radius that
+    // actually gets applied. Rounded in one place and floored in the other,
+    // the two would disagree by a pixel and the growth would be cropped.
+    let Some(mut ctx) = context() else { return };
+
+    let square = Rect::new(40.0, 40.0, 88.0, 88.0);
+    let below = filtered_square(
+        &mut ctx,
+        square,
+        ImageFilter::Dilate {
+            radius_x: 0.4,
+            radius_y: 0.4,
+        },
+    );
+    assert_eq!(
+        lit_span(&below, true, 64),
+        Some((40, 87)),
+        "four tenths of a texel is no texels, which is the shape unchanged"
+    );
+
+    let above = filtered_square(
+        &mut ctx,
+        square,
+        ImageFilter::Dilate {
+            radius_x: 0.6,
+            radius_y: 0.6,
+        },
+    );
+    assert_eq!(
+        lit_span(&above, true, 64),
+        Some((39, 88)),
+        "six tenths is one texel, applied and allowed for in the bounds"
     );
 }

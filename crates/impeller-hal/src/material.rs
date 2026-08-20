@@ -117,7 +117,16 @@ pub mod kind {
     pub const ELLIPSE: f32 = 8.0;
     pub const CONICAL: f32 = 9.0;
     pub const MESH: f32 = 10.0;
+    pub const MORPHOLOGY: f32 = 11.0;
 }
+
+/// How far one morphology pass reaches, in texels each way.
+///
+/// The shader's loop has to be bounded, and this is the bound. It is not a
+/// limit on the filter: a larger radius becomes more passes, since dilating
+/// twice dilates by the sum. Sixty-five samples per pixel per pass is already
+/// enough bandwidth that splitting is the cheaper answer anyway.
+pub const MORPHOLOGY_TAPS: u32 = 32;
 
 /// How many floats a runtime effect may take.
 ///
@@ -745,6 +754,37 @@ pub enum Material {
         /// result is and nothing else.
         sigma: f32,
     },
+    /// One axis of a morphological filter of a finished layer.
+    ///
+    /// The largest or smallest sample within a radius, per channel, which is
+    /// what `dart:ui` calls `ImageFilter.dilate` and `ImageFilter.erode`. Like
+    /// the blur it is separable -- a rectangular structuring element is the
+    /// product of two intervals -- so two passes give the square of taps.
+    ///
+    /// Unlike the blur it is also *decomposable*: dilating by `a` and then by
+    /// `b` is dilating by `a + b` exactly, because the structuring elements add
+    /// under the Minkowski sum. A radius past what one pass can reach is
+    /// therefore split across passes rather than approximated by sampling more
+    /// sparsely. Sparse taps work for a blur, where a missed sample costs a
+    /// little smoothness, and do not work here: the result is a maximum, so a
+    /// missed sample is a scallop in the edge.
+    Morphology {
+        origin: [f32; 2],
+        to_local: ToLocal,
+        slot: u32,
+        /// One tap's step, in the sampled texture's own coordinates. As
+        /// [`Self::Blur::step`].
+        step: [f32; 2],
+        /// How many texels each way this pass reaches, at most
+        /// [`MORPHOLOGY_TAPS`].
+        ///
+        /// A whole number of texels, because the structuring element is a set
+        /// of samples rather than a weighting of them and there is no meaning
+        /// to half of one.
+        radius: f32,
+        /// The largest sample in reach rather than the smallest.
+        dilate: bool,
+    },
     /// Coverage sampled from an atlas, tinting one color.
     ///
     /// Distinct from [`Self::Image`] in two ways that matter. The texture is
@@ -807,7 +847,7 @@ impl Material {
             Self::Runtime { .. } => false,
             // A blur of nothing is nothing, but the pass still has to run: what
             // it samples is not knowable from here.
-            Self::Blur { .. } => false,
+            Self::Blur { .. } | Self::Morphology { .. } => false,
             Self::RoundedRect {
                 color, half_size, ..
             }
@@ -829,7 +869,8 @@ impl Material {
             Self::Image { slot, .. }
             | Self::Mesh { slot, .. }
             | Self::Glyph { slot, .. }
-            | Self::Blur { slot, .. } => Some(*slot),
+            | Self::Blur { slot, .. }
+            | Self::Morphology { slot, .. } => Some(*slot),
             // A gradient names a texture only when its colors were too many to
             // carry, which is why this is an option rather than a slot.
             Self::LinearGradient { ramp, .. }
@@ -852,6 +893,7 @@ impl Material {
             | Self::Mesh { .. }
             | Self::Glyph { .. }
             | Self::Blur { .. }
+            | Self::Morphology { .. }
             | Self::RoundedRect { .. }
             | Self::Ellipse { .. }
             | Self::Runtime { .. } => &[],
@@ -955,6 +997,27 @@ impl Material {
             return out;
         }
 
+        if let Self::Morphology {
+            origin,
+            to_local,
+            step,
+            radius,
+            dilate,
+            ..
+        } = self
+        {
+            out[layout::GEOMETRY] = origin[0];
+            out[layout::GEOMETRY + 1] = origin[1];
+            out[layout::GEOMETRY + 2] = step[0];
+            out[layout::GEOMETRY + 3] = step[1];
+            out[layout::TO_LOCAL..layout::TO_LOCAL + 4].copy_from_slice(to_local);
+            out[layout::PARAMS] = 1.0;
+            out[layout::PARAMS + 1] = kind::MORPHOLOGY;
+            out[layout::PARAMS + 2] = radius.clamp(0.0, MORPHOLOGY_TAPS as f32);
+            out[layout::PARAMS + 3] = if *dilate { 1.0 } else { 0.0 };
+            return out;
+        }
+
         if let Self::Runtime { uniforms, .. } = self {
             // Straight into the block, in the order the caller wrote them. No
             // kind is set: nothing in the shared shader will read this, and a
@@ -1029,6 +1092,7 @@ impl Material {
             | Self::Mesh { .. }
             | Self::Glyph { .. }
             | Self::Blur { .. }
+            | Self::Morphology { .. }
             | Self::RoundedRect { .. }
             | Self::Ellipse { .. }
             | Self::Runtime { .. } => {

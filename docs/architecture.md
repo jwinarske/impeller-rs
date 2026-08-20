@@ -609,6 +609,38 @@ which requires a difference. It runs on every backend rather than on whichever
 comes first, because an offset that a full-size layer hides is exactly the kind
 of thing two backends could disagree about.
 
+**A morphological filter splits across passes rather than sampling sparsely.**
+Dilation and erosion are separable in the same way a Gaussian is -- a
+rectangular structuring element is the product of two intervals, so one pass
+per axis gives the square of taps -- and the two filters share the machinery
+that makes a pass over a finished layer. They part company at the tap budget.
+A shader loop has to be bounded, and the blur handles a sigma past that budget
+by spreading its taps further apart: a missed sample costs a little smoothness,
+and the result is still a blur.
+
+That trade does not exist here. The output is a maximum, so a sample the loop
+skips is not a small error in a weighting, it is a scallop in the edge, and the
+result is not a dilation by any radius. What does exist is a property the blur
+lacks: morphology is *decomposable*. Dilating by `a` and then by `b` dilates by
+`a + b` exactly, because flat structuring elements add under the Minkowski sum,
+and the same holds for erosion. So a radius past one pass becomes more passes
+and the answer stays exact. The radius is also rounded to whole texels on the
+host, in the one place that both the shader and the layer's bounds read it
+from: a structuring element is a set of sample positions and there is no half
+of one, and a radius rounded in one place and floored in the other would grow
+the picture by a pixel more than the target had room for.
+
+The two filters also disagree with the blur about what lies outside the image.
+The blur clamps to the edge, because a weighted average that read transparent
+black from beyond the bound would darken every border pixel. Morphology reads
+nothing, which is transparent black. For a dilation the two are
+indistinguishable -- the largest of a value and transparent black is the value
+-- and for an erosion the choice is the whole behavior: clamped to the edge, a
+shape sitting against its layer's bound would never be eaten into from that
+side, because every sample reaching past it would come back as more of the
+shape. Only a dilation widens the layer's bounds, for the same reason: an
+erosion never puts anything where there was nothing.
+
 **A recording is submitted, not just a batch.** A frame with layers is several
 passes, and for a while the presentation paths took a batch — so such a frame
 could be rendered offscreen and never displayed. The layer passes are

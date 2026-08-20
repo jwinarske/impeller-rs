@@ -17,8 +17,8 @@ use crate::image::Image;
 use crate::scene::{Fill, Item, Node, Scene};
 use crate::shape::Shape;
 use impeller_core::{
-    Affine2, Canvas, Color, GradientStop, Layer, Paint, Recording, Rect, Shader, SourceRect,
-    Sprite, Style, Vec2, Vertices,
+    Affine2, Canvas, Color, GradientStop, Layer, Morphology, Paint, Recording, Rect, Shader,
+    SourceRect, Sprite, Style, Vec2, Vertices,
 };
 use impeller_geometry::dash::Dash;
 use impeller_hal::{Hal, HalContext, PixelFormat, Result, TextureDescriptor};
@@ -323,6 +323,13 @@ fn record_node(canvas: &mut Canvas, node: &Node, anti_alias: bool) -> Result<()>
                 // redraw.
                 matrix: layer.matrix.map(|m| m.to_affine()),
                 backdrop_blur: layer.backdrop_blur,
+                morphology: layer.morphology.map(|m| {
+                    if m.dilate {
+                        Morphology::dilate(m.radius[0], m.radius[1])
+                    } else {
+                        Morphology::erode(m.radius[0], m.radius[1])
+                    }
+                }),
             };
             match bounds {
                 Some(bounds) => canvas.save_layer_bounds(layer, rect_of(*bounds)),

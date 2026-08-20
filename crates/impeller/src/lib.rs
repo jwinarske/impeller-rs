@@ -36,11 +36,13 @@ pub use context::{Context, Image, Surface};
 pub use impeller_core::{
     Affine2, Atlas, AtlasError, AtlasRect, BlendMode, Canvas, Color, ColorFilter, ColorForm,
     Coverage, Dash, Extent2D, FillRule, Gamma, GlyphKey, GradientStop, ImageFilter, Layer, LineCap,
-    LineJoin, MaskBlurStyle, Paint, Path, PathBuilder, PixelFormat, PointMode, PositionedGlyph,
-    Recording, Rect, Sampling, Shader, SourceRect, Sprite, StrokeStyle, Style, TileMode, Vec2,
-    VertexMode, Vertices, MAX_STOPS,
+    LineJoin, MaskBlurStyle, Morphology, Paint, Path, PathBuilder, PixelFormat, PointMode,
+    PositionedGlyph, Recording, Rect, Sampling, Shader, SourceRect, Sprite, StrokeStyle, Style,
+    TileMode, Vec2, VertexMode, Vertices, MAX_STOPS,
 };
-pub use impeller_hal::{BlendFactor, Capabilities, Error, Result, RuntimeProgram, RUNTIME_FLOATS};
+pub use impeller_hal::{
+    BlendFactor, Capabilities, Error, Result, RuntimeProgram, MORPHOLOGY_TAPS, RUNTIME_FLOATS,
+};
 
 /// Direct scanout to a display, with no compositor.
 #[cfg(feature = "drm")]

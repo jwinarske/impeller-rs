@@ -18,7 +18,7 @@ use impeller_geometry::transform::{
 use impeller_geometry::{FillRule, Path, PathBuilder};
 use impeller_hal::{
     Batch, BlendMode, ClipState, ColorFilter, Error, Extent2D, Material, PassDescriptor, Result,
-    Sampling, Scissor, Stop, TileMode, Vertex, MAX_STOPS,
+    Sampling, Scissor, Stop, TileMode, Vertex, MAX_STOPS, MORPHOLOGY_TAPS,
 };
 use impeller_renderer::{Paint as RenderPaint, Renderer, TOLERANCE};
 use impeller_text::{Atlas, PositionedGlyph};
@@ -298,6 +298,61 @@ struct LayerFrame {
     parent: Target,
 }
 
+/// Spreading or shrinking a finished layer, one axis at a time.
+///
+/// The pair `dart:ui` calls `ImageFilter.dilate` and `ImageFilter.erode`: each
+/// output pixel takes the largest, or the smallest, of the input within a
+/// rectangle around it. The rectangle is why the radii are per axis and why the
+/// filter is separable at all.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Morphology {
+    /// How far the structuring element reaches along each axis, in device
+    /// pixels.
+    pub radius: [f32; 2],
+    /// Take the largest sample in reach rather than the smallest.
+    pub dilate: bool,
+}
+
+impl Morphology {
+    /// Spread the layer: each pixel becomes the largest within the radii.
+    pub fn dilate(x: f32, y: f32) -> Self {
+        Self {
+            radius: Self::sane(x, y),
+            dilate: true,
+        }
+    }
+
+    /// Shrink the layer: each pixel becomes the smallest within the radii.
+    pub fn erode(x: f32, y: f32) -> Self {
+        Self {
+            radius: Self::sane(x, y),
+            dilate: false,
+        }
+    }
+
+    /// Whole texels, not negative, and finite.
+    ///
+    /// Rounded here rather than in the shader so that the radius a caller can
+    /// observe -- through the bounds a dilated layer takes, which grow by it --
+    /// is the radius that actually gets applied. A structuring element is a set
+    /// of sample positions; there is no half of one to keep.
+    fn sane(x: f32, y: f32) -> [f32; 2] {
+        let one = |v: f32| {
+            if v.is_finite() {
+                v.max(0.0).round()
+            } else {
+                0.0
+            }
+        };
+        [one(x), one(y)]
+    }
+
+    /// Whether this would leave every pixel where it was.
+    pub fn is_identity(&self) -> bool {
+        self.radius == [0.0, 0.0]
+    }
+}
+
 /// How a layer is composited back onto what was underneath it.
 ///
 /// A separate type from [`Paint`] rather than a reuse of it, because only two
@@ -359,6 +414,15 @@ pub struct Layer {
     /// composites the whole frame back. Both are meaningful and they are
     /// different pictures, so state the bounds when you mean a panel.
     pub backdrop_blur: f32,
+    /// Spread or shrink the group before compositing it. See [`Morphology`].
+    ///
+    /// On the group for the same reason [`Self::blur`] is: a maximum over a
+    /// window is a function of a finished image. Dilating each shape and then
+    /// compositing is a different picture from dilating the composite wherever
+    /// two shapes overlap.
+    ///
+    /// `None` for no morphology, which is the default and costs nothing.
+    pub morphology: Option<Morphology>,
 }
 
 impl Default for Layer {
@@ -369,6 +433,7 @@ impl Default for Layer {
             blend: BlendMode::SrcOver,
             matrix: None,
             backdrop_blur: 0.0,
+            morphology: None,
         }
     }
 }
@@ -390,6 +455,37 @@ impl Layer {
     pub fn with_blend(mut self, blend: BlendMode) -> Self {
         self.blend = blend;
         self
+    }
+
+    /// Spread or shrink the finished group. See [`Morphology`].
+    ///
+    /// A morphology that would move nothing becomes `None`, on the same
+    /// reasoning as a blur of zero: a caller animating a radius down to nothing
+    /// should get the unfiltered thing at the end, not two passes that copy the
+    /// image twice to say so.
+    pub fn with_morphology(mut self, morphology: Morphology) -> Self {
+        self.morphology = if morphology.is_identity() {
+            None
+        } else {
+            Some(morphology)
+        };
+        self
+    }
+
+    /// How far past the content this layer's filters reach, per axis, in device
+    /// pixels.
+    ///
+    /// A blur carries color outward and so does a dilation; an erosion only
+    /// eats inward and needs no room. The two can be asked for together, so
+    /// this is their sum rather than whichever is larger -- the passes run one
+    /// after the other, and the second reaches out from where the first put
+    /// things.
+    fn reach(&self) -> Vec2 {
+        let blur = Vec2::splat(blur_reach(self.blur));
+        match self.morphology {
+            Some(m) if m.dilate => blur + Vec2::new(m.radius[0], m.radius[1]),
+            _ => blur,
+        }
     }
 
     /// Blur the finished group, with `sigma` in device pixels.
@@ -862,7 +958,7 @@ impl Canvas {
     /// [`Self::clip_rect`] does with the same box, and for the same reason —
     /// there the box would admit pixels the caller asked to remove.
     pub fn save_layer_bounds(&mut self, layer: Layer, bounds: Rect) -> &mut Self {
-        let blur = layer.blur;
+        let reach = layer.reach();
         // Opened without seeding, because the seed has to land in the target
         // the content will draw into and that target is decided below. A
         // backdrop drawn into the full-size target and then narrowed would be
@@ -881,8 +977,7 @@ impl Canvas {
         //
         // Three deviations, matching where the shader stops taking taps, so the
         // target covers everything the blur will actually read.
-        let reach = blur_reach(blur);
-        let (min, max) = (min - Vec2::splat(reach), max + Vec2::splat(reach));
+        let (min, max) = (min - reach, max + reach);
         let parent = self.target;
         let left = min.x.floor().max(parent.origin.x);
         let top = min.y.floor().max(parent.origin.y);
@@ -1319,6 +1414,12 @@ impl Canvas {
         let layer = match paint.image_filter {
             ImageFilter::Blur { sigma } => Layer::opacity(1.0).with_blur(sigma),
             ImageFilter::Matrix { transform } => Layer::opacity(1.0).with_matrix(transform),
+            ImageFilter::Dilate { radius_x, radius_y } => {
+                Layer::opacity(1.0).with_morphology(Morphology::dilate(radius_x, radius_y))
+            }
+            ImageFilter::Erode { radius_x, radius_y } => {
+                Layer::opacity(1.0).with_morphology(Morphology::erode(radius_x, radius_y))
+            }
             // `is_identity` kept `None` out, and every other kind is handled.
             ImageFilter::None => {
                 return Err(Error::Unsupported("this image filter is not implemented"))
@@ -2310,6 +2411,12 @@ impl Canvas {
         if frame.paint.blur > 0.0 {
             index = self.blur_passes(index, layer, frame.paint.blur);
         }
+        // After the blur, because that is the order the reach above assumes
+        // when a layer asks for both: the blur softens the content and the
+        // morphology then works on what the blur produced.
+        if let Some(morphology) = frame.paint.morphology {
+            index = self.morphology_passes(index, layer, morphology);
+        }
         let slot = self.slot_for(TextureSource::Layer(index));
 
         // Where the layer sits in the parent's clip space, and how much of that
@@ -2397,6 +2504,110 @@ impl Canvas {
         );
     }
 
+    /// One pass covering `target`, drawing `material` over all of it, and the
+    /// index it landed at.
+    ///
+    /// What every image filter is made of. The material carries the mapping
+    /// from the quad's clip position to the sampled texture's coordinates --
+    /// the same pair a layer composite uses at zero offset, since a filter's
+    /// target is the same size as its source -- and the filtering itself. The
+    /// composite that follows is untouched, and still applies the layer's alpha
+    /// and blend: keeping the filter passes pure means neither has to know
+    /// about compositing.
+    fn filter_pass(&mut self, source: usize, target: Target, material: Material) -> usize {
+        // A pass of its own, so its slot table starts empty and the one slot it
+        // uses is the pass it samples.
+        let mut batch = Batch::new();
+        let sources = vec![TextureSource::Layer(source)];
+        let paint = RenderPaint {
+            material,
+            filter: ColorFilter::None,
+            // Replaces rather than blends: the target is cleared and this
+            // covers all of it, so anything else would blend against the clear
+            // for no reason.
+            blend: BlendMode::Src,
+            clip: None,
+            stencil: ClipState::UNCLIPPED,
+        };
+        let quad = target.path();
+        // The canvas's own renderer, aimed at the filter target for the one
+        // draw and put back afterward. A fresh `Renderer` here would build a
+        // pair of tessellators per pass per filtered layer per frame, for a
+        // quad -- and would be the kind of allocation that never shows up in a
+        // profile as itself.
+        self.renderer.set_viewport(target.origin, target.extent);
+        let _ = self
+            .renderer
+            .fill_into(&mut batch, &quad, Affine2::IDENTITY, &paint);
+        self.renderer
+            .set_viewport(self.target.origin, self.target.extent);
+
+        self.finished.push(Pass {
+            batch,
+            descriptor: PassDescriptor {
+                clear: Some([0.0; 4]),
+                // One sample: this reads a resolved image and writes another,
+                // so multisampling it would resolve twice for no difference.
+                samples: 1,
+            },
+            sources,
+            extent: target.extent,
+        });
+        self.finished.len() - 1
+    }
+
+    /// Spread or shrink a finished layer, and answer which pass holds the
+    /// result.
+    ///
+    /// One pass per axis where the radius fits the shader's tap budget, and
+    /// more where it does not. Splitting is exact rather than an
+    /// approximation: dilating by `a` and then by `b` dilates by `a + b`,
+    /// because the structuring elements add, and the same holds for erosion.
+    /// So a radius of eighty runs as thirty-two, thirty-two and sixteen, and
+    /// the picture is the one a single pass of eighty would have given.
+    ///
+    /// An axis with no radius contributes no passes at all. A dilation of ten
+    /// horizontally and none vertically is one pass, not two, and the second
+    /// would only have copied the image.
+    fn morphology_passes(
+        &mut self,
+        source: usize,
+        target: Target,
+        morphology: Morphology,
+    ) -> usize {
+        let origin = [-1.0, 1.0];
+        let to_local = [0.5, 0.0, 0.0, -0.5];
+        let axes = [
+            (
+                [1.0 / target.extent.width as f32, 0.0],
+                morphology.radius[0],
+            ),
+            (
+                [0.0, 1.0 / target.extent.height as f32],
+                morphology.radius[1],
+            ),
+        ];
+
+        let mut sampled = source;
+        for (step, radius) in axes {
+            let mut left = radius;
+            while left > 0.0 {
+                let taken = left.min(MORPHOLOGY_TAPS as f32);
+                left -= taken;
+                let material = Material::Morphology {
+                    origin,
+                    to_local,
+                    slot: 0,
+                    step,
+                    radius: taken,
+                    dilate: morphology.dilate,
+                };
+                sampled = self.filter_pass(sampled, target, material);
+            }
+        }
+        sampled
+    }
+
     /// Blur a finished layer, and answer which pass now holds the result.
     ///
     /// Two passes, one per axis, because a two-dimensional Gaussian is the
@@ -2425,53 +2636,17 @@ impl Canvas {
 
         let mut sampled = source;
         for step in steps {
-            let material = Material::Blur {
-                origin,
-                to_local,
-                slot: 0,
-                step,
-                sigma,
-            };
-            // A pass of its own, so its slot table starts empty and the one
-            // slot it uses is the pass it samples.
-            let mut batch = Batch::new();
-            let sources = vec![TextureSource::Layer(sampled)];
-            let paint = RenderPaint {
-                material,
-                filter: ColorFilter::None,
-                // Replaces rather than blends: the target is cleared and this
-                // covers all of it, so anything else would blend against the
-                // clear for no reason.
-                blend: BlendMode::Src,
-                clip: None,
-                stencil: ClipState::UNCLIPPED,
-            };
-            let quad = target.path();
-            // The canvas's own renderer, aimed at the blur target for the one
-            // draw and put back afterward. A fresh `Renderer` here would build
-            // a pair of tessellators per pass per blurred layer per frame, for
-            // a quad -- and would be the kind of allocation that never shows up
-            // in a profile as itself.
-            self.renderer.set_viewport(target.origin, target.extent);
-            let _ = self
-                .renderer
-                .fill_into(&mut batch, &quad, Affine2::IDENTITY, &paint);
-            self.renderer
-                .set_viewport(self.target.origin, self.target.extent);
-
-            self.finished.push(Pass {
-                batch,
-                descriptor: PassDescriptor {
-                    clear: Some([0.0; 4]),
-                    // One sample: this reads a resolved image and writes
-                    // another, so multisampling it would resolve twice for no
-                    // difference.
-                    samples: 1,
+            sampled = self.filter_pass(
+                sampled,
+                target,
+                Material::Blur {
+                    origin,
+                    to_local,
+                    slot: 0,
+                    step,
+                    sigma,
                 },
-                sources,
-                extent: target.extent,
-            });
-            sampled = self.finished.len() - 1;
+            );
         }
         sampled
     }

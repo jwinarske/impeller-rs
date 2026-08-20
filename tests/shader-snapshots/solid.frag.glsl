@@ -273,6 +273,48 @@ vec4 blur_along_axis(vec2 clip_4) {
     return (_e57 / vec4(max(_e58, 1e-6)));
 }
 
+vec4 sample_or_nothing(vec2 uv_3) {
+    if ((any(lessThan(uv_3, vec2(0.0))) || any(greaterThan(uv_3, vec2(1.0))))) {
+        return vec4(0.0);
+    }
+    vec4 _e15 = textureLod(_group_0_binding_0_fs, vec2(uv_3), 0.0);
+    return _e15;
+}
+
+vec4 morphology_along_axis(vec2 clip_5) {
+    vec4 best = vec4(0.0);
+    float i_2 = 1.0;
+    vec2 _e1 = to_gradient_space(clip_5);
+    vec4 _e4 = _group_1_binding_0_fs.geometry;
+    vec2 step_1 = _e4.zw;
+    float taps_1 = _group_1_binding_0_fs.params.z;
+    float _e13 = _group_1_binding_0_fs.params.w;
+    bool dilate = (_e13 > 0.5);
+    vec4 _e16 = sample_or_nothing(_e1);
+    best = _e16;
+    while(true) {
+        float _e20 = i_2;
+        if ((_e20 > taps_1)) {
+            break;
+        }
+        float _e22 = i_2;
+        vec4 _e25 = sample_or_nothing((_e1 + (step_1 * _e22)));
+        float _e26 = i_2;
+        vec4 _e29 = sample_or_nothing((_e1 - (step_1 * _e26)));
+        if (dilate) {
+            vec4 _e30 = best;
+            best = max(_e30, max(_e25, _e29));
+        } else {
+            vec4 _e33 = best;
+            best = min(_e33, min(_e25, _e29));
+        }
+        float _e36 = i_2;
+        i_2 = (_e36 + 1.0);
+    }
+    vec4 _e39 = best;
+    return _e39;
+}
+
 vec3 linear_to_srgb(vec3 c) {
     vec3 low_1 = (c * 12.92);
     vec3 high_1 = ((1.055 * pow(max(c, vec3(0.0)), vec3(0.41666666))) - vec3(0.055));
@@ -439,21 +481,25 @@ vec4 shade(VertexOutput in_1) {
         vec4 _e213 = blur_along_axis(in_1.clip);
         return _e213;
     }
-    if (((kind_1 > 9.5) && (kind_1 < 10.5))) {
-        vec4 _e220 = sample_mesh(in_1.uv);
+    if (((kind_1 > 10.5) && (kind_1 < 11.5))) {
+        vec4 _e220 = morphology_along_axis(in_1.clip);
         return _e220;
     }
+    if (((kind_1 > 9.5) && (kind_1 < 10.5))) {
+        vec4 _e227 = sample_mesh(in_1.uv);
+        return _e227;
+    }
     if (((kind_1 > 4.5) && (kind_1 < 5.5))) {
-        vec4 _e230 = textureLod(_group_0_binding_0_fs, vec2(in_1.uv), 0.0);
-        float coverage = _e230.x;
+        vec4 _e237 = textureLod(_group_0_binding_0_fs, vec2(in_1.uv), 0.0);
+        float coverage = _e237.x;
         vec4 tint_5 = _group_1_binding_0_fs.stops[0];
         float alpha_4 = (tint_5.w * coverage);
         return vec4((tint_5.xyz * alpha_4), alpha_4);
     }
-    vec4 _e241 = color_1;
-    float _e244 = color_1.w;
-    float _e247 = color_1.w;
-    return vec4((_e241.xyz * _e244), _e247);
+    vec4 _e248 = color_1;
+    float _e251 = color_1.w;
+    float _e254 = color_1.w;
+    return vec4((_e248.xyz * _e251), _e254);
 }
 
 void main() {

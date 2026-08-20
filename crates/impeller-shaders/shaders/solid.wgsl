@@ -491,6 +491,55 @@ fn blur_along_axis(clip: vec2<f32>) -> vec4<f32> {
     return total / max(weight_sum, 1e-6);
 }
 
+/// The bound texture at `uv`, or transparent black outside it.
+///
+/// The blur clamps to the edge instead, and is right to: it is a weighted
+/// average, so reading transparent black from outside would darken every
+/// border pixel. A morphological filter is an extremum rather than an average,
+/// and the two choices differ only for erosion -- the largest of a value and
+/// transparent black is the value, so a dilation cannot tell them apart. For
+/// erosion the choice is the whole behavior: clamped to the edge, a shape
+/// sitting against the bound would never be eaten into from that side, because
+/// the samples reaching past it would come back as more of the shape.
+fn sample_or_nothing(uv: vec2<f32>) -> vec4<f32> {
+    if (any(uv < vec2<f32>(0.0)) || any(uv > vec2<f32>(1.0))) {
+        return vec4<f32>(0.0);
+    }
+    return textureSampleLevel(image_texture, image_sampler, uv, 0.0);
+}
+
+/// One axis of a separable morphological filter of the bound texture.
+///
+/// Per channel on premultiplied color, which is what makes a dilation of a
+/// translucent shape spread the color and the coverage together rather than
+/// pulling color out from under an alpha that did not follow it.
+///
+/// Every tap is a whole texel away. There is no weighting to interpolate
+/// between them -- a structuring element is a set of positions, not a curve --
+/// so a fractional step would only sample the bilinear blend of two texels and
+/// call the result a maximum of them, which it is not.
+fn morphology_along_axis(clip: vec2<f32>) -> vec4<f32> {
+    let uv = to_gradient_space(clip);
+    let step = paint.geometry.zw;
+    let taps = paint.params.z;
+    let dilate = paint.params.w > 0.5;
+
+    var best = sample_or_nothing(uv);
+    var i = 1.0;
+    loop {
+        if (i > taps) { break; }
+        let ahead = sample_or_nothing(uv + step * i);
+        let behind = sample_or_nothing(uv - step * i);
+        if (dilate) {
+            best = max(best, max(ahead, behind));
+        } else {
+            best = min(best, min(ahead, behind));
+        }
+        i = i + 1.0;
+    }
+    return best;
+}
+
 /// Apply this paint's color filter, if it has one.
 ///
 /// Takes and returns premultiplied color, because that is what every path
@@ -717,6 +766,12 @@ fn shade(in: VertexOutput) -> vec4<f32> {
         // Already premultiplied, like anything else sampled from a target, and
         // a weighted average of premultiplied colors is premultiplied.
         return blur_along_axis(in.clip);
+    }
+    if (kind > 10.5 && kind < 11.5) {
+        // Premultiplied for the same reason, and an extremum of premultiplied
+        // colors taken channel by channel is one too: no channel can come out
+        // above an alpha that no sample had.
+        return morphology_along_axis(in.clip);
     }
     if (kind > 9.5 && kind < 10.5) {
         // Already premultiplied, like anything else sampled from a texture.

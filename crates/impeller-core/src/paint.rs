@@ -1,6 +1,6 @@
 //! How a shape is drawn.
 
-use crate::canvas::Rect;
+use crate::canvas::{Morphology, Rect};
 use crate::color::Color;
 use glam::{Affine2, Vec2};
 use impeller_geometry::dash::Dash;
@@ -234,6 +234,18 @@ pub enum ImageFilter {
     /// the reason `dart:ui` has both, and a caller wanting the sharp one
     /// already has `concat`.
     Matrix { transform: Affine2 },
+    /// Spread what was drawn, taking the largest sample within these radii in
+    /// device pixels.
+    ///
+    /// `ImageFilter.dilate`. On premultiplied color and channel by channel, so
+    /// a translucent shape spreads its coverage along with its color.
+    Dilate { radius_x: f32, radius_y: f32 },
+    /// Shrink what was drawn, taking the smallest sample within these radii in
+    /// device pixels.
+    ///
+    /// `ImageFilter.erode`, and the dual of [`Self::Dilate`]: what one does to
+    /// a shape the other does to the space around it.
+    Erode { radius_x: f32, radius_y: f32 },
 }
 
 impl ImageFilter {
@@ -249,6 +261,12 @@ impl ImageFilter {
             // A matrix that changes nothing is one that costs a layer for
             // nothing, so it is worth recognising.
             Self::Matrix { transform } => !transform.is_finite() || *transform == Affine2::IDENTITY,
+            // Rounded before the comparison, on the same reasoning that rounds
+            // it before it is applied: a radius of a third of a pixel names no
+            // sample the filter could take, so it is not a filter.
+            Self::Dilate { radius_x, radius_y } | Self::Erode { radius_x, radius_y } => {
+                Morphology::dilate(*radius_x, *radius_y).is_identity()
+            }
         }
     }
 }

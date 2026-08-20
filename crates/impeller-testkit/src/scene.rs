@@ -482,6 +482,21 @@ pub struct LayerSpec {
     /// Standard deviation of a blur over what lies behind the group, in device
     /// pixels. Zero for none.
     pub backdrop_blur: f32,
+    /// Spread or shrink the finished group. `None` for neither.
+    pub morphology: Option<MorphologySpec>,
+}
+
+/// A dilation or an erosion of a finished group.
+///
+/// Named here rather than reused from the renderer for the reason the whole
+/// scene format is: a scene is data about a picture and must not need a device
+/// to describe one.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct MorphologySpec {
+    /// Reach along each axis, in device pixels.
+    pub radius: [f32; 2],
+    /// Take the largest sample in reach rather than the smallest.
+    pub dilate: bool,
 }
 
 impl Default for LayerSpec {
@@ -492,11 +507,34 @@ impl Default for LayerSpec {
             alpha: 1.0,
             blend: BlendMode::SrcOver,
             backdrop_blur: 0.0,
+            morphology: None,
         }
     }
 }
 
 impl LayerSpec {
+    /// Spread the finished group by these radii, in device pixels.
+    pub fn dilated(x: f32, y: f32) -> Self {
+        Self {
+            morphology: Some(MorphologySpec {
+                radius: [x, y],
+                dilate: true,
+            }),
+            ..Self::default()
+        }
+    }
+
+    /// Shrink the finished group by these radii, in device pixels.
+    pub fn eroded(x: f32, y: f32) -> Self {
+        Self {
+            morphology: Some(MorphologySpec {
+                radius: [x, y],
+                dilate: false,
+            }),
+            ..Self::default()
+        }
+    }
+
     pub fn opacity(alpha: f32) -> Self {
         Self {
             alpha,
