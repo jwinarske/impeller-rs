@@ -416,6 +416,18 @@ impl Drop for GlesContext {
             for program in std::mem::take(&mut self.runtime_programs) {
                 self.gl.delete_program(program);
             }
+            // The placeholder is created on the first draw that samples
+            // nothing, which is why it was missing here: an object built lazily
+            // is easy to leave out of a teardown written when it did not exist.
+            // The same omission on the other backend left a descriptor set
+            // layout outliving its device, which is undefined behavior rather
+            // than a tidiness question -- here it is neither, since destroying
+            // the EGL context below releases everything it owns. It is deleted
+            // anyway, because "the context releases what it made" is a rule
+            // worth being able to state without an exception in it.
+            if let Some(texture) = self.placeholder.take() {
+                self.gl.delete_texture(texture);
+            }
         }
         // Unbind before destroying, or the driver keeps the context alive and
         // the display never actually releases its resources.

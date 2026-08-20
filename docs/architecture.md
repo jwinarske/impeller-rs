@@ -1739,6 +1739,16 @@ important part. If the layer is not installed at all the loader ignores the
 variable, which is not a silent pass -- the several tests that need it report a
 skip, and naming skips is what this command is for.
 
+The GLES side gets no equivalent, and the reason is worth stating rather than
+leaving as an apparent gap. GL has no object tracking: nothing reports that an
+object outlived the context that made it, because destroying an EGL context
+releases everything it owns and there is no undefined behavior to report. The
+same omission existed there -- a placeholder texture created on the first draw
+that samples nothing, missing from a teardown written before it existed -- and
+was found by looking for it after the Vulkan one, not by any check. So on that
+backend "the context releases what it made" is a rule held by reading, and this
+document is where it is written down.
+
 **Every context in the suite reports what the driver said about it.** On
 Vulkan that is the validation layer; on GLES it is `GL_KHR_debug`, which every
 3.2 implementation offers and which is the driver reporting on itself rather
