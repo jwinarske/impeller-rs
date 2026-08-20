@@ -61,9 +61,19 @@ fn every_catalog_scene_draws_something() {
         // Something other than the ground it cleared to. A scene whose
         // geometry landed offscreen, or whose colour matched the background,
         // is one nobody would notice was wrong by scrolling past it.
+        //
+        // Against the background rather than against the first pixel, which is
+        // not the same question and gets one plate wrong: a scene that covers
+        // the frame twice and blends the second over the first is *correctly*
+        // one colour everywhere, and reads as blank to a check that only asks
+        // whether the picture is uniform. It went unnoticed because the plate
+        // in question needs advanced blending, which the device here does not
+        // have -- so the flaw only surfaced on a software device that does.
+        let ground: [u8; 4] = scene
+            .background
+            .map(|c| (c.clamp(0.0, 1.0) * 255.0).round() as u8);
         let pixels = image.pixels.as_slice();
-        let first = &pixels[0..4];
-        if pixels.chunks_exact(4).all(|texel| texel == first) {
+        if pixels.chunks_exact(4).all(|texel| texel == ground) {
             blank.push(scene.name);
         }
     }
