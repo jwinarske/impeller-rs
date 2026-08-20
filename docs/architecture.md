@@ -678,6 +678,52 @@ back through the transform to have it mapped forward again is not the identity
 under a scale -- the bounds are floored and ceiled at the end, and a reach
 divided and remultiplied is the same length only if nothing rounds.
 
+**A mip chain is stated when a texture is created, not made for every one.**
+It costs a third again in memory -- each level is a quarter of the one above,
+and a quarter summed forever is a third -- and a pass of downsampling on every
+upload. Most textures here are drawn at or above their own size, where no level
+below the first is ever read, so making one unconditionally would be paying that
+on every image for the benefit of the few that minify. A caller who will minify
+says so, and the level count follows from the size: the longer axis halved until
+it reaches one texel, with the shorter axis holding at one while the longer keeps
+going.
+
+The levels are filled by the backend when the texture is written, and a caller
+cannot hand them in. That is not an omission. A chain built by any rule other
+than the backend's own would sample differently on the two backends, and the
+whole test model here is that they do not -- so the one thing a caller could
+supply is the one thing they must not.
+
+The two backends spell the same chain differently, and only one of them has a
+choice. GLES has `glGenerateMipmap`, which is the driver's own downsample, and
+asking for anything else would be inventing a disagreement. Vulkan has no such
+call, so the chain is a blit per level: level two is the average of level one
+rather than a quarter-scale filter over level zero, which is what a chain means
+and what differs once an image has any detail near its own resolution. The
+barriers there are the one place in this backend that transitions a subresource
+rather than an image, and have to be: each blit reads the level above while
+writing the one below, so the same image is a transfer source and a transfer
+destination at once. Everywhere else a transition covers every level, because a
+chain left half in the old layout is a validation error waiting for the first
+minified draw.
+
+Three separate things have to be right before a single level below the first is
+ever read, and each of them fails silently on its own. The image needs the
+levels. The sampler needs a maximum level of detail -- it defaults to zero,
+which clamps every read back to the largest level. And the view needs to span
+the levels, since a view over one of them is one a sampler cannot minify
+through. All three failures look identical from inside the renderer: the chain
+is there, the sampler is willing, and every read still lands on the image
+itself. There is a mutation test for each.
+
+Which level to read is the fragment's own arithmetic, from the screen-space
+derivative of the coordinate in texels. The derivative is taken from the
+coordinate *before* tiling: a repeat wraps with `fract`, whose derivative at the
+seam is the width of the whole image, and a level chosen from that is the
+smallest in the chain -- a blurred line down every seam. The branch that reaches
+the derivative is on a value from the uniform buffer, so the control flow is
+uniform across the draw and the translator's own analysis accepts it there.
+
 **A recording is submitted, not just a batch.** A frame with layers is several
 passes, and for a while the presentation paths took a batch — so such a frame
 could be rendered offscreen and never displayed. The layer passes are

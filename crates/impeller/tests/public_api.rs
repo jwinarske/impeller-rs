@@ -8040,3 +8040,201 @@ fn cubic_sampling_keeps_a_translucent_image_premultiplied() {
         );
     }
 }
+
+/// A 64×64 image of single-texel white columns every eighth texel, black
+/// between.
+///
+/// Chosen so that point-sampling it at eight texels per pixel is not merely
+/// noisy but wrong in one direction: every pixel center falls between the white
+/// columns, so a linear read misses all of them and the image comes out black.
+/// Its true average is one part in eight, which is what reading the level built
+/// for that size gives. A checkerboard -- the obvious pattern -- proves nothing
+/// here, because it averages to the same middle grey whether or not any
+/// averaging happened.
+fn striped_image() -> Vec<u8> {
+    let mut texels = vec![0u8; 64 * 64 * 4];
+    for y in 0..64u32 {
+        for x in 0..64u32 {
+            let i = ((y * 64 + x) * 4) as usize;
+            let level = if x % 8 == 0 { 255 } else { 0 };
+            texels[i..i + 4].copy_from_slice(&[level, level, level, 255]);
+        }
+    }
+    texels
+}
+
+/// The striped image drawn into a square `side` device pixels across.
+fn striped_at(ctx: &mut Context, side: f32, chained: bool, sampling: Sampling) -> Vec<u8> {
+    let extent = Extent2D::new(64, 64);
+    let mut image = if chained {
+        ctx.create_mipmapped_image(extent, PixelFormat::Rgba8Unorm)
+    } else {
+        ctx.create_image(extent, PixelFormat::Rgba8Unorm)
+    }
+    .expect("image");
+    ctx.write_image(&mut image, &striped_image())
+        .expect("upload");
+
+    let where_ = Rect::new(32.0, 32.0, 32.0 + side, 32.0 + side);
+    let mut canvas = Canvas::new(SIZE);
+    canvas.clear(Color::linear(0.0, 0.0, 0.0, 1.0));
+    canvas
+        .draw_rect(
+            where_,
+            &Paint::image(0, where_)
+                .with_sampling(sampling)
+                .with_anti_alias(false),
+        )
+        .expect("image");
+    let mut surface = ctx
+        .create_surface(SIZE, PixelFormat::Rgba8Unorm)
+        .expect("surface");
+    ctx.draw_with_images(&mut surface, &canvas.finish(), &[&image])
+        .expect("draw");
+    let pixels = ctx.read(&mut surface).expect("read");
+    ctx.destroy_surface(surface);
+    ctx.destroy_image(image);
+    pixels
+}
+
+#[test]
+fn mipmapped_sampling_reads_the_level_built_for_the_size_it_is_drawn_at() {
+    // The whole point of a chain, and the one thing about sampling that is
+    // about minification rather than magnification. Eight texels fall on every
+    // device pixel here. A linear read takes the four texels around the pixel's
+    // center and calls that the answer; the other sixty do not contribute, and
+    // for this image that means every white column is missed and the result is
+    // black. The level built for this size is the average of all sixty-four,
+    // which is one part in eight.
+    let Some(mut ctx) = context() else { return };
+
+    let linear = striped_at(&mut ctx, 8.0, false, Sampling::Linear);
+    let mipmapped = striped_at(&mut ctx, 8.0, true, Sampling::Mipmap);
+
+    for x in 32..40u32 {
+        assert_eq!(
+            pixel(&linear, x, 36)[0],
+            0,
+            "a linear read at eight texels per pixel misses every stripe, which \
+             is the aliasing this exists to fix"
+        );
+        let got = pixel(&mipmapped, x, 36)[0];
+        assert!(
+            (got as i32 - 32).abs() <= 2,
+            "at ({x}, 36) the mipmapped read should be the image's own average, \
+             which is 255 over 8, or 32. Got {got}"
+        );
+    }
+}
+
+#[test]
+fn mipmapped_sampling_at_full_size_is_the_image_itself() {
+    // The level is chosen from how fast the coordinate moves, and is clamped at
+    // zero because there is nothing above the image to read. Drawn at its own
+    // size, a mipmapped read has to be the same picture a linear one gives --
+    // not merely close to it. A level chosen even slightly above zero would
+    // soften every image drawn at one to one, which is most of them.
+    let Some(mut ctx) = context() else { return };
+
+    let linear = striped_at(&mut ctx, 64.0, false, Sampling::Linear);
+    let mipmapped = striped_at(&mut ctx, 64.0, true, Sampling::Mipmap);
+
+    for x in 32..96u32 {
+        assert_eq!(
+            pixel(&mipmapped, x, 36),
+            pixel(&linear, x, 36),
+            "at ({x}, 36) a mipmapped read at full size differs from a linear one"
+        );
+    }
+    // And the picture is actually the stripes, so the comparison above is not
+    // two blank images agreeing.
+    assert_eq!(
+        pixel(&mipmapped, 32, 36)[0],
+        255,
+        "the first column is a stripe and should be white"
+    );
+    assert_eq!(
+        pixel(&mipmapped, 33, 36)[0],
+        0,
+        "and the one beside it is not"
+    );
+}
+
+#[test]
+fn mipmapped_sampling_magnified_is_still_the_largest_level() {
+    // Below the image there is no larger level, so a draw at more than one
+    // device pixel per texel has to read the image itself however far it is
+    // magnified. Drawn at twice its size the stripes are two pixels wide with a
+    // blended pixel between, which is what a linear read of the largest level
+    // gives and what any level below it could not.
+    let Some(mut ctx) = context() else { return };
+
+    let mipmapped = striped_at(&mut ctx, 128.0, true, Sampling::Mipmap);
+    let linear = striped_at(&mut ctx, 128.0, false, Sampling::Linear);
+    for x in 32..96u32 {
+        assert_eq!(
+            pixel(&mipmapped, x, 36),
+            pixel(&linear, x, 36),
+            "at ({x}, 36) a magnified mipmapped read differs from a linear one"
+        );
+    }
+    assert_eq!(
+        pixel(&mipmapped, 32, 36)[0],
+        255,
+        "and the stripes are still there rather than averaged away"
+    );
+}
+
+#[test]
+fn mipmapped_sampling_of_an_image_without_a_chain_is_linear() {
+    // A texture allocated without a chain has one level, and a sampler asked
+    // for a level it does not have reads the one it does. So this degrades to
+    // linear rather than failing, which is the right shape for a quality hint:
+    // a caller who asks for medium and gets low has a worse picture, where a
+    // caller who gets an error has none.
+    //
+    // Worth pinning because it is the difference between a documented fallback
+    // and a chain that was silently never generated -- from inside the renderer
+    // the two look identical, and this test is what says which one is happening
+    // by showing the chained image doing better on the same draw.
+    let Some(mut ctx) = context() else { return };
+
+    let unchained = striped_at(&mut ctx, 8.0, false, Sampling::Mipmap);
+    let linear = striped_at(&mut ctx, 8.0, false, Sampling::Linear);
+    for x in 32..40u32 {
+        assert_eq!(
+            pixel(&unchained, x, 36),
+            pixel(&linear, x, 36),
+            "at ({x}, 36) a mipmapped read of a one-level texture should be the \
+             linear read exactly"
+        );
+    }
+}
+
+#[test]
+fn a_mip_chain_has_one_level_per_halving_of_the_longer_axis() {
+    // Both backends decide the level count from this, and they have to agree on
+    // it or a chain generated by one is a chain the other cannot finish
+    // reading. The awkward cases are the ones that are not powers of two and
+    // the ones that are not square: a hundred halves to fifty, twenty-five,
+    // twelve, six, three, one, and an axis that reaches a single texel stays
+    // there while the other keeps going.
+    use impeller::mip_levels_for;
+    assert_eq!(
+        mip_levels_for(Extent2D::new(1, 1)),
+        1,
+        "one texel is one level"
+    );
+    assert_eq!(mip_levels_for(Extent2D::new(64, 64)), 7);
+    assert_eq!(
+        mip_levels_for(Extent2D::new(100, 100)),
+        7,
+        "100 → 50 → 25 → 12 → 6 → 3 → 1"
+    );
+    assert_eq!(
+        mip_levels_for(Extent2D::new(8, 1)),
+        4,
+        "the longer axis decides, and the short one holds at a single texel"
+    );
+    assert_eq!(mip_levels_for(Extent2D::new(1, 8)), 4, "either way round");
+}

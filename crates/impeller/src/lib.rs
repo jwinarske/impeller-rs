@@ -41,7 +41,8 @@ pub use impeller_core::{
     TileMode, Vec2, VertexMode, Vertices, MAX_STOPS,
 };
 pub use impeller_hal::{
-    BlendFactor, Capabilities, Error, Result, RuntimeProgram, MORPHOLOGY_TAPS, RUNTIME_FLOATS,
+    mip_levels_for, BlendFactor, Capabilities, Error, Result, RuntimeProgram, MORPHOLOGY_TAPS,
+    RUNTIME_FLOATS,
 };
 
 /// Direct scanout to a display, with no compositor.

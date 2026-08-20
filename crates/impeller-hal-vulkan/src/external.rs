@@ -191,6 +191,9 @@ impl VulkanContext {
             extent,
             format,
             layout: std::cell::Cell::new(vk::ImageLayout::UNDEFINED),
+            // An exportable image is scanned out, not sampled, and a modifier
+            // negotiated with another device says nothing about a chain.
+            mip_levels: 1,
             usage: TextureUsage {
                 render_target: true,
                 transfer: true,

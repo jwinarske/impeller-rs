@@ -52,7 +52,15 @@ pub fn create_sampler(device: &ash::Device) -> Result<vk::Sampler> {
     let info = vk::SamplerCreateInfo::default()
         .mag_filter(vk::Filter::LINEAR)
         .min_filter(vk::Filter::LINEAR)
-        .mipmap_mode(vk::SamplerMipmapMode::NEAREST)
+        // Between levels as well as within one, which is what trilinear means
+        // and what `FilterQuality.medium` asks for. It changes nothing for the
+        // draws that do not want it: the shader names the level it reads, and
+        // every path but the mipmapped one names zero.
+        .mipmap_mode(vk::SamplerMipmapMode::LINEAR)
+        // Without this the maximum level of detail defaults to zero and the
+        // sampler clamps every read back to the largest level, which looks
+        // exactly like a chain that was never generated.
+        .max_lod(vk::LOD_CLAMP_NONE)
         // Clamped in the sampler and wrapped in the shader; see the module
         // note. Clamping here means a repeat's seam interpolates between the
         // texels the shader's own coordinate names, rather than across the
@@ -276,7 +284,12 @@ pub fn build(
             .subresource_range(
                 vk::ImageSubresourceRange::default()
                     .aspect_mask(vk::ImageAspectFlags::COLOR)
-                    .level_count(1)
+                    // Whatever the image has. A view over one level of a
+                    // mipmapped image is a view a sampler cannot minify
+                    // through, and the failure is silent -- the chain is there,
+                    // the sampler is willing, and every read still lands on the
+                    // largest level.
+                    .level_count(vk::REMAINING_MIP_LEVELS)
                     .layer_count(1),
             );
         let view = match unsafe { device.create_image_view(&view_info, None) } {

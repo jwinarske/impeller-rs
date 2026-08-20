@@ -382,7 +382,12 @@ where
         }
     }
     let pixels = if scene.samples_fixture() {
-        let mut sheet = ctx.create_texture(&TextureDescriptor::offscreen(
+        // With a chain, so a plate can draw the sheet smaller than its own size
+        // and mean it. Costs four levels over an eight-by-eight sheet and
+        // changes nothing for the plates that do not ask: only mipmapped
+        // sampling reads past the first level, and every other quality names
+        // level zero outright.
+        let mut sheet = ctx.create_texture(&TextureDescriptor::mipmapped(
             crate::fixture::SIZE,
             PixelFormat::Rgba8Unorm,
         ))?;

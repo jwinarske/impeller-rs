@@ -185,6 +185,33 @@ impl Context {
         }
     }
 
+    /// An image with a full mip chain, for drawing smaller than its own size.
+    ///
+    /// The levels are filled when the image is written, not here, and the
+    /// caller supplies only the image itself: a chain built by any rule other
+    /// than the backend's own would sample differently on the two backends,
+    /// which is the one thing this renderer's tests exist to rule out.
+    ///
+    /// A third again in memory, which is why it is a separate call rather than
+    /// what every image gets. Only [`Sampling::Mipmap`] reads past the first
+    /// level, so an image created this way and drawn at any other quality costs
+    /// the memory and nothing else.
+    ///
+    /// [`Sampling::Mipmap`]: crate::Sampling::Mipmap
+    pub fn create_mipmapped_image(
+        &mut self,
+        extent: Extent2D,
+        format: PixelFormat,
+    ) -> Result<Image> {
+        let descriptor = impeller_hal::TextureDescriptor::mipmapped(extent, format);
+        match self {
+            #[cfg(feature = "vulkan")]
+            Self::Vulkan(ctx) => HalContext::create_texture(ctx, &descriptor).map(Image::Vulkan),
+            #[cfg(feature = "gles")]
+            Self::Gles(ctx) => HalContext::create_texture(ctx, &descriptor).map(Image::Gles),
+        }
+    }
+
     /// Fill an image from host memory, tightly packed and top row first.
     ///
     /// Decoding is out of scope for this crate; bring `image` or another

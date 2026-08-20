@@ -19,6 +19,8 @@ pub struct GlesTexture {
     pub(crate) framebuffer: glow::Framebuffer,
     pub(crate) extent: Extent2D,
     pub(crate) format: PixelFormat,
+    /// How many mip levels the storage was allocated with, the image included.
+    pub(crate) mip_levels: u32,
 }
 
 impl GlesTexture {
@@ -108,18 +110,27 @@ impl GlesContext {
                 .create_texture()
                 .map_err(|e| gl_err("create_texture", &e))?;
             gl.bind_texture(glow::TEXTURE_2D, Some(texture));
+            let mip_levels = desc.mip_levels.max(1);
             gl.tex_storage_2d(
                 glow::TEXTURE_2D,
-                1,
+                mip_levels as i32,
                 internal_format(desc.format),
                 desc.extent.width as i32,
                 desc.extent.height as i32,
             );
-            // Sized storage with one level, so filtering must not expect mips.
+            // The minification filter has to match the storage. Sized storage
+            // with one level and a filter that expects mips leaves the texture
+            // incomplete, which GL answers by sampling black -- not by
+            // reporting an error -- so this is stated from the level count
+            // rather than set to whichever value is wanted more often.
             gl.tex_parameter_i32(
                 glow::TEXTURE_2D,
                 glow::TEXTURE_MIN_FILTER,
-                glow::LINEAR as i32,
+                if mip_levels > 1 {
+                    glow::LINEAR_MIPMAP_LINEAR as i32
+                } else {
+                    glow::LINEAR as i32
+                },
             );
             gl.tex_parameter_i32(
                 glow::TEXTURE_2D,
@@ -161,6 +172,7 @@ impl GlesContext {
             gl.bind_texture(glow::TEXTURE_2D, None);
 
             Ok(GlesTexture {
+                mip_levels,
                 texture,
                 framebuffer,
                 extent: desc.extent,
@@ -510,6 +522,15 @@ impl GlesContext {
                 glow::UNSIGNED_BYTE,
                 glow::PixelUnpackData::Slice(pixels),
             );
+            if texture.mip_levels > 1 {
+                // Every level below the first, each the average of the one
+                // above it. The Vulkan side spells the same chain out as a blit
+                // per level because it has to name the barriers between them;
+                // here the driver owns that, and asking for anything other than
+                // its own downsample would be two backends filtering
+                // differently for no reason a caller could see.
+                gl.generate_mipmap(glow::TEXTURE_2D);
+            }
             gl.bind_texture(glow::TEXTURE_2D, None);
 
             let error = gl.get_error();

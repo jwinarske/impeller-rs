@@ -478,6 +478,9 @@ impl VulkanContext {
                 ..TextureUsage::default()
             },
             sample_count: samples,
+            // A multisample buffer is resolved, never sampled, so a chain over
+            // it would be levels nothing reads.
+            mip_levels: 1,
             #[cfg(unix)]
             external: None,
         };

@@ -1350,6 +1350,38 @@ fn image() -> Vec<Scene> {
             )],
         ),
         plate(
+            "basic/image-mipmap-sampling",
+            // The sheet drawn at half its size and repeated across the plate,
+            // which is the only arrangement that makes minification legible at
+            // this scale: eight texels land on four pixels, so the level built
+            // for that size is the one read. Every other quality here reads the
+            // sheet itself and shows the moire a point sample of a repeating
+            // pattern gives.
+            vec![Item::filled(
+                whole.clone(),
+                sheet(
+                    [0.0, 0.0, 4.0, 4.0],
+                    ALL,
+                    TileMode::Repeat,
+                    Sampling::Mipmap,
+                ),
+            )],
+        ),
+        plate(
+            "basic/image-mipmap-sampling-magnified",
+            // The same quality where there is nothing above the sheet to read,
+            // so it has to come out as the linear plate does. A level chosen
+            // even slightly above zero would show here as a softened sheet, and
+            // this is the plate a reader would compare against to see it.
+            vec![Item::filled(
+                Shape::Rect {
+                    min: [16.0, 16.0],
+                    max: [112.0, 112.0],
+                },
+                sheet(SHEET, ALL, TileMode::Clamp, Sampling::Mipmap),
+            )],
+        ),
+        plate(
             "basic/image-nearest-sampling",
             // The same piece at the same magnification with no reconstruction
             // at all, so the pair reads as the two ends of what the setting

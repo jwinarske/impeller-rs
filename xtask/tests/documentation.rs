@@ -186,15 +186,27 @@ fn the_parity_tables_prose_summary_counts_its_own_rows_correctly() {
     let rows = rows(&doc);
     let count = |status: &str| rows.iter().filter(|(_, s, _)| s == status).count();
 
+    // The document is prose and has to read as prose, so a count of one takes a
+    // singular verb. Written with `are` throughout, this test would demand a
+    // sentence saying "one are partial" -- and the way that gets resolved under
+    // time pressure is by writing the ungrammatical sentence, since the test is
+    // the thing that has to pass.
+    let agreeing = |n: usize, verb: &str| {
+        let (singular, plural) = match verb {
+            "exist" => ("exists", "exist"),
+            _ => ("is", "are"),
+        };
+        format!("{} {}", spell(n), if n == 1 { singular } else { plural })
+    };
     let claim = format!(
-        "Of {} rows across `Canvas` and `Paint`: {} exist, {} are partial, {} are \
-         expressible by a caller who assembles them, {} are absent, and {} is out of scope.",
+        "Of {} rows across `Canvas` and `Paint`: {}, {} partial, {} \
+         expressible by a caller who assembles them, {} absent, and {} out of scope.",
         spell(rows.len()),
-        spell(count("yes")),
-        spell(count("partial")),
-        spell(count("via")),
-        spell(count("no")),
-        spell(count("out of scope")),
+        agreeing(count("yes"), "exist"),
+        agreeing(count("partial"), "be"),
+        agreeing(count("via"), "be"),
+        agreeing(count("no"), "be"),
+        agreeing(count("out of scope"), "be"),
     );
 
     // The sentence is wrapped in the source, so compare against the document

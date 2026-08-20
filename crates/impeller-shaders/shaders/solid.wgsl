@@ -290,12 +290,46 @@ fn cubic(coord: vec2<f32>, low: vec2<f32>, high: vec2<f32>) -> vec4<f32> {
     return vec4<f32>(clamp(total.rgb, vec3<f32>(0.0), vec3<f32>(alpha)), alpha);
 }
 
+/// The mip level a coordinate moving this fast across the screen should read.
+///
+/// `texels` is the coordinate in the texture's own texels rather than in the
+/// zero-to-one space the sampler takes, because the question is how many texels
+/// one screen pixel covers and the answer is that derivative. The larger of the
+/// two screen axes decides it, which is the isotropic choice every fixed
+/// function pipeline makes: an image minified hard along one axis and not the
+/// other comes out blurrier than it needs to be, and the alternative is
+/// anisotropic filtering, which is a sampler feature rather than something a
+/// fragment can reconstruct from two derivatives.
+///
+/// Magnifying gives a negative number, which is not a level. Both APIs clamp it
+/// to the largest one and would do the right thing with it, so the clamp here
+/// is not observable and no test can distinguish it -- it is one instruction
+/// spent on not depending on two different specifications agreeing about a
+/// value out of range. The floor inside the logarithm is load-bearing in a way
+/// the outer clamp is not: a coordinate that does not move at all, which is
+/// what a degenerate triangle gives, would otherwise take the logarithm of
+/// zero.
+fn level_of(texels: vec2<f32>) -> f32 {
+    let per_pixel = max(length(dpdx(texels)), length(dpdy(texels)));
+    return max(log2(max(per_pixel, 1e-6)), 0.0);
+}
+
 /// One texture read, at whatever quality this paint asked for.
 ///
 /// `low` and `high` bound the coordinates any tap may use, which is how a
 /// sprite selection keeps its neighbors out. The linear and nearest paths were
 /// already inside by construction and pass their own bounds through unused.
-fn sampled(coord: vec2<f32>, low: vec2<f32>, high: vec2<f32>) -> vec4<f32> {
+///
+/// `texels` is the same place expressed in the texture's own texels and taken
+/// *before* any tiling was applied. Only the mipmapped path reads it, and it
+/// has to be the untiled one: a repeat wraps with `fract`, whose derivative at
+/// the seam is the width of the whole image, and a level chosen from that is
+/// the smallest one in the chain -- a blurred line down every seam, which is
+/// the classic way this is got wrong.
+fn sampled(coord: vec2<f32>, texels: vec2<f32>, low: vec2<f32>, high: vec2<f32>) -> vec4<f32> {
+    if (paint.params.z > 2.5) {
+        return textureSampleLevel(image_texture, image_sampler, coord, level_of(texels));
+    }
     if (paint.params.z > 1.5) {
         return cubic(coord, low, high);
     }
@@ -326,7 +360,12 @@ fn tile_uv(uv: vec2<f32>, tile: f32) -> vec2<f32> {
 /// image path with everything the vertices already answered taken out.
 fn sample_mesh(uv: vec2<f32>) -> vec4<f32> {
     let tile = paint.geometry.y;
-    var texel = sampled(tile_uv(uv, tile), vec2<f32>(0.0), vec2<f32>(1.0));
+    var texel = sampled(
+        tile_uv(uv, tile),
+        uv * vec2<f32>(textureDimensions(image_texture)),
+        vec2<f32>(0.0),
+        vec2<f32>(1.0),
+    );
     if (tile > 1.5 && tile < 2.5) {
         // Decal, tested against the coordinate as given, since the tiled one
         // is inside by construction.
@@ -369,7 +408,12 @@ fn sample_image(clip: vec2<f32>) -> vec4<f32> {
     let high = max(source.xy + half_texel, source.zw - half_texel);
     coord = clamp(coord, low, high);
 
-    var texel = sampled(coord, low, high);
+    // In texels, from the coordinate before it was tiled and after the source
+    // rectangle scaled it: a sprite selected from a sheet covers as many texels
+    // as the selection is wide, not as many as the sheet is.
+    let size = vec2<f32>(textureDimensions(image_texture));
+    let texels = (source.xy + uv * (source.zw - source.xy)) * size;
+    var texel = sampled(coord, texels, low, high);
     if (tile > 1.5 && tile < 2.5) {
         // Decal: nothing outside the image's own bounds. Tested against the
         // unclamped coordinate, since the clamped one is inside by

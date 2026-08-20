@@ -33,6 +33,8 @@ pub struct VulkanTexture {
     /// batch could sample only one texture at a time.
     pub(crate) layout: std::cell::Cell<vk::ImageLayout>,
     pub(crate) usage: TextureUsage,
+    /// How many mip levels the image was allocated with, the image included.
+    pub(crate) mip_levels: u32,
 }
 
 /// Where a texture's memory came from.
@@ -73,6 +75,9 @@ impl VulkanTexture {
             extent,
             format,
             layout: std::cell::Cell::new(layout),
+            // A swapchain image is one level. Nothing here allocated it, so
+            // nothing here may claim it holds more than it was handed.
+            mip_levels: 1,
             usage: TextureUsage {
                 render_target: true,
                 sampled: false,
@@ -159,7 +164,7 @@ impl VulkanContext {
                 height: desc.extent.height,
                 depth: 1,
             })
-            .mip_levels(1)
+            .mip_levels(desc.mip_levels.max(1))
             .array_layers(1)
             .samples(sample_count_flags(desc.sample_count))
             .tiling(vk::ImageTiling::OPTIMAL)
@@ -199,6 +204,7 @@ impl VulkanContext {
             format: desc.format,
             layout: std::cell::Cell::new(vk::ImageLayout::UNDEFINED),
             usage: desc.usage,
+            mip_levels: desc.mip_levels.max(1),
         })
     }
 
@@ -270,7 +276,7 @@ impl VulkanContext {
         let clear = vk::ClearColorValue { float32: color };
         let range = vk::ImageSubresourceRange::default()
             .aspect_mask(vk::ImageAspectFlags::COLOR)
-            .level_count(1)
+            .level_count(vk::REMAINING_MIP_LEVELS)
             .layer_count(1);
         unsafe {
             device.cmd_clear_color_image(
@@ -380,6 +386,9 @@ impl VulkanContext {
                 );
             }
             texture.layout.set(vk::ImageLayout::TRANSFER_DST_OPTIMAL);
+            // In the same submission as the copy that fed it, so the chain is
+            // never a submission behind the level it was built from.
+            generate_mipmaps(&device, cmd, texture);
             self.submit_one_shot(cmd)
         });
 
@@ -470,6 +479,132 @@ impl VulkanContext {
     }
 }
 
+/// Fill every level below the first by halving the one above it.
+///
+/// A blit per level rather than a single downsample of the original, because
+/// that is what a mip chain means: level two is the average of level one and
+/// not a quarter-scale filter over level zero, and the two differ once an image
+/// has any detail near its own resolution. Linear filtering makes each blit the
+/// average of the four texels it covers.
+///
+/// The barriers are per level rather than over the image, which is the one
+/// place in this backend that has to be: each blit reads the level above while
+/// writing the one below, so within a single chain the same image is a transfer
+/// source and a transfer destination at once, in different subresources.
+/// Transitioning the whole image between them would be transitioning a
+/// subresource the blit is still reading.
+///
+/// Costs nothing on a texture with one level -- the loop does not run, and the
+/// caller does not need to ask whether it should.
+fn generate_mipmaps(device: &ash::Device, cmd: vk::CommandBuffer, texture: &VulkanTexture) {
+    if texture.mip_levels <= 1 {
+        return;
+    }
+    let level_range = |level: u32| {
+        vk::ImageSubresourceRange::default()
+            .aspect_mask(vk::ImageAspectFlags::COLOR)
+            .base_mip_level(level)
+            .level_count(1)
+            .layer_count(1)
+    };
+    let barrier = |level: u32, from: vk::ImageLayout, to: vk::ImageLayout| {
+        let barrier = vk::ImageMemoryBarrier::default()
+            .old_layout(from)
+            .new_layout(to)
+            .src_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
+            .dst_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
+            .image(texture.image)
+            .subresource_range(level_range(level))
+            .src_access_mask(vk::AccessFlags::TRANSFER_WRITE)
+            .dst_access_mask(vk::AccessFlags::TRANSFER_READ);
+        // SAFETY: the command buffer is recording and the image outlives the
+        // submission, which the one-shot helper waits on.
+        unsafe {
+            device.cmd_pipeline_barrier(
+                cmd,
+                vk::PipelineStageFlags::TRANSFER,
+                vk::PipelineStageFlags::TRANSFER,
+                vk::DependencyFlags::empty(),
+                &[],
+                &[],
+                &[barrier],
+            );
+        }
+    };
+
+    let mut width = texture.extent.width.max(1) as i32;
+    let mut height = texture.extent.height.max(1) as i32;
+    for level in 1..texture.mip_levels {
+        // The level above becomes readable. It was written either by the upload
+        // copy, for level zero, or by the previous blit.
+        barrier(
+            level - 1,
+            vk::ImageLayout::TRANSFER_DST_OPTIMAL,
+            vk::ImageLayout::TRANSFER_SRC_OPTIMAL,
+        );
+        // An axis that has reached one texel stays there while the other keeps
+        // halving, which is what makes a chain over a long thin image end in a
+        // strip rather than in nothing.
+        let next_width = (width / 2).max(1);
+        let next_height = (height / 2).max(1);
+        let blit = vk::ImageBlit::default()
+            .src_subresource(
+                vk::ImageSubresourceLayers::default()
+                    .aspect_mask(vk::ImageAspectFlags::COLOR)
+                    .mip_level(level - 1)
+                    .layer_count(1),
+            )
+            .src_offsets([
+                vk::Offset3D { x: 0, y: 0, z: 0 },
+                vk::Offset3D {
+                    x: width,
+                    y: height,
+                    z: 1,
+                },
+            ])
+            .dst_subresource(
+                vk::ImageSubresourceLayers::default()
+                    .aspect_mask(vk::ImageAspectFlags::COLOR)
+                    .mip_level(level)
+                    .layer_count(1),
+            )
+            .dst_offsets([
+                vk::Offset3D { x: 0, y: 0, z: 0 },
+                vk::Offset3D {
+                    x: next_width,
+                    y: next_height,
+                    z: 1,
+                },
+            ]);
+        // SAFETY: as above, and both subresources are in the layouts named.
+        unsafe {
+            device.cmd_blit_image(
+                cmd,
+                texture.image,
+                vk::ImageLayout::TRANSFER_SRC_OPTIMAL,
+                texture.image,
+                vk::ImageLayout::TRANSFER_DST_OPTIMAL,
+                &[blit],
+                vk::Filter::LINEAR,
+            );
+        }
+        width = next_width;
+        height = next_height;
+    }
+
+    // Every level but the last is a transfer source now, and the caller's
+    // record of the image's layout says destination. Putting them back is
+    // cheaper than teaching that record about levels, and the transition that
+    // follows -- to whatever samples this -- covers the whole image at once.
+    for level in 0..texture.mip_levels - 1 {
+        barrier(
+            level,
+            vk::ImageLayout::TRANSFER_SRC_OPTIMAL,
+            vk::ImageLayout::TRANSFER_DST_OPTIMAL,
+        );
+    }
+}
+
 /// Insert a full barrier around a layout change.
 ///
 /// Deliberately heavy-handed: ALL_COMMANDS on both sides with full access
@@ -495,7 +630,12 @@ pub(crate) fn transition(
         .subresource_range(
             vk::ImageSubresourceRange::default()
                 .aspect_mask(vk::ImageAspectFlags::COLOR)
-                .level_count(1)
+                // Every level, because this transitions an image rather than a
+                // level of one and a chain left half in the old layout is a
+                // validation error waiting for the first minified draw. The
+                // generation below transitions levels one at a time and says so
+                // explicitly; nothing else here has any business splitting them.
+                .level_count(vk::REMAINING_MIP_LEVELS)
                 .layer_count(1),
         )
         .src_access_mask(src_access)

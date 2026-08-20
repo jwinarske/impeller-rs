@@ -171,6 +171,20 @@ pub enum Sampling {
     /// weights go a little negative between one and two texels out -- and that
     /// overshoot is the sharpening, not an error in it.
     Cubic,
+    /// A linear read of the mip level that matches how far the image is being
+    /// minified, blended with the level either side of it.
+    ///
+    /// What `dart:ui` calls `FilterQuality.medium`, and the one quality that
+    /// answers minification rather than magnification. Drawn at half its size
+    /// an image read linearly skips every other texel and aliases; read from
+    /// the level built for that size, every texel of the original contributes.
+    ///
+    /// It needs a texture that was allocated with a chain, since a level that
+    /// was never made cannot be read. On a texture without one every read lands
+    /// on the image itself and this is linear -- which is a picture that is
+    /// merely worse rather than wrong, and is what a sampler does with a level
+    /// it does not have.
+    Mipmap,
 }
 
 /// The number the shader reads for a sampling mode.
@@ -179,6 +193,7 @@ fn sampling_code(sampling: Sampling) -> f32 {
         Sampling::Linear => sampling::LINEAR,
         Sampling::Nearest => sampling::NEAREST,
         Sampling::Cubic => sampling::CUBIC,
+        Sampling::Mipmap => sampling::MIPMAP,
     }
 }
 
@@ -187,6 +202,7 @@ pub mod sampling {
     pub const LINEAR: f32 = 0.0;
     pub const NEAREST: f32 = 1.0;
     pub const CUBIC: f32 = 2.0;
+    pub const MIPMAP: f32 = 3.0;
 }
 
 /// Tile mode selector shared with the shader.

@@ -74,9 +74,36 @@ pub struct TextureDescriptor {
     pub usage: TextureUsage,
     /// Sample count for MSAA targets. 1 means single-sampled.
     pub sample_count: u32,
+    /// How many mip levels this texture holds. 1 is the image alone.
+    ///
+    /// A chain is not made for every texture, because it costs a third again
+    /// in memory and a pass of downsampling on upload, and most textures here
+    /// are drawn at or above their own size where it would never be read. A
+    /// caller who will minify states it, and [`Self::mipmapped`] works out how
+    /// many levels that takes.
+    ///
+    /// Levels past the first are filled by the backend when the texture is
+    /// written, not by the caller: there is no way to hand them in, because a
+    /// chain a caller built by some other rule would sample differently on the
+    /// two backends and this renderer's whole test model is that they agree.
+    pub mip_levels: u32,
     /// When present, import this existing image instead of allocating.
     #[cfg(unix)]
     pub external: Option<ExternalImageDesc>,
+}
+
+/// How many mip levels an image of this size has, counting the image itself.
+///
+/// Halving the larger axis until it reaches one texel, which is what both
+/// backends mean by a complete chain: a level is not required to be square, and
+/// an axis that reaches one stays there while the other keeps halving.
+pub fn mip_levels_for(extent: Extent2D) -> u32 {
+    let longest = extent.width.max(extent.height).max(1);
+    // `ilog2` of a power of two is the exponent, and of anything else is the
+    // exponent below it -- which is the count of halvings that still leave more
+    // than one texel, so adding the level for the image itself is the whole
+    // chain either way.
+    longest.ilog2() + 1
 }
 
 impl TextureDescriptor {
@@ -87,9 +114,28 @@ impl TextureDescriptor {
             format,
             usage: TextureUsage::offscreen(),
             sample_count: 1,
+            mip_levels: 1,
             #[cfg(unix)]
             external: None,
         }
+    }
+
+    /// The same, with a full mip chain.
+    ///
+    /// Every level down to a single texel, which is what a caller minifying by
+    /// an unknown amount needs and is only a third again in memory however far
+    /// it goes -- each level is a quarter of the one above, and a quarter
+    /// summed forever is a third.
+    pub fn mipmapped(extent: Extent2D, format: PixelFormat) -> Self {
+        Self {
+            mip_levels: mip_levels_for(extent),
+            ..Self::offscreen(extent, format)
+        }
+    }
+
+    /// Whether this texture holds more than the image itself.
+    pub fn is_mipmapped(&self) -> bool {
+        self.mip_levels > 1
     }
 
     /// Whether this describes an import rather than an allocation.
