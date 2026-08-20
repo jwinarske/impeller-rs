@@ -553,6 +553,167 @@ fn path() -> Vec<Scene> {
             )],
         ),
         plate(
+            "path/stroke-with-a-zero-length-segment",
+            // A point repeated in the middle of a run. The segment between the
+            // two copies has no direction, so anything deriving a normal from
+            // it divides by its length -- and the failure is not a wrong
+            // picture but a hole, a spike, or nothing at all. Impeller's own
+            // path suite carries this case for the same reason.
+            vec![Item::stroke(
+                Shape::Polyline(vec![
+                    [16.0, 40.0],
+                    [56.0, 40.0],
+                    [56.0, 40.0],
+                    [112.0, 40.0],
+                ]),
+                StrokeSpec {
+                    cap: LineCap::Round,
+                    join: LineJoin::Round,
+                    ..StrokeSpec::new(14.0)
+                },
+                RED,
+            )],
+        ),
+        plate(
+            "path/stroke-that-doubles-back-on-itself",
+            // An instant turn: the run goes out and returns along the same
+            // line, so the join between the two segments is a full reversal.
+            // A miter there is infinitely long and has to fall back, which is
+            // the one case the miter limit exists for and the one a gentle
+            // corner cannot reach.
+            vec![
+                Item::stroke(
+                    Shape::Polyline(vec![[24.0, 36.0], [104.0, 36.0], [24.0, 36.0]]),
+                    StrokeSpec {
+                        cap: LineCap::Butt,
+                        join: LineJoin::Miter,
+                        ..StrokeSpec::new(16.0)
+                    },
+                    GREEN,
+                ),
+                Item::stroke(
+                    Shape::Polyline(vec![[24.0, 84.0], [104.0, 84.0], [24.0, 84.0]]),
+                    StrokeSpec {
+                        cap: LineCap::Round,
+                        join: LineJoin::Round,
+                        ..StrokeSpec::new(16.0)
+                    },
+                    BLUE,
+                ),
+            ],
+        ),
+        plate(
+            "path/arcs-of-degenerate-sweep",
+            // Three sweeps that are not a normal arc: none at all, a full turn,
+            // and more than a full turn. A zero sweep is a point and must draw
+            // either nothing or a cap, never a whole ring; a sweep past two pi
+            // must not wind twice and cancel itself under a nonzero fill.
+            vec![
+                Item::stroke(
+                    Shape::Arc {
+                        center: [32.0, 64.0],
+                        radii: [22.0, 22.0],
+                        start: 0.0,
+                        sweep: 0.0,
+                        through_center: false,
+                    },
+                    StrokeSpec {
+                        cap: LineCap::Round,
+                        ..StrokeSpec::new(8.0)
+                    },
+                    YELLOW,
+                ),
+                Item::stroke(
+                    Shape::Arc {
+                        center: [64.0, 64.0],
+                        radii: [22.0, 22.0],
+                        start: 0.0,
+                        sweep: std::f32::consts::TAU,
+                        through_center: false,
+                    },
+                    StrokeSpec::new(6.0),
+                    GREEN,
+                ),
+                Item::filled(
+                    Shape::Arc {
+                        center: [100.0, 64.0],
+                        radii: [22.0, 22.0],
+                        start: 0.4,
+                        sweep: std::f32::consts::TAU * 1.35,
+                        through_center: true,
+                    },
+                    Fill::Solid(BLUE),
+                ),
+            ],
+        ),
+        plate(
+            "path/circles-from-subpixel-to-large",
+            // A radius sweep across the scale where coverage is decided one
+            // sample at a time rather than by area. At four samples a circle of
+            // radius a third draws nothing, half a pixel lights one sample, and
+            // it is not until about one and a half that any pixel comes out
+            // solid. That staircase is not a fault -- it is what sample-based
+            // coverage is -- but every step of it is a place two rasterizers
+            // could put their samples differently and disagree, which is what
+            // this plate is for. The smallest circle here is below the first
+            // step, and the backends agreeing that it draws nothing at all is
+            // as much a comparison as the ones that do.
+            (0..6)
+                .map(|i| {
+                    let radius = 0.4 * (2.6f32).powi(i);
+                    Item::filled(
+                        Shape::Circle {
+                            center: [14.0 + i as f32 * 20.0, 64.0],
+                            radius,
+                        },
+                        Fill::Solid(WHITE),
+                    )
+                })
+                .collect(),
+        ),
+        plate(
+            "path/rounded-rects-from-square-to-stadium",
+            // A corner radius taken past half the shorter side, where it is
+            // clamped. Unclamped the corners would cross and the outline would
+            // fold through itself, which fills as a bow tie under a nonzero
+            // rule and as a hole under an even-odd one -- two wrong pictures
+            // rather than one, and neither an error.
+            (0..4)
+                .map(|i| {
+                    let top = 8.0 + i as f32 * 30.0;
+                    Item::filled(
+                        Shape::RoundedRect {
+                            min: [16.0, top],
+                            max: [112.0, top + 24.0],
+                            radius: [0.0, 4.0, 12.0, 40.0][i],
+                        },
+                        Fill::Solid(BLUE),
+                    )
+                })
+                .collect(),
+        ),
+        plate(
+            "path/cubic-with-a-cusp",
+            // Control points crossing, so the curve reverses direction at a
+            // point where its tangent vanishes. A stroke there has no normal to
+            // offset along, which is the curve equivalent of the repeated point
+            // above and reaches a different part of the same arithmetic.
+            vec![Item::stroke(
+                Shape::Cubic {
+                    start: [24.0, 92.0],
+                    c0: [104.0, 20.0],
+                    c1: [24.0, 20.0],
+                    end: [104.0, 92.0],
+                },
+                StrokeSpec {
+                    cap: LineCap::Round,
+                    join: LineJoin::Round,
+                    ..StrokeSpec::new(10.0)
+                },
+                YELLOW,
+            )],
+        ),
+        plate(
             "path/stroke-caps-and-joins",
             vec![
                 Item::stroke(
