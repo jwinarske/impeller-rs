@@ -110,6 +110,16 @@ pub enum Shader {
     RuntimeEffect {
         program: u32,
         uniforms: Vec<f32>,
+        /// A texture slot the program may sample, if it declares one.
+        ///
+        /// The same table an image paint names, so a caller supplies it in the
+        /// same array beside the recording. One rather than several, which is
+        /// what a draw already carries.
+        ///
+        /// A program that samples having named nothing here reads a one-pixel
+        /// opaque white texture -- what a solid fill binds, and what keeps a
+        /// pipeline's declared binding satisfied.
+        image: Option<u32>,
     },
     /// A gradient between two circles **in user space**, reaching its first
     /// stop on the first circle and its last on the second.
@@ -388,9 +398,24 @@ impl Paint {
     /// what goes here.
     pub fn runtime_effect(program: u32, uniforms: Vec<f32>) -> Self {
         Self {
-            shader: Shader::RuntimeEffect { program, uniforms },
+            shader: Shader::RuntimeEffect {
+                program,
+                uniforms,
+                image: None,
+            },
             ..Default::default()
         }
+    }
+
+    /// Give a runtime effect a texture to sample.
+    ///
+    /// Ignored by every other kind of paint, which either samples nothing or
+    /// already names what it samples.
+    pub fn with_effect_image(mut self, slot: u32) -> Self {
+        if let Shader::RuntimeEffect { image, .. } = &mut self.shader {
+            *image = Some(slot);
+        }
+        self
     }
 
     /// A fill that runs between two circles in user space.

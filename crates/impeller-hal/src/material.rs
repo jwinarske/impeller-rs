@@ -519,6 +519,16 @@ pub enum Material {
     Runtime {
         program: u32,
         uniforms: Vec<f32>,
+        /// A texture the program may sample, if it declares one.
+        ///
+        /// No new descriptor set. Every draw already binds a texture at the
+        /// one binding this renderer's shader declares -- a placeholder where
+        /// the material samples nothing, because a pipeline that declares a
+        /// binding must have it bound however unreachable the branch reading
+        /// it. An effect declaring the same binding gets whatever this names,
+        /// which is one texture rather than the several `dart:ui` allows, and
+        /// is what the existing machinery already carries.
+        texture: Option<u32>,
     },
     /// A texture, sampled at coordinates the vertices carry.
     ///
@@ -769,10 +779,11 @@ impl Material {
             | Self::RadialGradient { ramp, .. }
             | Self::SweepGradient { ramp, .. }
             | Self::ConicalGradient { ramp, .. } => *ramp,
-            Self::Solid(_)
-            | Self::RoundedRect { .. }
-            | Self::Ellipse { .. }
-            | Self::Runtime { .. } => None,
+            Self::Solid(_) | Self::RoundedRect { .. } | Self::Ellipse { .. } => None,
+            // Whatever a caller named, and `None` where they named nothing --
+            // in which case the placeholder is bound and a program that
+            // samples anyway reads opaque white.
+            Self::Runtime { texture, .. } => *texture,
         }
     }
 

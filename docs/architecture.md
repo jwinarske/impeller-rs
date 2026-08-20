@@ -977,10 +977,19 @@ and what this project's own build does.
 **The interface is the paint's own uniform block.** A runtime effect declares
 the same std140 block every material uses and reads the floats a caller packed
 into it. That is fifty-six floats, which is what a material already costs, and
-it buys a first version with no new descriptor set, no new binding, and no
-change to how a draw's uniforms reach the shader. An effect wanting more than
-that, or wanting textures of its own, is a second version and a second
-descriptor set — worth doing once something needs it rather than before.
+it buys a version with no new descriptor set, no new binding, and no change to
+how a draw's uniforms reach the shader.
+
+**A texture came the same way, and for a reason worth noticing.** The obvious
+reading of "an effect needs to sample an image" is that it needs a descriptor
+set of its own. It does not, because every draw already binds a texture at the
+one binding this renderer's shader declares — a placeholder where the material
+samples nothing, since a pipeline must have every binding it declares bound
+however unreachable the branch reading it. So a program declaring the same
+binding gets whatever the draw named, and the machinery carrying it is the
+machinery that was already there. What that buys is one texture rather than the
+several `dart:ui` allows, which is what an image-based effect wants; several is
+the second descriptor set, and still worth deferring until something asks.
 
 **A program is a pipeline, not a material kind.** Every material today shares
 one fragment shader and picks its behaviour by branching on a kind. A runtime

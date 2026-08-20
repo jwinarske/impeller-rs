@@ -1088,9 +1088,17 @@ impl Canvas {
             // matrix -- because this renderer's own shader expects it that
             // way. A caller's program expects whatever the caller wrote, and
             // there is nothing here that could resolve it correctly.
-            Shader::RuntimeEffect { program, uniforms } => Material::Runtime {
+            Shader::RuntimeEffect {
+                program,
+                uniforms,
+                image,
+            } => Material::Runtime {
                 program: *program,
                 uniforms: uniforms.clone(),
+                // Through this pass's own table, like every other texture: a
+                // layer occupies a slot too, so a caller's index and the
+                // pass's are not the same number once one is opened.
+                texture: image.map(|slot| self.slot_for(TextureSource::Image(slot))),
             },
             Shader::Image {
                 slot,

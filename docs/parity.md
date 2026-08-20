@@ -181,11 +181,12 @@ build them:
    wants that should re-record. The pass model has the other half of the
    question: a nested recording arrives with its own passes and its own
    texture table, and merging those is about numbering slots.
-3. **The rest of runtime effects.** A caller's fragment program draws, on both
-   backends, through the paint. What it gets is the material's own uniform
-   block — fifty-six floats — and no textures of its own. An effect wanting
-   more than that, or wanting to sample an image the caller supplies, needs a
-   second descriptor set, which is worth building when something asks for it.
+3. **The rest of runtime effects.** A caller's fragment program draws on both
+   backends, through the paint, with the material's own uniform block — fifty-
+   six floats — and one texture, which it gets without a descriptor set of its
+   own because every draw already binds one. What is missing is *several*
+   textures, which `dart:ui` allows and which does need a second set. Worth
+   building when something asks for it.
 
    This row was described here for a long time as needing a shader pipeline
    that compiles at run time. That was wrong, and the correction was most of

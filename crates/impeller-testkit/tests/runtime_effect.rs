@@ -51,6 +51,7 @@ where
             Material::Runtime {
                 program: id,
                 uniforms: uniforms(0.25),
+                texture: None,
             },
             BlendMode::Src,
         )

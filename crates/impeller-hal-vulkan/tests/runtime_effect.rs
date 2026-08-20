@@ -82,6 +82,7 @@ fn a_registered_program_draws_its_own_picture() {
         Material::Runtime {
             program: id,
             uniforms: uniforms([1.0, 0.0, 0.0, 1.0], [0.0, 0.0, 1.0, 1.0], 0.0),
+            texture: None,
         },
     );
     assert_eq!(pixel(&pixels, 4, 16), [255, 0, 0, 255], "left of the split");
@@ -102,6 +103,7 @@ fn the_uniforms_a_caller_packed_are_the_ones_the_program_reads() {
             Material::Runtime {
                 program: id,
                 uniforms: uniforms([1.0, 0.0, 0.0, 1.0], [0.0, 0.0, 1.0, 1.0], threshold),
+                texture: None,
             },
         )
     };
@@ -130,6 +132,7 @@ fn a_program_nobody_registered_is_refused_rather_than_drawn() {
             Material::Runtime {
                 program: 7,
                 uniforms: uniforms([1.0; 4], [0.0; 4], 0.0),
+                texture: None,
             },
             BlendMode::Src,
         )
@@ -161,6 +164,7 @@ fn a_built_in_material_still_draws_beside_a_registered_one() {
             Material::Runtime {
                 program: id,
                 uniforms: uniforms([1.0, 0.0, 0.0, 1.0], [0.0, 0.0, 1.0, 1.0], 0.0),
+                texture: None,
             },
             BlendMode::Src,
         )
@@ -202,4 +206,97 @@ fn registering_one_program_twice_gives_one_program() {
     let first = ctx.register_program(&program()).expect("first");
     let second = ctx.register_program(&program()).expect("second");
     assert_eq!(first, second, "the same payload should be the same program");
+}
+
+#[test]
+fn an_effect_reads_the_texture_the_draw_named() {
+    // An effect gets a texture without a descriptor set of its own, because
+    // every draw already binds one at the binding this renderer's shader
+    // declares. What that buys is one texture rather than the several
+    // `dart:ui` allows -- and one is what an image-based effect wants.
+    let Some(mut ctx) = context() else { return };
+    let id = ctx
+        .register_program(&RuntimeProgram {
+            spirv: impeller_shaders::EFFECT_IMAGE_SPV.to_vec(),
+            glsl_es: impeller_shaders::EFFECT_IMAGE_FS_GLSL.to_string(),
+        })
+        .expect("register");
+
+    // Two texels side by side, so which one a coordinate read is legible.
+    let mut source = ctx
+        .create_texture(&TextureDescriptor::offscreen(
+            Extent2D::new(2, 1),
+            PixelFormat::Rgba8Unorm,
+        ))
+        .expect("source");
+    ctx.write_texture(&mut source, &[255, 0, 0, 255, 0, 0, 255, 255])
+        .expect("upload");
+
+    let mut uniforms = vec![0.0; impeller_hal::RUNTIME_FLOATS];
+    // A tint of opaque white, which changes nothing and leaves the picture the
+    // texture's own.
+    uniforms[0..4].copy_from_slice(&[1.0, 1.0, 1.0, 1.0]);
+
+    let mut batch = Batch::new();
+    batch
+        .push(
+            &FULL,
+            &QUAD,
+            Material::Runtime {
+                program: id,
+                uniforms,
+                texture: Some(0),
+            },
+            BlendMode::Src,
+        )
+        .expect("push");
+
+    let mut target = ctx
+        .create_texture(&TextureDescriptor::offscreen(SIZE, PixelFormat::Rgba8Unorm))
+        .expect("target");
+    ctx.submit_batch_textured(
+        &mut target,
+        &batch,
+        PassDescriptor::clear([0.0, 0.0, 0.0, 1.0]),
+        &[&source],
+    )
+    .expect("submit");
+    let pixels = ctx.read_texture(&mut target).expect("readback");
+    ctx.destroy_texture(target);
+    ctx.destroy_texture(source);
+
+    assert_eq!(pixel(&pixels, 4, 16), [255, 0, 0, 255], "the first texel");
+    assert_eq!(pixel(&pixels, 28, 16), [0, 0, 255, 255], "the second");
+}
+
+#[test]
+fn an_effect_naming_no_texture_reads_the_placeholder_rather_than_failing() {
+    // A pipeline must have every binding it declares bound, and a program
+    // declaring a texture it was given none for would otherwise be invalid.
+    // The placeholder is opaque white, so a tint comes through as itself --
+    // which is a sensible picture rather than a crash, and is what the same
+    // arrangement already does for a solid fill.
+    let Some(mut ctx) = context() else { return };
+    let id = ctx
+        .register_program(&RuntimeProgram {
+            spirv: impeller_shaders::EFFECT_IMAGE_SPV.to_vec(),
+            glsl_es: impeller_shaders::EFFECT_IMAGE_FS_GLSL.to_string(),
+        })
+        .expect("register");
+
+    let mut uniforms = vec![0.0; impeller_hal::RUNTIME_FLOATS];
+    uniforms[0..4].copy_from_slice(&[0.0, 1.0, 0.0, 1.0]);
+    let pixels = render(
+        &mut ctx,
+        Material::Runtime {
+            program: id,
+            uniforms,
+            texture: None,
+        },
+    );
+    assert_eq!(
+        pixel(&pixels, 16, 16),
+        [0, 255, 0, 255],
+        "white placeholder times the tint is the tint"
+    );
 }

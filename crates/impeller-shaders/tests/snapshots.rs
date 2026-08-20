@@ -96,10 +96,18 @@ fn the_translated_glsl_is_what_it_was() {
     // translator change that altered it would move the ground under those
     // tests rather than under anything a user sees.
     check("effect.frag.glsl", impeller_shaders::EFFECT_FS_GLSL);
+    check(
+        "effect_image.frag.glsl",
+        impeller_shaders::EFFECT_IMAGE_FS_GLSL,
+    );
 }
 
 #[test]
 fn the_translated_spirv_is_what_it_was() {
     check("solid.spv.txt", &digest(impeller_shaders::SOLID_SPV));
     check("effect.spv.txt", &digest(impeller_shaders::EFFECT_SPV));
+    check(
+        "effect_image.spv.txt",
+        &digest(impeller_shaders::EFFECT_IMAGE_SPV),
+    );
 }

@@ -6829,3 +6829,65 @@ fn a_paint_naming_a_program_nobody_registered_is_refused() {
         "a program nobody registered should be refused when the recording is drawn"
     );
 }
+
+#[test]
+fn a_runtime_effect_can_read_a_texture_the_caller_supplied() {
+    // What closes the gap between this and `dart:ui`'s fragment shader for the
+    // common case. No descriptor set of its own: every draw already binds a
+    // texture at the one binding this renderer's shader declares, so a program
+    // declaring the same gets whatever the paint named.
+    let Some(mut ctx) = context() else { return };
+    let program = ctx
+        .register_program(&impeller::RuntimeProgram {
+            spirv: impeller_shaders::EFFECT_IMAGE_SPV.to_vec(),
+            glsl_es: impeller_shaders::EFFECT_IMAGE_FS_GLSL.to_string(),
+        })
+        .expect("register");
+
+    let mut image = ctx
+        .create_image(Extent2D::new(4, 4), PixelFormat::Rgba8Unorm)
+        .expect("image");
+    ctx.write_image(&mut image, &quadrant_image())
+        .expect("upload");
+
+    let mut uniforms = vec![0.0; RUNTIME_FLOATS];
+    // Opaque white, so what comes out is the texture rather than the tint.
+    uniforms[0..4].copy_from_slice(&[1.0, 1.0, 1.0, 1.0]);
+
+    let mut canvas = Canvas::new(SIZE);
+    canvas.clear(Color::BLACK);
+    canvas
+        .draw_rect(
+            Rect::from_size(128.0, 128.0),
+            &Paint::runtime_effect(program, uniforms)
+                .with_effect_image(0)
+                .with_anti_alias(false),
+        )
+        .expect("effect");
+
+    let mut surface = ctx
+        .create_surface(SIZE, PixelFormat::Rgba8Unorm)
+        .expect("surface");
+    ctx.draw_with_images(&mut surface, &canvas.finish(), &[&image])
+        .expect("draw");
+    let pixels = ctx.read(&mut surface).expect("read");
+    ctx.destroy_surface(surface);
+    ctx.destroy_image(image);
+
+    // The program maps clip space onto the texture with Y increasing upward,
+    // which is the convention this renderer's clip space uses and not the
+    // one an image material undoes -- so the sheet arrives flipped compared
+    // with `drawImage`, and that is the caller's arithmetic to own.
+    for (x, y, want, corner) in [
+        (16u32, 112u32, [255u8, 0, 0, 255], "bottom-left"),
+        (112, 112, [0, 255, 0, 255], "bottom-right"),
+        (16, 16, [0, 0, 255, 255], "top-left"),
+        (112, 16, [255, 255, 0, 255], "top-right"),
+    ] {
+        assert_eq!(
+            pixel(&pixels, x, y),
+            want,
+            "the {corner} of the frame read the wrong texel"
+        );
+    }
+}

@@ -85,6 +85,11 @@ fn shader_for(fill: &Fill) -> Shader {
             // which the executor does.
             program: 0,
             uniforms: uniforms.clone(),
+            // The scene format has no way to say a program samples the sheet
+            // yet, and the fixture effect does not. Adding it is the same
+            // shape of change as the fill that named the sheet, for the day a
+            // plate needs one.
+            image: None,
         },
         Fill::Image {
             rect,
