@@ -7237,3 +7237,156 @@ fn an_image_filter_on_a_shape_with_a_fast_path_is_not_quietly_dropped() {
         );
     }
 }
+
+/// The sRGB transfer function on the host, to compare the shader against.
+///
+/// Written out longhand rather than shared with the renderer on purpose: a
+/// constant copied from the shader would agree with the shader even if both
+/// were wrong, and these numbers are the ones the specification states.
+fn encode_srgb(linear: f32) -> f32 {
+    if linear <= 0.003_130_8 {
+        linear * 12.92
+    } else {
+        1.055 * linear.powf(1.0 / 2.4) - 0.055
+    }
+}
+
+fn decode_srgb(encoded: f32) -> f32 {
+    if encoded <= 0.040_45 {
+        encoded / 12.92
+    } else {
+        ((encoded + 0.055) / 1.055).powf(2.4)
+    }
+}
+
+#[test]
+fn the_gamma_filter_follows_the_curve_at_both_ends_of_it() {
+    // The reason the gamma pair cannot be a color matrix, tested where it
+    // matters. Almost anywhere in the midtones the curve is within a couple of
+    // 8-bit steps of a plain power of 2.2, which is close enough that a test
+    // there would pass on the approximation too. Below the knee at 0.0031308
+    // the curve is a straight line of slope 12.92 and the approximation is
+    // nowhere near it, so that is where this samples.
+    let Some(mut ctx) = context() else { return };
+
+    // Two below the knee, two above, one on either side of a byte boundary so
+    // that no sample is near a rounding tie.
+    const SAMPLES: [f32; 4] = [0.001, 0.002_5, 0.2, 0.75];
+
+    let mut canvas = Canvas::new(SIZE);
+    canvas.clear(Color::linear(0.0, 0.0, 0.0, 1.0));
+    for (i, value) in SAMPLES.iter().enumerate() {
+        let x = i as f32 * 32.0;
+        canvas
+            .draw_rect(
+                Rect::new(x, 0.0, x + 32.0, 128.0),
+                &Paint::fill(Color::linear(*value, *value, *value, 1.0))
+                    .with_color_filter(ColorFilter::linear_to_srgb())
+                    .with_anti_alias(false),
+            )
+            .expect("encoded");
+    }
+    let pixels = render(&mut ctx, canvas);
+
+    for (i, value) in SAMPLES.iter().enumerate() {
+        let want = (encode_srgb(*value) * 255.0).round() as i32;
+        let got = pixel(&pixels, i as u32 * 32 + 16, 64);
+        assert!(
+            (got[0] as i32 - want).abs() <= 2,
+            "linear {value} should encode to {want}, got {}. A power of 2.2 \
+             would give {} instead.",
+            got[0],
+            (value.powf(1.0 / 2.2) * 255.0).round() as i32
+        );
+    }
+}
+
+#[test]
+fn the_gamma_pair_undo_each_other() {
+    // Each direction is checked against the host curve above, which would pass
+    // even if the two shader branches were the same function written twice.
+    // This is the property that makes them a pair: decoding what the other
+    // encoded lands back where it started.
+    let Some(mut ctx) = context() else { return };
+
+    const LINEAR: f32 = 0.35;
+    let encoded = encode_srgb(LINEAR);
+
+    let mut canvas = Canvas::new(SIZE);
+    canvas.clear(Color::linear(0.0, 0.0, 0.0, 1.0));
+    canvas
+        .draw_rect(
+            Rect::new(0.0, 0.0, 64.0, 128.0),
+            &Paint::fill(Color::linear(LINEAR, LINEAR, LINEAR, 1.0))
+                .with_color_filter(ColorFilter::linear_to_srgb())
+                .with_anti_alias(false),
+        )
+        .expect("encoded");
+    canvas
+        .draw_rect(
+            Rect::new(64.0, 0.0, 128.0, 128.0),
+            &Paint::fill(Color::linear(encoded, encoded, encoded, 1.0))
+                .with_color_filter(ColorFilter::srgb_to_linear())
+                .with_anti_alias(false),
+        )
+        .expect("decoded");
+    let pixels = render(&mut ctx, canvas);
+
+    let left = pixel(&pixels, 32, 64);
+    let right = pixel(&pixels, 96, 64);
+    let want_left = (encoded * 255.0).round() as i32;
+    let want_right = (decode_srgb(encoded) * 255.0).round() as i32;
+    assert_eq!(
+        want_right,
+        (LINEAR * 255.0).round() as i32,
+        "the host curve does not round-trip, so the test itself is wrong"
+    );
+    assert!(
+        (left[0] as i32 - want_left).abs() <= 2,
+        "encoding {LINEAR} should give {want_left}, got {left:?}"
+    );
+    assert!(
+        (right[0] as i32 - want_right).abs() <= 2,
+        "decoding {encoded} should give back {want_right}, got {right:?}. \
+         The two directions are not inverses."
+    );
+}
+
+#[test]
+fn the_gamma_filter_curves_colour_and_leaves_alpha_alone() {
+    // Gamma applies to straight color: the shader has to divide the alpha out
+    // first, curve what is left, and multiply it back. Curving the
+    // premultiplied channel instead would encode the coverage along with the
+    // color, and curving alpha would change how much of the pixel is covered
+    // at all -- a filter that says nothing about coverage.
+    let Some(mut ctx) = context() else { return };
+
+    const LINEAR: f32 = 0.25;
+    const ALPHA: f32 = 0.5;
+
+    let mut canvas = Canvas::new(SIZE);
+    canvas.clear(Color::linear(0.0, 0.0, 0.0, 0.0));
+    canvas
+        .draw_rect(
+            Rect::from_size(128.0, 128.0),
+            &Paint::fill(Color::linear(LINEAR, LINEAR, LINEAR, ALPHA))
+                .with_color_filter(ColorFilter::linear_to_srgb())
+                .with_anti_alias(false),
+        )
+        .expect("filtered");
+    let pixels = render(&mut ctx, canvas);
+
+    let got = pixel(&pixels, 64, 64);
+    let want = (encode_srgb(LINEAR) * ALPHA * 255.0).round() as i32;
+    assert!(
+        (got[3] as i32 - (ALPHA * 255.0).round() as i32).abs() <= 2,
+        "alpha should pass through the curve untouched, got {got:?}"
+    );
+    assert!(
+        (got[0] as i32 - want).abs() <= 2,
+        "the straight color should be curved and then premultiplied, which is \
+         {want}. Curving the premultiplied channel would give {} instead. Got \
+         {got:?}",
+        (encode_srgb(LINEAR * ALPHA) * 255.0).round() as i32
+    );
+}

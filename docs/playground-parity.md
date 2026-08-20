@@ -49,7 +49,7 @@ drifts from what it inventories is worse than none.
 | `aiks_dl_gradient_unittests.cc` | ~40 | 17 | dithering |
 | `aiks_dl_clip_unittests.cc` | ~5 | 3 | difference clips |
 | `aiks_dl_opacity_unittests.cc` | ~3 | 2 | subpass collapse |
-| `aiks_dl_blend_unittests.cc` | ~79 | 34 | framebuffer fetch, wide gamut, subpass collapse |
+| `aiks_dl_blend_unittests.cc` | ~79 | 36 | framebuffer fetch, wide gamut, subpass collapse |
 | `aiks_dl_blur_unittests.cc` | ~59 | 19 | backdrop identity keys, blurs under rotation and clipping together, mipmap cases |
 | `aiks_dl_vertices_unittests.cc` | ~16 | 10 | runtime effects, mask filters on a mesh |
 | `aiks_dl_atlas_unittests.cc` | ~15 | 5 | advanced blends per sprite, wide gamut, geometry-level cases |
@@ -59,7 +59,7 @@ drifts from what it inventories is worse than none.
 | `aiks_dl_runtime_effect_unittests.cc` | — | 3 | bounded by having one fixture program rather than by the renderer |
 | `aiks_dl_unittests.cc` | ~39 | 7 | mostly internal optimizations and picture round-trips |
 
-The catalog holds one hundred and forty-eight scenes of roughly four hundred,
+The catalog holds one hundred and fifty scenes of roughly four hundred,
 and the proportion is less interesting than which ones: the arithmetic of drawing is largely covered, and
 what is missing is either a capability this renderer does not have or a thing
 the scene model cannot describe.

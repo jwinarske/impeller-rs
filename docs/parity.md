@@ -117,7 +117,7 @@ reason.
 | `isAntiAlias` | yes | `with_anti_alias` | `circle-antialiased`, `curve-antialiased` |
 | `blendMode` | yes | `with_blend`, all of Porter-Duff and the fifteen advanced modes where the device offers them | `advanced-blend-*` |
 | `shader` | yes | linear, radial, sweep and conical gradients, images, and a caller's own fragment program | `a_caller_can_fill_a_shape_with_their_own_fragment_program` |
-| `colorFilter` | partial | `with_color_filter`: a color matrix, and any blend against a constant that is affine in what it blends. Not the advanced blend modes, and not the gamma pair | `colour-filter-luminance` |
+| `colorFilter` | yes | `with_color_filter`: a color matrix, the sRGB transfer function in either direction, and any blend against a constant that is affine in what it blends. Not the advanced blend modes, which the paint's own blend mode covers | `the_gamma_filter_follows_the_curve_at_both_ends_of_it` |
 | `imageFilter` | partial | `with_image_filter`: a blur and a matrix, applied to what the paint drew rather than to the colour it computed. Not dilate, erode or compose | `a_matrix_image_filter_moves_what_was_drawn` |
 | `maskFilter` | yes | `with_mask_blur` and `with_mask_blur_style`: a blur of a shape's coverage in all four styles. Solid colors only, since the identity it rests on holds for nothing else | `each_mask_blur_style_keeps_the_part_of_the_blur_it_names` |
 | `filterQuality` | partial | `with_sampling`: linear and nearest. `medium` and `high` are mipmapped and bicubic, and neither exists here to select | `nearest_sampling_reads_one_texel_where_linear_blends_two` |
@@ -137,35 +137,16 @@ above it or not at all:
 
 ## Where that leaves it
 
-Of forty-seven rows across `Canvas` and `Paint`: thirty-four exist, four are
+Of forty-seven rows across `Canvas` and `Paint`: thirty-five exist, three are
 partial, five are expressible by a caller who assembles them, three are absent,
 and one is out of scope. Counting them is the least interesting thing
 about the table -- the absences are not equal, and a reader deciding whether
 this renderer is usable should look at which ones rather than how many.
 
-The three that would matter most to a real application, in the order I would
+The two that would matter most to a real application, in the order I would
 build them:
 
-1. **The rest of `colorFilter`.** A color matrix works, and so does any blend
-   against a constant color that is affine in what it blends — which is every
-   separable Porter-Duff mode, because with the source fixed each of them is a
-   matrix, and the derivation is checked against the hardware blender computing
-   the same thing its own way. What is missing is the advanced modes, which are
-   piecewise or exchange components between channels and are refused rather
-   than approximated, and `linearToSrgbGamma`/`srgbToLinearGamma`, which are
-   transfer functions rather than affine maps and sit oddly in a pipeline that
-   stays linear until the attachment writes.
-
-   Getting this far took moving materials out of push constants, and the
-   premise is worth recording because I had just been wrong about a similar
-   one. A conical gradient did *not* need that move: a whole float was carrying
-   a boolean, and a material whose colors are in a texture has no stop count to
-   report, so the two folded into one number. A color filter genuinely does
-   need it — it applies on top of whatever material is there, and a color
-   matrix alone is twenty floats. Check whether a field is paying for its width
-   before concluding a limit has been reached; that is not an argument against
-   changing a mechanism when it has to change.
-2. **`drawPicture`**, which is a smaller feature here than it is in Skia and
+1. **`drawPicture`**, which is a smaller feature here than it is in Skia and
    worth understanding before anyone plans it. An `SkPicture` is a command
    list, so replaying one under a new transform re-runs the commands and
    re-tessellates. A `Recording` here is already tessellated: paths were
@@ -181,7 +162,7 @@ build them:
    wants that should re-record. The pass model has the other half of the
    question: a nested recording arrives with its own passes and its own
    texture table, and merging those is about numbering slots.
-3. **The rest of runtime effects.** A caller's fragment program draws on both
+2. **The rest of runtime effects.** A caller's fragment program draws on both
    backends, through the paint, with the material's own uniform block — fifty-
    six floats — and one texture, which it gets without a descriptor set of its
    own because every draw already binds one. What is missing is *several*

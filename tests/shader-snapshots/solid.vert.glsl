@@ -65,6 +65,18 @@ float rounded_rect_distance(vec2 point, vec2 half_size, float radius) {
     return ((min(max(q.x, q.y), 0.0) + length(max(q, vec2(0.0)))) - radius);
 }
 
+vec3 linear_to_srgb(vec3 c) {
+    vec3 low = (c * 12.92);
+    vec3 high = ((1.055 * pow(max(c, vec3(0.0)), vec3(0.41666666))) - vec3(0.055));
+    return mix(high, low, lessThanEqual(c, vec3(0.0031308)));
+}
+
+vec3 srgb_to_linear(vec3 c_1) {
+    vec3 low_1 = (c_1 / vec3(12.92));
+    vec3 high_1 = pow(((max(c_1, vec3(0.0)) + vec3(0.055)) / vec3(1.055)), vec3(2.4));
+    return mix(high_1, low_1, lessThanEqual(c_1, vec3(0.04045)));
+}
+
 void main() {
     vec2 position = _p2vs_location0;
     vec2 uv = _p2vs_location1;

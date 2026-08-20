@@ -1171,6 +1171,37 @@ fn blend() -> Vec<Scene> {
     ));
 
     scenes.push(plate(
+        "blend/gamma-encode",
+        // The gamma pair over a ramp, which is where the curve is legible: a
+        // linear ramp encoded into sRGB brightens most in the dark end, and
+        // that is exactly the shape of the curve. A pair of flat swatches
+        // would show two colours and say nothing about the function between
+        // them.
+        vec![Item::filled(
+            Shape::Rect {
+                min: [8.0, 8.0],
+                max: [120.0, 120.0],
+            },
+            ramp(),
+        )
+        .with_color_filter(ColorFilter::linear_to_srgb())],
+    ));
+
+    scenes.push(plate(
+        "blend/gamma-decode",
+        // The other direction, over the same ramp, so the two plates read as
+        // opposite bends of one curve when set side by side.
+        vec![Item::filled(
+            Shape::Rect {
+                min: [8.0, 8.0],
+                max: [120.0, 120.0],
+            },
+            ramp(),
+        )
+        .with_color_filter(ColorFilter::srgb_to_linear())],
+    ));
+
+    scenes.push(plate(
         "blend/clear-blend",
         vec![
             Item::fill(

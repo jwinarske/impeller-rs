@@ -213,6 +213,27 @@ pub enum ColorFilter {
         offset: [f32; 4],
         form: ColorForm,
     },
+    /// The sRGB transfer function, one direction or the other.
+    ///
+    /// The one filter `dart:ui` offers that a matrix cannot express: the curve
+    /// is piecewise, and the piece that covers almost all of the range has an
+    /// exponent in it. Approximating it as a power of 2.2 -- which is the usual
+    /// shortcut -- is wrong by about a percent in the midtones and much more
+    /// near black, where the linear segment is doing the work, so the shader
+    /// evaluates the real thing instead.
+    ///
+    /// Applied to straight color, per channel, leaving alpha alone. Gamma on a
+    /// premultiplied channel would be encoding the alpha along with the color.
+    Gamma { direction: Gamma },
+}
+
+/// Which way through the sRGB transfer function a [`ColorFilter::Gamma`] goes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Gamma {
+    /// Linear light in, sRGB's encoding out. `ColorFilter.linearToSrgbGamma`.
+    LinearToSrgb,
+    /// sRGB's encoding in, linear light out. `ColorFilter.srgbToLinearGamma`.
+    SrgbToLinear,
 }
 
 impl ColorFilter {
@@ -235,6 +256,21 @@ impl ColorFilter {
             columns,
             offset,
             form: ColorForm::Straight,
+        }
+    }
+
+    /// Linear light encoded into sRGB, which is `ColorFilter.linearToSrgbGamma`.
+    pub fn linear_to_srgb() -> Self {
+        Self::Gamma {
+            direction: Gamma::LinearToSrgb,
+        }
+    }
+
+    /// sRGB decoded back to linear light, which is
+    /// `ColorFilter.srgbToLinearGamma`.
+    pub fn srgb_to_linear() -> Self {
+        Self::Gamma {
+            direction: Gamma::SrgbToLinear,
         }
     }
 
@@ -329,6 +365,9 @@ impl ColorFilter {
                             .all(|(i, v)| *v == if i == j { 1.0 } else { 0.0 })
                     })
             }
+            // The curve is the identity at exactly three points -- zero, one,
+            // and nowhere else on the range -- so as a function it never is.
+            Self::Gamma { .. } => false,
         }
     }
 
@@ -344,6 +383,12 @@ impl ColorFilter {
                 form: ColorForm::Straight,
                 ..
             } => filter::STRAIGHT,
+            Self::Gamma {
+                direction: Gamma::LinearToSrgb,
+            } => filter::LINEAR_TO_SRGB,
+            Self::Gamma {
+                direction: Gamma::SrgbToLinear,
+            } => filter::SRGB_TO_LINEAR,
         }
     }
 
@@ -366,6 +411,18 @@ pub mod filter {
     pub const NONE: f32 = 0.0;
     pub const PREMULTIPLIED: f32 = 1.0;
     pub const STRAIGHT: f32 = 2.0;
+    pub const LINEAR_TO_SRGB: f32 = 3.0;
+    pub const SRGB_TO_LINEAR: f32 = 4.0;
+
+    /// Whether a code names a filter that reads straight rather than
+    /// premultiplied color.
+    ///
+    /// The shader decides this by comparison rather than by equality, and gets
+    /// the same answer, so the boundary lives here where both can cite it: a
+    /// filter added above this line is straight unless it says otherwise.
+    pub fn is_straight(code: f32) -> bool {
+        code > PREMULTIPLIED
+    }
 }
 
 /// A color stop.

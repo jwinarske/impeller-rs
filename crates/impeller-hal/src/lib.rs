@@ -66,8 +66,8 @@ pub struct RuntimeProgram {
 }
 
 pub use material::{
-    ColorFilter, ColorForm, Material, MaterialVariant, Sampling, Stop, TileMode, MATERIAL_FLOATS,
-    MAX_STOPS, RUNTIME_FLOATS,
+    ColorFilter, ColorForm, Gamma, Material, MaterialVariant, Sampling, Stop, TileMode,
+    MATERIAL_FLOATS, MAX_STOPS, RUNTIME_FLOATS,
 };
 pub use resource::{BufferDescriptor, BufferUsage, TextureDescriptor, TextureUsage};
 pub use scissor::Scissor;

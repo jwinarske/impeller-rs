@@ -273,6 +273,18 @@ vec4 blur_along_axis(vec2 clip_4) {
     return (_e57 / vec4(max(_e58, 1e-6)));
 }
 
+vec3 linear_to_srgb(vec3 c) {
+    vec3 low_1 = (c * 12.92);
+    vec3 high_1 = ((1.055 * pow(max(c, vec3(0.0)), vec3(0.41666666))) - vec3(0.055));
+    return mix(high_1, low_1, lessThanEqual(c, vec3(0.0031308)));
+}
+
+vec3 srgb_to_linear(vec3 c_1) {
+    vec3 low_2 = (c_1 / vec3(12.92));
+    vec3 high_2 = pow(((max(c_1, vec3(0.0)) + vec3(0.055)) / vec3(1.055)), vec3(2.4));
+    return mix(high_2, low_2, lessThanEqual(c_1, vec3(0.04045)));
+}
+
 vec4 filtered(vec4 premultiplied) {
     vec4 color = vec4(0.0);
     vec4 out_1 = vec4(0.0);
@@ -289,28 +301,42 @@ vec4 filtered(vec4 premultiplied) {
         float _e19 = color.w;
         color = vec4((_e14.xyz / vec3(alpha_2)), _e19);
     }
-    vec4 _e24 = _group_1_binding_0_fs.recolor[0];
-    float _e26 = color.x;
-    vec4 _e31 = _group_1_binding_0_fs.recolor[1];
-    float _e33 = color.y;
-    vec4 _e39 = _group_1_binding_0_fs.recolor[2];
-    float _e41 = color.z;
-    vec4 _e47 = _group_1_binding_0_fs.recolor[3];
-    float _e49 = color.w;
-    vec4 _e54 = _group_1_binding_0_fs.filter_offset;
-    out_1 = (((((_e24 * _e26) + (_e31 * _e33)) + (_e39 * _e41)) + (_e47 * _e49)) + _e54);
-    if (straight) {
-        vec4 _e57 = out_1;
-        out_1 = clamp(_e57, vec4(0.0), vec4(1.0));
-        vec4 _e63 = out_1;
-        float _e66 = out_1.w;
-        float _e69 = out_1.w;
-        return vec4((_e63.xyz * _e66), _e69);
+    if ((kind > 2.5)) {
+        if ((kind < 3.5)) {
+            vec4 _e26 = color;
+            vec3 _e28 = linear_to_srgb(_e26.xyz);
+            float _e30 = color.w;
+            out_1 = vec4(_e28, _e30);
+        } else {
+            vec4 _e32 = color;
+            vec3 _e34 = srgb_to_linear(_e32.xyz);
+            float _e36 = color.w;
+            out_1 = vec4(_e34, _e36);
+        }
+    } else {
+        vec4 _e41 = _group_1_binding_0_fs.recolor[0];
+        float _e43 = color.x;
+        vec4 _e48 = _group_1_binding_0_fs.recolor[1];
+        float _e50 = color.y;
+        vec4 _e56 = _group_1_binding_0_fs.recolor[2];
+        float _e58 = color.z;
+        vec4 _e64 = _group_1_binding_0_fs.recolor[3];
+        float _e66 = color.w;
+        vec4 _e71 = _group_1_binding_0_fs.filter_offset;
+        out_1 = (((((_e41 * _e43) + (_e48 * _e50)) + (_e56 * _e58)) + (_e64 * _e66)) + _e71);
     }
-    float _e72 = out_1.w;
-    float alpha_3 = clamp(_e72, 0.0, 1.0);
-    vec4 _e76 = out_1;
-    return vec4(clamp(_e76.xyz, vec3(0.0), vec3(alpha_3)), alpha_3);
+    if (straight) {
+        vec4 _e73 = out_1;
+        out_1 = clamp(_e73, vec4(0.0), vec4(1.0));
+        vec4 _e79 = out_1;
+        float _e82 = out_1.w;
+        float _e85 = out_1.w;
+        return vec4((_e79.xyz * _e82), _e85);
+    }
+    float _e88 = out_1.w;
+    float alpha_3 = clamp(_e88, 0.0, 1.0);
+    vec4 _e92 = out_1;
+    return vec4(clamp(_e92.xyz, vec3(0.0), vec3(alpha_3)), alpha_3);
 }
 
 vec4 shade(VertexOutput in_1) {
@@ -360,10 +386,10 @@ vec4 shade(VertexOutput in_1) {
                     float dr = _group_1_binding_0_fs.geometry.w;
                     float a = ((separation * separation) - (dr * dr));
                     float b = ((_e100.x * separation) + (r0_ * dr));
-                    float c = (dot(_e100, _e100) - (r0_ * r0_));
+                    float c_2 = (dot(_e100, _e100) - (r0_ * r0_));
                     float magnitude = max((separation * separation), (dr * dr));
                     if ((abs(a) > (magnitude * 1e-5))) {
-                        float disc = ((b * b) - (a * c));
+                        float disc = ((b * b) - (a * c_2));
                         if ((disc >= 0.0)) {
                             float root = sqrt(disc);
                             float far = max(((b + root) / a), ((b - root) / a));
@@ -380,7 +406,7 @@ vec4 shade(VertexOutput in_1) {
                         }
                     } else {
                         if ((abs(b) > 1e-6)) {
-                            float only = (c / (2.0 * b));
+                            float only = (c_2 / (2.0 * b));
                             if (((r0_ + (only * dr)) >= 0.0)) {
                                 t_3 = only;
                                 covered = true;

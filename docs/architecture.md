@@ -457,8 +457,19 @@ a uniform block — that arrived in 3.10, above this project's floor — so the
 build step adds it, asserts it found exactly what it expected, and a test reads
 the generated source back to confirm.
 
-The material is still 32 floats. The mechanism changed; the size should not,
-until a material needs it.
+Changing the mechanism is not a licence to change the size, and the size is
+stated once -- below, where the number is under test -- rather than restated
+here where it would go stale. It did go stale here once, which is why.
+
+The premise behind a widening is worth checking before acting on it, because
+the one just before this was wrong. A conical gradient looked like it needed
+the same move and did not: a whole float was carrying a boolean, and a material
+whose colors come from a texture has no stop count to report, so the two folded
+into one number and the material never grew. A color filter genuinely does need
+the room -- it applies on top of whatever material is already there, so its
+cost is additive to a gradient that already uses every float. Ask whether a
+field is paying for its width before concluding a limit has been reached. That
+is not an argument against changing a mechanism when it does have to change.
 
 **A recording is tessellated geometry, not a command list.** Worth stating
 because the name suggests otherwise and because it decides what nesting one

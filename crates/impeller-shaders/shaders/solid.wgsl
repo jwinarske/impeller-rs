@@ -503,12 +503,35 @@ fn blur_along_axis(clip: vec2<f32>) -> vec4<f32> {
 /// filters are the ones affine in their other operand; deciding which those
 /// are happens on the processor, where it is a table rather than a branch per
 /// fragment.
+/// Linear light encoded into sRGB, the standard piecewise curve.
+///
+/// `pow` of a negative base is undefined rather than merely wrong, and a
+/// straight color divided out of a nearly-transparent premultiplied one can
+/// land slightly below zero, so the base is floored. The comparison still uses
+/// the unfloored value, which keeps the two branches meeting exactly at the
+/// knee.
+fn linear_to_srgb(c: vec3<f32>) -> vec3<f32> {
+    let low = c * 12.92;
+    let high = 1.055 * pow(max(c, vec3<f32>(0.0)), vec3<f32>(1.0 / 2.4)) - 0.055;
+    return select(high, low, c <= vec3<f32>(0.0031308));
+}
+
+/// sRGB decoded back to linear light, the inverse of the curve above.
+fn srgb_to_linear(c: vec3<f32>) -> vec3<f32> {
+    let low = c / 12.92;
+    let high = pow((max(c, vec3<f32>(0.0)) + 0.055) / 1.055, vec3<f32>(2.4));
+    return select(high, low, c <= vec3<f32>(0.04045));
+}
+
 fn filtered(premultiplied: vec4<f32>) -> vec4<f32> {
     let kind = paint.filter_params.x;
     if (kind < 0.5) {
         return premultiplied;
     }
 
+    // Everything past the premultiplied matrix reads straight color -- the
+    // gamma pair could not mean anything else -- so the test is a threshold
+    // rather than a list. `filter::is_straight` draws the same line.
     let straight = kind > 1.5;
     var color = premultiplied;
     if (straight) {
@@ -519,11 +542,24 @@ fn filtered(premultiplied: vec4<f32>) -> vec4<f32> {
         color = vec4<f32>(color.rgb / alpha, color.a);
     }
 
-    var out = paint.recolor[0] * color.r
-        + paint.recolor[1] * color.g
-        + paint.recolor[2] * color.b
-        + paint.recolor[3] * color.a
-        + paint.filter_offset;
+    var out: vec4<f32>;
+    if (kind > 2.5) {
+        // The transfer function moves each channel along a curve and leaves
+        // alpha where it is. Alpha is a coverage, not a color, and running it
+        // through a color's encoding would make a half-covered pixel a
+        // differently-covered one.
+        if (kind < 3.5) {
+            out = vec4<f32>(linear_to_srgb(color.rgb), color.a);
+        } else {
+            out = vec4<f32>(srgb_to_linear(color.rgb), color.a);
+        }
+    } else {
+        out = paint.recolor[0] * color.r
+            + paint.recolor[1] * color.g
+            + paint.recolor[2] * color.b
+            + paint.recolor[3] * color.a
+            + paint.filter_offset;
+    }
 
     if (straight) {
         out = clamp(out, vec4<f32>(0.0), vec4<f32>(1.0));
