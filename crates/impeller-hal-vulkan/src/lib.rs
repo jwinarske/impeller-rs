@@ -27,4 +27,4 @@ pub use device::{ContextConfig, DevicePreference, FrameSync, VulkanContext};
 pub use fence::VulkanFence;
 pub use hal::VulkanHal;
 pub use resource::VulkanTexture;
-pub use validation::{Validated, ValidationMessage, ValidationSeverity};
+pub use validation::{Validated, ValidationLog, ValidationMessage, ValidationSeverity};

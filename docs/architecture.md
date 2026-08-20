@@ -1694,6 +1694,26 @@ become master of, and it cannot speak to real hardware. Those are the levels
 that still need a machine with a GPU and a free connector, and running them
 there is still manual.
 
+**A context's own teardown is validation-checked, which took a handle that
+outlives it.** Everything else reads the validation log through the context
+that owns it, and that arrangement cannot cover the last thing the layer has to
+say. A child object outliving its device is reported at `vkDestroyDevice`, and
+that call is inside the context's drop -- so those reports were not merely
+unchecked, they were unreachable from a test, and the whole class of fault was
+structurally invisible. A descriptor set layout leaked on every device for as
+long as the material set has existed, with the suite green throughout, and it
+was found by running the layer by hand rather than by anything here.
+
+The log is behind an `Arc` already, so the fix is an accessor that hands out a
+clone and a test that holds one across the drop. The messenger is destroyed
+after the device rather than before, which was already true and is what makes
+those reports reach the callback at all.
+
+The test has to draw before it drops. The objects worth checking are the ones a
+context builds lazily -- the leaking layout is created on the first draw that
+needs a material -- so a context that never drew would pass while the fault was
+live.
+
 **Every context in the suite reports what the driver said about it.** On
 Vulkan that is the validation layer; on GLES it is `GL_KHR_debug`, which every
 3.2 implementation offers and which is the driver reporting on itself rather

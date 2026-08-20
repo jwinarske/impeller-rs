@@ -661,6 +661,22 @@ impl VulkanContext {
         self.validation_log.is_clean()
     }
 
+    /// A handle on the log that outlives this context.
+    ///
+    /// Every other accessor here reads the log *through* the context, which
+    /// cannot see the last thing the layer has to say. A child object that
+    /// outlives its device is reported at `vkDestroyDevice`, which happens
+    /// inside this context's own drop, and by then there is nothing left to
+    /// ask -- so a whole class of fault was structurally invisible to every
+    /// test rather than merely untested. Holding this across the drop is what
+    /// makes teardown assertable.
+    ///
+    /// The messenger is destroyed after the device, deliberately, so the
+    /// callback is still installed while those reports are made.
+    pub fn validation_log(&self) -> Arc<ValidationLog> {
+        Arc::clone(&self.validation_log)
+    }
+
     pub fn queue_family_index(&self) -> u32 {
         self.queue_family_index
     }
@@ -870,7 +886,18 @@ impl Drop for VulkanContext {
             if let Some(sampler) = self.sampler.take() {
                 self.device.destroy_sampler(sampler, None);
             }
-            if let Some(layout) = self.descriptor_layout.take() {
+            // Both layouts, and they are separate fields because they are
+            // separate sets: the texture and sampler in one, the material's
+            // uniform block in the other. This one was missing for as long as
+            // the second set has existed, and the leak it left was one layout
+            // per device -- invisible to every test, since a context is
+            // destroyed at the end of a process that is about to exit anyway,
+            // and reported by the validation layer at `vkDestroyDevice` as a
+            // child object outliving its parent.
+            for layout in [self.descriptor_layout.take(), self.material_layout.take()]
+                .into_iter()
+                .flatten()
+            {
                 self.device.destroy_descriptor_set_layout(layout, None);
             }
         }
