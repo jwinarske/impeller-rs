@@ -120,7 +120,7 @@ reason.
 | `colorFilter` | yes | `with_color_filter`: a color matrix, the sRGB transfer function in either direction, and any blend against a constant that is affine in what it blends. Not the advanced blend modes, which the paint's own blend mode covers | `the_gamma_filter_follows_the_curve_at_both_ends_of_it` |
 | `imageFilter` | yes | `with_image_filter`: a blur, a matrix, dilate, erode and any composition of them, applied to what the paint drew rather than to the colour it computed | `composing_an_erosion_with_a_dilation_depends_on_which_runs_first` |
 | `maskFilter` | yes | `with_mask_blur` and `with_mask_blur_style`: a blur of a shape's coverage in all four styles. Solid colors only, since the identity it rests on holds for nothing else | `each_mask_blur_style_keeps_the_part_of_the_blur_it_names` |
-| `filterQuality` | partial | `with_sampling`: linear and nearest. `medium` and `high` are mipmapped and bicubic, and neither exists here to select | `nearest_sampling_reads_one_texel_where_linear_blends_two` |
+| `filterQuality` | partial | `with_sampling`: nearest, linear, and the Mitchell bicubic that `high` means. `medium` is mipmapped, and no texture here carries a mip chain to select from | `cubic_sampling_overshoots_a_step_where_linear_cannot` |
 | `invertColors` | via | a color filter whose matrix negates each channel and adds one | |
 
 ## Beyond the surface

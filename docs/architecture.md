@@ -497,6 +497,19 @@ read — one multiply, floor and divide, and no bindings at all. The texture's
 size comes from the shader rather than from the material, because the recorder
 that built the material has never seen the texture.
 
+The bicubic that `FilterQuality.high` means goes in the same place, and there it
+is not a saving but the only place it could go: no sampler reconstructs a cubic,
+so the sixteen reads and their weights are arithmetic in the fragment either
+way. The curve is Mitchell-Netravali with `B` and `C` both a third, which is
+what Skia's high quality has always been and therefore what a caller porting
+from Flutter is expecting -- sharper than a pure B-spline, gentler than
+Catmull-Rom. Its weights are a partition of unity, so nothing is normalized
+afterward and a flat image comes back exactly flat, and they go slightly
+negative between one and two texels out, which is the sharpening rather than a
+fault in it. That overshoot is also why the result is clamped back into
+premultiplied form: colour and alpha ring by different amounts wherever they
+step differently, and a channel above its own alpha is not a colour.
+
 **A batch merges adjacent draws that differ in nothing.** Two draws with the
 same material, filter, blend, clip and stencil are one draw over a longer index
 range: their indices were appended to the same buffer, so extending the first

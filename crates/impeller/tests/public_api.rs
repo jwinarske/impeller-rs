@@ -7863,3 +7863,180 @@ fn composing_an_erosion_with_a_dilation_depends_on_which_runs_first() {
          Reaching {right} means the erosion ran first, which is an opening."
     );
 }
+
+/// An 8×8 image whose left half is one value and right half another, with the
+/// step falling exactly between two columns of texels.
+///
+/// Eight wide rather than four so that a cubic read four texels across never
+/// reaches the edge of the image, where the clamp would flatten the very
+/// overshoot the step exists to produce.
+fn step_image(left: u8, right: u8, alpha: u8) -> Vec<u8> {
+    let mut pixels = vec![0u8; 8 * 8 * 4];
+    for y in 0..8u32 {
+        for x in 0..8u32 {
+            let i = ((y * 8 + x) * 4) as usize;
+            let level = if x < 4 { left } else { right };
+            pixels[i..i + 4].copy_from_slice(&[level, level, level, alpha]);
+        }
+    }
+    pixels
+}
+
+/// An 8×8 image drawn across the whole frame, at one sampling quality, over a
+/// transparent ground.
+///
+/// Transparent so that what is read back is the sampled color itself. Over an
+/// opaque ground the composite makes every pixel's alpha one, and a question
+/// about whether the color stayed within its own alpha cannot be asked.
+fn drawn_at(ctx: &mut Context, texels: &[u8], sampling: Sampling) -> Vec<u8> {
+    let mut image = ctx
+        .create_image(Extent2D::new(8, 8), PixelFormat::Rgba8Unorm)
+        .expect("image");
+    ctx.write_image(&mut image, texels).expect("upload");
+
+    let mut canvas = Canvas::new(SIZE);
+    canvas.clear(Color::linear(0.0, 0.0, 0.0, 0.0));
+    canvas
+        .draw_rect(
+            Rect::from_size(128.0, 128.0),
+            &Paint::image(0, Rect::from_size(128.0, 128.0))
+                .with_sampling(sampling)
+                .with_anti_alias(false),
+        )
+        .expect("image");
+    let mut surface = ctx
+        .create_surface(SIZE, PixelFormat::Rgba8Unorm)
+        .expect("surface");
+    ctx.draw_with_images(&mut surface, &canvas.finish(), &[&image])
+        .expect("draw");
+    let pixels = ctx.read(&mut surface).expect("read");
+    ctx.destroy_surface(surface);
+    ctx.destroy_image(image);
+    pixels
+}
+
+#[test]
+fn cubic_sampling_leaves_a_flat_image_exactly_flat() {
+    // The weights are a partition of unity: they sum to one wherever the sample
+    // falls between texels. That is what lets the shader skip normalizing, and
+    // it is not a property to take on trust -- a coefficient mistyped anywhere
+    // in the curve shows here as a flat image that is not quite its own color,
+    // and shows at every magnification rather than only at an edge.
+    let Some(mut ctx) = context() else { return };
+
+    const LEVEL: u8 = 137;
+    let pixels = drawn_at(&mut ctx, &step_image(LEVEL, LEVEL, 255), Sampling::Cubic);
+
+    // Sixteen device pixels per texel, so these fall at texel centers, between
+    // two texels, and at three-eighths of the way across one.
+    for x in [8u32, 16, 22, 64, 71, 120] {
+        assert_eq!(
+            pixel(&pixels, x, 64),
+            [LEVEL, LEVEL, LEVEL, 255],
+            "a flat image read at ({x}, 64) should be its own color exactly"
+        );
+    }
+}
+
+#[test]
+fn cubic_sampling_overshoots_a_step_where_linear_cannot() {
+    // What distinguishes a cubic reconstruction from a linear one, and it is
+    // not simply "smoother". Between one and two texels from the sample the
+    // Mitchell curve's weights go negative, so the value near a step is pulled
+    // past the level on the far side: darker than the dark half just before the
+    // edge, brighter than the bright half just after. A linear read is a
+    // weighted average of two texels with non-negative weights and can never
+    // leave the interval between them, at any magnification.
+    //
+    // The levels are a quarter and three quarters rather than black and white
+    // so that the overshoot has somewhere to go. Against the ends of the range
+    // the same ringing is there and is entirely clipped away by the eight-bit
+    // target, and a test written that way would pass on a linear read.
+    let Some(mut ctx) = context() else { return };
+
+    const DARK: u8 = 64;
+    const LIGHT: u8 = 191;
+    let texels = step_image(DARK, LIGHT, 255);
+    let linear = drawn_at(&mut ctx, &texels, Sampling::Linear);
+    let cubic = drawn_at(&mut ctx, &texels, Sampling::Cubic);
+
+    // The step is between texels three and four, which is the middle of the
+    // frame. The undershoot bottoms out about one texel before it and the
+    // overshoot about one texel after -- sixteen device pixels either way.
+    let under = pixel(&cubic, 48, 64)[0];
+    let over = pixel(&cubic, 80, 64)[0];
+    assert!(
+        under < DARK,
+        "a cubic read a texel before the step should undershoot below {DARK}, \
+         got {under}"
+    );
+    assert!(
+        over > LIGHT,
+        "and a texel after it should overshoot above {LIGHT}, got {over}"
+    );
+
+    // The same two places under a linear read, which is where the two
+    // reconstructions are supposed to differ and where a cubic implemented as a
+    // slightly different average would not.
+    assert_eq!(
+        (pixel(&linear, 48, 64)[0], pixel(&linear, 80, 64)[0]),
+        (DARK, LIGHT),
+        "linear stays between the two levels, which is the whole contrast"
+    );
+
+    // And nowhere does the ringing run away: Mitchell's negative lobe is small,
+    // so the excursion is a handful of levels rather than a visible band.
+    for x in 0..SIZE.width {
+        let got = pixel(&cubic, x, 64)[0];
+        assert!(
+            (DARK as i32 - 8..=LIGHT as i32 + 8).contains(&(got as i32)),
+            "cubic at ({x}, 64) rang out to {got}, far past what this curve does"
+        );
+    }
+}
+
+#[test]
+fn cubic_sampling_keeps_a_translucent_image_premultiplied() {
+    // The ringing pulls each channel independently, and colour and alpha ring
+    // by different amounts wherever they step differently. Premultiplied colour
+    // has an invariant that does not survive that on its own: no channel may
+    // exceed the alpha it was multiplied by, and a colour brighter than its own
+    // alpha composites as though it were lit from nowhere.
+    let Some(mut ctx) = context() else { return };
+
+    // The two halves are chosen so the invariant is actually reachable, which
+    // most pairs are not. Colour has to be sitting on its alpha on one side --
+    // white at whatever coverage it has -- and the two have to step in opposite
+    // directions, so that just before the seam colour rings upward while the
+    // alpha it must not exceed rings downward. Colour and alpha stepping the
+    // same way ring by the same fraction and stay ordered however far they
+    // overshoot, which is why the obvious fixture proves nothing.
+    let mut texels = step_image(0, 0, 0);
+    for y in 0..8u32 {
+        for x in 0..8u32 {
+            let i = ((y * 8 + x) * 4) as usize;
+            // Left: white at an alpha of 200, so colour equals alpha exactly.
+            // Right: opaque black. Colour falls by two hundred, alpha rises by
+            // fifty-five.
+            let texel: [u8; 4] = if x < 4 {
+                [200, 200, 200, 200]
+            } else {
+                [0, 0, 0, 255]
+            };
+            texels[i..i + 4].copy_from_slice(&texel);
+        }
+    }
+
+    let pixels = drawn_at(&mut ctx, &texels, Sampling::Cubic);
+    // Over the seam, where both curves are ringing.
+    for x in 40..88u32 {
+        let got = pixel(&pixels, x, 64);
+        assert!(
+            got[0] as i32 <= got[3] as i32 + 1,
+            "at ({x}, 64) the colour {} exceeds its own alpha {}, which the \
+             clamp at the end of the cubic read is there to prevent",
+            got[0],
+            got[3]
+        );
+    }
+}

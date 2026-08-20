@@ -214,11 +214,95 @@ fn to_gradient_space(clip: vec2<f32>) -> vec2<f32> {
 /// built this material has never seen the texture and cannot know how large it
 /// is.
 fn snapped(coord: vec2<f32>) -> vec2<f32> {
-    if (paint.params.z < 0.5) {
+    // Bounded on both sides. Written as `>= 0.5` it would be correct only
+    // because the cubic path returns before reaching here, and the next
+    // quality added would silently be snapped as well -- which is the mistake
+    // the material kinds in this file already made once.
+    if (paint.params.z < 0.5 || paint.params.z > 1.5) {
         return coord;
     }
     let size = vec2<f32>(textureDimensions(image_texture));
     return (floor(coord * size) + vec2<f32>(0.5)) / size;
+}
+
+/// One axis of the Mitchell-Netravali curve, `x` texels from the sample.
+///
+/// The family is stated with its two parameters rather than folded into
+/// constants, because which member of it this is has a reason: `B` and `C` both
+/// a third is what Skia's high quality means, and a caller porting from Flutter
+/// is expecting that curve and not the sharper Catmull-Rom or the softer pure
+/// B-spline. Reading the coefficients back out of six folded numbers would be
+/// no way to check that.
+fn cubic_weight(x: f32) -> f32 {
+    let b = 1.0 / 3.0;
+    let c = 1.0 / 3.0;
+    let t = abs(x);
+    if (t < 1.0) {
+        let cubic = 12.0 - 9.0 * b - 6.0 * c;
+        let square = -18.0 + 12.0 * b + 6.0 * c;
+        return ((cubic * t + square) * t * t + (6.0 - 2.0 * b)) / 6.0;
+    }
+    if (t < 2.0) {
+        let cubic = -b - 6.0 * c;
+        let square = 6.0 * b + 30.0 * c;
+        let linear = -12.0 * b - 48.0 * c;
+        return (((cubic * t + square) * t + linear) * t + (8.0 * b + 24.0 * c)) / 6.0;
+    }
+    return 0.0;
+}
+
+/// A bicubic read of the bound texture, over the sixteen texels around `coord`.
+///
+/// The weights are a partition of unity -- they sum to one wherever the sample
+/// falls -- so nothing is normalized afterward and a flat image stays exactly
+/// flat. What they are not is non-negative: between one and two texels out the
+/// curve dips below zero, which is what sharpens an edge and what makes a
+/// bright edge overshoot into the dark side of it. The result is clamped back
+/// into the premultiplied form the rest of this shader assumes, since a channel
+/// above its own alpha is not a color.
+fn cubic(coord: vec2<f32>, low: vec2<f32>, high: vec2<f32>) -> vec4<f32> {
+    let size = vec2<f32>(textureDimensions(image_texture));
+    // Texel centers sit at half-integers, so the coordinate is shifted by half
+    // a texel before flooring. Without the shift the sixteen texels chosen are
+    // the ones around a corner rather than around the sample.
+    let position = coord * size - vec2<f32>(0.5);
+    let base = floor(position);
+    let offset = position - base;
+
+    var total = vec4<f32>(0.0);
+    for (var j = -1; j <= 2; j = j + 1) {
+        let wy = cubic_weight(f32(j) - offset.y);
+        for (var i = -1; i <= 2; i = i + 1) {
+            let weight = cubic_weight(f32(i) - offset.x) * wy;
+            // Held inside whatever selection the caller made, exactly as the
+            // linear path is: a cubic read four texels wide would otherwise
+            // reach two texels into a sprite's neighbors where a linear one
+            // reaches half of one.
+            let texel = clamp(
+                (base + vec2<f32>(f32(i), f32(j)) + vec2<f32>(0.5)) / size,
+                low,
+                high,
+            );
+            total = total + textureSampleLevel(image_texture, image_sampler, texel, 0.0) * weight;
+        }
+    }
+    let alpha = clamp(total.a, 0.0, 1.0);
+    return vec4<f32>(clamp(total.rgb, vec3<f32>(0.0), vec3<f32>(alpha)), alpha);
+}
+
+/// One texture read, at whatever quality this paint asked for.
+///
+/// `low` and `high` bound the coordinates any tap may use, which is how a
+/// sprite selection keeps its neighbors out. The linear and nearest paths were
+/// already inside by construction and pass their own bounds through unused.
+fn sampled(coord: vec2<f32>, low: vec2<f32>, high: vec2<f32>) -> vec4<f32> {
+    if (paint.params.z > 1.5) {
+        return cubic(coord, low, high);
+    }
+    // Linear and nearest are one read between them: the sampler stays linear,
+    // and nearest is the coordinate snapped to a texel center, where a linear
+    // filter has all its weight on one texel.
+    return textureSampleLevel(image_texture, image_sampler, snapped(coord), 0.0);
 }
 
 fn tile_uv(uv: vec2<f32>, tile: f32) -> vec2<f32> {
@@ -242,7 +326,7 @@ fn tile_uv(uv: vec2<f32>, tile: f32) -> vec2<f32> {
 /// image path with everything the vertices already answered taken out.
 fn sample_mesh(uv: vec2<f32>) -> vec4<f32> {
     let tile = paint.geometry.y;
-    var texel = textureSampleLevel(image_texture, image_sampler, snapped(tile_uv(uv, tile)), 0.0);
+    var texel = sampled(tile_uv(uv, tile), vec2<f32>(0.0), vec2<f32>(1.0));
     if (tile > 1.5 && tile < 2.5) {
         // Decal, tested against the coordinate as given, since the tiled one
         // is inside by construction.
@@ -285,7 +369,7 @@ fn sample_image(clip: vec2<f32>) -> vec4<f32> {
     let high = max(source.xy + half_texel, source.zw - half_texel);
     coord = clamp(coord, low, high);
 
-    var texel = textureSampleLevel(image_texture, image_sampler, snapped(coord), 0.0);
+    var texel = sampled(coord, low, high);
     if (tile > 1.5 && tile < 2.5) {
         // Decal: nothing outside the image's own bounds. Tested against the
         // unclamped coordinate, since the clamped one is inside by

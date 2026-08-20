@@ -1331,6 +1331,43 @@ fn image() -> Vec<Scene> {
             )],
         ),
         plate(
+            "basic/image-cubic-sampling",
+            // A small piece of the sheet magnified hard, which is where the
+            // three qualities actually differ: at or near an image's own size a
+            // cubic read and a linear one agree to within the target's
+            // precision, and only a strong magnification separates them.
+            vec![Item::filled(
+                Shape::Rect {
+                    min: [16.0, 16.0],
+                    max: [112.0, 112.0],
+                },
+                sheet(
+                    [48.0, 48.0, 80.0, 80.0],
+                    ALL,
+                    TileMode::Clamp,
+                    Sampling::Cubic,
+                ),
+            )],
+        ),
+        plate(
+            "basic/image-nearest-sampling",
+            // The same piece at the same magnification with no reconstruction
+            // at all, so the pair reads as the two ends of what the setting
+            // does.
+            vec![Item::filled(
+                Shape::Rect {
+                    min: [16.0, 16.0],
+                    max: [112.0, 112.0],
+                },
+                sheet(
+                    [48.0, 48.0, 80.0, 80.0],
+                    ALL,
+                    TileMode::Clamp,
+                    Sampling::Nearest,
+                ),
+            )],
+        ),
+        plate(
             "basic/can-render-tiled-texture-clamp",
             vec![Item::filled(
                 whole.clone(),

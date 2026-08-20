@@ -40,6 +40,22 @@ vec2 tile_gradient(float t_1, float tile) {
     return vec2(clamp(t_1, 0.0, 1.0), 1.0);
 }
 
+float cubic_weight(float x) {
+    float t_4 = abs(x);
+    if ((t_4 < 1.0)) {
+        float cubic_1 = ((12.0 - (9.0 * 0.33333334)) - (6.0 * 0.33333334));
+        float square = ((-18.0 + (12.0 * 0.33333334)) + (6.0 * 0.33333334));
+        return ((((((cubic_1 * t_4) + square) * t_4) * t_4) + (6.0 - (2.0 * 0.33333334))) / 6.0);
+    }
+    if ((t_4 < 2.0)) {
+        float cubic_2 = (-(0.33333334) - (6.0 * 0.33333334));
+        float square_1 = ((6.0 * 0.33333334) + (30.0 * 0.33333334));
+        float linear = ((-12.0 * 0.33333334) - (48.0 * 0.33333334));
+        return (((((((cubic_2 * t_4) + square_1) * t_4) + linear) * t_4) + ((8.0 * 0.33333334) + (24.0 * 0.33333334))) / 6.0);
+    }
+    return 0.0;
+}
+
 vec2 tile_uv(vec2 uv_1, float tile_1) {
     if (((tile_1 > 0.5) && (tile_1 < 1.5))) {
         return fract(uv_1);
@@ -66,15 +82,15 @@ float rounded_rect_distance(vec2 point, vec2 half_size, float radius) {
 }
 
 vec3 linear_to_srgb(vec3 c) {
-    vec3 low = (c * 12.92);
-    vec3 high = ((1.055 * pow(max(c, vec3(0.0)), vec3(0.41666666))) - vec3(0.055));
-    return mix(high, low, lessThanEqual(c, vec3(0.0031308)));
+    vec3 low_2 = (c * 12.92);
+    vec3 high_2 = ((1.055 * pow(max(c, vec3(0.0)), vec3(0.41666666))) - vec3(0.055));
+    return mix(high_2, low_2, lessThanEqual(c, vec3(0.0031308)));
 }
 
 vec3 srgb_to_linear(vec3 c_1) {
-    vec3 low_1 = (c_1 / vec3(12.92));
-    vec3 high_1 = pow(((max(c_1, vec3(0.0)) + vec3(0.055)) / vec3(1.055)), vec3(2.4));
-    return mix(high_1, low_1, lessThanEqual(c_1, vec3(0.04045)));
+    vec3 low_3 = (c_1 / vec3(12.92));
+    vec3 high_3 = pow(((max(c_1, vec3(0.0)) + vec3(0.055)) / vec3(1.055)), vec3(2.4));
+    return mix(high_3, low_3, lessThanEqual(c_1, vec3(0.04045)));
 }
 
 void main() {

@@ -158,6 +158,19 @@ pub enum Sampling {
     /// What pixel art needs, and what a sprite drawn at exactly its own size
     /// wants in order to be certain no neighbour bled in.
     Nearest,
+    /// A bicubic reconstruction over the sixteen texels around the coordinate.
+    ///
+    /// What `dart:ui` calls `FilterQuality.high`. Sharper than linear under
+    /// magnification, because the curve through four texels along an axis has
+    /// a slope where a straight line between two has a corner, and it costs
+    /// sixteen reads per fragment to say so.
+    ///
+    /// The particular curve is Mitchell-Netravali with `B` and `C` both a
+    /// third, which is what Skia's high quality has always meant and so what a
+    /// caller porting from Flutter is expecting. It rings slightly -- the
+    /// weights go a little negative between one and two texels out -- and that
+    /// overshoot is the sharpening, not an error in it.
+    Cubic,
 }
 
 /// The number the shader reads for a sampling mode.
@@ -165,6 +178,7 @@ fn sampling_code(sampling: Sampling) -> f32 {
     match sampling {
         Sampling::Linear => sampling::LINEAR,
         Sampling::Nearest => sampling::NEAREST,
+        Sampling::Cubic => sampling::CUBIC,
     }
 }
 
@@ -172,6 +186,7 @@ fn sampling_code(sampling: Sampling) -> f32 {
 pub mod sampling {
     pub const LINEAR: f32 = 0.0;
     pub const NEAREST: f32 = 1.0;
+    pub const CUBIC: f32 = 2.0;
 }
 
 /// Tile mode selector shared with the shader.
