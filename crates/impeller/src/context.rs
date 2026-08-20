@@ -2,7 +2,9 @@
 
 use crate::backend::{no_backend, Backend, BackendPreference};
 use impeller_core::Recording;
-use impeller_hal::{Capabilities, Error, Extent2D, HalContext, PixelFormat, Result};
+use impeller_hal::{
+    Capabilities, Error, Extent2D, HalContext, PixelFormat, Result, RuntimeProgram,
+};
 
 /// A device to render with.
 ///
@@ -143,6 +145,28 @@ impl Context {
     ///
     /// The format decides how the bytes written into it are read, and the
     /// choice is not cosmetic. Color inside the renderer is linear, and an
+    /// Register a fragment program a caller's own build produced.
+    ///
+    /// Returns the index to name it by, which is what goes into
+    /// [`Paint::runtime_effect`]. Indices are per context: a recording that
+    /// names one is bound to the context that registered it, in exactly the
+    /// way one naming a texture slot is bound to the textures supplied
+    /// beside it.
+    ///
+    /// Nothing here compiles a shader. The payload for the backend in use has
+    /// to be present -- SPIR-V for Vulkan, GLSL ES for GLES -- and one built
+    /// for the other backend alone is refused rather than silently ignored.
+    /// See the architecture document for why a single source translated on
+    /// load was declined.
+    pub fn register_program(&mut self, program: &RuntimeProgram) -> Result<u32> {
+        match self {
+            #[cfg(feature = "vulkan")]
+            Self::Vulkan(ctx) => ctx.register_program(program),
+            #[cfg(feature = "gles")]
+            Self::Gles(ctx) => ctx.register_program(program),
+        }
+    }
+
     /// sRGB format decodes on sample -- so a picture, whose bytes are
     /// sRGB-encoded because that is what every image file holds, wants
     /// [`PixelFormat::Rgba8UnormSrgb`] and comes out washed pale without it.

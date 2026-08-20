@@ -95,6 +95,22 @@ pub enum Shader {
         /// nothing; it is a partial sweep that has an outside.
         tile: TileMode,
     },
+    /// A caller's own fragment program.
+    ///
+    /// The one shader here this renderer did not write. `program` names one
+    /// registered with a context, and `uniforms` are the floats it reads --
+    /// laid out as the program's own declaration expects, which is a contract
+    /// between the caller's shader and the caller's code and not something
+    /// this renderer can check.
+    ///
+    /// At most [`RUNTIME_FLOATS`] of them; the rest are dropped rather than
+    /// overflowing into a block that has no room for them.
+    ///
+    /// [`RUNTIME_FLOATS`]: impeller_hal::RUNTIME_FLOATS
+    RuntimeEffect {
+        program: u32,
+        uniforms: Vec<f32>,
+    },
     /// A gradient between two circles **in user space**, reaching its first
     /// stop on the first circle and its last on the second.
     ///
@@ -133,7 +149,7 @@ impl Shader {
     /// [`MAX_STOPS`]: impeller_hal::MAX_STOPS
     pub fn stop_count(&self) -> usize {
         match self {
-            Self::Solid(_) | Self::Image { .. } => 0,
+            Self::Solid(_) | Self::Image { .. } | Self::RuntimeEffect { .. } => 0,
             Self::LinearGradient { stops, .. }
             | Self::RadialGradient { stops, .. }
             | Self::SweepGradient { stops, .. }
@@ -145,6 +161,8 @@ impl Shader {
     pub fn is_visible(&self) -> bool {
         match self {
             Self::Solid(color) => !color.is_invisible(),
+            // What a caller's program draws is not knowable from here.
+            Self::RuntimeEffect { .. } => true,
             Self::LinearGradient { stops, .. }
             | Self::RadialGradient { stops, .. }
             | Self::SweepGradient { stops, .. }
@@ -363,6 +381,18 @@ impl Paint {
         }
     }
 
+    /// A fill computed by a program the caller supplied.
+    ///
+    /// See [`Shader::RuntimeEffect`]. The program has to be registered with
+    /// the context that will draw the recording, and the index it was given is
+    /// what goes here.
+    pub fn runtime_effect(program: u32, uniforms: Vec<f32>) -> Self {
+        Self {
+            shader: Shader::RuntimeEffect { program, uniforms },
+            ..Default::default()
+        }
+    }
+
     /// A fill that runs between two circles in user space.
     ///
     /// The general gradient: the first stop lands on the first circle and the
@@ -498,7 +528,10 @@ impl Paint {
             | Shader::RadialGradient { tile: current, .. }
             | Shader::SweepGradient { tile: current, .. }
             | Shader::ConicalGradient { tile: current, .. } => *current = tile,
-            Shader::Solid(_) => {}
+            // Neither has an outside a tile mode could describe: a solid has
+            // no edge, and where a caller's program stops is the caller's
+            // arithmetic rather than this renderer's.
+            Shader::Solid(_) | Shader::RuntimeEffect { .. } => {}
         }
         self
     }

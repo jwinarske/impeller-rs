@@ -32,6 +32,7 @@ impeller = { path = ".", features = ["gles"] }
 [dependencies]
 impeller-core = { workspace = true }
 impeller-hal = { workspace = true }
+impeller-shaders = { workspace = true }
 impeller-present = { workspace = true }
 impeller-hal-vulkan = { workspace = true, optional = true }
 impeller-hal-gles = { workspace = true, optional = true }

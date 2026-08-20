@@ -116,7 +116,7 @@ reason.
 | `strokeMiterLimit` | yes | `StrokeStyle::miter_limit` | `stroke-joins` |
 | `isAntiAlias` | yes | `with_anti_alias` | `circle-antialiased`, `curve-antialiased` |
 | `blendMode` | yes | `with_blend`, all of Porter-Duff and the fifteen advanced modes where the device offers them | `advanced-blend-*` |
-| `shader` | partial | linear, radial, sweep and conical gradients, and images. Runtime effects are absent | `gradient-*` |
+| `shader` | yes | linear, radial, sweep and conical gradients, images, and a caller's own fragment program | `a_caller_can_fill_a_shape_with_their_own_fragment_program` |
 | `colorFilter` | partial | `with_color_filter`: a color matrix, and any blend against a constant that is affine in what it blends. Not the advanced blend modes, and not the gamma pair | `colour-filter-luminance` |
 | `imageFilter` | partial | `with_image_filter`: a blur, applied to what the paint drew rather than to the colour it computed. No other filter kind | `an_image_filter_blurs_a_gradient_that_a_mask_blur_refuses` |
 | `maskFilter` | yes | `with_mask_blur` and `with_mask_blur_style`: a blur of a shape's coverage in all four styles. Solid colors only, since the identity it rests on holds for nothing else | `each_mask_blur_style_keeps_the_part_of_the_blur_it_names` |
@@ -137,7 +137,7 @@ above it or not at all:
 
 ## Where that leaves it
 
-Of forty-seven rows across `Canvas` and `Paint`: thirty exist, five are
+Of forty-seven rows across `Canvas` and `Paint`: thirty-one exist, four are
 partial, seven are expressible by a caller who assembles them, four are absent,
 and one is out of scope. Counting them is the least interesting thing
 about the table -- the absences are not equal, and a reader deciding whether
@@ -181,13 +181,17 @@ build them:
    wants that should re-record. The pass model has the other half of the
    question: a nested recording arrives with its own passes and its own
    texture table, and merging those is about numbering slots.
-3. **Runtime effects** — user fragment shaders. Described here for a long time
-   as needing a shader pipeline that compiles at run time, which was wrong.
-   Flutter compiles these ahead of time and ships one already-compiled payload
-   per backend; what happens at run time is that a pipeline is built from a
-   module the engine did not know about when it was built. So what this needs
-   is a pipeline cache that can hold more than one program and a way to
-   register one — not a compiler. `docs/architecture.md` has the design.
+3. **The rest of runtime effects.** A caller's fragment program draws, on both
+   backends, through the paint. What it gets is the material's own uniform
+   block — fifty-six floats — and no textures of its own. An effect wanting
+   more than that, or wanting to sample an image the caller supplies, needs a
+   second descriptor set, which is worth building when something asks for it.
+
+   This row was described here for a long time as needing a shader pipeline
+   that compiles at run time. That was wrong, and the correction was most of
+   the work: Flutter compiles these ahead of time and ships one payload per
+   backend, so what was needed was a pipeline cache that can hold more than one
+   program, not a compiler. `docs/architecture.md` has the design.
 
 `drawRSuperellipse` and `clipRSuperellipse` were once described here as shapes
 with rules attached, cheap once somebody needed them. That was wrong, and the

@@ -1083,6 +1083,15 @@ impl Canvas {
 
         match shader {
             Shader::Solid(color) => Material::solid(color.to_array()),
+            // Passed through untouched. Every other material here is resolved
+            // -- geometry carried into clip space, a radius folded into a
+            // matrix -- because this renderer's own shader expects it that
+            // way. A caller's program expects whatever the caller wrote, and
+            // there is nothing here that could resolve it correctly.
+            Shader::RuntimeEffect { program, uniforms } => Material::Runtime {
+                program: *program,
+                uniforms: uniforms.clone(),
+            },
             Shader::Image {
                 slot,
                 rect,

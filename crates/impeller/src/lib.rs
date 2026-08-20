@@ -40,7 +40,7 @@ pub use impeller_core::{
     Recording, Rect, Sampling, Shader, SourceRect, Sprite, StrokeStyle, Style, TileMode, Vec2,
     VertexMode, Vertices, MAX_STOPS,
 };
-pub use impeller_hal::{BlendFactor, Capabilities, Error, Result};
+pub use impeller_hal::{BlendFactor, Capabilities, Error, Result, RuntimeProgram, RUNTIME_FLOATS};
 
 /// Direct scanout to a display, with no compositor.
 #[cfg(feature = "drm")]

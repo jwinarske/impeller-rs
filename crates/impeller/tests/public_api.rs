@@ -11,7 +11,7 @@ use impeller::{
     Affine2, Atlas, BackendPreference, BlendMode, Canvas, Color, ColorFilter, Context, Coverage,
     Dash, Extent2D, GlyphKey, GradientStop, ImageFilter, Layer, LineCap, MaskBlurStyle, Paint,
     Path, PathBuilder, PixelFormat, PointMode, PositionedGlyph, Rect, Result, Sampling, SourceRect,
-    Sprite, StrokeStyle, Style, TileMode, Vec2, VertexMode, Vertices, MAX_STOPS,
+    Sprite, StrokeStyle, Style, TileMode, Vec2, VertexMode, Vertices, MAX_STOPS, RUNTIME_FLOATS,
 };
 
 const SIZE: Extent2D = Extent2D {
@@ -6713,5 +6713,119 @@ fn a_collapsed_transform_leaves_nothing_reachable() {
         (local.right - local.left, local.bottom - local.top),
         (0.0, 0.0),
         "a transform that cannot be inverted reaches nothing"
+    );
+}
+
+/// The uniform block as the test effect reads it: two colours and a threshold.
+fn effect_uniforms(threshold: f32) -> Vec<f32> {
+    let mut out = vec![0.0; RUNTIME_FLOATS];
+    out[0..4].copy_from_slice(&[1.0, 0.0, 0.0, 1.0]);
+    out[4..8].copy_from_slice(&[0.0, 0.7, 0.2, 1.0]);
+    out[20] = threshold;
+    out
+}
+
+#[test]
+fn a_caller_can_fill_a_shape_with_their_own_fragment_program() {
+    // The whole point of the feature, through the surface a caller actually
+    // has: register a program, name it in a paint, draw a shape with it. What
+    // makes this more than the backend test is that the shape is a shape --
+    // the effect fills a circle here, so it goes through tessellation, the
+    // material path and the paint, not a full-screen quad pushed at the HAL.
+    let Some(mut ctx) = context() else { return };
+    let program = ctx
+        .register_program(&impeller::RuntimeProgram {
+            spirv: impeller_shaders::EFFECT_SPV.to_vec(),
+            glsl_es: impeller_shaders::EFFECT_FS_GLSL.to_string(),
+        })
+        .expect("register");
+
+    let mut canvas = Canvas::new(SIZE);
+    canvas.clear(Color::BLACK);
+    canvas
+        .draw_circle(
+            Vec2::new(64.0, 64.0),
+            48.0,
+            &Paint::runtime_effect(program, effect_uniforms(0.0)).with_anti_alias(false),
+        )
+        .expect("effect");
+    let pixels = render(&mut ctx, canvas);
+
+    // The effect splits at the middle of clip space, so the circle is two
+    // colours -- and outside it the ground shows, which is what says the
+    // program filled a shape rather than the frame.
+    assert_eq!(pixel(&pixels, 40, 64), [255, 0, 0, 255], "the left half");
+    assert_eq!(
+        pixel(&pixels, 88, 64),
+        [0, 178, 51, 255],
+        "the right half, in the caller's second colour"
+    );
+    assert_eq!(
+        pixel(&pixels, 4, 4),
+        [0, 0, 0, 255],
+        "outside the circle the effect did not run"
+    );
+}
+
+#[test]
+fn an_effects_uniforms_travel_with_the_paint_that_names_it() {
+    // Two draws with the same program and different uniforms, in one
+    // recording. They share a pipeline and differ only in the block, which is
+    // the arrangement that would break if uniforms were held by the program
+    // rather than by the draw.
+    let Some(mut ctx) = context() else { return };
+    let program = ctx
+        .register_program(&impeller::RuntimeProgram {
+            spirv: impeller_shaders::EFFECT_SPV.to_vec(),
+            glsl_es: impeller_shaders::EFFECT_FS_GLSL.to_string(),
+        })
+        .expect("register");
+
+    let mut canvas = Canvas::new(SIZE);
+    canvas.clear(Color::BLACK);
+    canvas
+        .draw_rect(
+            Rect::new(0.0, 0.0, 128.0, 60.0),
+            &Paint::runtime_effect(program, effect_uniforms(-0.5)).with_anti_alias(false),
+        )
+        .expect("upper");
+    canvas
+        .draw_rect(
+            Rect::new(0.0, 68.0, 128.0, 128.0),
+            &Paint::runtime_effect(program, effect_uniforms(0.5)).with_anti_alias(false),
+        )
+        .expect("lower");
+    let pixels = render(&mut ctx, canvas);
+
+    // A threshold of minus a half falls at pixel thirty-two, and of plus a
+    // half at ninety-six. So the middle of the frame is on opposite sides of
+    // the two splits.
+    assert_eq!(pixel(&pixels, 64, 30), [0, 178, 51, 255], "past the first");
+    assert_eq!(
+        pixel(&pixels, 64, 100),
+        [255, 0, 0, 255],
+        "before the second"
+    );
+}
+
+#[test]
+fn a_paint_naming_a_program_nobody_registered_is_refused() {
+    let Some(mut ctx) = context() else { return };
+    let mut canvas = Canvas::new(SIZE);
+    canvas
+        .draw_rect(
+            Rect::from_size(128.0, 128.0),
+            &Paint::runtime_effect(11, effect_uniforms(0.0)),
+        )
+        .expect("recording a draw does not touch a device");
+
+    let mut surface = ctx
+        .create_surface(SIZE, PixelFormat::Rgba8Unorm)
+        .expect("surface");
+    let result = ctx.draw(&mut surface, &canvas.finish());
+    ctx.destroy_surface(surface);
+    assert!(
+        result.is_err(),
+        "a program nobody registered should be refused when the recording is drawn"
     );
 }
