@@ -84,3 +84,61 @@ pub fn effect_uniforms(left: [f32; 4], right: [f32; 4], threshold: f32) -> Vec<f
     out[impeller_hal::material::layout::GEOMETRY] = threshold;
     out
 }
+
+/// The slot a scene's glyph atlas arrives at.
+///
+/// One past the sheet, so a scene drawing both text and an image needs no
+/// negotiation about which is which. A scene that draws only text still leaves
+/// the sheet at zero rather than shifting down: the number a plate reads is
+/// then the same whatever else the plate does.
+pub const GLYPH_SLOT: u32 = 1;
+
+/// How wide and tall each fixture glyph is.
+pub const GLYPH_SIZE: u32 = 10;
+
+/// The glyphs a scene can name, by index.
+///
+/// Synthetic rather than rasterized from a font, for the reason the whole
+/// fixture is synthetic: a scene has to describe a picture without a device,
+/// and a font file is a device of its own -- one whose version decides what the
+/// picture is. These are coverage in the shape text has, an outline and a
+/// weight, without being letters.
+///
+/// Four of them, which is enough for a run to be a run: two solid, one at half
+/// coverage to check that an atlas is read as coverage rather than as color,
+/// and one hollow so a glyph with a hole in it goes through the same path.
+pub fn glyph_coverage(index: u32) -> Vec<u8> {
+    let size = GLYPH_SIZE;
+    let mut out = vec![0u8; (size * size) as usize];
+    for y in 0..size {
+        for x in 0..size {
+            let edge = x == 0 || y == 0 || x == size - 1 || y == size - 1;
+            let value = match index % 4 {
+                // A filled block, the simplest thing an atlas can hold.
+                0 => 255,
+                // Half coverage everywhere, which comes out as the paint's
+                // color at half alpha and not as a lighter color.
+                1 => 128,
+                // A ring, so a glyph with a hole in it is drawn as one.
+                2 => {
+                    if edge {
+                        255
+                    } else {
+                        0
+                    }
+                }
+                // A diagonal wedge, which has partial coverage along an edge
+                // that is neither horizontal nor vertical.
+                _ => {
+                    if x + y >= size {
+                        255
+                    } else {
+                        0
+                    }
+                }
+            };
+            out[(y * size + x) as usize] = value;
+        }
+    }
+    out
+}

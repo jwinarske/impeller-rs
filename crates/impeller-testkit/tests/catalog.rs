@@ -138,7 +138,7 @@ fn catalog_names_say_which_file_they_came_from() {
     // The name is the only link back to the test each scene mirrors, so it
     // carries the topic its file is named for. A scene that does not is one
     // whose original nobody can find.
-    const TOPICS: [&str; 12] = [
+    const TOPICS: [&str; 13] = [
         "basic/",
         "path/",
         "gradient/",
@@ -151,6 +151,11 @@ fn catalog_names_say_which_file_they_came_from() {
         "shadow/",
         "dl/",
         "effect/",
+        // The text file's subject is text rendering, of which only shaping is
+        // out of scope here. These plates mirror what a run does on its way to
+        // the screen using synthetic coverage, which is the part of that file
+        // this renderer has anything to say about.
+        "text/",
     ];
     let stray: Vec<&str> = catalog()
         .iter()

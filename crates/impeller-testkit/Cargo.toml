@@ -10,6 +10,7 @@ license.workspace = true
 glam = { workspace = true }
 impeller-core = { workspace = true }
 impeller-geometry = { workspace = true }
+impeller-text = { workspace = true }
 impeller-hal = { workspace = true }
 impeller-shaders = { workspace = true }
 impeller-renderer = { workspace = true }

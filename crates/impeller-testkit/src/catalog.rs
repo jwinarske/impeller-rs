@@ -34,8 +34,8 @@
 //! scene here with no counterpart there would be visible as one.
 
 use crate::scene::{
-    AtlasSpec, Fill, Item, LayerSpec, MeshSpec, Node, Scene, ShadowSpec, SpriteSpec, Stop,
-    StrokeSpec, Transform,
+    AtlasSpec, Fill, GlyphRunSpec, Item, LayerSpec, MeshSpec, Node, Scene, ShadowSpec, SpriteSpec,
+    Stop, StrokeSpec, Transform,
 };
 use crate::shape::Shape;
 use impeller_core::{Affine2, ImageFilter, MaskBlurStyle, Vec2, VertexMode};
@@ -76,6 +76,7 @@ pub fn catalog() -> Vec<Scene> {
     scenes.extend(layers());
     scenes.extend(runtime_effect());
     scenes.extend(image_filters());
+    scenes.extend(glyphs());
     scenes
 }
 
@@ -2178,6 +2179,93 @@ fn caster(shape: Shape) -> ShadowSpec {
         transform: Transform::default(),
         with_caster: true,
     }
+}
+
+/// A run of the fixture glyphs, placed along a line.
+fn run(indices: &[u32], origin: [f32; 2]) -> Vec<(u32, [f32; 2])> {
+    indices
+        .iter()
+        .enumerate()
+        .map(|(i, index)| (*index, [origin[0] + i as f32 * 14.0, origin[1]]))
+        .collect()
+}
+
+fn text(name: &'static str, spec: GlyphRunSpec) -> Scene {
+    Scene::tree(name, vec![Node::Glyphs(Box::new(spec))])
+        .with_background(DARK)
+        .with_samples(4)
+}
+
+fn run_of(glyphs: Vec<(u32, [f32; 2])>, color: [f32; 4]) -> GlyphRunSpec {
+    GlyphRunSpec {
+        glyphs,
+        color,
+        blend: BlendMode::SrcOver,
+        transform: Transform::default(),
+        image_filter: ImageFilter::None,
+        mask_blur: 0.0,
+        mask_blur_style: MaskBlurStyle::Normal,
+    }
+}
+
+/// Glyph runs, which Impeller's own text file cannot be mirrored for -- that
+/// one shapes real fonts, and a font file decides the picture. These use
+/// synthetic coverage instead, so what is compared is the path a run takes
+/// through this renderer rather than anyone's hinting.
+fn glyphs() -> Vec<Scene> {
+    vec![
+        text(
+            "text/a-run-reads-its-atlas-as-coverage",
+            // The four fixture glyphs: solid, half, a ring and a wedge. Half
+            // coverage has to come out as the paint's color at half alpha
+            // rather than as a lighter color, which is the whole difference
+            // between an atlas read as coverage and one read as color.
+            run_of(run(&[0, 1, 2, 3], [22.0, 58.0]), YELLOW),
+        ),
+        text(
+            "text/a-run-through-an-image-filter",
+            // A dilation over a run, which goes through a layer -- the route a
+            // run did not take at all until recently.
+            GlyphRunSpec {
+                image_filter: ImageFilter::Dilate {
+                    radius_x: 4.0,
+                    radius_y: 4.0,
+                },
+                ..run_of(run(&[0, 2, 3], [30.0, 58.0]), GREEN)
+            },
+        ),
+        text(
+            "text/a-run-with-a-normal-mask-blur",
+            // A text shadow, which is what a mask blur over a run is for.
+            GlyphRunSpec {
+                mask_blur: 4.0,
+                ..run_of(run(&[0, 2, 3], [30.0, 58.0]), WHITE)
+            },
+        ),
+        text(
+            "text/a-run-with-a-solid-mask-blur",
+            // The shape kept at full strength with its blur around it, which
+            // is the shadow and the text in one draw.
+            GlyphRunSpec {
+                mask_blur: 4.0,
+                mask_blur_style: MaskBlurStyle::Solid,
+                ..run_of(run(&[0, 2, 3], [30.0, 58.0]), BLUE)
+            },
+        ),
+        text(
+            "text/a-run-under-a-rotation",
+            // A run turns with the canvas like anything else, and its coverage
+            // is sampled through the rotation rather than snapped to it.
+            GlyphRunSpec {
+                transform: Transform {
+                    rotate: 0.35,
+                    translate: [18.0, -14.0],
+                    ..Transform::default()
+                },
+                ..run_of(run(&[0, 1, 2, 3], [22.0, 58.0]), RED)
+            },
+        ),
+    ]
 }
 
 /// `aiks_dl_shadow_unittests.cc`.

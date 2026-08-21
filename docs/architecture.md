@@ -845,6 +845,23 @@ and a second pipeline for text, spends more in pipeline state and in the code
 deciding which of two shapes a batch is in, to save memory on the geometry that
 was already cheapest to store.
 
+**A scene can name a glyph run, so text is compared across backends.** It could
+not before, and the consequence was that the whole coverage path -- an atlas
+uploaded as a texture, read through the red channel, tinted by the paint -- along
+with everything a run gained recently, had only ever run on whichever backend
+came first.
+
+A scene names glyphs by index into a synthetic fixture set for the same reason it
+names no texture: it must describe a picture without a device, and a font file is
+a device of its own, one whose version decides what the picture is. Four glyphs
+is enough for a run to be a run -- solid, half-covered, a ring and a wedge --
+which between them cover full coverage, partial coverage, a hole, and an edge
+that is neither horizontal nor vertical. What that leaves out is shaping, which
+is out of scope here and is the only part of Impeller's text file that is.
+
+The atlas arrives at slot one and the sheet stays at zero, so the number a plate
+reads does not depend on what else the plate draws.
+
 **A glyph atlas holds coverage, not color**, in a single-channel format. The
 glyph material reads one channel and scales a solid with it, which is what
 antialiased text is; an image paint replaces color instead. The two differ in

@@ -329,6 +329,7 @@ fn the_playground_inventory_counts_each_file_correctly() {
         ("aiks_dl_shadow_unittests.cc", "shadow"),
         ("aiks_dl_unittests.cc", "dl"),
         ("aiks_dl_runtime_effect_unittests.cc", "effect"),
+        ("aiks_dl_text_unittests.cc", "text"),
     ];
     let doc = doc("playground-parity.md");
     let mut counted = 0;

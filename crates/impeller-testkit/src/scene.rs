@@ -94,6 +94,26 @@ pub struct MeshSpec {
     pub image_filter: ImageFilter,
 }
 
+/// A run of glyphs, placed.
+///
+/// A scene names glyphs by index into the fixture set for the reason it names
+/// no texture: it has to describe a picture without a device, and a font file
+/// is a device of its own -- one whose version decides what the picture is. The
+/// executor builds the atlas, uploads it, and supplies the slot.
+#[derive(Debug, Clone, PartialEq)]
+pub struct GlyphRunSpec {
+    /// Which fixture glyph, and where its top-left corner goes.
+    pub glyphs: Vec<(u32, [f32; 2])>,
+    pub color: [f32; 4],
+    pub blend: BlendMode,
+    pub transform: Transform,
+    /// Filter what the run drew. See [`Item::image_filter`].
+    pub image_filter: ImageFilter,
+    /// Blur the run's coverage before filling it. Zero for none.
+    pub mask_blur: f32,
+    pub mask_blur_style: MaskBlurStyle,
+}
+
 /// A shape's shadow, and whether the shape will cover it.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ShadowSpec {
@@ -582,6 +602,8 @@ pub enum Node {
     Mesh(Box<MeshSpec>),
     /// Pieces of the fixture sheet, each placed and tinted on its own.
     Atlas(Box<AtlasSpec>),
+    /// A run of glyphs read from the fixture glyph atlas as coverage.
+    Glyphs(Box<GlyphRunSpec>),
     /// The shadow a shape at some elevation casts.
     Shadow(Box<ShadowSpec>),
     /// A group rendered into a target of its own and composited back.
@@ -644,7 +666,9 @@ impl Node {
             // derivations need from them is asked for separately, by
             // `samples_fixture` and `blends`, which are exhaustive over this
             // enum so that a node kind cannot be added without deciding.
-            Self::Mesh(_) | Self::Atlas(_) | Self::Shadow(_) => Box::new(std::iter::empty()),
+            Self::Mesh(_) | Self::Atlas(_) | Self::Shadow(_) | Self::Glyphs(_) => {
+                Box::new(std::iter::empty())
+            }
             Self::Layer { children, .. } => Box::new(children.iter().flat_map(Node::items)),
         }
     }
@@ -652,7 +676,9 @@ impl Node {
     fn items_mut(&mut self) -> Box<dyn Iterator<Item = &mut Item> + '_> {
         match self {
             Self::Draw(item) => Box::new(std::iter::once(item.as_mut())),
-            Self::Mesh(_) | Self::Atlas(_) | Self::Shadow(_) => Box::new(std::iter::empty()),
+            Self::Mesh(_) | Self::Atlas(_) | Self::Shadow(_) | Self::Glyphs(_) => {
+                Box::new(std::iter::empty())
+            }
             Self::Layer { children, .. } => Box::new(children.iter_mut().flat_map(Node::items_mut)),
         }
     }
@@ -660,7 +686,9 @@ impl Node {
     /// Whether this subtree composites a group at all.
     fn has_layer(&self) -> bool {
         match self {
-            Self::Draw(_) | Self::Mesh(_) | Self::Atlas(_) | Self::Shadow(_) => false,
+            Self::Draw(_) | Self::Mesh(_) | Self::Atlas(_) | Self::Shadow(_) | Self::Glyphs(_) => {
+                false
+            }
             Self::Layer { .. } => true,
         }
     }
@@ -675,7 +703,7 @@ impl Node {
         match self {
             Self::Draw(item) => matches!(item.fill, Fill::RuntimeEffect { .. }),
             Self::Mesh(mesh) => matches!(mesh.fill, Fill::RuntimeEffect { .. }),
-            Self::Atlas(_) | Self::Shadow(_) => false,
+            Self::Atlas(_) | Self::Shadow(_) | Self::Glyphs(_) => false,
             Self::Layer { children, .. } => children.iter().any(Node::uses_effect),
         }
     }
@@ -686,8 +714,23 @@ impl Node {
             Self::Mesh(mesh) => matches!(mesh.fill, Fill::Image { .. }),
             // A sprite batch is pieces of the sheet by definition.
             Self::Atlas(_) => true,
-            Self::Shadow(_) => false,
+            // A run reads the glyph atlas, which is a texture of its own rather
+            // than the sheet -- see `uses_glyphs`.
+            Self::Shadow(_) | Self::Glyphs(_) => false,
             Self::Layer { children, .. } => children.iter().any(Node::samples_fixture),
+        }
+    }
+
+    /// Whether this subtree reads the fixture glyph atlas.
+    ///
+    /// A separate question from [`Self::samples_fixture`] because it is a
+    /// separate texture: the sheet is color and the glyph atlas is coverage,
+    /// and a scene may want either, both, or neither.
+    fn uses_glyphs(&self) -> bool {
+        match self {
+            Self::Glyphs(_) => true,
+            Self::Draw(_) | Self::Mesh(_) | Self::Atlas(_) | Self::Shadow(_) => false,
+            Self::Layer { children, .. } => children.iter().any(Node::uses_glyphs),
         }
     }
 
@@ -699,6 +742,7 @@ impl Node {
             Self::Atlas(atlas) => Box::new(std::iter::once(atlas.blend)),
             // A shadow blends against what is under it and nothing else.
             Self::Shadow(_) => Box::new(std::iter::once(BlendMode::SrcOver)),
+            Self::Glyphs(run) => Box::new(std::iter::once(run.blend)),
             Self::Layer {
                 layer, children, ..
             } => {
@@ -709,7 +753,9 @@ impl Node {
 
     fn has_bounded_layer(&self) -> bool {
         match self {
-            Self::Draw(_) | Self::Mesh(_) | Self::Atlas(_) | Self::Shadow(_) => false,
+            Self::Draw(_) | Self::Mesh(_) | Self::Atlas(_) | Self::Shadow(_) | Self::Glyphs(_) => {
+                false
+            }
             Self::Layer {
                 bounds, children, ..
             } => bounds.is_some() || children.iter().any(Node::has_bounded_layer),
@@ -725,7 +771,9 @@ impl Node {
     /// bounded-equals-unbounded comparison cannot be asked of these.
     fn filters_its_backdrop(&self) -> bool {
         match self {
-            Self::Draw(_) | Self::Mesh(_) | Self::Atlas(_) | Self::Shadow(_) => false,
+            Self::Draw(_) | Self::Mesh(_) | Self::Atlas(_) | Self::Shadow(_) | Self::Glyphs(_) => {
+                false
+            }
             Self::Layer {
                 layer, children, ..
             } => layer.backdrop_blur > 0.0 || children.iter().any(Node::filters_its_backdrop),
@@ -883,6 +931,11 @@ impl Scene {
     /// naming a texture nobody supplied.
     pub fn samples_fixture(&self) -> bool {
         self.items.iter().any(Node::samples_fixture)
+    }
+
+    /// Whether any node in this scene reads the fixture glyph atlas.
+    pub fn uses_glyphs(&self) -> bool {
+        self.items.iter().any(Node::uses_glyphs)
     }
 
     /// Whether any item in this scene is drawn by the fixture program.

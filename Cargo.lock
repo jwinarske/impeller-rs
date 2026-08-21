@@ -450,6 +450,7 @@ dependencies = [
  "impeller-hal-vulkan",
  "impeller-renderer",
  "impeller-shaders",
+ "impeller-text",
 ]
 
 [[package]]

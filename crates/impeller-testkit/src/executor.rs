@@ -183,6 +183,55 @@ fn rect_of([left, top, right, bottom]: [f32; 4]) -> Rect {
 /// meaning depends on what came before.
 fn record_node(canvas: &mut Canvas, node: &Node, anti_alias: bool) -> Result<()> {
     match node {
+        Node::Glyphs(run) => {
+            canvas.save();
+            canvas.concat(run.transform.to_affine());
+            // Built here rather than carried in the scene, for the reason the
+            // scene names no texture: an atlas holds device-side coverage and a
+            // scene has to be writable without a device. The same indices give
+            // the same coverage on both backends, which is what makes a plate
+            // over text comparable at all.
+            let mut atlas = impeller_text::Atlas::new(64);
+            let mut placed = Vec::with_capacity(run.glyphs.len());
+            for (index, position) in &run.glyphs {
+                let key = impeller_text::GlyphKey {
+                    font: 1,
+                    glyph: *index as u16,
+                    size: 16,
+                };
+                let coverage = impeller_text::Coverage {
+                    width: crate::fixture::GLYPH_SIZE,
+                    height: crate::fixture::GLYPH_SIZE,
+                    texels: crate::fixture::glyph_coverage(*index),
+                };
+                let rect = match atlas.insert(key, &coverage) {
+                    Ok(rect) => rect,
+                    Err(e) => {
+                        canvas.restore();
+                        return Err(impeller_hal::Error::Backend {
+                            backend: "testkit",
+                            detail: format!("a fixture glyph did not fit its atlas: {e:?}"),
+                        });
+                    }
+                };
+                placed.push(impeller_text::PositionedGlyph::new(key, *position, rect));
+            }
+            let mut paint = Paint::fill(color_of(run.color))
+                .with_blend(run.blend)
+                .with_image_filter(run.image_filter.clone());
+            if run.mask_blur > 0.0 {
+                paint = paint
+                    .with_mask_blur(run.mask_blur)
+                    .with_mask_blur_style(run.mask_blur_style);
+            }
+            let outcome = canvas
+                .draw_glyphs(&placed, &atlas, crate::fixture::GLYPH_SLOT, &paint)
+                .err();
+            canvas.restore();
+            if let Some(e) = outcome {
+                return Err(e);
+            }
+        }
         Node::Mesh(mesh) => {
             canvas.save();
             canvas.concat(mesh.transform.to_affine());
@@ -383,7 +432,10 @@ where
             ));
         }
     }
-    let pixels = if scene.samples_fixture() {
+    // The textures a scene named, in the slots it named them by. A scene using
+    // neither still goes through here with an empty list, which is what it
+    // always did.
+    let sheet = if scene.samples_fixture() {
         // With a chain, so a plate can draw the sheet smaller than its own size
         // and mean it. Costs four levels over an eight-by-eight sheet and
         // changes nothing for the plates that do not ask: only mipmapped
@@ -393,16 +445,89 @@ where
             crate::fixture::SIZE,
             PixelFormat::Rgba8Unorm,
         ))?;
-        let result = ctx
-            .write_texture(&mut sheet, &crate::fixture::pixels())
-            .and_then(|()| impeller_core::render_offscreen::<H>(ctx, &recording, &[&sheet]));
-        // Released whether the draw worked or not: a scene that fails to
-        // render must not leak a texture into every later scene's device.
-        ctx.destroy_texture(sheet);
-        result?
+        if let Err(e) = ctx.write_texture(&mut sheet, &crate::fixture::pixels()) {
+            ctx.destroy_texture(sheet);
+            return Err(e);
+        }
+        Some(sheet)
     } else {
-        impeller_core::render_offscreen::<H>(ctx, &recording, &[])?
+        None
     };
+    // A single channel would do, coverage being one byte per texel, but the
+    // slot table and the shader both read four -- and the glyph material takes
+    // its coverage from the red channel precisely so that a four-channel atlas
+    // and a one-channel one are the same picture.
+    let glyphs = if scene.uses_glyphs() {
+        let side = 64;
+        let made = ctx
+            .create_texture(&TextureDescriptor::offscreen(
+                impeller_hal::Extent2D::new(side, side),
+                PixelFormat::Rgba8Unorm,
+            ))
+            .and_then(|mut texture| {
+                let mut atlas = impeller_text::Atlas::new(side);
+                for index in 0..4u32 {
+                    let key = impeller_text::GlyphKey {
+                        font: 1,
+                        glyph: index as u16,
+                        size: 16,
+                    };
+                    let _ = atlas.insert(
+                        key,
+                        &impeller_text::Coverage {
+                            width: crate::fixture::GLYPH_SIZE,
+                            height: crate::fixture::GLYPH_SIZE,
+                            texels: crate::fixture::glyph_coverage(index),
+                        },
+                    );
+                }
+                // The atlas holds one byte per texel and the texture four, so
+                // the coverage is spread across all of them. Any channel would
+                // serve, since the material reads red; writing all four is what
+                // makes the texture legible if anyone looks at it.
+                let mut texels = vec![0u8; (side * side * 4) as usize];
+                for (i, coverage) in atlas.texels().iter().enumerate() {
+                    texels[i * 4..i * 4 + 4].copy_from_slice(&[*coverage; 4]);
+                }
+                ctx.write_texture(&mut texture, &texels).map(|()| texture)
+            });
+        match made {
+            Ok(texture) => Some(texture),
+            Err(e) => {
+                if let Some(sheet) = sheet {
+                    ctx.destroy_texture(sheet);
+                }
+                return Err(e);
+            }
+        }
+    } else {
+        None
+    };
+
+    let mut bound: Vec<&<H as Hal>::Texture> = Vec::new();
+    if let Some(sheet) = sheet.as_ref() {
+        bound.push(sheet);
+    }
+    if let Some(glyphs) = glyphs.as_ref() {
+        // Slot one whether or not the sheet is there, so a plate reads the same
+        // number however else it is drawn. Where the sheet is absent the slot
+        // still has to exist, and the sheet's own texture stands in for it --
+        // nothing samples it, and a table with a hole in it is not a table.
+        if sheet.is_none() {
+            bound.push(glyphs);
+        }
+        bound.push(glyphs);
+    }
+    let result = impeller_core::render_offscreen::<H>(ctx, &recording, &bound);
+    // Released whether the draw worked or not: a scene that fails to render
+    // must not leak a texture into every later scene's device.
+    if let Some(sheet) = sheet {
+        ctx.destroy_texture(sheet);
+    }
+    if let Some(glyphs) = glyphs {
+        ctx.destroy_texture(glyphs);
+    }
+    let pixels = result?;
     Ok(Image::new(scene.size.width, scene.size.height, pixels))
 }
 
