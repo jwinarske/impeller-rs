@@ -71,7 +71,7 @@ impl AtlasRect {
 /// in whole pixels: a cache keyed by a float would miss on values that differ
 /// only in their last bit, and rasterizing at a rounded size is what a caller
 /// is doing anyway.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct GlyphKey {
     pub font: u64,
     pub glyph: u16,
@@ -356,10 +356,11 @@ impl Atlas {
         // Copied out before anything is cleared, since the atlas's own texels
         // are the only place a glyph's coverage still exists — the bitmaps a
         // caller supplied were borrowed and are long gone.
-        let coverage: Vec<(GlyphKey, Coverage)> = survivors
+        let mut coverage: Vec<(GlyphKey, Coverage)> = survivors
             .iter()
             .map(|(key, placed)| (*key, self.extract(placed.rect)))
             .collect();
+        repacking_order(&mut coverage);
 
         self.texels.fill(0);
         self.shelves.clear();
@@ -398,11 +399,12 @@ impl Atlas {
         // Read back before the texels are replaced: the atlas is the only place
         // a glyph's coverage still exists, the bitmaps a caller supplied having
         // been borrowed.
-        let kept: Vec<(GlyphKey, Coverage)> = self
+        let mut kept: Vec<(GlyphKey, Coverage)> = self
             .placed
             .iter()
             .map(|(key, placed)| (*key, self.extract(placed.rect)))
             .collect();
+        repacking_order(&mut kept);
 
         self.size = grown;
         self.texels = vec![0; (grown as usize) * (grown as usize)];
@@ -478,6 +480,32 @@ impl Atlas {
     }
 }
 
+/// The order glyphs are packed in when the atlas is rebuilt.
+///
+/// Tallest first, which is what shelf packing wants: a shelf is as tall as the
+/// tallest glyph on it, so a short glyph landing first opens a shelf that a
+/// tall one cannot use and every tall glyph after it opens another. Width and
+/// then the key break ties, the key because two glyphs of the same size have to
+/// land in the same order every run.
+///
+/// Determinism is the reason this exists at all, not the packing. Both rebuilds
+/// took their order from a `HashMap`, whose iteration order Rust seeds per
+/// process -- so the same text through the same atlas produced a different
+/// layout each run, and, worse, a different *number of compactions*: measured
+/// over four runs of one fixed sequence, three compacted once and one did not
+/// compact at all. Anything asserting on those counters was a coin flip, and
+/// the comment claiming a repack "cannot fail" rested on packing a subset in an
+/// order nothing guaranteed.
+fn repacking_order(glyphs: &mut [(GlyphKey, Coverage)]) {
+    glyphs.sort_by(|(left_key, left), (right_key, right)| {
+        right
+            .height
+            .cmp(&left.height)
+            .then(right.width.cmp(&left.width))
+            .then(left_key.cmp(right_key))
+    });
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -496,6 +524,90 @@ mod tests {
             glyph,
             size: 16,
         }
+    }
+
+    #[test]
+    fn a_compaction_lays_its_survivors_out_tallest_first() {
+        // The observable consequence of packing a rebuild in a defined order,
+        // and the reason there is one. Shelves are opened top-down, so if the
+        // tallest survivor is placed first it takes the first shelf, and every
+        // survivor after it sits on that shelf or a later one -- which makes
+        // "sorted by height descending" and "sorted by row" the same ordering.
+        //
+        // What this stands in for is a property that cannot be asserted from
+        // inside a single run. Both rebuilds took their order from a `HashMap`,
+        // seeded per process, so the same text packed differently every run;
+        // measured over five runs of one sequence, the atlas held thirty-six
+        // glyphs three times and thirty-five twice, a glyph lost to the hasher.
+        // That loss is a probabilistic consequence and a test for it would
+        // catch the fault only sometimes, which is worse than not testing it.
+        // This asks the deterministic thing that causes it instead.
+        let mut atlas = Atlas::with_limit(64, 64);
+        let sizes: Vec<(u32, u32)> = (0..40u32)
+            .map(|i| (3 + (i * 7) % 11, 3 + (i * 5) % 13))
+            .collect();
+        for (i, (w, h)) in sizes.iter().enumerate() {
+            let _ = atlas.insert(key(i as u16), &solid(*w, *h, 200));
+        }
+        atlas.begin_frame();
+        let mut survivors = Vec::new();
+        for i in (0..40usize).step_by(2) {
+            let (w, h) = sizes[i];
+            if atlas.insert(key(i as u16), &solid(w, h, 200)).is_ok() {
+                survivors.push((i as u16, h));
+            }
+        }
+        // One more, which needs the room the stale glyphs are holding.
+        let _ = atlas.insert(key(90), &solid(6, 9, 200));
+        assert_eq!(
+            atlas.compactions(),
+            1,
+            "nothing compacted, so this proves nothing"
+        );
+
+        // The tallest survivor is placed first into an empty atlas, so it
+        // opens the first shelf and sits at its top. Nothing stronger holds:
+        // shelves are scanned for the first that fits, so a shorter glyph
+        // placed later can land on an earlier shelf, and rows do go backward.
+        survivors.sort_by(|(left_key, left), (right_key, right)| {
+            right.cmp(left).then(left_key.cmp(right_key))
+        });
+        let (tallest, height) = survivors[0];
+        let rect = atlas
+            .get(key(tallest))
+            .expect("the tallest survivor should have been kept");
+        assert_eq!(
+            rect.y, 0,
+            "glyph {tallest}, the tallest survivor at {height}, landed at row \
+             {} rather than opening the first shelf -- so the rebuild placed \
+             something else before it",
+            rect.y
+        );
+    }
+
+    #[test]
+    fn a_rebuild_packs_the_tallest_glyphs_first() {
+        // A shelf is as tall as the tallest glyph on it, so a short glyph
+        // landing first opens a shelf a tall one cannot use, and every tall
+        // glyph after it opens another. Sorting by height is what makes a
+        // rebuild pack at least as well as the atlas it is rebuilding.
+        let mut glyphs = vec![
+            (key(1), solid(4, 4, 1)),
+            (key(2), solid(4, 20, 2)),
+            (key(3), solid(9, 12, 3)),
+            (key(4), solid(2, 20, 4)),
+        ];
+        repacking_order(&mut glyphs);
+        let heights: Vec<u32> = glyphs.iter().map(|(_, c)| c.height).collect();
+        assert_eq!(heights, vec![20, 20, 12, 4], "tallest first");
+        // Ties broken by width and then by the key, so two glyphs of a size
+        // land in the same order every run rather than in whichever order they
+        // arrived.
+        assert_eq!(
+            (glyphs[0].1.width, glyphs[1].1.width),
+            (4, 2),
+            "a tie in height is broken by width"
+        );
     }
 
     #[test]

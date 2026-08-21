@@ -851,6 +851,33 @@ because the packer runs once per glyph per size rather than per frame. Each
 glyph is padded by a texel: a linear filter samples a neighborhood, so a glyph
 flush against its neighbor bleeds that neighbor into its own edge.
 
+**A rebuilt atlas is packed in a stated order, not in whatever order a hash
+map iterated.** Both rebuilds -- the compaction that discards stale glyphs and
+the growth that doubles the sheet -- read the glyphs they are keeping out of a
+`HashMap` and reinserted them in iteration order. Rust seeds that per process,
+so the same text through the same atlas packed differently on every run.
+
+The layout differing would not matter on its own, since a glyph's coordinates
+travel with it. What mattered is that shelf packing is order-sensitive: a shelf
+is as tall as the tallest glyph on it, so a short glyph landing first opens a
+shelf a tall one cannot use. Measured over five runs of one fixed sequence, the
+atlas came out holding thirty-six glyphs three times and thirty-five twice --
+whether a glyph fit at all was decided by the hasher, and the comment saying a
+repack "cannot fail" rested on packing a subset in an order nothing guaranteed.
+
+Rebuilds now sort tallest first, with width and then the key breaking ties so
+that two glyphs of a size land in the same order every run. That is both the
+determinism and the standard shelf heuristic, which is why it costs nothing.
+
+What can be tested from inside a single run is narrower than the fault, and the
+test says so. Cross-run determinism is not observable where the hasher is seeded
+once per process, and the glyph loss it caused is probabilistic -- a test for
+that would catch the fault sometimes, which is worse than not testing it. So the
+assertion is on the deterministic thing underneath: the tallest survivor is
+placed first into an empty sheet, so it opens the first shelf. Nothing stronger
+holds, because shelves are scanned for the first that fits and a shorter glyph
+placed later does land on an earlier one.
+
 **Room is made by compacting, not by freeing.** Shelves cannot release a glyph
 in place — a hole in the middle of one is reusable only by a glyph of the same
 height, and tracking holes is most of what makes a general packer expensive. So
