@@ -9188,6 +9188,15 @@ fn every_draw_that_takes_a_paint_honours_its_color_filter_and_blend() {
     // A flat red sheet, so an image draw has the same color as a solid one.
     ctx.write_image(&mut image, &[255u8, 0, 0, 255].repeat(16))
         .expect("upload");
+    // A run, which this sweep left out when it was written and which was then
+    // the entry point that had dropped a paint field.
+    let (atlas, glyph, _) = two_glyph_atlas();
+    let atlas_image = upload_atlas(&mut ctx, &atlas);
+    let glyph_run = [PositionedGlyph::new(
+        glyph,
+        [60.0, 60.0],
+        atlas.get(glyph).unwrap(),
+    )];
     let red = Color::linear(1.0, 0.0, 0.0, 1.0);
     let square = Rect::new(40.0, 40.0, 88.0, 88.0);
     let mut b = PathBuilder::new();
@@ -9270,13 +9279,16 @@ fn every_draw_that_takes_a_paint_honours_its_color_filter_and_blend() {
                 let _ = canvas.clip_rect(square);
                 canvas.draw_paint(&paint).map(|_| ())
             }
+            "draw_glyphs" => canvas
+                .draw_glyphs(&glyph_run, &atlas, 1, &paint)
+                .map(|_| ()),
             other => unreachable!("{other}"),
         }
         .unwrap_or_else(|e| panic!("{name}: {e}"));
         let mut surface = ctx
             .create_surface(SIZE, PixelFormat::Rgba8Unorm)
             .expect("s");
-        ctx.draw_with_images(&mut surface, &canvas.finish(), &[&image])
+        ctx.draw_with_images(&mut surface, &canvas.finish(), &[&image, &atlas_image])
             .expect("d");
         let px = ctx.read(&mut surface).expect("r");
         ctx.destroy_surface(surface);
@@ -9301,6 +9313,7 @@ fn every_draw_that_takes_a_paint_honours_its_color_filter_and_blend() {
         "draw_atlas",
         "draw_image_nine",
         "draw_paint",
+        "draw_glyphs",
     ] {
         let plain = sample(&mut ctx, name, &|p| p, black);
         let filtered = sample(&mut ctx, name, &|p: Paint| p.with_color_filter(half), black);
@@ -9328,6 +9341,7 @@ fn every_draw_that_takes_a_paint_honours_its_color_filter_and_blend() {
         );
     }
     ctx.destroy_image(image);
+    ctx.destroy_image(atlas_image);
 }
 
 #[test]
@@ -9502,6 +9516,15 @@ fn every_draw_that_takes_a_paint_obeys_the_transform_and_the_clip() {
         .expect("image");
     ctx.write_image(&mut image, &[255u8, 0, 0, 255].repeat(16))
         .expect("upload");
+    // A run, stubbed out of this sweep when it was written because building an
+    // atlas here was awkward -- and then the one entry point that turned out to
+    // have dropped a paint field.
+    let (atlas, glyph, _) = two_glyph_atlas();
+    let atlas_image = upload_atlas(&mut ctx, &atlas);
+    let glyph_run = [
+        PositionedGlyph::new(glyph, [40.0, 60.0], atlas.get(glyph).unwrap()),
+        PositionedGlyph::new(glyph, [80.0, 60.0], atlas.get(glyph).unwrap()),
+    ];
     let red = Color::linear(1.0, 0.0, 0.0, 1.0);
     let square = Rect::new(40.0, 40.0, 88.0, 88.0);
     let mut b = PathBuilder::new();
@@ -9577,14 +9600,16 @@ fn every_draw_that_takes_a_paint_obeys_the_transform_and_the_clip() {
                     &img,
                 )
                 .map(|_| ()),
-            "draw_glyphs" => Ok(()),
+            "draw_glyphs" => canvas
+                .draw_glyphs(&glyph_run, &atlas, 1, &paint)
+                .map(|_| ()),
             other => unreachable!("{other}"),
         }
         .unwrap_or_else(|e| panic!("{name}: {e}"));
         let mut surface = ctx
             .create_surface(SIZE, PixelFormat::Rgba8Unorm)
             .expect("s");
-        ctx.draw_with_images(&mut surface, &canvas.finish(), &[&image])
+        ctx.draw_with_images(&mut surface, &canvas.finish(), &[&image, &atlas_image])
             .expect("d");
         let px = ctx.read(&mut surface).expect("r");
         ctx.destroy_surface(surface);
@@ -9625,6 +9650,7 @@ fn every_draw_that_takes_a_paint_obeys_the_transform_and_the_clip() {
         "draw_vertices",
         "draw_atlas",
         "draw_image_nine",
+        "draw_glyphs",
     ] {
         let plain = span(&mut ctx, name, &|_| {});
         assert_ne!(plain.0, 999, "{name} drew nothing to compare against");
@@ -9659,6 +9685,7 @@ fn every_draw_that_takes_a_paint_obeys_the_transform_and_the_clip() {
         );
     }
     ctx.destroy_image(image);
+    ctx.destroy_image(atlas_image);
 }
 
 #[test]
