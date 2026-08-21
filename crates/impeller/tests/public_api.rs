@@ -9835,18 +9835,15 @@ fn every_material_draws_the_same_inside_a_layer_as_outside_one() {
 }
 
 #[test]
-fn a_glyph_run_takes_an_image_filter_and_refuses_a_mask_blur() {
+fn a_glyph_run_takes_an_image_filter() {
     // The third call that does not pass through `draw_path`, after the mesh and
     // the sprite batch, and the third to have accepted a filter and quietly
     // drawn without one. A run is the highest-draw-count content there is, so
     // it is also the one where a dropped filter is least likely to be noticed
     // as a filter rather than as bad text.
     //
-    // The mask blur is refused rather than implemented, and for a different
-    // reason than the mesh's. A mesh varies in color per vertex, so blurring
-    // its coverage and blurring its result are different pictures and the
-    // refusal is permanent. A run is coverage times one solid color, where the
-    // two agree -- this one is simply not built, and the message says so.
+    // Its mask blur has its own test, the four styles being a larger question
+    // than whether the field is noticed at all.
     let Some(mut ctx) = context() else { return };
     let (atlas, solid, _) = two_glyph_atlas();
     let image = upload_atlas(&mut ctx, &atlas);
@@ -9907,16 +9904,107 @@ fn a_glyph_run_takes_an_image_filter_and_refuses_a_mask_blur() {
         "a blur should carry the glyph past its own box, but it spans {blurred:?}"
     );
 
-    let mut canvas = Canvas::new(SIZE);
-    canvas.clear(Color::linear(0.0, 0.0, 0.0, 1.0));
-    let refused = canvas
-        .draw_glyphs(&run, &atlas, 0, &Paint::fill(red).with_mask_blur(5.0))
-        .map(|_| ());
-    assert!(
-        matches!(refused, Err(Error::Unsupported(_))),
-        "a mask blur over a run should be refused while it is unimplemented, \
-         not accepted and ignored. Got {refused:?}"
+    ctx.destroy_image(image);
+}
+
+#[test]
+fn a_glyph_run_takes_all_four_mask_blur_styles() {
+    // A text shadow is a mask blur over a run, which is how the common case of
+    // shadowed text is drawn -- so a run needs the same four styles a shape
+    // gets rather than a refusal. What each style means is a statement about
+    // two pictures, the run's own coverage and that coverage blurred, so each
+    // is checked by where those two survive rather than by a color.
+    let Some(mut ctx) = context() else { return };
+    let (atlas, solid, other) = two_glyph_atlas();
+    let image = upload_atlas(&mut ctx, &atlas);
+    // Two glyphs, far apart, and the second is what makes the bounds matter.
+    // The blurred layer is opened over the whole run, and a layer sized from
+    // one glyph still covers that glyph once the blur's own reach is added --
+    // so a single-glyph run cannot tell a correct span from a collapsed one.
+    // The second sits well outside anything the first's box could reach.
+    let run = [
+        PositionedGlyph::new(solid, [30.0, 48.0], atlas.get(solid).unwrap()),
+        PositionedGlyph::new(other, [92.0, 48.0], atlas.get(other).unwrap()),
+    ];
+
+    // Inside the first glyph's own box and just outside it. That glyph covers
+    // 30..37 in x.
+    let look = |ctx: &mut Context, paint: &Paint| -> (u8, u8, usize) {
+        let mut canvas = Canvas::new(SIZE);
+        canvas.clear(Color::linear(0.0, 0.0, 0.0, 1.0));
+        canvas.draw_glyphs(&run, &atlas, 0, paint).expect("glyphs");
+        let mut surface = ctx
+            .create_surface(SIZE, PixelFormat::Rgba8Unorm)
+            .expect("surface");
+        ctx.draw_with_images(&mut surface, &canvas.finish(), &[&image])
+            .expect("draw");
+        let pixels = ctx.read(&mut surface).expect("read");
+        ctx.destroy_surface(surface);
+        let mut lit = 0;
+        for y in 0..SIZE.height {
+            for x in 0..SIZE.width {
+                if pixel(&pixels, x, y)[0] > 0 {
+                    lit += 1;
+                }
+            }
+        }
+        (pixel(&pixels, 33, 51)[0], pixel(&pixels, 26, 51)[0], lit)
+    };
+
+    let red = Color::linear(1.0, 0.0, 0.0, 1.0);
+    let (sharp_center, sharp_halo, sharp_lit) = look(&mut ctx, &Paint::fill(red));
+    assert_eq!(
+        (sharp_center, sharp_halo),
+        (255, 0),
+        "the first fixture glyph is a solid block with nothing around it"
     );
+    // Both glyphs, so a run whose second glyph was clipped away by bounds taken
+    // from the first would already differ here.
+    assert!(
+        sharp_lit > 64,
+        "only {sharp_lit} lit, which is one glyph rather than two"
+    );
+
+    let masked = |style: MaskBlurStyle| {
+        Paint::fill(red)
+            .with_mask_blur(5.0)
+            .with_mask_blur_style(style)
+    };
+
+    // Normal: the blurred coverage and nothing else, soft on both sides of the
+    // edge, so the middle is no longer at full strength.
+    let (center, halo, lit) = look(&mut ctx, &masked(MaskBlurStyle::Normal));
+    assert!(
+        center < 255 && center > 0,
+        "normal softens the middle, got {center}"
+    );
+    assert!(halo > 0, "normal reaches outside the glyph, got {halo}");
+    assert!(
+        lit > sharp_lit * 4,
+        "normal covers far more than the glyph did"
+    );
+
+    // Solid: the shape at full strength with the blur around it, which is
+    // exactly normal plus a sharp middle.
+    let (center, halo, _) = look(&mut ctx, &masked(MaskBlurStyle::Solid));
+    assert_eq!(center, 255, "solid keeps the glyph itself at full strength");
+    assert!(halo > 0, "and still puts the blur outside it, got {halo}");
+
+    // Outer: the blur outside the shape only, which is what a drop shadow
+    // behind opaque text needs -- the middle has to be gone.
+    let (center, halo, _) = look(&mut ctx, &masked(MaskBlurStyle::Outer));
+    assert_eq!(center, 0, "outer removes the glyph and keeps only its halo");
+    assert!(halo > 0, "and the halo is what is left, got {halo}");
+
+    // Inner: the blur inside the shape only, so nothing escapes the glyph's own
+    // box and the pixel count is the glyph's.
+    let (center, halo, lit) = look(&mut ctx, &masked(MaskBlurStyle::Inner));
+    assert!(
+        center < 255 && center > 0,
+        "inner softens within the glyph, got {center}"
+    );
+    assert_eq!(halo, 0, "inner puts nothing outside the glyph, got {halo}");
+    assert_eq!(lit, sharp_lit, "and covers exactly what the glyph covered");
 
     ctx.destroy_image(image);
 }

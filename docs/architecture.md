@@ -690,13 +690,19 @@ vertices to take them from. Text is the highest-draw-count content there is,
 which also makes it the place a dropped filter is least likely to be recognized
 as a dropped filter rather than as bad text.
 
-Its mask blur is refused, and for a different reason than the mesh's. A mesh
-carries a color per vertex, so blurring its coverage and blurring its result are
-different pictures and the refusal is permanent. A run is coverage times one
-solid color, which is exactly the case where the two agree -- so this one is
-simply not built, and the message says that rather than implying it could not
-be. Building it means the four mask styles over a run, which is drawing the run
-twice into layers rather than reusing any of the shape's machinery.
+Its mask blur is built rather than refused, unlike the mesh's, and the
+difference is not arbitrary. A mesh carries a color per vertex, so blurring its
+coverage and blurring its result are different pictures and the refusal is
+permanent. A run is coverage times one solid color, which is exactly the case
+where the two agree -- and a text shadow is a mask blur over a run, so it is the
+common case rather than a corner.
+
+Building it took naming what a mask blur is blurring instead of passing it a
+path. Every style draws its content two or three times -- into a blurred layer,
+and again at full sharpness to combine with it -- so the content is a small enum
+rather than a closure, a closure taking `&mut Canvas` not being callable twice
+while the canvas is borrowed. Two variants is the whole set: the operation needs
+coverage times one solid color, which is what rules a mesh and an image out.
 
 **A mesh takes the same filter routing a shape does, because it does not pass
 through the same door.** `draw_path` is where a paint's image filter and mask

@@ -353,6 +353,23 @@ impl Morphology {
     }
 }
 
+/// What a mask blur is blurring: a shape, or a run of glyphs.
+///
+/// An enum rather than a closure because every style draws its content two or
+/// three times and a closure taking `&mut Canvas` cannot be called twice while
+/// the canvas is borrowed. Two variants is also the whole set: a mask blur
+/// needs the content's coverage times one solid color, which a mesh's per-vertex
+/// colors rule out and an image's texels rule out.
+#[derive(Clone, Copy)]
+enum Masked<'a> {
+    Path(&'a Path),
+    Glyphs {
+        glyphs: &'a [PositionedGlyph],
+        atlas: &'a Atlas,
+        slot: u32,
+    },
+}
+
 /// How a layer is composited back onto what was underneath it.
 ///
 /// A separate type from [`Paint`] rather than a reuse of it, because only two
@@ -1188,7 +1205,7 @@ impl Canvas {
             return self.draw_effect_filtered(path, paint);
         }
         if paint.mask_blur > 0.0 {
-            return self.draw_masked(path, paint);
+            return self.draw_masked(Masked::Path(path), paint);
         }
         if paint.anti_alias {
             self.anti_alias = true;
@@ -1704,7 +1721,43 @@ impl Canvas {
         )
     }
 
-    fn draw_masked(&mut self, path: &Path, paint: &Paint) -> Result<&mut Self> {
+    /// What a mask blur is blurring.
+    ///
+    /// A mask blur draws its content two or three times -- once into a blurred
+    /// layer, sometimes again at full sharpness to combine with it -- and every
+    /// style needs the same content each time. Naming the content rather than
+    /// passing a path is what lets a glyph run take the same four styles a
+    /// shape does, which matters because a text shadow is a mask blur over a
+    /// run and is how the common case of shadowed text is drawn.
+    fn draw_mask_content(&mut self, content: Masked<'_>, paint: &Paint) -> Result<&mut Self> {
+        match content {
+            Masked::Path(path) => self.draw_path(path, paint),
+            Masked::Glyphs {
+                glyphs,
+                atlas,
+                slot,
+            } => self.draw_glyphs(glyphs, atlas, slot, paint),
+        }
+    }
+
+    /// The bounds of what a mask blur is blurring, in the canvas's own units.
+    fn mask_bounds(&self, content: Masked<'_>, paint: &Paint) -> Rect {
+        match content {
+            Masked::Path(path) => self.filter_bounds(path, paint),
+            Masked::Glyphs { glyphs, .. } => {
+                let (mut min, mut max) =
+                    (Vec2::splat(f32::INFINITY), Vec2::splat(f32::NEG_INFINITY));
+                for glyph in glyphs {
+                    let corner = Vec2::from(glyph.position);
+                    min = min.min(corner);
+                    max = max.max(corner + Vec2::from(glyph.size));
+                }
+                Rect::new(min.x, min.y, max.x, max.y)
+            }
+        }
+    }
+
+    fn draw_masked(&mut self, content: Masked<'_>, paint: &Paint) -> Result<&mut Self> {
         if !matches!(paint.shader, Shader::Solid(_)) {
             // See `Paint::mask_blur`: for anything that varies, the two orders
             // are different pictures, and drawing one while the caller asked
@@ -1714,7 +1767,7 @@ impl Canvas {
                 "a mask blur takes a solid color; draw into a blurred layer for anything else",
             ));
         }
-        let bounds = self.filter_bounds(path, paint);
+        let bounds = self.mask_bounds(content, paint);
         // Without the mask, or this would open a layer inside itself forever --
         // and with the caller's blend taken off, because it belongs to the
         // composite that puts the finished mask on the frame rather than to a
@@ -1743,7 +1796,7 @@ impl Canvas {
             // taken up again after: the layer has to be closed whether the
             // draw inside it succeeded or not, or every later draw lands in a
             // layer nobody composites.
-            let failure = self.draw_path(path, &inner).err();
+            let failure = self.draw_mask_content(content, &inner).err();
             self.restore();
             return match failure {
                 Some(e) => Err(e),
@@ -1787,9 +1840,12 @@ impl Canvas {
                     _ => BlendMode::DstOut,
                 };
                 self.save_layer_bounds(blurred, bounds);
-                let first = self.draw_path(path, &inner).err();
+                let first = self.draw_mask_content(content, &inner).err();
                 self.restore();
-                first.or_else(|| self.draw_path(path, &inner.with_blend(blend)).err())
+                first.or_else(|| {
+                    self.draw_mask_content(content, &inner.with_blend(blend))
+                        .err()
+                })
             }
             // The shape first, and the blur composited onto it with `DstIn`.
             // The other order is the obvious one and is wrong: outside the
@@ -1798,10 +1854,10 @@ impl Canvas {
             // Compositing a layer covers the whole region, so putting the
             // blur on that side is what makes the rule act everywhere.
             MaskBlurStyle::Inner => {
-                let first = self.draw_path(path, &inner).err();
+                let first = self.draw_mask_content(content, &inner).err();
                 if first.is_none() {
                     self.save_layer_bounds(blurred.with_blend(BlendMode::DstIn), bounds);
-                    let second = self.draw_path(path, &inner).err();
+                    let second = self.draw_mask_content(content, &inner).err();
                     self.restore();
                     second
                 } else {
@@ -2143,16 +2199,19 @@ impl Canvas {
             return self.draw_glyphs_filtered(glyphs, atlas, atlas_slot, paint);
         }
         if paint.mask_blur > 0.0 {
-            // Refused rather than dropped, and not because it is meaningless:
-            // a run is coverage times one solid color, which is exactly the
-            // case where blurring the coverage and blurring the result agree.
-            // It is not implemented, which is a different thing and worth
-            // saying differently -- the four mask styles combine a shape with
-            // its own blur, and doing that for a run means drawing the run
-            // twice into layers rather than reusing anything here.
-            return Err(Error::Unsupported(
-                "a mask blur over a glyph run is not implemented; draw the run into a blurred layer",
-            ));
+            // The same four styles a shape gets, over the run instead. A run is
+            // coverage times one solid color, which is exactly the case where
+            // blurring the coverage and blurring the result agree -- so unlike
+            // a mesh, there is nothing here to refuse. This is how a text
+            // shadow is drawn.
+            return self.draw_masked(
+                Masked::Glyphs {
+                    glyphs,
+                    atlas,
+                    slot: atlas_slot,
+                },
+                paint,
+            );
         }
 
         let color = match &paint.shader {
