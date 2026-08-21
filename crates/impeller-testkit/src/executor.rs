@@ -185,6 +185,33 @@ fn rect_of([left, top, right, bottom]: [f32; 4]) -> Rect {
 /// meaning depends on what came before.
 fn record_node(canvas: &mut Canvas, node: &Node, anti_alias: bool) -> Result<()> {
     match node {
+        Node::Picture(picture) => {
+            // Recorded into a canvas of its own and then drawn, which is the
+            // whole of what `drawPicture` is. The children go through the same
+            // `record_node` they would anywhere else, so a picture may hold a
+            // layer, a run, an effect -- and those become passes of the
+            // picture's recording rather than of this one, which is the
+            // difference the call exists to make.
+            let mut inner = Canvas::new(picture.size);
+            inner.clear(impeller_core::Color::linear(0.0, 0.0, 0.0, 0.0));
+            for child in &picture.children {
+                record_node(&mut inner, child, anti_alias)?;
+            }
+            let recording = inner.finish();
+            canvas.save();
+            canvas.concat(picture.transform.to_affine());
+            let outcome = canvas
+                .draw_recording(
+                    &recording,
+                    &Paint::fill(impeller_core::Color::linear(1.0, 1.0, 1.0, 1.0))
+                        .with_blend(picture.blend),
+                )
+                .err();
+            canvas.restore();
+            if let Some(e) = outcome {
+                return Err(e);
+            }
+        }
         Node::Glyphs(run) => {
             canvas.save();
             canvas.concat(run.transform.to_affine());

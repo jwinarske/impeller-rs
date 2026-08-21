@@ -94,6 +94,24 @@ pub struct MeshSpec {
     pub image_filter: ImageFilter,
 }
 
+/// A finished recording, drawn into the scene that holds it.
+///
+/// The children are recorded into a canvas of their own and the result is drawn
+/// through `draw_recording`, which is what `dart:ui` calls `drawPicture`. The
+/// distinction from a layer is what happens to the passes: a layer's are this
+/// recording's from the start, and a picture's are another recording's,
+/// appended with every index inside them moved along.
+#[derive(Debug, Clone, PartialEq)]
+pub struct PictureSpec {
+    /// The size of the canvas the children are recorded into. What lands where
+    /// depends on it: a picture is placed by the transform and covers its own
+    /// extent, having no bounds of its own.
+    pub size: Extent2D,
+    pub children: Vec<Node>,
+    pub transform: Transform,
+    pub blend: BlendMode,
+}
+
 /// A run of glyphs, placed.
 ///
 /// A scene names glyphs by index into the fixture set for the reason it names
@@ -615,6 +633,8 @@ pub enum Node {
     Atlas(Box<AtlasSpec>),
     /// A run of glyphs read from the fixture glyph atlas as coverage.
     Glyphs(Box<GlyphRunSpec>),
+    /// A recording of its own, drawn into this one.
+    Picture(Box<PictureSpec>),
     /// The shadow a shape at some elevation casts.
     Shadow(Box<ShadowSpec>),
     /// A group rendered into a target of its own and composited back.
@@ -680,6 +700,7 @@ impl Node {
             Self::Mesh(_) | Self::Atlas(_) | Self::Shadow(_) | Self::Glyphs(_) => {
                 Box::new(std::iter::empty())
             }
+            Self::Picture(picture) => Box::new(picture.children.iter().flat_map(Node::items)),
             Self::Layer { children, .. } => Box::new(children.iter().flat_map(Node::items)),
         }
     }
@@ -690,6 +711,9 @@ impl Node {
             Self::Mesh(_) | Self::Atlas(_) | Self::Shadow(_) | Self::Glyphs(_) => {
                 Box::new(std::iter::empty())
             }
+            Self::Picture(picture) => {
+                Box::new(picture.children.iter_mut().flat_map(Node::items_mut))
+            }
             Self::Layer { children, .. } => Box::new(children.iter_mut().flat_map(Node::items_mut)),
         }
     }
@@ -697,6 +721,9 @@ impl Node {
     /// Whether this subtree composites a group at all.
     fn has_layer(&self) -> bool {
         match self {
+            // A picture is composited from a target of its own whatever it
+            // holds, which is the same per-fragment arithmetic a layer is.
+            Self::Picture(_) => true,
             Self::Draw(_) | Self::Mesh(_) | Self::Atlas(_) | Self::Shadow(_) | Self::Glyphs(_) => {
                 false
             }
@@ -715,6 +742,7 @@ impl Node {
             Self::Draw(item) => matches!(item.fill, Fill::RuntimeEffect { .. }),
             Self::Mesh(mesh) => matches!(mesh.fill, Fill::RuntimeEffect { .. }),
             Self::Atlas(_) | Self::Shadow(_) | Self::Glyphs(_) => false,
+            Self::Picture(picture) => picture.children.iter().any(Node::uses_effect),
             Self::Layer { children, .. } => children.iter().any(Node::uses_effect),
         }
     }
@@ -735,6 +763,7 @@ impl Node {
             // A run reads the glyph atlas, which is a texture of its own rather
             // than the sheet -- see `uses_glyphs`.
             Self::Shadow(_) | Self::Glyphs(_) => false,
+            Self::Picture(picture) => picture.children.iter().any(Node::samples_fixture),
             Self::Layer { children, .. } => children.iter().any(Node::samples_fixture),
         }
     }
@@ -754,6 +783,7 @@ impl Node {
             Self::Draw(item) => reads_atlas(&item.fill),
             Self::Mesh(mesh) => reads_atlas(&mesh.fill),
             Self::Atlas(_) | Self::Shadow(_) => false,
+            Self::Picture(picture) => picture.children.iter().any(Node::uses_glyphs),
             Self::Layer { children, .. } => children.iter().any(Node::uses_glyphs),
         }
     }
@@ -767,6 +797,10 @@ impl Node {
             // A shadow blends against what is under it and nothing else.
             Self::Shadow(_) => Box::new(std::iter::once(BlendMode::SrcOver)),
             Self::Glyphs(run) => Box::new(std::iter::once(run.blend)),
+            Self::Picture(picture) => Box::new(
+                std::iter::once(picture.blend)
+                    .chain(picture.children.iter().flat_map(Node::blends)),
+            ),
             Self::Layer {
                 layer, children, ..
             } => {
@@ -777,6 +811,7 @@ impl Node {
 
     fn has_bounded_layer(&self) -> bool {
         match self {
+            Self::Picture(picture) => picture.children.iter().any(Node::has_bounded_layer),
             Self::Draw(_) | Self::Mesh(_) | Self::Atlas(_) | Self::Shadow(_) | Self::Glyphs(_) => {
                 false
             }
@@ -795,6 +830,7 @@ impl Node {
     /// bounded-equals-unbounded comparison cannot be asked of these.
     fn filters_its_backdrop(&self) -> bool {
         match self {
+            Self::Picture(picture) => picture.children.iter().any(Node::filters_its_backdrop),
             Self::Draw(_) | Self::Mesh(_) | Self::Atlas(_) | Self::Shadow(_) | Self::Glyphs(_) => {
                 false
             }

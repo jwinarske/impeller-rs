@@ -34,14 +34,14 @@
 //! scene here with no counterpart there would be visible as one.
 
 use crate::scene::{
-    AtlasSpec, Fill, GlyphRunSpec, Item, LayerSpec, MeshSpec, Node, Scene, ShadowSpec, SpriteSpec,
-    Stop, StrokeSpec, Transform,
+    AtlasSpec, Fill, GlyphRunSpec, Item, LayerSpec, MeshSpec, Node, PictureSpec, Scene, ShadowSpec,
+    SpriteSpec, Stop, StrokeSpec, Transform,
 };
 use crate::shape::Shape;
 use impeller_core::{Affine2, ImageFilter, MaskBlurStyle, Vec2, VertexMode};
 use impeller_geometry::stroke::{LineCap, LineJoin};
 use impeller_geometry::FillRule;
-use impeller_hal::{BlendMode, ColorFilter, Sampling, TileMode};
+use impeller_hal::{BlendMode, ColorFilter, Extent2D, Sampling, TileMode};
 
 const WHITE: [f32; 4] = [1.0, 1.0, 1.0, 1.0];
 const RED: [f32; 4] = [1.0, 0.0, 0.0, 1.0];
@@ -77,6 +77,7 @@ pub fn catalog() -> Vec<Scene> {
     scenes.extend(runtime_effect());
     scenes.extend(image_filters());
     scenes.extend(glyphs());
+    scenes.extend(pictures());
     scenes
 }
 
@@ -2263,6 +2264,83 @@ fn glyphs() -> Vec<Scene> {
                     ..Transform::default()
                 },
                 ..run_of(run(&[0, 1, 2, 3], [22.0, 58.0]), RED)
+            },
+        ),
+    ]
+}
+
+fn picture(name: &'static str, spec: PictureSpec) -> Scene {
+    Scene::tree(name, vec![Node::Picture(Box::new(spec))])
+        .with_background(DARK)
+        .with_samples(4)
+}
+
+/// The picture scenes from `aiks_dl_unittests.cc`, which is where that file's
+/// round-trip cases live.
+fn pictures() -> Vec<Scene> {
+    let contents = || {
+        vec![
+            Node::Draw(Box::new(Item::fill(
+                Shape::Rect {
+                    min: [8.0, 8.0],
+                    max: [56.0, 56.0],
+                },
+                RED,
+            ))),
+            Node::Draw(Box::new(Item::fill(
+                Shape::Circle {
+                    center: [32.0, 32.0],
+                    radius: 14.0,
+                },
+                BLUE,
+            ))),
+        ]
+    };
+    vec![
+        picture(
+            "dl/draw-picture-at-its-own-scale",
+            // A picture placed by the transform and nothing else. It has no
+            // bounds of its own, so its extent is the rectangle and the corner
+            // goes where the transform says.
+            PictureSpec {
+                size: Extent2D::new(64, 64),
+                children: contents(),
+                transform: Transform::translate(32.0, 32.0),
+                blend: BlendMode::SrcOver,
+            },
+        ),
+        picture(
+            "dl/draw-picture-magnified",
+            // The limitation, drawn rather than described: a recording is
+            // already tessellated, so magnifying one resamples the picture it
+            // became instead of re-flattening its curves at the new scale. The
+            // circle's edge is what shows it.
+            PictureSpec {
+                size: Extent2D::new(64, 64),
+                children: contents(),
+                transform: Transform {
+                    scale: [1.9, 1.9],
+                    rotate: 0.0,
+                    translate: [4.0, 4.0],
+                },
+                blend: BlendMode::SrcOver,
+            },
+        ),
+        picture(
+            "dl/draw-picture-holding-a-layer",
+            // A picture carrying a pass of its own, which is the case where the
+            // indices inside it have to move: its layer names a pass by
+            // position in a list this recording is appending to.
+            PictureSpec {
+                size: Extent2D::new(64, 64),
+                children: vec![Node::Layer {
+                    layer: LayerSpec::opacity(0.5),
+                    bounds: Some([0.0, 0.0, 64.0, 64.0]),
+                    transform: Transform::default(),
+                    children: contents(),
+                }],
+                transform: Transform::translate(32.0, 32.0),
+                blend: BlendMode::SrcOver,
             },
         ),
     ]

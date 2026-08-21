@@ -64,9 +64,9 @@ blocked and are not any more.
 | `aiks_dl_primitive_shape_unittests.cc` | ~2 | 0 | one is a playground harness, one is a hairline skew |
 | `aiks_dl_text_unittests.cc` | — | 5 | shaping and font parsing, which are out of scope; glyph rendering is not, and these use synthetic coverage |
 | `aiks_dl_runtime_effect_unittests.cc` | — | 5 | bounded by having two fixture programs rather than by the renderer |
-| `aiks_dl_unittests.cc` | ~39 | 7 | mostly internal optimizations and picture round-trips |
+| `aiks_dl_unittests.cc` | ~39 | 10 | mostly internal optimizations; the picture cases are here now |
 
-The catalog holds one hundred and eighty-six scenes of roughly four hundred,
+The catalog holds one hundred and eighty-nine scenes of roughly four hundred,
 and the proportion is less interesting than which ones: the arithmetic of drawing is largely covered, and
 what is missing is either a capability this renderer does not have or a thing
 the scene model cannot describe.
