@@ -9660,3 +9660,176 @@ fn every_draw_that_takes_a_paint_obeys_the_transform_and_the_clip() {
     }
     ctx.destroy_image(image);
 }
+
+#[test]
+fn every_material_draws_the_same_inside_a_layer_as_outside_one() {
+    // A layer is a render target of a different size and origin, and every
+    // material carries its geometry in clip space -- which that target
+    // normalizes its own way. So a mapping that quietly assumed the frame's
+    // dimensions would be right everywhere until someone opened a layer, and
+    // wrong there in a way that looks like the material rather than the layer.
+    //
+    // A layer at full opacity composited with the default blend is a no-op, so
+    // the two pictures have to agree. Checked on both a hardware and a software
+    // device before the tolerance below was written down.
+    let Some(mut ctx) = context() else { return };
+    let mut image = ctx
+        .create_image(Extent2D::new(4, 4), PixelFormat::Rgba8Unorm)
+        .expect("image");
+    ctx.write_image(&mut image, &[255u8, 0, 0, 255].repeat(16))
+        .expect("upload");
+    let red = Color::linear(1.0, 0.0, 0.0, 1.0);
+    let square = Rect::new(40.0, 40.0, 88.0, 88.0);
+    let mut b = PathBuilder::new();
+    b.move_to(Vec2::new(40.0, 40.0))
+        .line_to(Vec2::new(88.0, 40.0))
+        .line_to(Vec2::new(88.0, 88.0))
+        .line_to(Vec2::new(40.0, 88.0))
+        .close();
+    let path = b.build();
+    let mesh = square_mesh(red);
+    let stops = vec![
+        GradientStop::new(Color::linear(1.0, 0.0, 0.0, 1.0), 0.0),
+        GradientStop::new(Color::linear(0.0, 0.0, 1.0, 1.0), 1.0),
+    ];
+
+    let render_with = |ctx: &mut Context, name: &str, layered: bool| -> Vec<u8> {
+        let mut canvas = Canvas::new(SIZE);
+        canvas.clear(Color::linear(0.0, 0.0, 0.0, 1.0));
+        if layered {
+            canvas.save_layer_bounds(Layer::opacity(1.0), Rect::new(30.0, 30.0, 100.0, 100.0));
+        }
+        let paint = Paint::fill(red).with_anti_alias(false);
+        let img = Paint::image(0, Rect::from_size(4.0, 4.0)).with_anti_alias(false);
+        match name {
+            "solid rect" => canvas.draw_rect(square, &paint).map(|_| ()),
+            "path" => canvas.draw_path(&path, &paint).map(|_| ()),
+            "rrect" => canvas.draw_rrect(square, 12.0, &paint).map(|_| ()),
+            "circle" => canvas
+                .draw_circle(Vec2::new(64.0, 64.0), 24.0, &paint)
+                .map(|_| ()),
+            "linear gradient" => canvas
+                .draw_rect(
+                    square,
+                    &Paint::fill(red)
+                        .with_anti_alias(false)
+                        .with_shader(Shader::LinearGradient {
+                            start: Vec2::new(40.0, 40.0),
+                            end: Vec2::new(88.0, 88.0),
+                            stops: stops.clone(),
+                            tile: TileMode::Clamp,
+                        }),
+                )
+                .map(|_| ()),
+            "radial gradient" => canvas
+                .draw_rect(
+                    square,
+                    &Paint::fill(red)
+                        .with_anti_alias(false)
+                        .with_shader(Shader::RadialGradient {
+                            center: Vec2::new(64.0, 64.0),
+                            radius: 24.0,
+                            stops: stops.clone(),
+                            tile: TileMode::Clamp,
+                        }),
+                )
+                .map(|_| ()),
+            "sweep gradient" => canvas
+                .draw_rect(
+                    square,
+                    &Paint::fill(red)
+                        .with_anti_alias(false)
+                        .with_shader(Shader::SweepGradient {
+                            center: Vec2::new(64.0, 64.0),
+                            start_angle: 0.0,
+                            end_angle: std::f32::consts::TAU,
+                            stops: stops.clone(),
+                            tile: TileMode::Clamp,
+                        }),
+                )
+                .map(|_| ()),
+            "conical gradient" => canvas
+                .draw_rect(
+                    square,
+                    &Paint::fill(red)
+                        .with_anti_alias(false)
+                        .with_shader(Shader::ConicalGradient {
+                            start_center: Vec2::new(50.0, 64.0),
+                            start_radius: 0.0,
+                            end_center: Vec2::new(64.0, 64.0),
+                            end_radius: 24.0,
+                            stops: stops.clone(),
+                            tile: TileMode::Clamp,
+                        }),
+                )
+                .map(|_| ()),
+            "image" => canvas.draw_rect(square, &img).map(|_| ()),
+            "mesh" => canvas.draw_vertices(&mesh, &paint).map(|_| ()),
+            "image nine" => canvas
+                .draw_image_nine(
+                    0,
+                    Extent2D::new(4, 4),
+                    Rect::new(1.0, 1.0, 3.0, 3.0),
+                    square,
+                    &img,
+                )
+                .map(|_| ()),
+            other => unreachable!("{other}"),
+        }
+        .unwrap_or_else(|e| panic!("{name}: {e}"));
+        if layered {
+            canvas.restore();
+        }
+        let mut surface = ctx
+            .create_surface(SIZE, PixelFormat::Rgba8Unorm)
+            .expect("s");
+        ctx.draw_with_images(&mut surface, &canvas.finish(), &[&image])
+            .expect("d");
+        let px = ctx.read(&mut surface).expect("r");
+        ctx.destroy_surface(surface);
+        px
+    };
+    // A linear gradient is the one material whose parameter is a projection
+    // onto an axis, and the axis is stated in clip space -- which a layer of a
+    // different size normalizes differently. The picture is the same and a
+    // handful of pixels round to the other side of an eight-bit step. Every
+    // other material either measures a distance, which is invariant under that
+    // normalization, or samples a texture at coordinates the vertices already
+    // carried.
+    const ROUNDS: [&str; 1] = ["linear gradient"];
+    for name in [
+        "solid rect",
+        "path",
+        "rrect",
+        "circle",
+        "linear gradient",
+        "radial gradient",
+        "sweep gradient",
+        "conical gradient",
+        "image",
+        "mesh",
+        "image nine",
+    ] {
+        let direct = render_with(&mut ctx, name, false);
+        let layered = render_with(&mut ctx, name, true);
+        assert!(
+            direct.chunks_exact(4).any(|texel| texel != [0, 0, 0, 255]),
+            "{name} drew nothing, so this comparison says nothing"
+        );
+        let worst = direct
+            .iter()
+            .zip(&layered)
+            .map(|(a, b)| (*a as i32 - *b as i32).abs())
+            .max()
+            .unwrap_or(0);
+        let allowed = if ROUNDS.contains(&name) { 1 } else { 0 };
+        assert!(
+            worst <= allowed,
+            "{name} drew differently inside a layer than outside one, by {worst} \
+             where {allowed} is allowed. A layer is a target of another size and \
+             origin, so a material whose mapping assumed the frame comes out \
+             wrong in one"
+        );
+    }
+    ctx.destroy_image(image);
+}
