@@ -1814,6 +1814,7 @@ fn mesh_of(positions: Vec<[f32; 2]>, fill: Fill) -> MeshSpec {
         fill,
         blend: BlendMode::SrcOver,
         transform: Transform::default(),
+        image_filter: ImageFilter::None,
     }
 }
 
@@ -1828,6 +1829,38 @@ fn vertices() -> Vec<Scene> {
     ];
 
     vec![
+        mesh(
+            "vertices/mesh-through-an-image-filter",
+            // A mesh does not pass through the call where a paint's image
+            // filter is noticed, so it had its own route added and this is the
+            // plate that holds the two backends to the same answer on it. A
+            // dilation, because its reach is exact: the triangle grows by ten
+            // and nothing about the picture is a matter of taste.
+            MeshSpec {
+                image_filter: ImageFilter::Dilate {
+                    radius_x: 10.0,
+                    radius_y: 10.0,
+                },
+                ..mesh_of(
+                    vec![[34.0, 88.0], [64.0, 30.0], [94.0, 88.0]],
+                    Fill::Solid(YELLOW),
+                )
+            },
+        ),
+        mesh(
+            "vertices/mesh-through-a-blur",
+            // The other kind of filter over a mesh, where what is checked is
+            // not an extent but a gradient of coverage -- two rasterizers can
+            // agree about where a dilation ends and still disagree about how a
+            // blur falls off.
+            MeshSpec {
+                image_filter: ImageFilter::Blur { sigma: 6.0 },
+                ..mesh_of(
+                    vec![[34.0, 88.0], [64.0, 30.0], [94.0, 88.0]],
+                    Fill::Solid(GREEN),
+                )
+            },
+        ),
         mesh(
             "vertices/draw-vertices-solid-color-triangles-without-indices",
             mesh_of(triangle(), Fill::Solid(BLUE)),
@@ -2453,6 +2486,39 @@ fn blur_variants() -> Vec<Scene> {
             ],
         ),
         plate(
+            "blur/composed-filters",
+            // Two filters composed, which is a chain of layers rather than one
+            // -- the outermost is peeled off, its layer opened, and the rest
+            // handed back to be drawn inside it. An erosion inside a dilation
+            // is a closing, so the notch between the two arms fills while the
+            // outline returns to about where it started: a picture neither
+            // filter gives on its own, which is what makes it worth comparing
+            // across backends.
+            vec![Item::fill(
+                Shape::Polygon(vec![
+                    [30.0, 34.0],
+                    [98.0, 34.0],
+                    [98.0, 94.0],
+                    [76.0, 94.0],
+                    [76.0, 62.0],
+                    [52.0, 62.0],
+                    [52.0, 94.0],
+                    [30.0, 94.0],
+                ]),
+                WHITE,
+            )
+            .with_image_filter(ImageFilter::compose(
+                ImageFilter::Erode {
+                    radius_x: 9.0,
+                    radius_y: 9.0,
+                },
+                ImageFilter::Dilate {
+                    radius_x: 9.0,
+                    radius_y: 9.0,
+                },
+            ))],
+        ),
+        plate(
             "blur/dilate-one-axis",
             // Radii that differ, which is what makes the structuring element a
             // rectangle rather than a square and the filter two passes rather
@@ -2727,6 +2793,28 @@ fn runtime_effect() -> Vec<Scene> {
                 },
                 effect(-0.25),
             )],
+        ),
+        plate(
+            "effect/runtime-effect-through-a-color-filter",
+            // A color filter is arithmetic at the end of this renderer's own
+            // fragment shader, and a caller's program replaces that shader --
+            // so this one has to act on the image the program drew, through a
+            // layer. Worth a plate because the route is entirely different from
+            // every other filtered draw, and because it was silently doing
+            // nothing until recently.
+            vec![Item::filled(
+                Shape::Rect {
+                    min: [16.0, 16.0],
+                    max: [112.0, 112.0],
+                },
+                effect(0.0),
+            )
+            .with_color_filter(ColorFilter::matrix([
+                0.2126, 0.7152, 0.0722, 0.0, 0.0, //
+                0.2126, 0.7152, 0.0722, 0.0, 0.0, //
+                0.2126, 0.7152, 0.0722, 0.0, 0.0, //
+                0.0, 0.0, 0.0, 1.0, 0.0,
+            ]))],
         ),
         plate(
             "effect/runtime-effect-with-transform",

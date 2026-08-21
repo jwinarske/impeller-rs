@@ -90,6 +90,8 @@ pub struct MeshSpec {
     pub fill: Fill,
     pub blend: BlendMode,
     pub transform: Transform,
+    /// Filter what the mesh drew. See [`Item::image_filter`].
+    pub image_filter: ImageFilter,
 }
 
 /// A shape's shadow, and whether the shape will cover it.

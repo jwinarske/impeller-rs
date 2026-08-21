@@ -203,6 +203,7 @@ fn record_node(canvas: &mut Canvas, node: &Node, anti_alias: bool) -> Result<()>
             )?;
             let mut paint = paint_from(&mesh.fill, anti_alias);
             paint.blend = mesh.blend;
+            paint.image_filter = mesh.image_filter.clone();
             // Restored before the error is raised, or a mesh a device refuses
             // would leave the canvas inside a save nobody closes and every
             // later node in the scene inside it too.
