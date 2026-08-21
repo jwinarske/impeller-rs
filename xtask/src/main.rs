@@ -31,11 +31,11 @@
 //! previous VT and session state on exit including on panic. An engineer's
 //! desktop must survive a failed test run.
 
+mod drivers;
 mod drm;
 mod gallery;
 mod gate;
 mod report;
-mod software;
 mod verify;
 
 const USAGE: &str = "\
@@ -49,7 +49,10 @@ Commands:
                     are passed to cargo test.
                     --software  run against Mesa's CPU drivers instead of this
                     machine's, which is what CI uses and covers scenes the
-                    hardware here reports as unavailable.
+                    hardware here reports as unavailable. Either way the
+                    drivers are named rather than left to the loader to find,
+                    which is what stops it unloading one thread's driver while
+                    another is using it.
   gallery [path]    Render every corpus scene onto one sheet to look at.
                     Defaults to corpus.ppm.
   gate              Lint, format, build, the feature matrix and the suite,
@@ -140,21 +143,22 @@ fn main() {
         Some("verify") => {
             let software = rest.iter().any(|a| a == "--software");
             let passed: Vec<String> = rest.into_iter().filter(|a| a != "--software").collect();
-            let env = if software {
-                match software::environment() {
-                    Ok(env) => {
-                        for (key, value) in &env {
-                            eprintln!("{key}={value}");
-                        }
-                        env
-                    }
-                    Err(why) => {
-                        eprintln!("{why}");
-                        std::process::exit(1);
-                    }
-                }
+            let mode = if software {
+                drivers::Mode::Software
             } else {
-                Vec::new()
+                drivers::Mode::Devices
+            };
+            let env = match drivers::environment(mode) {
+                Ok(env) => {
+                    for (key, value) in &env {
+                        eprintln!("{key}={value}");
+                    }
+                    env
+                }
+                Err(why) => {
+                    eprintln!("{why}");
+                    std::process::exit(1);
+                }
             };
             let outcome = verify::run_with_env(&passed, &env);
             print!("{}", verify::text(&outcome));

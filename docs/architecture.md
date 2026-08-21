@@ -1985,12 +1985,23 @@ several threads is explicitly permitted, and the test harness does it because
 each device test takes a fresh context, which is the arrangement in which state
 left behind by a previous frame cannot be seen.
 
-Nothing here is doing anything it may not. What would avoid it is naming one ICD
-so the loader has nothing to scan and unload, which is what `--software` already
-does for the CPU drivers and why that path has never crashed; or serializing
-context creation, which would not weaken the fresh-context-per-test property at
-all, since each test would still get its own. Both are decisions about what the
-suite is for rather than fixes to a fault in it, and neither is taken here.
+Nothing here is doing anything it may not, so what changed is what the suite
+tells the loader rather than what it asks of Vulkan. Every run now names its
+drivers, and the loader has nothing left to scan and nothing to unload --
+`--software` already did this for the CPU drivers, which is why that path never
+crashed.
+
+Two drivers, not one, and that is the part worth stating. The conformance suite
+renders the same scene on the hardware Vulkan driver and on the software
+reference and compares them, so naming only the first would have traded a crash
+for a test that silently stopped comparing anything. That is the quieter of the
+two failures and therefore the worse.
+
+The list of hardware drivers to prefer is short and written down rather than
+discovered, and the honest reason is that discovering it means enumerating
+devices, which is the call that crashes. A machine whose driver is not on that
+list has nothing named and gets the loader's own scan, as before, and the run
+says which of the two happened.
 
 **Every context in the suite reports what the driver said about it.** On
 Vulkan that is the validation layer; on GLES it is `GL_KHR_debug`, which every
