@@ -682,6 +682,22 @@ what the filter meant anyway and costs what every other image-acting filter
 costs. `Layer` grew a color filter for it, which `dart:ui` has independently:
 `saveLayer` takes a paint, and that paint's `colorFilter` applies to the group.
 
+**A mesh takes the same filter routing a shape does, because it does not pass
+through the same door.** `draw_path` is where a paint's image filter and mask
+blur are noticed, and a mesh never goes near it -- so both were accepted on a
+mesh and silently dropped, and an atlas inherited that, being a mesh by the time
+it arrives. The image filter now routes through a layer exactly as it does for a
+shape, taking its bounds from the vertices since there is no path to take them
+from. The mask blur is refused instead of implemented, which is the same answer
+`draw_masked` gives a gradient and for the same reason: blurring coverage and
+then filling is the same picture as blurring the result only where the fill does
+not vary, and a mesh carries a colour per vertex.
+
+The two routes are written out separately rather than shared behind a closure.
+They differ in exactly two places -- where the bounds come from, and which draw
+call the remainder of the chain is handed back to -- and everything else about
+them is the same, which is worth being able to read side by side.
+
 **A chain of image filters is a stack of layers, peeled one at a time.**
 `ImageFilter::Compose` holds two filters, so a paint can carry a chain of any
 depth. Building the whole stack at once would mean walking the chain in the

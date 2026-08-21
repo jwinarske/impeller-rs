@@ -9,9 +9,9 @@
 use googletest::prelude::*;
 use impeller::{
     Affine2, Atlas, BackendPreference, BlendMode, Canvas, Color, ColorFilter, Context, Coverage,
-    Dash, Extent2D, GlyphKey, GradientStop, ImageFilter, Layer, LineCap, MaskBlurStyle, Morphology,
-    Paint, Path, PathBuilder, PixelFormat, PointMode, PositionedGlyph, Rect, Result, Sampling,
-    Shader, SourceRect, Sprite, StrokeStyle, Style, TileMode, Vec2, VertexMode, Vertices,
+    Dash, Error, Extent2D, GlyphKey, GradientStop, ImageFilter, Layer, LineCap, MaskBlurStyle,
+    Morphology, Paint, Path, PathBuilder, PixelFormat, PointMode, PositionedGlyph, Rect, Result,
+    Sampling, Shader, SourceRect, Sprite, StrokeStyle, Style, TileMode, Vec2, VertexMode, Vertices,
     MAX_STOPS, MORPHOLOGY_TAPS, RUNTIME_FLOATS,
 };
 
@@ -8882,4 +8882,105 @@ fn a_filter_blends_where_it_meets_the_frame_not_inside_its_own_layer() {
              means the blend ran inside the layer, against its transparent black"
         );
     }
+}
+
+/// A square mesh of four vertices in one flat colour.
+fn square_mesh(color: Color) -> Vertices {
+    Vertices::full(
+        VertexMode::Triangles,
+        vec![
+            Vec2::new(34.0, 34.0),
+            Vec2::new(94.0, 34.0),
+            Vec2::new(94.0, 94.0),
+            Vec2::new(34.0, 94.0),
+        ],
+        vec![],
+        vec![color; 4],
+        vec![0, 1, 2, 0, 2, 3],
+    )
+    .expect("mesh")
+}
+
+#[test]
+fn an_image_filter_applies_to_a_mesh_as_it_does_to_a_shape() {
+    // A mesh does not go through `draw_path`, which is where a paint's image
+    // filter was noticed -- so a filter on a mesh was accepted and silently
+    // dropped. An atlas is a mesh by the time it arrives, so every sprite batch
+    // had the same hole.
+    //
+    // Measured as an extent, because that is what these two filters do that
+    // nothing else would: a dilation of ten reaches exactly ten further each
+    // way, and a blur reaches past the shape at all.
+    let Some(mut ctx) = context() else { return };
+
+    let mesh = square_mesh(Color::linear(1.0, 0.0, 0.0, 1.0));
+    let base = Paint::fill(Color::linear(1.0, 1.0, 1.0, 1.0)).with_anti_alias(false);
+    let draw = |ctx: &mut Context, paint: Paint| {
+        let mut canvas = Canvas::new(SIZE);
+        canvas.clear(Color::linear(0.0, 0.0, 0.0, 1.0));
+        canvas.draw_vertices(&mesh, &paint).expect("mesh");
+        let pixels = render(ctx, canvas);
+        // Any channel lit, since a filter may change the colour as well.
+        let lit: Vec<u32> = (0..SIZE.width)
+            .filter(|x| pixel(&pixels, *x, 64)[0] > 0 || pixel(&pixels, *x, 64)[1] > 0)
+            .collect();
+        (
+            *lit.first().expect("something drew"),
+            *lit.last().expect("something drew"),
+        )
+    };
+
+    assert_eq!(
+        draw(&mut ctx, base.clone()),
+        (34, 93),
+        "the mesh alone spans its own vertices"
+    );
+    assert_eq!(
+        draw(
+            &mut ctx,
+            base.clone().with_image_filter(ImageFilter::Dilate {
+                radius_x: 10.0,
+                radius_y: 10.0
+            })
+        ),
+        (24, 103),
+        "a dilation of ten should reach ten further each way. The mesh's own \
+         span means the filter was dropped"
+    );
+    let (left, right) = draw(
+        &mut ctx,
+        base.with_image_filter(ImageFilter::Blur { sigma: 6.0 }),
+    );
+    assert!(
+        left < 34 && right > 93,
+        "a blur should carry colour past the mesh, but it spans {left}..{right}"
+    );
+}
+
+#[test]
+fn a_mask_blur_on_a_mesh_is_refused_rather_than_dropped() {
+    // A mask blur blurs coverage and then fills, which is the same picture as
+    // blurring the result only where the fill does not vary. A mesh carries a
+    // colour per vertex, so it varies by construction -- `draw_masked` refuses
+    // a gradient for exactly this reason, and a mesh is the same argument.
+    //
+    // The point is that it is refused rather than ignored. Accepting a mask
+    // blur and drawing the mesh unblurred is the failure this codebase least
+    // wants, and is what happened before: no error, no blur.
+    let Some(mut ctx) = context() else { return };
+    let _ = &mut ctx;
+
+    let mesh = square_mesh(Color::linear(1.0, 0.0, 0.0, 1.0));
+    let mut canvas = Canvas::new(SIZE);
+    canvas.clear(Color::linear(0.0, 0.0, 0.0, 1.0));
+    let outcome = canvas
+        .draw_vertices(
+            &mesh,
+            &Paint::fill(Color::linear(1.0, 1.0, 1.0, 1.0)).with_mask_blur(6.0),
+        )
+        .map(|_| ());
+    assert!(
+        matches!(outcome, Err(Error::Unsupported(_))),
+        "a mask blur on a mesh should be refused, got {outcome:?}"
+    );
 }

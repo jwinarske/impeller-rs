@@ -1489,6 +1489,67 @@ impl Canvas {
     /// blur is only the same picture as this when the fill does not vary, and
     /// so takes a solid color, while filtering a result is defined whatever
     /// produced it. What is paid for that is a target of its own.
+    /// The layer that applies one filter, where that filter is a leaf.
+    ///
+    /// `None` for the two that are not: `is_identity` keeps `None` out, and
+    /// `peel` recurses through a composition's outer half until it reaches
+    /// something that is not one -- so neither can arrive here. They were
+    /// reachable when peeling took that half to be a leaf, and composing two
+    /// compositions was then refused as unimplemented, having been assembled
+    /// out of nothing but implemented filters.
+    fn filter_layer(&self, filter: &ImageFilter) -> Option<Layer> {
+        Some(match *filter {
+            ImageFilter::Blur { sigma } => Layer::opacity(1.0).with_blur(sigma),
+            ImageFilter::Matrix { transform } => Layer::opacity(1.0).with_matrix(transform),
+            ImageFilter::Dilate { radius_x, radius_y } => {
+                Layer::opacity(1.0).with_morphology(Morphology::dilate(radius_x, radius_y))
+            }
+            ImageFilter::Erode { radius_x, radius_y } => {
+                Layer::opacity(1.0).with_morphology(Morphology::erode(radius_x, radius_y))
+            }
+            ImageFilter::None | ImageFilter::Compose { .. } => return None,
+        })
+    }
+
+    /// A mesh drawn into a layer, and the layer filtered.
+    ///
+    /// The path version's twin, and separate rather than shared because the two
+    /// differ in the only two places that matter -- where the bounds come from,
+    /// and which draw call the remainder of the chain is handed back to. The
+    /// peeling, the region arithmetic and the blend placement are the same and
+    /// are described there.
+    fn draw_vertices_filtered(&mut self, mesh: &Vertices, paint: &Paint) -> Result<&mut Self> {
+        let (outermost, rest) = paint.image_filter.peel();
+        let Some(layer) = self.filter_layer(&outermost) else {
+            return Err(Error::Unsupported("this image filter is not implemented"));
+        };
+        // From the vertices themselves. A mesh has no path to take bounds from,
+        // and the positions are in the same coordinates a path's points would
+        // be, so the transform below is the one that applies to either.
+        let positions = mesh.positions();
+        let (mut min, mut max) = (Vec2::splat(f32::INFINITY), Vec2::splat(f32::NEG_INFINITY));
+        for point in positions {
+            min = min.min(*point);
+            max = max.max(*point);
+        }
+        if !min.is_finite() || !max.is_finite() {
+            return Err(Error::Unsupported("a mesh position is not a finite number"));
+        }
+        let (min, max) = transformed_bounds(&self.transform, min, max);
+        let (min, max) = rest.covering(min, max);
+        self.save_layer_device_bounds(layer.with_blend(paint.blend), min, max);
+        let inner = paint
+            .clone()
+            .with_image_filter(rest)
+            .with_blend(BlendMode::SrcOver);
+        let failure = self.draw_vertices(mesh, &inner).err();
+        self.restore();
+        match failure {
+            Some(e) => Err(e),
+            None => Ok(self),
+        }
+    }
+
     /// A caller's program drawn into a layer, and the layer recolored.
     ///
     /// The bounds are the path's own, widened by a stroke where there is one.
@@ -1537,24 +1598,8 @@ impl Canvas {
         // one frame at a time rather than all at once -- which keeps the
         // single-filter case exactly what it was, with the remainder `None`.
         let (outermost, rest) = paint.image_filter.peel();
-        let layer = match outermost {
-            ImageFilter::Blur { sigma } => Layer::opacity(1.0).with_blur(sigma),
-            ImageFilter::Matrix { transform } => Layer::opacity(1.0).with_matrix(transform),
-            ImageFilter::Dilate { radius_x, radius_y } => {
-                Layer::opacity(1.0).with_morphology(Morphology::dilate(radius_x, radius_y))
-            }
-            ImageFilter::Erode { radius_x, radius_y } => {
-                Layer::opacity(1.0).with_morphology(Morphology::erode(radius_x, radius_y))
-            }
-            // `is_identity` kept `None` out, and `peel` recurses through the
-            // outer half until it reaches something that is not a composition,
-            // so neither of these can arrive here. They were reachable when
-            // peeling took the outer half to be a leaf: composing two
-            // compositions was then refused as unimplemented, having been built
-            // out of nothing but implemented filters.
-            ImageFilter::None | ImageFilter::Compose { .. } => {
-                return Err(Error::Unsupported("this image filter is not implemented"))
-            }
+        let Some(layer) = self.filter_layer(&outermost) else {
+            return Err(Error::Unsupported("this image filter is not implemented"));
         };
         let bounds = self.filter_bounds(path, paint);
         // In device pixels, because that is where a filter's reach is measured.
@@ -2141,6 +2186,23 @@ impl Canvas {
         }
         if self.clip.is_some_and(Scissor::is_empty) {
             return Ok(self);
+        }
+        // The same routing `draw_path` does, and it has to be repeated here
+        // because a mesh does not go through `draw_path` at all. Left out, an
+        // image filter on a mesh -- or on an atlas, which is a mesh by the time
+        // it arrives -- was accepted and silently dropped.
+        if !paint.image_filter.is_identity() {
+            return self.draw_vertices_filtered(mesh, paint);
+        }
+        if paint.mask_blur > 0.0 {
+            // Refused rather than dropped, and rather than approximated. A mask
+            // blur blurs coverage and then fills, which is the same picture as
+            // blurring the result only where the fill does not vary -- and a
+            // mesh carries a colour per vertex, so it varies by construction.
+            // `draw_masked` refuses a gradient for exactly this reason.
+            return Err(Error::Unsupported(
+                "a mask blur takes a solid colour; draw the mesh into a blurred layer instead",
+            ));
         }
 
         let textured = !mesh.texture_coords().is_empty();
