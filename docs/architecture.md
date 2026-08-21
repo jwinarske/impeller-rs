@@ -1965,6 +1965,33 @@ was found by looking for it after the Vulkan one, not by any check. So on that
 backend "the context releases what it made" is a rule held by reading, and this
 document is where it is written down.
 
+**A segmentation fault in the suite was diagnosed to the Vulkan loader, not to
+this code.** It appeared twice, in different test binaries, days apart, and
+reproduced neither on demand nor under deliberate concurrency on a quiet
+machine. The second one left a core, and the core settles it.
+
+Two threads, both inside the loader. One is in `vkEnumeratePhysicalDevices`,
+which had reached `loader_unload_scanned_icd` and was calling `dlclose` on
+driver libraries. The other is in `vkCreateDevice`, loading device function
+pointers through `vkGetDeviceProcAddr`, and it faults in
+`loader_get_icd_and_device`. One thread is unloading the drivers another thread
+is looking a device up in.
+
+The trigger is this machine having twelve ICD manifests installed. Almost all of
+them find no device here, and the loader unloads the ones that do not -- so the
+unload path runs on every enumeration, and it is not synchronized against
+another thread's device calls. Creating instances and devices concurrently from
+several threads is explicitly permitted, and the test harness does it because
+each device test takes a fresh context, which is the arrangement in which state
+left behind by a previous frame cannot be seen.
+
+Nothing here is doing anything it may not. What would avoid it is naming one ICD
+so the loader has nothing to scan and unload, which is what `--software` already
+does for the CPU drivers and why that path has never crashed; or serializing
+context creation, which would not weaken the fresh-context-per-test property at
+all, since each test would still get its own. Both are decisions about what the
+suite is for rather than fixes to a fault in it, and neither is taken here.
+
 **Every context in the suite reports what the driver said about it.** On
 Vulkan that is the validation layer; on GLES it is `GL_KHR_debug`, which every
 3.2 implementation offers and which is the driver reporting on itself rather
