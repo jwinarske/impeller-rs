@@ -1511,6 +1511,48 @@ impl Canvas {
         })
     }
 
+    /// A glyph run drawn into a layer, and the layer filtered.
+    ///
+    /// The third of these, after the shape and the mesh, and the same shape as
+    /// both. The bounds come from the run's own boxes, since a run has neither
+    /// a path nor vertices to take them from.
+    fn draw_glyphs_filtered(
+        &mut self,
+        glyphs: &[PositionedGlyph],
+        atlas: &Atlas,
+        atlas_slot: u32,
+        paint: &Paint,
+    ) -> Result<&mut Self> {
+        let (outermost, rest) = paint.image_filter.peel();
+        let Some(layer) = self.filter_layer(&outermost) else {
+            return Err(Error::Unsupported("this image filter is not implemented"));
+        };
+        let (mut min, mut max) = (Vec2::splat(f32::INFINITY), Vec2::splat(f32::NEG_INFINITY));
+        for glyph in glyphs {
+            let corner = Vec2::from(glyph.position);
+            min = min.min(corner);
+            max = max.max(corner + Vec2::from(glyph.size));
+        }
+        if !min.is_finite() || !max.is_finite() {
+            return Err(Error::Unsupported(
+                "a glyph in this run is not at a finite position",
+            ));
+        }
+        let (min, max) = transformed_bounds(&self.transform, min, max);
+        let (min, max) = rest.covering(min, max);
+        self.save_layer_device_bounds(layer.with_blend(paint.blend), min, max);
+        let inner = paint
+            .clone()
+            .with_image_filter(rest)
+            .with_blend(BlendMode::SrcOver);
+        let failure = self.draw_glyphs(glyphs, atlas, atlas_slot, &inner).err();
+        self.restore();
+        match failure {
+            Some(e) => Err(e),
+            None => Ok(self),
+        }
+    }
+
     /// A mesh drawn into a layer, and the layer filtered.
     ///
     /// The path version's twin, and separate rather than shared because the two
@@ -2093,6 +2135,24 @@ impl Canvas {
         }
         if self.clip.is_some_and(Scissor::is_empty) {
             return Ok(self);
+        }
+        // A run does not go through `draw_path` either, so it has to notice
+        // these itself -- and did not, which made it the third call to accept a
+        // filter and quietly draw without one.
+        if !paint.image_filter.is_identity() {
+            return self.draw_glyphs_filtered(glyphs, atlas, atlas_slot, paint);
+        }
+        if paint.mask_blur > 0.0 {
+            // Refused rather than dropped, and not because it is meaningless:
+            // a run is coverage times one solid color, which is exactly the
+            // case where blurring the coverage and blurring the result agree.
+            // It is not implemented, which is a different thing and worth
+            // saying differently -- the four mask styles combine a shape with
+            // its own blur, and doing that for a run means drawing the run
+            // twice into layers rather than reusing anything here.
+            return Err(Error::Unsupported(
+                "a mask blur over a glyph run is not implemented; draw the run into a blurred layer",
+            ));
         }
 
         let color = match &paint.shader {

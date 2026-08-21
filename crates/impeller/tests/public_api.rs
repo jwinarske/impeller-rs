@@ -9833,3 +9833,90 @@ fn every_material_draws_the_same_inside_a_layer_as_outside_one() {
     }
     ctx.destroy_image(image);
 }
+
+#[test]
+fn a_glyph_run_takes_an_image_filter_and_refuses_a_mask_blur() {
+    // The third call that does not pass through `draw_path`, after the mesh and
+    // the sprite batch, and the third to have accepted a filter and quietly
+    // drawn without one. A run is the highest-draw-count content there is, so
+    // it is also the one where a dropped filter is least likely to be noticed
+    // as a filter rather than as bad text.
+    //
+    // The mask blur is refused rather than implemented, and for a different
+    // reason than the mesh's. A mesh varies in color per vertex, so blurring
+    // its coverage and blurring its result are different pictures and the
+    // refusal is permanent. A run is coverage times one solid color, where the
+    // two agree -- this one is simply not built, and the message says so.
+    let Some(mut ctx) = context() else { return };
+    let (atlas, solid, _) = two_glyph_atlas();
+    let image = upload_atlas(&mut ctx, &atlas);
+    let run = [PositionedGlyph::new(
+        solid,
+        [48.0, 48.0],
+        atlas.get(solid).unwrap(),
+    )];
+
+    let span = |ctx: &mut Context, paint: &Paint| -> (i32, i32) {
+        let mut canvas = Canvas::new(SIZE);
+        canvas.clear(Color::linear(0.0, 0.0, 0.0, 1.0));
+        canvas.draw_glyphs(&run, &atlas, 0, paint).expect("glyphs");
+        let mut surface = ctx
+            .create_surface(SIZE, PixelFormat::Rgba8Unorm)
+            .expect("surface");
+        ctx.draw_with_images(&mut surface, &canvas.finish(), &[&image])
+            .expect("draw");
+        let pixels = ctx.read(&mut surface).expect("read");
+        ctx.destroy_surface(surface);
+        let mut low = i32::MAX;
+        let mut high = -1;
+        for y in 0..SIZE.height {
+            for x in 0..SIZE.width {
+                if pixel(&pixels, x, y)[0] > 0 {
+                    low = low.min(x as i32);
+                    high = high.max(x as i32);
+                }
+            }
+        }
+        (low, high)
+    };
+
+    let red = Color::linear(1.0, 0.0, 0.0, 1.0);
+    let plain = span(&mut ctx, &Paint::fill(red));
+    assert_eq!(plain, (48, 55), "the fixture glyph is eight texels wide");
+
+    let dilated = span(
+        &mut ctx,
+        &Paint::fill(red).with_image_filter(ImageFilter::Dilate {
+            radius_x: 10.0,
+            radius_y: 10.0,
+        }),
+    );
+    assert_eq!(
+        dilated,
+        (38, 65),
+        "a dilation of ten should reach ten further each way. The glyph's own \
+         extent means the filter was accepted and dropped"
+    );
+
+    let blurred = span(
+        &mut ctx,
+        &Paint::fill(red).with_image_filter(ImageFilter::Blur { sigma: 5.0 }),
+    );
+    assert!(
+        blurred.0 < 48 && blurred.1 > 55,
+        "a blur should carry the glyph past its own box, but it spans {blurred:?}"
+    );
+
+    let mut canvas = Canvas::new(SIZE);
+    canvas.clear(Color::linear(0.0, 0.0, 0.0, 1.0));
+    let refused = canvas
+        .draw_glyphs(&run, &atlas, 0, &Paint::fill(red).with_mask_blur(5.0))
+        .map(|_| ());
+    assert!(
+        matches!(refused, Err(Error::Unsupported(_))),
+        "a mask blur over a run should be refused while it is unimplemented, \
+         not accepted and ignored. Got {refused:?}"
+    );
+
+    ctx.destroy_image(image);
+}

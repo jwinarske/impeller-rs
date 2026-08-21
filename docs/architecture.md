@@ -682,6 +682,22 @@ what the filter meant anyway and costs what every other image-acting filter
 costs. `Layer` grew a color filter for it, which `dart:ui` has independently:
 `saveLayer` takes a paint, and that paint's `colorFilter` applies to the group.
 
+**A glyph run is the third door, and it was open too.** A run does not pass
+through `draw_path` any more than a mesh does, and it too accepted an image
+filter and drew without one. It now routes through a layer like the other two,
+taking its bounds from the run's own boxes since it has neither a path nor
+vertices to take them from. Text is the highest-draw-count content there is,
+which also makes it the place a dropped filter is least likely to be recognized
+as a dropped filter rather than as bad text.
+
+Its mask blur is refused, and for a different reason than the mesh's. A mesh
+carries a color per vertex, so blurring its coverage and blurring its result are
+different pictures and the refusal is permanent. A run is coverage times one
+solid color, which is exactly the case where the two agree -- so this one is
+simply not built, and the message says that rather than implying it could not
+be. Building it means the four mask styles over a run, which is drawing the run
+twice into layers rather than reusing any of the shape's machinery.
+
 **A mesh takes the same filter routing a shape does, because it does not pass
 through the same door.** `draw_path` is where a paint's image filter and mask
 blur are noticed, and a mesh never goes near it -- so both were accepted on a
