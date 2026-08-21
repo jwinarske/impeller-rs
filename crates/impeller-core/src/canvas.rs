@@ -162,6 +162,11 @@ pub enum TextureSource {
 }
 
 /// One target's worth of drawing.
+///
+/// Cloneable so that a finished recording can be drawn into another one: the
+/// passes are taken as they are, and the recording being drawn keeps its own
+/// copy for a caller who draws it more than once.
+#[derive(Clone)]
 pub struct Pass {
     pub batch: Batch,
     pub descriptor: PassDescriptor,
@@ -2564,6 +2569,133 @@ impl Canvas {
                 }
             }
         }
+        Ok(self)
+    }
+
+    /// Draw a finished recording into this one.
+    ///
+    /// `dart:ui` calls this `drawPicture`, and it is a smaller thing here than
+    /// there, which is worth saying plainly. An `SkPicture` is a command list,
+    /// so replaying one under a new transform re-runs the commands and
+    /// re-tessellates at the new scale. A [`Recording`] is already tessellated:
+    /// its paths were flattened at a tolerance taken from the transform in force
+    /// when they were recorded, and its vertices are in clip space. Magnified,
+    /// it shows the polygon it was flattened to.
+    ///
+    /// So this composes scenes at about the scale they were recorded at. It is
+    /// not the reuse optimization the same call is elsewhere, and a caller who
+    /// wants that should re-record.
+    ///
+    /// What it costs is a layer, because that is what it is: the recording's
+    /// passes are taken as they are and its root becomes an image this canvas
+    /// samples. Nothing is re-recorded and no geometry is touched, which is
+    /// what makes it cheap and also what makes it unable to re-tessellate.
+    ///
+    /// # Slots
+    ///
+    /// A recording naming a caller's image by index keeps that index. The two
+    /// recordings are submitted with one image table, so an index means the
+    /// same thing in both -- a caller composing recordings that disagree about
+    /// what image three is has to renumber before recording, which is a thing
+    /// they can see and this call cannot.
+    ///
+    /// Its layers and its baked gradients are renumbered, since those name
+    /// positions in lists this recording is appending to.
+    pub fn draw_recording(&mut self, recording: &Recording, paint: &Paint) -> Result<&mut Self> {
+        if recording.is_empty() || !paint.is_visible() {
+            return Ok(self);
+        }
+        if self.clip.is_some_and(Scissor::is_empty) {
+            return Ok(self);
+        }
+
+        // Where the passes and ramps being appended will land. Taken before
+        // anything is pushed, because every index inside the recording is
+        // relative to lists that start here.
+        let pass_offset = self.finished.len();
+        let ramp_offset = self.ramps.len();
+        self.ramps.extend(recording.ramps.iter().cloned());
+
+        for pass in &recording.passes {
+            let mut pass = pass.clone();
+            for source in &mut pass.sources {
+                *source = match *source {
+                    // A layer names a pass by position in the recording it came
+                    // from, and that recording's passes are now further along.
+                    TextureSource::Layer(index) => TextureSource::Layer(index + pass_offset),
+                    TextureSource::Ramp(index) => TextureSource::Ramp(index + ramp_offset),
+                    // The caller's own table, which both recordings share.
+                    TextureSource::Image(index) => TextureSource::Image(index),
+                };
+            }
+            self.finished.push(pass);
+        }
+
+        // The recording's root is the image this canvas now samples, and every
+        // other pass it brought is a layer feeding that one.
+        let root = self.finished.len() - 1;
+        let slot = self.slot_for(TextureSource::Layer(root));
+
+        // The recording rendered at its own extent, and it lands here at that
+        // size with its top-left at the origin of the current transform. A
+        // recording is a picture rather than a shape, so it has no bounds of
+        // its own to place -- where it goes is what the transform says.
+        let extent = recording.extent;
+        let placement = Rect::new(0.0, 0.0, extent.width as f32, extent.height as f32);
+        // The mapping from a fragment's clip position back to a texel of the
+        // recording, which is the same pair a layer composite builds -- except
+        // that a layer sits at a known place in its parent and a recording is
+        // placed by the transform, so the mapping is built from that instead.
+        //
+        // Clip space runs from -1 to 1 and upward, so the axes are halved and Y
+        // is negated. Inverting the transform is what carries a fragment back
+        // into the recording's own coordinates; a transform that folds the
+        // plane has no inverse, and the geometry collapses with it, so both
+        // halves go together and nothing is drawn.
+        let to_clip = self.target.projection() * self.transform;
+        if to_clip.matrix2.determinant().abs() <= f32::EPSILON {
+            return Ok(self);
+        }
+        let scale = Mat2::from_diagonal(Vec2::new(
+            1.0 / extent.width as f32,
+            1.0 / extent.height as f32,
+        ));
+        let mapping = scale * to_clip.matrix2.inverse();
+        let origin = to_clip.transform_point2(Vec2::ZERO);
+        if !mapping.is_finite() || !origin.is_finite() {
+            return Ok(self);
+        }
+        let material = Material::Image {
+            origin: [origin.x, origin.y],
+            to_local: [
+                mapping.x_axis.x,
+                mapping.x_axis.y,
+                mapping.y_axis.x,
+                mapping.y_axis.y,
+            ],
+            slot,
+            alpha: 1.0,
+            tile: TileMode::Clamp,
+            // At its own size a texel lands on a pixel, and under a transform
+            // the recording is resampled -- which is what a picture drawn
+            // scaled means, and the same answer a matrix image filter gives.
+            sampling: Sampling::Linear,
+            source: [0.0, 0.0, 1.0, 1.0],
+            tint: [1.0, 1.0, 1.0, 1.0],
+        };
+        let render_paint = RenderPaint {
+            material,
+            filter: paint.color_filter,
+            blend: paint.blend,
+            clip: self.clip,
+            stencil: ClipState::content(self.depth),
+        };
+        self.renderer.fill_into(
+            &mut self.batch,
+            &placement.to_path(),
+            self.transform,
+            &render_paint,
+        )?;
         Ok(self)
     }
 

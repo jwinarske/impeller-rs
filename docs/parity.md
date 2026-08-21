@@ -89,7 +89,7 @@ reason.
 | `drawDRRect` | yes | `draw_drrect`: two contours filled even-odd, which is what makes the inner one a hole | `a_double_rounded_rect_is_a_ring_rather_than_two_shapes` |
 | `drawShadow` | yes | `draw_shadow`: offset, blur and alpha all from the elevation, under one light | `a_shadow_falls_below_what_casts_it_and_widens_with_elevation` |
 | `drawRSuperellipse` | no | | |
-| `drawPicture` | no | — a recording here is tessellated, not a command list; see below | |
+| `drawPicture` | yes | `draw_recording`, which composes a finished recording into this one. Tessellated rather than replayed -- see below for what that costs | `a_recording_drawn_into_another_keeps_its_own_layers_and_ramps` |
 | `clipRect` | yes | `clip_rect` | `clipped-circle`, `shape-clip-and-scissor-together` |
 | `clipPath` | yes | `clip_path` | `clip-varies-between-draws`, `shape-clipped-fill` |
 | `clipRRect` | via | `clip_path` of `Rect::to_rounded_path` | |
@@ -137,32 +137,34 @@ above it or not at all:
 
 ## Where that leaves it
 
-Of forty-seven rows across `Canvas` and `Paint`: thirty-seven exist, one is
-partial, five are expressible by a caller who assembles them, three are absent,
+Of forty-seven rows across `Canvas` and `Paint`: thirty-eight exist, one is
+partial, five are expressible by a caller who assembles them, two are absent,
 and one is out of scope. Counting them is the least interesting thing
 about the table -- the absences are not equal, and a reader deciding whether
 this renderer is usable should look at which ones rather than how many.
 
-The two that would matter most to a real application, in the order I would
-build them:
+`drawPicture` is now built, and what it turned out to be is worth recording
+because the analysis that preceded it was right about the shape and wrong about
+the cost. A `Recording` is already tessellated -- paths flattened at a tolerance
+taken from the transform in force when they were recorded, vertices and
+materials in clip space -- so the flattening cannot be undone and a picture
+magnified shows the polygon it became. That much was expected, and it is why
+this composes scenes at about the scale they were recorded at rather than being
+the reuse optimization the same call is elsewhere.
 
-1. **`drawPicture`**, which is a smaller feature here than it is in Skia and
-   worth understanding before anyone plans it. An `SkPicture` is a command
-   list, so replaying one under a new transform re-runs the commands and
-   re-tessellates. A `Recording` here is already tessellated: paths were
-   flattened at a tolerance chosen from the transform in force when they were
-   recorded, and both the vertices and the materials are in clip space.
+What was expected to be the work -- carrying clip-space positions and each
+material's geometry through the composite affine -- turned out not to be needed
+at all. The pass model already had the answer: a layer *is* a pass another pass
+samples, so a picture is its passes appended and its root sampled, with nothing
+re-recorded and no geometry touched. What is left is arithmetic on indices,
+since a picture's layers and baked gradients name positions in lists the
+receiving recording is appending to. Getting that wrong makes a picture's layer
+sample the host's, which is a plausible picture of something nobody drew, and
+there is a test that catches exactly that.
 
-   Replaying one under another transform is mechanically possible — the
-   composite is affine, so clip-space positions and each material's own
-   geometry can be carried through it — but the flattening cannot be undone.
-   A recording magnified shows the polygon it was flattened to. So this would
-   be a convenience for composing scenes at the scale they were recorded at,
-   not the reuse optimization the same call is elsewhere, and a caller who
-   wants that should re-record. The pass model has the other half of the
-   question: a nested recording arrives with its own passes and its own
-   texture table, and merging those is about numbering slots.
-2. **The rest of runtime effects.** A caller's fragment program draws on both
+The one that would matter most to a real application now:
+
+1. **The rest of runtime effects.** A caller's fragment program draws on both
    backends, through the paint, with the material's own uniform block — fifty-
    six floats — and one texture, which it gets without a descriptor set of its
    own because every draw already binds one. What is missing is *several*

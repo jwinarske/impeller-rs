@@ -471,6 +471,26 @@ cost is additive to a gradient that already uses every float. Ask whether a
 field is paying for its width before concluding a limit has been reached. That
 is not an argument against changing a mechanism when it does have to change.
 
+**A picture is its passes appended and its root sampled.** `draw_recording` is
+`drawPicture`, and building it needed less than the note below predicted. That
+note expected the work to be carrying clip-space positions and each material's
+own geometry through the composite affine. None of that is done, because the
+pass model already answered it: a layer is a pass another pass samples, so a
+finished recording is its passes taken as they are and its root sampled by the
+canvas drawing it. Nothing is re-recorded and no vertex is touched.
+
+What is left is index arithmetic, and it is the whole of what can go wrong. A
+picture's layers name passes by position, and its baked gradients name ramps by
+position, in lists the receiving recording is appending to -- so both shift by
+however much is already there. Wrong, and a picture's layer samples the host's:
+a plausible picture of something nobody drew, which is the failure mode this
+document keeps returning to.
+
+Images are the exception and are not renumbered. A caller's image index means
+the same thing in both recordings because both are submitted against one table,
+and a caller composing pictures that disagree about what image three is has to
+renumber before recording -- which is a thing they can see and this call cannot.
+
 **A recording is tessellated geometry, not a command list.** Worth stating
 because the name suggests otherwise and because it decides what nesting one
 inside another could mean. By the time a draw reaches a batch its path has been

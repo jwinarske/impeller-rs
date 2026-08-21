@@ -10035,3 +10035,220 @@ fn a_glyph_run_takes_all_four_mask_blur_styles() {
 
     ctx.destroy_image(image);
 }
+
+/// A gradient with more stops than a material carries, so it bakes a ramp.
+///
+/// `hue` picks which colors, because two ramps of the same stops are one ramp:
+/// the recorder deduplicates them, so a test wanting to tell one index from
+/// another has to ask for genuinely different gradients.
+fn ramped_stops(hue: usize) -> Vec<GradientStop> {
+    (0..=MAX_STOPS + 2)
+        .map(|i| {
+            let t = i as f32 / (MAX_STOPS + 2) as f32;
+            let color = match hue {
+                0 => Color::linear(t, 1.0 - t, 0.5, 1.0),
+                _ => Color::linear(0.5, t * 0.2, 1.0 - t, 1.0),
+            };
+            GradientStop::new(color, t)
+        })
+        .collect()
+}
+
+#[test]
+fn a_recording_drawn_into_another_keeps_its_own_layers_and_ramps() {
+    // `drawPicture`, and the part of it with anything to go wrong. A recording
+    // is passes and baked gradients, and both are named by position in lists
+    // the receiving recording is appending to -- so every index inside the
+    // picture has to move by however much is already there. Get that wrong and
+    // a picture's layer samples the host's, which is a plausible picture of
+    // something nobody drew.
+    //
+    // Both index spaces are non-empty before the picture arrives, which is what
+    // makes the offsets observable at all: appending to empty lists renumbers
+    // by zero and any arithmetic passes.
+    let Some(mut ctx) = context() else { return };
+
+    // A picture carrying one of each: a half-opacity layer, and a gradient with
+    // more stops than a material holds.
+    let mut inner = Canvas::new(Extent2D::new(64, 64));
+    inner.clear(Color::linear(0.0, 0.0, 0.0, 0.0));
+    inner.save_layer_bounds(Layer::opacity(0.5), Rect::new(0.0, 0.0, 64.0, 64.0));
+    inner
+        .draw_rect(
+            Rect::new(4.0, 4.0, 60.0, 60.0),
+            &Paint::fill(Color::linear(1.0, 0.0, 0.0, 1.0)).with_anti_alias(false),
+        )
+        .expect("picture layer");
+    inner.restore();
+    inner
+        .draw_rect(
+            Rect::new(8.0, 24.0, 56.0, 40.0),
+            &Paint::fill(Color::linear(1.0, 1.0, 1.0, 1.0))
+                .with_anti_alias(false)
+                .with_shader(Shader::LinearGradient {
+                    start: Vec2::new(8.0, 0.0),
+                    end: Vec2::new(56.0, 0.0),
+                    stops: ramped_stops(0),
+                    tile: TileMode::Clamp,
+                }),
+        )
+        .expect("picture gradient");
+    let picture = inner.finish();
+    assert_eq!(
+        (picture.passes.len(), picture.ramps.len()),
+        (2, 1),
+        "the picture should carry a layer and a ramp, or this proves nothing"
+    );
+
+    // A host that already has one of each, so the picture's indices land after.
+    let mut canvas = Canvas::new(SIZE);
+    canvas.clear(Color::linear(0.05, 0.05, 0.05, 1.0));
+    canvas.save_layer_bounds(Layer::opacity(1.0), Rect::new(0.0, 0.0, 20.0, 20.0));
+    canvas
+        .draw_rect(
+            Rect::new(2.0, 2.0, 18.0, 18.0),
+            &Paint::fill(Color::linear(0.0, 1.0, 0.0, 1.0)).with_anti_alias(false),
+        )
+        .expect("host layer");
+    canvas.restore();
+    canvas
+        .draw_rect(
+            Rect::new(0.0, 108.0, 128.0, 128.0),
+            &Paint::fill(Color::linear(1.0, 1.0, 1.0, 1.0))
+                .with_anti_alias(false)
+                .with_shader(Shader::LinearGradient {
+                    start: Vec2::new(0.0, 0.0),
+                    end: Vec2::new(128.0, 0.0),
+                    stops: ramped_stops(1),
+                    tile: TileMode::Clamp,
+                }),
+        )
+        .expect("host gradient");
+    canvas.save();
+    canvas.translate(40.0, 30.0);
+    canvas
+        .draw_recording(&picture, &Paint::fill(Color::linear(1.0, 1.0, 1.0, 1.0)))
+        .expect("recording");
+    canvas.restore();
+    let combined = canvas.finish();
+    assert_eq!(
+        (combined.passes.len(), combined.ramps.len()),
+        (4, 2),
+        "the picture's passes and ramps should have been appended, not merged"
+    );
+    let pixels = render_recording(&mut ctx, &combined);
+
+    // The host's own layer, which the picture must not have displaced.
+    assert_eq!(
+        pixel(&pixels, 10, 10),
+        [0, 255, 0, 255],
+        "the host's layer changed when a picture was drawn beside it"
+    );
+    // The host's ramp, still a gradient rather than the picture's.
+    // The host's stops hold red at a half and keep green under a fifth, which
+    // is what tells them from the picture's, where green rises to full.
+    let host_ramp = pixel(&pixels, 64, 118);
+    assert!(
+        host_ramp[0] > 100 && host_ramp[1] < 60,
+        "the host's gradient should still run through its own stops, got \
+         {host_ramp:?}. A high green would be the picture's ramp"
+    );
+    // The picture's layer, whose half opacity is the evidence it is that layer
+    // and not the host's: the host's is fully opaque.
+    let inside = pixel(&pixels, 60, 50);
+    assert!(
+        inside[0] > 100 && inside[0] < 180 && inside[1] < 40,
+        "the picture's layer should be red at half opacity over the ground, \
+         got {inside:?}. Full red would mean it sampled the wrong pass"
+    );
+    // And the picture's gradient, which is a different ramp from the host's.
+    let picture_ramp = pixel(&pixels, 60, 62);
+    assert!(
+        picture_ramp[1] > 100,
+        "the picture's gradient should run through its own stops -- green \
+         rising as red falls -- and not the host's, whose green never passes a \
+         fifth. Got {picture_ramp:?}"
+    );
+}
+
+#[test]
+fn a_recording_lands_where_the_transform_puts_it() {
+    // A recording has no bounds of its own to place -- it is a picture rather
+    // than a shape -- so where it goes is entirely what the transform says. Its
+    // own extent is the rectangle, with its corner at the origin.
+    //
+    // Scaling it resamples rather than redraws, which is the whole limitation
+    // of this call and is worth pinning rather than only describing: the
+    // picture was flattened at the tolerance in force when it was recorded, and
+    // nothing here can undo that.
+    let Some(mut ctx) = context() else { return };
+
+    let mut inner = Canvas::new(Extent2D::new(64, 64));
+    inner.clear(Color::linear(0.0, 0.0, 0.0, 0.0));
+    inner
+        .draw_rect(
+            Rect::new(8.0, 8.0, 56.0, 56.0),
+            &Paint::fill(Color::linear(1.0, 0.0, 0.0, 1.0)).with_anti_alias(false),
+        )
+        .expect("rect");
+    let picture = inner.finish();
+
+    let span = |ctx: &mut Context, place: &dyn Fn(&mut Canvas)| -> (u32, u32) {
+        let mut canvas = Canvas::new(SIZE);
+        canvas.clear(Color::linear(0.0, 0.0, 0.0, 1.0));
+        canvas.save();
+        place(&mut canvas);
+        canvas
+            .draw_recording(&picture, &Paint::fill(Color::linear(1.0, 1.0, 1.0, 1.0)))
+            .expect("recording");
+        canvas.restore();
+        let pixels = render(ctx, canvas);
+        let lit: Vec<u32> = (0..SIZE.width)
+            .filter(|x| pixel(&pixels, *x, 40)[0] > 40)
+            .collect();
+        (
+            *lit.first().expect("the picture drew nothing"),
+            *lit.last().expect("the picture drew nothing"),
+        )
+    };
+
+    // Untransformed, the picture's own coordinates are the canvas's.
+    assert_eq!(
+        span(&mut ctx, &|_| {}),
+        (8, 55),
+        "a picture at the origin should land where it drew"
+    );
+    // Translated, it moves by exactly that much.
+    assert_eq!(
+        span(&mut ctx, &|c: &mut Canvas| {
+            c.translate(48.0, 0.0);
+        }),
+        (56, 103),
+        "a picture should move with the transform"
+    );
+    // Scaled about a point, its corners land where that scale puts them.
+    assert_eq!(
+        span(&mut ctx, &|c: &mut Canvas| {
+            c.translate(16.0, 0.0);
+            c.scale(1.5, 1.5);
+        }),
+        (27, 100),
+        "a picture scaled by half again should span half again as much"
+    );
+    // A transform that folds the plane leaves nothing to sample and nothing to
+    // draw, so the call does nothing rather than dividing by a determinant of
+    // zero.
+    let mut canvas = Canvas::new(SIZE);
+    canvas.clear(Color::linear(0.0, 0.0, 0.0, 1.0));
+    canvas.save();
+    canvas.scale(0.0, 1.0);
+    canvas
+        .draw_recording(&picture, &Paint::fill(Color::linear(1.0, 1.0, 1.0, 1.0)))
+        .expect("collapsed");
+    canvas.restore();
+    let pixels = render(&mut ctx, canvas);
+    assert!(
+        pixels.chunks_exact(4).all(|texel| texel == [0, 0, 0, 255]),
+        "a picture under a collapsed transform should draw nothing at all"
+    );
+}
