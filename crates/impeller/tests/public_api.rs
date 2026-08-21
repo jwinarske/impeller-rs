@@ -9488,3 +9488,175 @@ fn every_draw_that_takes_a_paint_applies_or_refuses_a_mask_blur() {
     }
     ctx.destroy_image(image);
 }
+
+#[test]
+fn every_draw_that_takes_a_paint_obeys_the_transform_and_the_clip() {
+    // The seam question asked of canvas state rather than of the paint. A draw
+    // that missed either would be a plain correctness fault rather than a
+    // dropped option, and both are cheap to state exactly: a translation of
+    // sixteen moves the drawing sixteen, and a clip beginning at fifty-six
+    // leaves nothing to its left.
+    let Some(mut ctx) = context() else { return };
+    let mut image = ctx
+        .create_image(Extent2D::new(4, 4), PixelFormat::Rgba8Unorm)
+        .expect("image");
+    ctx.write_image(&mut image, &[255u8, 0, 0, 255].repeat(16))
+        .expect("upload");
+    let red = Color::linear(1.0, 0.0, 0.0, 1.0);
+    let square = Rect::new(40.0, 40.0, 88.0, 88.0);
+    let mut b = PathBuilder::new();
+    b.move_to(Vec2::new(40.0, 40.0))
+        .line_to(Vec2::new(88.0, 40.0))
+        .line_to(Vec2::new(88.0, 88.0))
+        .line_to(Vec2::new(40.0, 88.0))
+        .close();
+    let path = b.build();
+    let mesh = square_mesh(red);
+
+    let span = |ctx: &mut Context, name: &str, setup: &dyn Fn(&mut Canvas)| -> (u32, u32) {
+        let mut canvas = Canvas::new(SIZE);
+        canvas.clear(Color::linear(0.0, 0.0, 0.0, 1.0));
+        setup(&mut canvas);
+        let paint = Paint::fill(red).with_anti_alias(false);
+        let img = Paint::image(0, Rect::from_size(4.0, 4.0)).with_anti_alias(false);
+        match name {
+            "draw_path" => canvas.draw_path(&path, &paint).map(|_| ()),
+            "draw_rect" => canvas.draw_rect(square, &paint).map(|_| ()),
+            "draw_rrect" => canvas.draw_rrect(square, 8.0, &paint).map(|_| ()),
+            "draw_circle" => canvas
+                .draw_circle(Vec2::new(64.0, 64.0), 24.0, &paint)
+                .map(|_| ()),
+            "draw_oval" => canvas.draw_oval(square, &paint).map(|_| ()),
+            "draw_drrect" => canvas
+                .draw_drrect(square, 8.0, Rect::new(80.0, 80.0, 86.0, 86.0), 1.0, &paint)
+                .map(|_| ()),
+            "draw_line" => canvas
+                .draw_line(
+                    Vec2::new(40.0, 64.0),
+                    Vec2::new(88.0, 64.0),
+                    &Paint::stroke(red, 40.0),
+                )
+                .map(|_| ()),
+            "draw_points" => canvas
+                .draw_points(
+                    PointMode::Points,
+                    &[Vec2::new(64.0, 64.0)],
+                    &Paint::fill(red).with_style(Style::Stroke(StrokeStyle {
+                        cap: LineCap::Round,
+                        ..StrokeStyle::new(48.0)
+                    })),
+                )
+                .map(|_| ()),
+            "draw_vertices" => canvas.draw_vertices(&mesh, &paint).map(|_| ()),
+            "draw_atlas" => canvas
+                .draw_atlas(
+                    &[Sprite {
+                        source: SourceRect {
+                            x: 0.0,
+                            y: 0.0,
+                            width: 4.0,
+                            height: 4.0,
+                        },
+                        color: Color::linear(1.0, 1.0, 1.0, 1.0),
+                        transform: Affine2::from_scale_angle_translation(
+                            Vec2::splat(12.0),
+                            0.0,
+                            Vec2::new(40.0, 40.0),
+                        ),
+                    }],
+                    Extent2D::new(4, 4),
+                    &img,
+                )
+                .map(|_| ()),
+            "draw_image_nine" => canvas
+                .draw_image_nine(
+                    0,
+                    Extent2D::new(4, 4),
+                    Rect::new(1.0, 1.0, 3.0, 3.0),
+                    square,
+                    &img,
+                )
+                .map(|_| ()),
+            "draw_glyphs" => Ok(()),
+            other => unreachable!("{other}"),
+        }
+        .unwrap_or_else(|e| panic!("{name}: {e}"));
+        let mut surface = ctx
+            .create_surface(SIZE, PixelFormat::Rgba8Unorm)
+            .expect("s");
+        ctx.draw_with_images(&mut surface, &canvas.finish(), &[&image])
+            .expect("d");
+        let px = ctx.read(&mut surface).expect("r");
+        ctx.destroy_surface(surface);
+        let lit: Vec<u32> = (0..128)
+            .filter(|x| {
+                let q = ((64u32 * 128 + x) * 4) as usize;
+                px[q] > 0
+            })
+            .collect();
+        (
+            lit.first().copied().unwrap_or(999),
+            lit.last().copied().unwrap_or(999),
+        )
+    };
+
+    // A stencil clip rather than the scissor, which is a different mechanism
+    // and so a separate chance to be missed: an axis-aligned rectangle narrows
+    // the scissor, and anything else is written into the stencil and tested per
+    // fragment. A triangle covering the right half tests the second.
+    let mut wedge = PathBuilder::new();
+    wedge
+        .move_to(Vec2::new(56.0, -40.0))
+        .line_to(Vec2::new(200.0, -40.0))
+        .line_to(Vec2::new(200.0, 200.0))
+        .line_to(Vec2::new(56.0, 200.0))
+        .close();
+    let wedge = wedge.build();
+
+    for name in [
+        "draw_path",
+        "draw_rect",
+        "draw_rrect",
+        "draw_circle",
+        "draw_oval",
+        "draw_drrect",
+        "draw_line",
+        "draw_points",
+        "draw_vertices",
+        "draw_atlas",
+        "draw_image_nine",
+    ] {
+        let plain = span(&mut ctx, name, &|_| {});
+        assert_ne!(plain.0, 999, "{name} drew nothing to compare against");
+
+        let moved = span(&mut ctx, name, &|c: &mut Canvas| {
+            c.translate(16.0, 0.0);
+        });
+        assert_eq!(
+            moved,
+            (plain.0 + 16, plain.1 + 16),
+            "{name} did not move with the canvas transform"
+        );
+
+        let scissored = span(&mut ctx, name, &|c: &mut Canvas| {
+            let _ = c.clip_rect(Rect::new(56.0, 0.0, 128.0, 128.0));
+        });
+        assert!(
+            scissored.0 >= 56 && scissored.1 == plain.1,
+            "{name} drew outside a rectangular clip: {scissored:?} where the \
+             clip begins at 56 and the drawing ends at {}",
+            plain.1
+        );
+
+        let stencilled = span(&mut ctx, name, &|c: &mut Canvas| {
+            let _ = c.clip_path(&wedge);
+        });
+        assert!(
+            stencilled.0 >= 56 && stencilled.1 == plain.1,
+            "{name} drew outside a stencil clip: {stencilled:?}. A rectangle \
+             narrows the scissor and anything else is tested per fragment, so \
+             one can hold while the other does not"
+        );
+    }
+    ctx.destroy_image(image);
+}
