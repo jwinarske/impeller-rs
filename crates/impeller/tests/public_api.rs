@@ -9331,7 +9331,15 @@ fn every_draw_that_takes_a_paint_honours_its_color_filter_and_blend() {
 }
 
 #[test]
-fn probe_mask_blur_sweep() {
+fn every_draw_that_takes_a_paint_applies_or_refuses_a_mask_blur() {
+    // The third field with its own routing, and the one where doing nothing is
+    // sometimes right. A mask blur blurs coverage and then fills, which is the
+    // same picture as blurring the result only where the fill does not vary --
+    // so a paint whose color comes from a texture or from vertices cannot have
+    // one, and gets an error rather than a guess.
+    //
+    // What must not happen is the third outcome: accepted, and no blur. Every
+    // call here either softens its edge or says why it will not.
     let Some(mut ctx) = context() else { return };
     let mut image = ctx
         .create_image(Extent2D::new(4, 4), PixelFormat::Rgba8Unorm)
@@ -9438,6 +9446,9 @@ fn probe_mask_blur_sweep() {
         let i = ((64u32 * 128 + 42) * 4) as usize;
         Ok(px[i])
     };
+    // The three that refuse are exactly the three whose color does not come
+    // from the paint: two meshes and a nine-patch, all reading a texture.
+    const REFUSES: [&str; 3] = ["draw_vertices", "draw_atlas", "draw_image_nine"];
     for name in [
         "draw_path",
         "draw_rect",
@@ -9452,14 +9463,28 @@ fn probe_mask_blur_sweep() {
         "draw_image_nine",
         "draw_paint",
     ] {
-        match (edge(&mut ctx, name, 0.0), edge(&mut ctx, name, 8.0)) {
-            (Ok(a), Ok(b)) => {
-                let verdict = if b < a { "applied" } else { "DROPPED" };
-                eprintln!("{name:>16}: {verdict} ({a} -> {b})");
-            }
-            (_, Err(e)) => eprintln!("{name:>16}: refused ({e})"),
-            (Err(e), _) => eprintln!("{name:>16}: plain refused ({e})"),
+        let sharp = edge(&mut ctx, name, 0.0);
+        let soft = edge(&mut ctx, name, 8.0);
+        if REFUSES.contains(&name) {
+            assert!(
+                soft.is_err(),
+                "{name} reads its color from a texture, so a mask blur over it \
+                 is a guess rather than a picture. It should be refused, not accepted"
+            );
+            continue;
         }
+        let sharp = sharp.unwrap_or_else(|e| panic!("{name} without a blur: {e}"));
+        let soft = soft.unwrap_or_else(|e| panic!("{name} with a blur: {e}"));
+        assert_eq!(
+            sharp, 255,
+            "{name} should meet its own edge at full strength when nothing is \
+             blurring it"
+        );
+        assert!(
+            soft < sharp,
+            "{name} accepted a mask blur and drew the same {soft} it draws \
+             without one, which is the blur being dropped"
+        );
     }
     ctx.destroy_image(image);
 }
