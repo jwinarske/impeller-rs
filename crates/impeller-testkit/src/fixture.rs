@@ -67,7 +67,7 @@ pub fn pixels() -> Vec<u8> {
 /// picture, and one program that draws something no material here draws shows
 /// that as well as twenty would.
 ///
-/// It reads two colours from the first two stop slots and a threshold from the
+/// It reads two colors from the first two stop slots and a threshold from the
 /// first geometry slot, and splits the frame vertically between them.
 pub fn effect() -> impeller_hal::RuntimeProgram {
     impeller_hal::RuntimeProgram {
@@ -76,7 +76,7 @@ pub fn effect() -> impeller_hal::RuntimeProgram {
     }
 }
 
-/// Lay two colours and a threshold out where [`effect`] reads them.
+/// Lay two colors and a threshold out where [`effect`] reads them.
 pub fn effect_uniforms(left: [f32; 4], right: [f32; 4], threshold: f32) -> Vec<f32> {
     let mut out = vec![0.0; impeller_hal::RUNTIME_FLOATS];
     out[0..4].copy_from_slice(&left);

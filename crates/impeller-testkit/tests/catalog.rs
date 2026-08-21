@@ -34,7 +34,7 @@ use impeller_testkit::{accepts, catalog, compare, render_scene, Image, Scene, To
 /// So this bounds *how much of the picture* may differ, not by how much. Three
 /// per cent covers the edges of the busiest plate with room to spare, and
 /// nothing that is actually wrong stays inside it: a shape missing on one
-/// backend, a stroke placed differently, a colour computed differently, each
+/// backend, a stroke placed differently, a color computed differently, each
 /// cover far more of the frame than their own outlines.
 const CATALOG: Tolerance = Tolerance::new(1, 0.03);
 
@@ -59,13 +59,13 @@ fn every_catalog_scene_draws_something() {
         }
         let image = render::<VulkanHal>(&mut ctx, &scene);
         // Something other than the ground it cleared to. A scene whose
-        // geometry landed offscreen, or whose colour matched the background,
+        // geometry landed offscreen, or whose color matched the background,
         // is one nobody would notice was wrong by scrolling past it.
         //
         // Against the background rather than against the first pixel, which is
         // not the same question and gets one plate wrong: a scene that covers
         // the frame twice and blends the second over the first is *correctly*
-        // one colour everywhere, and reads as blank to a check that only asks
+        // one color everywhere, and reads as blank to a check that only asks
         // whether the picture is uniform. It went unnoticed because the plate
         // in question needs advanced blending, which the device here does not
         // have -- so the flaw only surfaced on a software device that does.

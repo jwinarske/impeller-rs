@@ -20,6 +20,14 @@
 use std::collections::BTreeSet;
 use std::path::PathBuf;
 
+/// The workspace root, which is where every path in this file is relative to.
+fn repo_root() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .expect("xtask sits inside the workspace")
+        .to_path_buf()
+}
+
 fn doc(name: &str) -> String {
     let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .parent()
@@ -347,5 +355,82 @@ fn the_playground_inventory_counts_each_file_correctly() {
         counted, total,
         "the catalog holds {total} scenes but only {counted} fall under a topic \
          the inventory names, so some scene is uncounted by the table"
+    );
+}
+
+#[test]
+fn the_tree_is_written_in_american_english() {
+    // A stated convention for this project, and one that drifts silently:
+    // nothing about "colour" beside "color" fails to compile, and a message a
+    // caller reads is as much a part of the interface as the name it belongs
+    // to. Eighty-odd of these accumulated before anyone looked, in comments, in
+    // test names, and in the text of two errors that sat next to their
+    // American twins.
+    //
+    // Checked by spelling rather than by a dictionary, because the list of
+    // words this project actually uses is short and a dictionary would need one
+    // anyway. None of these is a substring of an American word, which is what
+    // makes an unanchored search the right one -- "recolours" has to be found
+    // as surely as "colours".
+    const BRITISH: [&str; 8] = [
+        "colour",
+        "centre",
+        "behaviour",
+        "recognise",
+        "normalise",
+        "favour",
+        "modelled",
+        "cancelled",
+    ];
+    // Everything tracked that a reader or a caller sees. The two untracked
+    // files are excluded by not being here.
+    let roots = ["crates", "xtask", "docs", "playground", "tests"];
+    let mut found = Vec::new();
+    for root in roots {
+        let mut stack = vec![repo_root().join(root)];
+        while let Some(dir) = stack.pop() {
+            let Ok(entries) = std::fs::read_dir(&dir) else {
+                continue;
+            };
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if path.is_dir() {
+                    if path.file_name().is_some_and(|n| n == "target") {
+                        continue;
+                    }
+                    stack.push(path);
+                    continue;
+                }
+                let is_text = path
+                    .extension()
+                    .and_then(|e| e.to_str())
+                    .is_some_and(|e| matches!(e, "rs" | "md" | "wgsl" | "toml" | "yml"));
+                if !is_text {
+                    continue;
+                }
+                // This file names every word it forbids, so it answers to all
+                // of them. A check that has to spell out what it is looking for
+                // cannot also be looked in.
+                if path.file_name().is_some_and(|n| n == "documentation.rs") {
+                    continue;
+                }
+                let Ok(text) = std::fs::read_to_string(&path) else {
+                    continue;
+                };
+                let lower = text.to_lowercase();
+                for word in BRITISH {
+                    if lower.contains(word) {
+                        found.push(format!("{}: {word}", path.display()));
+                    }
+                }
+            }
+        }
+    }
+    found.sort();
+    found.dedup();
+    assert!(
+        found.is_empty(),
+        "this project is written in American English, and these are not:\n  {}",
+        found.join("\n  ")
     );
 }

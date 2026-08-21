@@ -1367,7 +1367,7 @@ impl Canvas {
                 // and under decal it leaves, because past the end is where
                 // decal draws nothing. Repeat and mirror have no limit at all,
                 // the parameter oscillating faster and faster, and they take
-                // the same answer as clamp because a stable colour is worth
+                // the same answer as clamp because a stable color is worth
                 // more than an arbitrary one that shimmers.
                 //
                 // The limit rather than a refusal, on the same reasoning that
@@ -1920,7 +1920,7 @@ impl Canvas {
     /// Impeller uses and what makes a raised object's shadow fall downward on
     /// screen. Three things follow from the elevation and nothing else: the
     /// shadow is offset downward by it, blurred in proportion to it, and drawn
-    /// at a quarter of the stated colour's alpha.
+    /// at a quarter of the stated color's alpha.
     ///
     /// `elevation` is in the same units the canvas draws in. Impeller scales
     /// it by a device pixel ratio first, which is a framework concept rather
@@ -2198,10 +2198,10 @@ impl Canvas {
             // Refused rather than dropped, and rather than approximated. A mask
             // blur blurs coverage and then fills, which is the same picture as
             // blurring the result only where the fill does not vary -- and a
-            // mesh carries a colour per vertex, so it varies by construction.
+            // mesh carries a color per vertex, so it varies by construction.
             // `draw_masked` refuses a gradient for exactly this reason.
             return Err(Error::Unsupported(
-                "a mask blur takes a solid colour; draw the mesh into a blurred layer instead",
+                "a mask blur takes a solid color; draw the mesh into a blurred layer instead",
             ));
         }
 
@@ -2544,7 +2544,7 @@ impl Canvas {
             || center.bottom < center.top
         {
             return Err(Error::Unsupported(
-                "a nine-patch centre must lie within the image it divides",
+                "a nine-patch center must lie within the image it divides",
             ));
         }
 
@@ -3078,7 +3078,7 @@ fn circle_path(center: Vec2, radius: f32) -> Path {
 /// decisions, and neither should be made without saying so.
 const LIGHT_RATIO: f32 = 800.0 / 600.0;
 
-/// What fraction of the stated colour's alpha a shadow is drawn at.
+/// What fraction of the stated color's alpha a shadow is drawn at.
 ///
 /// A quarter, matching Impeller. A shadow is a suggestion of occlusion rather
 /// than an absence of light, and at full alpha it reads as a hole.

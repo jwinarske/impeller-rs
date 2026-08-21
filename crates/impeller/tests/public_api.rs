@@ -91,7 +91,7 @@ fn a_rectangle_lands_where_it_was_asked_to() {
 }
 
 #[test]
-fn colours_are_specified_in_srgb_and_stored_linearly() {
+fn colors_are_specified_in_srgb_and_stored_linearly() {
     let Some(mut ctx) = context() else { return };
     let mut canvas = Canvas::new(SIZE);
     // A mid gray as a design tool would give it.
@@ -1718,7 +1718,7 @@ fn a_gradient_with_more_than_two_stops_passes_through_each() {
 }
 
 #[test]
-fn a_radial_gradient_runs_outward_from_its_centre() {
+fn a_radial_gradient_runs_outward_from_its_center() {
     let Some(mut ctx) = context() else { return };
     let mut canvas = Canvas::new(SIZE);
     canvas.clear(Color::BLACK);
@@ -3035,7 +3035,7 @@ fn a_partial_sweep_holds_its_end_color_around_the_rest_of_the_turn() {
 }
 
 #[test]
-fn a_sweep_gradient_runs_around_its_centre() {
+fn a_sweep_gradient_runs_around_its_center() {
     let Some(mut ctx) = context() else { return };
     let mut canvas = Canvas::new(SIZE);
     canvas.clear(Color::BLACK);
@@ -5029,7 +5029,7 @@ fn conical_stops() -> Vec<GradientStop> {
 }
 
 #[test]
-fn a_conical_gradient_whose_first_circle_is_a_point_at_the_centre_is_a_radial_gradient() {
+fn a_conical_gradient_whose_first_circle_is_a_point_at_the_center_is_a_radial_gradient() {
     // The two take entirely different routes -- the radial folds its radius
     // into a matrix and measures a length, the conical solves a quadratic --
     // and this is the one configuration where they must agree exactly. It is
@@ -5091,7 +5091,7 @@ fn a_conical_gradient_whose_first_circle_is_a_point_at_the_centre_is_a_radial_gr
 }
 
 #[test]
-fn a_conical_gradient_between_concentric_circles_holds_the_first_colour_inside_the_inner_one() {
+fn a_conical_gradient_between_concentric_circles_holds_the_first_color_inside_the_inner_one() {
     // The configuration that gives the first radius somewhere to show. With
     // both circles on the same center the family is an annulus, the parameter
     // is zero on the inner circle and one on the outer, and everything inside
@@ -5665,7 +5665,7 @@ fn a_blend_filter_agrees_with_the_same_blend_done_by_the_blender() {
 }
 
 #[test]
-fn a_colour_matrix_recolours_a_gradient_which_no_tint_could() {
+fn a_color_matrix_recolors_a_gradient_which_no_tint_could() {
     // What the row in the parity table means by tinting anything rather than
     // only an image: the filter applies to the color the shader produced, so a
     // gradient is recolored along its whole length rather than at its stops.
@@ -5738,7 +5738,7 @@ fn an_advanced_blend_mode_is_refused_as_a_filter_rather_than_approximated() {
 }
 
 #[test]
-fn a_colour_matrix_is_applied_to_straight_colour_not_premultiplied() {
+fn a_color_matrix_is_applied_to_straight_color_not_premultiplied() {
     // The distinction only shows on a translucent color, which is why it needs
     // its own test: everything else here is opaque, and on an opaque color the
     // two forms are the same function.
@@ -5783,7 +5783,7 @@ fn a_colour_matrix_is_applied_to_straight_colour_not_premultiplied() {
 }
 
 #[test]
-fn a_luminance_matrix_turns_every_colour_the_same_grey_it_weighs() {
+fn a_luminance_matrix_turns_every_color_the_same_grey_it_weighs() {
     // The canonical color filter, and the one that pins the matrix's
     // orientation. Every row is the same set of weights, so the matrix is not
     // symmetric -- transposed, it would scale each channel by its own weight
@@ -5831,7 +5831,7 @@ fn a_luminance_matrix_turns_every_colour_the_same_grey_it_weighs() {
 }
 
 #[test]
-fn a_mesh_interpolates_the_colours_its_vertices_carry() {
+fn a_mesh_interpolates_the_colors_its_vertices_carry() {
     // What per-vertex color is for: a gradient across a triangle that no
     // gradient shader describes, because the three corners are independent.
     // Each corner must be its own color and the middle a mixture of all three,
@@ -5882,7 +5882,7 @@ fn a_mesh_interpolates_the_colours_its_vertices_carry() {
 }
 
 #[test]
-fn a_vertex_colour_multiplies_the_paint_rather_than_replacing_it() {
+fn a_vertex_color_multiplies_the_paint_rather_than_replacing_it() {
     // The rule that makes a white paint leave the mesh's colors alone and any
     // other paint shade them. A half-strength red paint under a green vertex
     // color has to give neither red nor green but their product, which is
@@ -5976,7 +5976,7 @@ fn an_atlas_tints_each_sprite_on_its_own_in_one_draw() {
 }
 
 #[test]
-fn a_vertex_colour_is_interpolated_premultiplied_across_a_fading_edge() {
+fn a_vertex_color_is_interpolated_premultiplied_across_a_fading_edge() {
     // The distinction only appears where alpha varies between vertices, which
     // is why the other color tests cannot see it: on constant alpha the two
     // forms are the same numbers.
@@ -6146,7 +6146,7 @@ fn an_image_filter_blur_of_a_solid_agrees_with_the_mask_blur_of_the_same_shape()
     assert!(
         worst <= 2,
         "blurring coverage and blurring the result should agree on a solid \
-         colour; they differ by {worst}"
+         color; they differ by {worst}"
     );
 }
 
@@ -6189,7 +6189,7 @@ fn an_image_filter_blurs_a_gradient_that_a_mask_blur_refuses() {
         .expect("image filter");
     let pixels = render(&mut ctx, canvas);
 
-    // Soft at the edge: a pixel just outside the rectangle has colour, and one
+    // Soft at the edge: a pixel just outside the rectangle has color, and one
     // well outside has none.
     let just_outside = pixel(&pixels, 64, 36);
     let far_outside = pixel(&pixels, 64, 8);
@@ -6222,7 +6222,7 @@ fn a_filtered_stroke_keeps_the_half_of_itself_that_lies_outside_the_path() {
     // widenings are nothing like each other.
     //
     // A circle of radius twenty stroked forty wide covers everything within
-    // forty of its centre. Without the stroke's own reach the layer would end
+    // forty of its center. Without the stroke's own reach the layer would end
     // about twenty-three out, and the outer half of the band would be clipped
     // away -- which looks like a thinner stroke rather than like a bug.
     let Some(mut ctx) = context() else { return };
@@ -6348,7 +6348,7 @@ fn the_two_halves_of_a_blur_add_up_to_the_whole_of_it() {
     let draw = |ctx: &mut Context, style: MaskBlurStyle| {
         let mut canvas = Canvas::new(SIZE);
         // Black, so what comes back at each pixel is the contribution itself:
-        // source-over onto zero leaves the premultiplied colour alone.
+        // source-over onto zero leaves the premultiplied color alone.
         canvas.clear(Color::linear(0.0, 0.0, 0.0, 1.0));
         canvas
             .draw_circle(
@@ -6717,7 +6717,7 @@ fn a_collapsed_transform_leaves_nothing_reachable() {
     );
 }
 
-/// The uniform block as the test effect reads it: two colours and a threshold.
+/// The uniform block as the test effect reads it: two colors and a threshold.
 fn effect_uniforms(threshold: f32) -> Vec<f32> {
     let mut out = vec![0.0; RUNTIME_FLOATS];
     out[0..4].copy_from_slice(&[1.0, 0.0, 0.0, 1.0]);
@@ -6753,13 +6753,13 @@ fn a_caller_can_fill_a_shape_with_their_own_fragment_program() {
     let pixels = render(&mut ctx, canvas);
 
     // The effect splits at the middle of clip space, so the circle is two
-    // colours -- and outside it the ground shows, which is what says the
+    // colors -- and outside it the ground shows, which is what says the
     // program filled a shape rather than the frame.
     assert_eq!(pixel(&pixels, 40, 64), [255, 0, 0, 255], "the left half");
     assert_eq!(
         pixel(&pixels, 88, 64),
         [0, 178, 51, 255],
-        "the right half, in the caller's second colour"
+        "the right half, in the caller's second color"
     );
     assert_eq!(
         pixel(&pixels, 4, 4),
@@ -6898,9 +6898,9 @@ fn a_runtime_effect_can_read_a_texture_the_caller_supplied() {
 /// Built for the nine-patch test and not shared with the others, because what
 /// it has to show is different: each of the nine pieces must read one block
 /// and no other, so a piece drawn in the wrong place or stretched when it
-/// should not be shows as a colour where another belongs. The quadrant image
+/// should not be shows as a color where another belongs. The quadrant image
 /// cannot do that -- with four regions, two of the nine pieces read the same
-/// colour and a stretched corner is indistinguishable from a correct edge.
+/// color and a stretched corner is indistinguishable from a correct edge.
 fn nine_region_image() -> Vec<u8> {
     const BLOCKS: [[u8; 3]; 9] = [
         [220, 40, 40],
@@ -6930,8 +6930,8 @@ fn a_nine_patch_stretches_its_middle_and_keeps_its_corners() {
     // The whole content of a nine-patch, and the part a test has to work at:
     // that the corners *keep their size*. Sampling inside a corner proves
     // nothing, because a corner stretched across a third of the frame still
-    // has its own colour at its own end. So this samples just past where the
-    // corner should stop, and requires the edge's colour there.
+    // has its own color at its own end. So this samples just past where the
+    // corner should stop, and requires the edge's color there.
     let Some(mut ctx) = context() else { return };
     let mut image = ctx
         .create_image(Extent2D::new(12, 12), PixelFormat::Rgba8Unorm)
@@ -6981,7 +6981,7 @@ fn a_nine_patch_stretches_its_middle_and_keeps_its_corners() {
     );
 
     // Just past where the corner ends. A corner that stretched would still be
-    // its own colour here, which is exactly what this rejects.
+    // its own color here, which is exactly what this rejects.
     assert_eq!(
         pixel(&pixels, 40, 10),
         [40, 200, 60, 255],
@@ -7000,7 +7000,7 @@ fn a_nine_patch_stretches_its_middle_and_keeps_its_corners() {
 }
 
 #[test]
-fn a_nine_patch_centre_outside_the_image_is_refused() {
+fn a_nine_patch_center_outside_the_image_is_refused() {
     let mut canvas = Canvas::new(SIZE);
     assert!(
         canvas
@@ -7012,7 +7012,7 @@ fn a_nine_patch_centre_outside_the_image_is_refused() {
                 &Paint::fill(Color::WHITE),
             )
             .is_err(),
-        "a centre reaching past the image leaves no nine pieces to draw"
+        "a center reaching past the image leaves no nine pieces to draw"
     );
 }
 
@@ -7053,7 +7053,7 @@ fn drawing_the_paint_fills_the_clip_rather_than_the_target() {
 }
 
 #[test]
-fn drawing_a_colour_blends_where_clearing_replaces() {
+fn drawing_a_color_blends_where_clearing_replaces() {
     // `clear` replaces the whole target and ignores the clip; this is a draw,
     // so it blends and obeys what is in force. Two calls that look alike and
     // are not, which is why both exist.
@@ -7063,7 +7063,7 @@ fn drawing_a_colour_blends_where_clearing_replaces() {
     canvas.clip_rect(Rect::new(0.0, 0.0, 64.0, 128.0)).unwrap();
     canvas
         .draw_color(Color::linear(0.0, 0.0, 1.0, 0.5), BlendMode::SrcOver)
-        .expect("colour");
+        .expect("color");
     let pixels = render(&mut ctx, canvas);
 
     let mixed = pixel(&pixels, 32, 64);
@@ -7176,12 +7176,12 @@ fn a_matrix_image_filter_moves_what_was_drawn() {
 
     // Drawn at (32, 32) with radius twenty, so unfiltered it would cover
     // twelve to fifty-two. Doubled, it covers twenty-four to a hundred and
-    // four -- so the centre of the frame is inside it and its old position is
+    // four -- so the center of the frame is inside it and its old position is
     // not.
     assert_eq!(
         pixel(&pixels, 64, 64),
         [255, 255, 255, 255],
-        "the doubled circle should cover the centre of the frame"
+        "the doubled circle should cover the center of the frame"
     );
     assert_eq!(
         pixel(&pixels, 100, 64),
@@ -7354,7 +7354,7 @@ fn the_gamma_pair_undo_each_other() {
 }
 
 #[test]
-fn the_gamma_filter_curves_colour_and_leaves_alpha_alone() {
+fn the_gamma_filter_curves_color_and_leaves_alpha_alone() {
     // Gamma applies to straight color: the shader has to divide the alpha out
     // first, curve what is left, and multiply it back. Curving the
     // premultiplied channel instead would encode the coverage along with the
@@ -7587,7 +7587,7 @@ fn a_radius_past_one_pass_is_split_across_passes_and_stays_exact() {
 }
 
 #[test]
-fn dilating_a_translucent_shape_spreads_its_coverage_with_its_colour() {
+fn dilating_a_translucent_shape_spreads_its_coverage_with_its_color() {
     // Per channel on premultiplied color. Taking the extremum of straight
     // color instead would spread the color without the alpha that belongs to
     // it -- a shape's own hue laid over a coverage it never had -- and the ring
@@ -7997,26 +7997,26 @@ fn cubic_sampling_overshoots_a_step_where_linear_cannot() {
 
 #[test]
 fn cubic_sampling_keeps_a_translucent_image_premultiplied() {
-    // The ringing pulls each channel independently, and colour and alpha ring
-    // by different amounts wherever they step differently. Premultiplied colour
+    // The ringing pulls each channel independently, and color and alpha ring
+    // by different amounts wherever they step differently. Premultiplied color
     // has an invariant that does not survive that on its own: no channel may
-    // exceed the alpha it was multiplied by, and a colour brighter than its own
+    // exceed the alpha it was multiplied by, and a color brighter than its own
     // alpha composites as though it were lit from nowhere.
     let Some(mut ctx) = context() else { return };
 
     // The two halves are chosen so the invariant is actually reachable, which
-    // most pairs are not. Colour has to be sitting on its alpha on one side --
+    // most pairs are not. Color has to be sitting on its alpha on one side --
     // white at whatever coverage it has -- and the two have to step in opposite
-    // directions, so that just before the seam colour rings upward while the
-    // alpha it must not exceed rings downward. Colour and alpha stepping the
+    // directions, so that just before the seam color rings upward while the
+    // alpha it must not exceed rings downward. Color and alpha stepping the
     // same way ring by the same fraction and stay ordered however far they
     // overshoot, which is why the obvious fixture proves nothing.
     let mut texels = step_image(0, 0, 0);
     for y in 0..8u32 {
         for x in 0..8u32 {
             let i = ((y * 8 + x) * 4) as usize;
-            // Left: white at an alpha of 200, so colour equals alpha exactly.
-            // Right: opaque black. Colour falls by two hundred, alpha rises by
+            // Left: white at an alpha of 200, so color equals alpha exactly.
+            // Right: opaque black. Color falls by two hundred, alpha rises by
             // fifty-five.
             let texel: [u8; 4] = if x < 4 {
                 [200, 200, 200, 200]
@@ -8033,7 +8033,7 @@ fn cubic_sampling_keeps_a_translucent_image_premultiplied() {
         let got = pixel(&pixels, x, 64);
         assert!(
             got[0] as i32 <= got[3] as i32 + 1,
-            "at ({x}, 64) the colour {} exceeds its own alpha {}, which the \
+            "at ({x}, 64) the color {} exceeds its own alpha {}, which the \
              clamp at the end of the cubic read is there to prevent",
             got[0],
             got[3]
@@ -8421,7 +8421,7 @@ fn a_transparent_occluder_keeps_the_shadow_under_the_caster_and_nothing_else() {
     // further out than the edge itself can reach.
     assert!(
         furthest <= RADIUS + 1.5,
-        "the furthest changed pixel is {furthest:.1} from the centre, where the \
+        "the furthest changed pixel is {furthest:.1} from the center, where the \
          caster's edge is at {RADIUS}. The flag altered how the shadow was \
          built rather than only what was cut out of it"
     );
@@ -8447,7 +8447,7 @@ fn a_radial_gradient_of_no_radius_settles_on_the_stop_it_was_heading_for() {
     // different size.
     //
     // What it should be is the limit of the real thing. As the radius shrinks
-    // every point but the centre runs off the end of the ramp, so under clamp
+    // every point but the center runs off the end of the ramp, so under clamp
     // it settles on the last stop. The limit rather than a refusal, on the same
     // reasoning that makes a mask blur of zero the sharp shape: a caller
     // animating a radius to nothing should arrive somewhere.
@@ -8474,7 +8474,7 @@ fn a_radial_gradient_of_no_radius_settles_on_the_stop_it_was_heading_for() {
         .expect("gradient");
     let pixels = render(&mut ctx, canvas);
 
-    // Every pixel the last stop, including ones far from the centre -- which is
+    // Every pixel the last stop, including ones far from the center -- which is
     // exactly where an invented radius would have left something else.
     for (x, y) in [(2u32, 2u32), (64, 64), (126, 126), (2, 126), (100, 30)] {
         assert_eq!(
@@ -8750,7 +8750,7 @@ fn a_composition_may_hold_a_composition_in_either_half() {
 }
 
 #[test]
-fn a_colour_filter_recolours_what_a_runtime_effect_drew() {
+fn a_color_filter_recolors_what_a_runtime_effect_drew() {
     // A color filter is arithmetic in this renderer's own fragment shader, and
     // a runtime effect replaces that shader outright -- the caller's program is
     // what runs, and there is nowhere in it to put a matrix. So the filter was
@@ -8799,7 +8799,7 @@ fn a_colour_filter_recolours_what_a_runtime_effect_drew() {
         render(ctx, canvas)
     };
 
-    // The fixture program draws its first uniform colour, which is pure red.
+    // The fixture program draws its first uniform color, which is pure red.
     assert_eq!(
         pixel(&draw(&mut ctx, ColorFilter::None), 64, 64),
         [255, 0, 0, 255],
@@ -8824,9 +8824,9 @@ fn a_filter_blends_where_it_meets_the_frame_not_inside_its_own_layer() {
     // nothing there and produces the source unchanged, which is then composited
     // over the frame it was supposed to combine with.
     //
-    // That was the behaviour of all three of these paths. `Plus` over a cyan
+    // That was the behavior of all three of these paths. `Plus` over a cyan
     // ground gave red where it should give white, for every image filter, every
-    // mask blur style, and a colour-filtered effect.
+    // mask blur style, and a color-filtered effect.
     //
     // Checked against the unfiltered draw rather than against a constant: what
     // makes it wrong is that adding a filter changed how the paint met the
@@ -8884,7 +8884,7 @@ fn a_filter_blends_where_it_meets_the_frame_not_inside_its_own_layer() {
     }
 }
 
-/// A square mesh of four vertices in one flat colour.
+/// A square mesh of four vertices in one flat color.
 fn square_mesh(color: Color) -> Vertices {
     Vertices::full(
         VertexMode::Triangles,
@@ -8920,7 +8920,7 @@ fn an_image_filter_applies_to_a_mesh_as_it_does_to_a_shape() {
         canvas.clear(Color::linear(0.0, 0.0, 0.0, 1.0));
         canvas.draw_vertices(&mesh, &paint).expect("mesh");
         let pixels = render(ctx, canvas);
-        // Any channel lit, since a filter may change the colour as well.
+        // Any channel lit, since a filter may change the color as well.
         let lit: Vec<u32> = (0..SIZE.width)
             .filter(|x| pixel(&pixels, *x, 64)[0] > 0 || pixel(&pixels, *x, 64)[1] > 0)
             .collect();
@@ -8953,7 +8953,7 @@ fn an_image_filter_applies_to_a_mesh_as_it_does_to_a_shape() {
     );
     assert!(
         left < 34 && right > 93,
-        "a blur should carry colour past the mesh, but it spans {left}..{right}"
+        "a blur should carry color past the mesh, but it spans {left}..{right}"
     );
 }
 
@@ -8961,7 +8961,7 @@ fn an_image_filter_applies_to_a_mesh_as_it_does_to_a_shape() {
 fn a_mask_blur_on_a_mesh_is_refused_rather_than_dropped() {
     // A mask blur blurs coverage and then fills, which is the same picture as
     // blurring the result only where the fill does not vary. A mesh carries a
-    // colour per vertex, so it varies by construction -- `draw_masked` refuses
+    // color per vertex, so it varies by construction -- `draw_masked` refuses
     // a gradient for exactly this reason, and a mesh is the same argument.
     //
     // The point is that it is refused rather than ignored. Accepting a mask
@@ -9167,4 +9167,299 @@ fn every_draw_that_takes_a_paint_honours_its_image_filter() {
         "a blurred paint should soften on the inside of its clip, but the pixel \
          beside the edge reads {blurred}"
     );
+}
+
+#[test]
+fn every_draw_that_takes_a_paint_honours_its_color_filter_and_blend() {
+    // The companion sweep to the image-filter one. Those three fields are
+    // routed differently -- a color filter travels in the material, a blend
+    // is chosen per draw, an image filter needs a layer -- so honouring one
+    // says nothing about honouring the others, and only the image filter
+    // turned out to have a seam.
+    //
+    // Kept as a sweep rather than folded into the other because what it probes
+    // is different in kind: a filter that halves every channel and a blend that
+    // adds to what is underneath, both of which are exact and neither of which
+    // moves a pixel.
+    let Some(mut ctx) = context() else { return };
+    let mut image = ctx
+        .create_image(Extent2D::new(4, 4), PixelFormat::Rgba8Unorm)
+        .expect("image");
+    // A flat red sheet, so an image draw has the same color as a solid one.
+    ctx.write_image(&mut image, &[255u8, 0, 0, 255].repeat(16))
+        .expect("upload");
+    let red = Color::linear(1.0, 0.0, 0.0, 1.0);
+    let square = Rect::new(40.0, 40.0, 88.0, 88.0);
+    let mut b = PathBuilder::new();
+    b.move_to(Vec2::new(40.0, 40.0))
+        .line_to(Vec2::new(88.0, 40.0))
+        .line_to(Vec2::new(88.0, 88.0))
+        .line_to(Vec2::new(40.0, 88.0))
+        .close();
+    let path = b.build();
+    let mesh = square_mesh(red);
+
+    let sample = |ctx: &mut Context,
+                  name: &str,
+                  adjust: &dyn Fn(Paint) -> Paint,
+                  ground: Color|
+     -> [u8; 4] {
+        let mut canvas = Canvas::new(SIZE);
+        canvas.clear(ground);
+        let paint = adjust(Paint::fill(red).with_anti_alias(false));
+        let img = adjust(Paint::image(0, Rect::from_size(4.0, 4.0)).with_anti_alias(false));
+        match name {
+            "draw_path" => canvas.draw_path(&path, &paint).map(|_| ()),
+            "draw_rect" => canvas.draw_rect(square, &paint).map(|_| ()),
+            "draw_rrect" => canvas.draw_rrect(square, 8.0, &paint).map(|_| ()),
+            "draw_circle" => canvas
+                .draw_circle(Vec2::new(64.0, 64.0), 24.0, &paint)
+                .map(|_| ()),
+            "draw_oval" => canvas.draw_oval(square, &paint).map(|_| ()),
+            "draw_drrect" => canvas
+                .draw_drrect(square, 8.0, Rect::new(80.0, 80.0, 86.0, 86.0), 1.0, &paint)
+                .map(|_| ()),
+            "draw_line" => canvas
+                .draw_line(
+                    Vec2::new(40.0, 64.0),
+                    Vec2::new(88.0, 64.0),
+                    &adjust(Paint::stroke(red, 40.0)),
+                )
+                .map(|_| ()),
+            "draw_points" => canvas
+                .draw_points(
+                    PointMode::Points,
+                    &[Vec2::new(64.0, 64.0)],
+                    &adjust(Paint::fill(red).with_style(Style::Stroke(StrokeStyle {
+                        cap: LineCap::Round,
+                        ..StrokeStyle::new(48.0)
+                    }))),
+                )
+                .map(|_| ()),
+            "draw_vertices" => canvas.draw_vertices(&mesh, &paint).map(|_| ()),
+            "draw_atlas" => canvas
+                .draw_atlas(
+                    &[Sprite {
+                        source: SourceRect {
+                            x: 0.0,
+                            y: 0.0,
+                            width: 4.0,
+                            height: 4.0,
+                        },
+                        color: Color::linear(1.0, 1.0, 1.0, 1.0),
+                        transform: Affine2::from_scale_angle_translation(
+                            Vec2::splat(12.0),
+                            0.0,
+                            Vec2::new(40.0, 40.0),
+                        ),
+                    }],
+                    Extent2D::new(4, 4),
+                    &img,
+                )
+                .map(|_| ()),
+            "draw_image_nine" => canvas
+                .draw_image_nine(
+                    0,
+                    Extent2D::new(4, 4),
+                    Rect::new(1.0, 1.0, 3.0, 3.0),
+                    square,
+                    &img,
+                )
+                .map(|_| ()),
+            "draw_paint" => {
+                let _ = canvas.clip_rect(square);
+                canvas.draw_paint(&paint).map(|_| ())
+            }
+            other => unreachable!("{other}"),
+        }
+        .unwrap_or_else(|e| panic!("{name}: {e}"));
+        let mut surface = ctx
+            .create_surface(SIZE, PixelFormat::Rgba8Unorm)
+            .expect("s");
+        ctx.draw_with_images(&mut surface, &canvas.finish(), &[&image])
+            .expect("d");
+        let px = ctx.read(&mut surface).expect("r");
+        ctx.destroy_surface(surface);
+        let i = ((64u32 * 128 + 64) * 4) as usize;
+        [px[i], px[i + 1], px[i + 2], px[i + 3]]
+    };
+
+    #[rustfmt::skip]
+    let half = ColorFilter::matrix([0.5,0.0,0.0,0.0,0.0, 0.0,0.5,0.0,0.0,0.0, 0.0,0.0,0.5,0.0,0.0, 0.0,0.0,0.0,1.0,0.0]);
+    let black = Color::linear(0.0, 0.0, 0.0, 1.0);
+    let cyan = Color::linear(0.0, 1.0, 1.0, 1.0);
+    for name in [
+        "draw_path",
+        "draw_rect",
+        "draw_rrect",
+        "draw_circle",
+        "draw_oval",
+        "draw_drrect",
+        "draw_line",
+        "draw_points",
+        "draw_vertices",
+        "draw_atlas",
+        "draw_image_nine",
+        "draw_paint",
+    ] {
+        let plain = sample(&mut ctx, name, &|p| p, black);
+        let filtered = sample(&mut ctx, name, &|p: Paint| p.with_color_filter(half), black);
+        let blended = sample(
+            &mut ctx,
+            name,
+            &|p: Paint| p.with_blend(BlendMode::Plus),
+            cyan,
+        );
+        assert_eq!(
+            plain[0], 255,
+            "{name} should draw full red before anything is applied to it"
+        );
+        assert!(
+            (filtered[0] as i32 - 128).abs() <= 2,
+            "{name} did not halve its color: {} rather than 128, which is the \
+             filter being accepted and dropped",
+            filtered[0]
+        );
+        assert_eq!(
+            blended,
+            [255, 255, 255, 255],
+            "{name} drew red over cyan under Plus and did not add. Red back \
+             means the blend was accepted and dropped"
+        );
+    }
+    ctx.destroy_image(image);
+}
+
+#[test]
+fn probe_mask_blur_sweep() {
+    let Some(mut ctx) = context() else { return };
+    let mut image = ctx
+        .create_image(Extent2D::new(4, 4), PixelFormat::Rgba8Unorm)
+        .expect("image");
+    ctx.write_image(&mut image, &[255u8, 0, 0, 255].repeat(16))
+        .expect("upload");
+    let red = Color::linear(1.0, 0.0, 0.0, 1.0);
+    let square = Rect::new(40.0, 40.0, 88.0, 88.0);
+    let mut b = PathBuilder::new();
+    b.move_to(Vec2::new(40.0, 40.0))
+        .line_to(Vec2::new(88.0, 40.0))
+        .line_to(Vec2::new(88.0, 88.0))
+        .line_to(Vec2::new(40.0, 88.0))
+        .close();
+    let path = b.build();
+    let mesh = square_mesh(red);
+
+    let edge = |ctx: &mut Context, name: &str, sigma: f32| -> std::result::Result<u8, String> {
+        let mut canvas = Canvas::new(SIZE);
+        canvas.clear(Color::linear(0.0, 0.0, 0.0, 1.0));
+        let paint = Paint::fill(red)
+            .with_anti_alias(false)
+            .with_mask_blur(sigma);
+        let img = Paint::image(0, Rect::from_size(4.0, 4.0))
+            .with_anti_alias(false)
+            .with_mask_blur(sigma);
+        let r = match name {
+            "draw_path" => canvas.draw_path(&path, &paint).map(|_| ()),
+            "draw_rect" => canvas.draw_rect(square, &paint).map(|_| ()),
+            "draw_rrect" => canvas.draw_rrect(square, 8.0, &paint).map(|_| ()),
+            "draw_circle" => canvas
+                .draw_circle(Vec2::new(64.0, 64.0), 24.0, &paint)
+                .map(|_| ()),
+            "draw_oval" => canvas.draw_oval(square, &paint).map(|_| ()),
+            "draw_drrect" => canvas
+                .draw_drrect(square, 8.0, Rect::new(80.0, 80.0, 86.0, 86.0), 1.0, &paint)
+                .map(|_| ()),
+            "draw_line" => canvas
+                .draw_line(
+                    Vec2::new(40.0, 64.0),
+                    Vec2::new(88.0, 64.0),
+                    &Paint::stroke(red, 40.0).with_mask_blur(sigma),
+                )
+                .map(|_| ()),
+            "draw_points" => canvas
+                .draw_points(
+                    PointMode::Points,
+                    &[Vec2::new(64.0, 64.0)],
+                    &Paint::fill(red)
+                        .with_style(Style::Stroke(StrokeStyle {
+                            cap: LineCap::Round,
+                            ..StrokeStyle::new(48.0)
+                        }))
+                        .with_mask_blur(sigma),
+                )
+                .map(|_| ()),
+            "draw_vertices" => canvas.draw_vertices(&mesh, &paint).map(|_| ()),
+            "draw_atlas" => canvas
+                .draw_atlas(
+                    &[Sprite {
+                        source: SourceRect {
+                            x: 0.0,
+                            y: 0.0,
+                            width: 4.0,
+                            height: 4.0,
+                        },
+                        color: Color::linear(1.0, 1.0, 1.0, 1.0),
+                        transform: Affine2::from_scale_angle_translation(
+                            Vec2::splat(12.0),
+                            0.0,
+                            Vec2::new(40.0, 40.0),
+                        ),
+                    }],
+                    Extent2D::new(4, 4),
+                    &img,
+                )
+                .map(|_| ()),
+            "draw_image_nine" => canvas
+                .draw_image_nine(
+                    0,
+                    Extent2D::new(4, 4),
+                    Rect::new(1.0, 1.0, 3.0, 3.0),
+                    square,
+                    &img,
+                )
+                .map(|_| ()),
+            "draw_paint" => {
+                let _ = canvas.clip_rect(square);
+                canvas.draw_paint(&paint).map(|_| ())
+            }
+            other => unreachable!("{other}"),
+        };
+        if let Err(e) = r {
+            return Err(format!("{e}"));
+        }
+        let mut surface = ctx
+            .create_surface(SIZE, PixelFormat::Rgba8Unorm)
+            .expect("s");
+        ctx.draw_with_images(&mut surface, &canvas.finish(), &[&image])
+            .expect("d");
+        let px = ctx.read(&mut surface).expect("r");
+        ctx.destroy_surface(surface);
+        // Just inside the left edge of the shape, where a mask blur softens.
+        let i = ((64u32 * 128 + 42) * 4) as usize;
+        Ok(px[i])
+    };
+    for name in [
+        "draw_path",
+        "draw_rect",
+        "draw_rrect",
+        "draw_circle",
+        "draw_oval",
+        "draw_drrect",
+        "draw_line",
+        "draw_points",
+        "draw_vertices",
+        "draw_atlas",
+        "draw_image_nine",
+        "draw_paint",
+    ] {
+        match (edge(&mut ctx, name, 0.0), edge(&mut ctx, name, 8.0)) {
+            (Ok(a), Ok(b)) => {
+                let verdict = if b < a { "applied" } else { "DROPPED" };
+                eprintln!("{name:>16}: {verdict} ({a} -> {b})");
+            }
+            (_, Err(e)) => eprintln!("{name:>16}: refused ({e})"),
+            (Err(e), _) => eprintln!("{name:>16}: plain refused ({e})"),
+        }
+    }
+    ctx.destroy_image(image);
 }

@@ -42,7 +42,7 @@ fn vs_main(
     return out;
 }
 
-// The texture read across clip space and multiplied by a colour the caller
+// The texture read across clip space and multiplied by a color the caller
 // gives. Deliberately mapped from the fragment's own position rather than from
 // a vertex coordinate, so the picture depends on the sampler having been bound
 // and on nothing this renderer would have done for an image material.

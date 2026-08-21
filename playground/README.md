@@ -22,7 +22,7 @@ baked into a texture instead — two different shader paths. A step in the pictu
 as it crosses is those paths disagreeing.
 
 The conical gradient is the other one worth sweeping deliberately. Its knob
-slides the first circle's centre out toward the second's edge and past it. At
+slides the first circle's center out toward the second's edge and past it. At
 exactly one the two circles are tangent, the family of circles collapses to a
 half plane, and the quadratic the shader solves loses its squared term — a
 branch taken on a set of measure zero, which is the sort of thing a knob finds

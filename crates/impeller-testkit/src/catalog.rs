@@ -215,7 +215,7 @@ fn basic() -> Vec<Scene> {
                     StrokeSpec::new(10.0),
                     GREEN,
                 ),
-                // Wider than the radius, so the band closes over the centre --
+                // Wider than the radius, so the band closes over the center --
                 // the case a stroke of a small circle has to get right.
                 Item::stroke(
                     Shape::Circle {
@@ -922,7 +922,7 @@ fn gradient() -> Vec<Scene> {
             vec![Item::filled(
                 band.clone(),
                 // Neither end of the unit interval is named, so the shader has
-                // to hold the first and last colours beyond them.
+                // to hold the first and last colors beyond them.
                 Fill::LinearGradient {
                     start: [8.0, 0.0],
                     end: [120.0, 0.0],
@@ -1023,10 +1023,10 @@ fn gradient() -> Vec<Scene> {
         ),
         plate(
             "gradient/conical-concentric-circles",
-            // The two circles share a centre, which makes the cone a plain
+            // The two circles share a center, which makes the cone a plain
             // radial gradient. Worth its own plate because it is the case the
             // general solution degenerates to: the quadratic that locates a
-            // point along the cone loses its linear term when the centres
+            // point along the cone loses its linear term when the centers
             // coincide, so an implementation that always divides by it fails
             // exactly here and nowhere else.
             vec![Item::filled(
@@ -1091,7 +1091,7 @@ fn gradient() -> Vec<Scene> {
             // onto and the projection divides by the axis's own length, so this
             // is the gradient equivalent of a repeated point in a stroked path.
             // Every pixel has to land on one end of the ramp or the other --
-            // one flat colour, not a division by zero.
+            // one flat color, not a division by zero.
             vec![Item::filled(
                 band.clone(),
                 Fill::LinearGradient {
@@ -1402,7 +1402,7 @@ fn blend() -> Vec<Scene> {
             plate(
                 name,
                 vec![
-                    // A destination with structure rather than a flat colour:
+                    // A destination with structure rather than a flat color:
                     // dodge, burn and the two contrast modes are functions of
                     // what is underneath, and a flat backdrop would exercise
                     // one point of each curve.
@@ -1471,7 +1471,7 @@ fn blend() -> Vec<Scene> {
         // A blend against a constant, applied to the paint rather than to the
         // framebuffer -- which is the distinction this scene exists to show,
         // since the picture is the one the blend mode would give against a
-        // flat destination of that colour.
+        // flat destination of that color.
         .with_color_filter(
             ColorFilter::blend([0.2, 0.5, 1.0, 1.0], BlendMode::SrcIn).expect("affine"),
         )],
@@ -1499,7 +1499,7 @@ fn blend() -> Vec<Scene> {
         // The gamma pair over a ramp, which is where the curve is legible: a
         // linear ramp encoded into sRGB brightens most in the dark end, and
         // that is exactly the shape of the curve. A pair of flat swatches
-        // would show two colours and say nothing about the function between
+        // would show two colors and say nothing about the function between
         // them.
         vec![Item::filled(
             Shape::Rect {
@@ -1856,7 +1856,7 @@ fn vertices() -> Vec<Scene> {
             "vertices/vertices-geometry-color-uv-position-data",
             MeshSpec {
                 positions: quad.clone(),
-                // A colour at each corner, which no gradient describes: the
+                // A color at each corner, which no gradient describes: the
                 // four are independent and the interior is all of them at once.
                 colors: corners.clone(),
                 indices: vec![0, 1, 2, 0, 2, 3],
@@ -1939,7 +1939,7 @@ fn vertices() -> Vec<Scene> {
     ]
 }
 
-/// Four colours, one per corner.
+/// Four colors, one per corner.
 const ALL_CORNERS: [[f32; 4]; 4] = [
     [1.0, 0.2, 0.2, 1.0],
     [0.2, 1.0, 0.3, 1.0],
@@ -1947,7 +1947,7 @@ const ALL_CORNERS: [[f32; 4]; 4] = [
     [1.0, 0.9, 0.2, 1.0],
 ];
 
-/// A fan around the plate's centre.
+/// A fan around the plate's center.
 fn fan() -> Vec<[f32; 2]> {
     let mut points = vec![[64.0, 64.0]];
     for i in 0..=8 {
@@ -2354,7 +2354,7 @@ fn grouped(name: &'static str, layer: LayerSpec, bounds: Option<[f32; 4]>) -> Sc
 /// renderer lacks.
 ///
 /// The file's mask-blur variants are the same shape drawn at each style
-/// against translucent and opaque colours, which is precisely what the styles
+/// against translucent and opaque colors, which is precisely what the styles
 /// were built for. What is still missing from it wants a mask blur over a
 /// gradient -- refused here, because blurring coverage and then filling is a
 /// different picture from blurring the result unless the fill is constant --

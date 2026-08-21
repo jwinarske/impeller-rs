@@ -67,7 +67,7 @@ pub fn scenes() -> Vec<Live> {
         Live {
             name: "conical gradient, focus leaving the circle",
             knob: "focus offset",
-            // Past one, the first circle's centre is outside the second, and
+            // Past one, the first circle's center is outside the second, and
             // the family of circles stops covering the plane. The interesting
             // value is exactly one, where the two are tangent and the
             // quadratic the shader solves loses its squared term altogether --
@@ -80,7 +80,7 @@ pub fn scenes() -> Vec<Live> {
         Live {
             name: "mesh corners fading",
             knob: "corner alpha",
-            // The premultiplied question. Colour is interpolated across the
+            // The premultiplied question. Color is interpolated across the
             // triangle premultiplied, so a corner fading out darkens toward
             // nothing; interpolated straight and used as premultiplied it
             // would stay bright and only the edge would thin. Sweeping the
@@ -122,15 +122,15 @@ pub fn scenes() -> Vec<Live> {
 fn conical_focus(canvas: &mut Canvas, extent: Extent2D, knob: f32, _time: f32) {
     ground(canvas);
     let (w, h) = (extent.width as f32, extent.height as f32);
-    let centre = Vec2::new(w * 0.5, h * 0.5);
+    let center = Vec2::new(w * 0.5, h * 0.5);
     let radius = h * 0.4;
-    let focus = centre + Vec2::new(radius * knob, 0.0);
+    let focus = center + Vec2::new(radius * knob, 0.0);
     let _ = canvas.draw_rect(
         Rect::new(0.0, 0.0, w, h),
         &Paint::conical_gradient(
             focus,
             0.0,
-            centre,
+            center,
             radius,
             vec![
                 GradientStop::new(Color::srgb(1.0, 0.95, 0.7, 1.0), 0.0),
@@ -142,7 +142,7 @@ fn conical_focus(canvas: &mut Canvas, extent: Extent2D, knob: f32, _time: f32) {
     // The second circle drawn on top, so where the gradient stops covering the
     // plane is visible against a shape that does not move.
     let _ = canvas.draw_circle(
-        centre,
+        center,
         radius,
         &Paint::stroke(Color::srgb(1.0, 1.0, 1.0, 0.35), 1.5),
     );
@@ -150,21 +150,21 @@ fn conical_focus(canvas: &mut Canvas, extent: Extent2D, knob: f32, _time: f32) {
 
 /// A fan of triangles whose outer corners fade.
 ///
-/// The centre stays opaque and the rim's alpha is the knob, so the whole thing
-/// is one mesh with colours no gradient describes: each triangle interpolates
+/// The center stays opaque and the rim's alpha is the knob, so the whole thing
+/// is one mesh with colors no gradient describes: each triangle interpolates
 /// between three independent corners.
 fn mesh_corners(canvas: &mut Canvas, extent: Extent2D, knob: f32, time: f32) {
     ground(canvas);
     let (w, h) = (extent.width as f32, extent.height as f32);
-    let centre = Vec2::new(w * 0.5, h * 0.5);
+    let center = Vec2::new(w * 0.5, h * 0.5);
     let radius = h * 0.42;
 
     const POINTS: usize = 12;
-    let mut positions = vec![centre];
+    let mut positions = vec![center];
     let mut colors = vec![Color::srgb(1.0, 1.0, 1.0, 1.0)];
     for i in 0..=POINTS {
         let angle = i as f32 / POINTS as f32 * std::f32::consts::TAU + time * 0.2;
-        positions.push(centre + Vec2::new(angle.cos(), angle.sin()) * radius);
+        positions.push(center + Vec2::new(angle.cos(), angle.sin()) * radius);
         let turn = i as f32 / POINTS as f32 * std::f32::consts::TAU;
         colors.push(wheel(turn, knob));
     }
@@ -177,11 +177,11 @@ fn mesh_corners(canvas: &mut Canvas, extent: Extent2D, knob: f32, time: f32) {
 ///
 /// The sheet is four flat quadrants, so which part of it each sprite reads is
 /// legible at a glance, and each sprite carries a tint of its own -- which is
-/// the thing that would otherwise cost one draw per colour.
+/// the thing that would otherwise cost one draw per color.
 fn atlas_orbit(canvas: &mut Canvas, extent: Extent2D, knob: f32, time: f32) {
     ground(canvas);
     let (w, h) = (extent.width as f32, extent.height as f32);
-    let centre = Vec2::new(w * 0.5, h * 0.5);
+    let center = Vec2::new(w * 0.5, h * 0.5);
     let count = knob.round().max(1.0) as usize;
     let size = h * 0.09;
 
@@ -190,9 +190,9 @@ fn atlas_orbit(canvas: &mut Canvas, extent: Extent2D, knob: f32, time: f32) {
             let t = i as f32 / count as f32;
             let angle = t * std::f32::consts::TAU + time * 0.35;
             let orbit = h * (0.16 + 0.22 * ((t * 3.0) % 1.0));
-            let at = centre + Vec2::new(angle.cos(), angle.sin()) * orbit;
+            let at = center + Vec2::new(angle.cos(), angle.sin()) * orbit;
             // Each sprite reads a different quadrant of the sheet, and spins
-            // about its own centre rather than about the orbit.
+            // about its own center rather than about the orbit.
             let quadrant = i % 4;
             let source = SourceRect::new(
                 (quadrant % 2) as f32 * 2.0,
@@ -216,7 +216,7 @@ fn atlas_orbit(canvas: &mut Canvas, extent: Extent2D, knob: f32, time: f32) {
     );
 }
 
-/// A colour a third of a turn apart in each channel, which sweeps the hues
+/// A color a third of a turn apart in each channel, which sweeps the hues
 /// without a conversion nobody else here needs.
 fn wheel(turn: f32, alpha: f32) -> Color {
     let third = std::f32::consts::TAU / 3.0;

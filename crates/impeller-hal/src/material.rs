@@ -140,9 +140,9 @@ pub const RUNTIME_FLOATS: usize = MATERIAL_FLOATS;
 /// Not two samplers. The same argument that keeps tile modes in the shader
 /// keeps this there: a sampler baked with a filter would mean one sampler per
 /// combination and a descriptor set per draw that used a different one. A
-/// linear sampler read exactly at a texel's centre returns that texel and
+/// linear sampler read exactly at a texel's center returns that texel and
 /// nothing else, so nearest sampling is the coordinate snapped to the nearest
-/// centre before the read, which is one multiply-floor-divide and no bindings
+/// center before the read, which is one multiply-floor-divide and no bindings
 /// at all.
 ///
 /// `dart:ui` offers four qualities. These are its first two; the other two are
@@ -1244,7 +1244,7 @@ mod tests {
     }
 
     #[test]
-    fn a_solid_colour_lands_in_the_first_stop_and_selects_the_solid_path() {
+    fn a_solid_color_lands_in_the_first_stop_and_selects_the_solid_path() {
         let packed = Material::solid([0.25, 0.5, 0.75, 1.0]).to_uniform();
         assert_eq!(&packed[0..4], &[0.25, 0.5, 0.75, 1.0]);
         assert_eq!(packed[layout::PARAMS], 1.0, "stop count");
@@ -1280,7 +1280,7 @@ mod tests {
     }
 
     #[test]
-    fn a_radial_gradient_packs_its_centre_and_mapping() {
+    fn a_radial_gradient_packs_its_center_and_mapping() {
         let packed = Material::RadialGradient {
             center: [0.25, -0.5],
             to_local: [2.0, 0.0, 0.0, 4.0],
@@ -1304,7 +1304,7 @@ mod tests {
     }
 
     #[test]
-    fn a_sweep_gradient_packs_its_angles_alongside_its_centre() {
+    fn a_sweep_gradient_packs_its_angles_alongside_its_center() {
         let packed = Material::SweepGradient {
             center: [0.0, 0.0],
             to_local: [1.0, 0.0, 0.0, 1.0],

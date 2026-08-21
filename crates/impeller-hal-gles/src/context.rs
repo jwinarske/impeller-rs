@@ -62,7 +62,7 @@ pub struct GlesContext {
     /// pipeline there also needs a render pass and a blend mode that only a
     /// draw knows.
     pub(crate) runtime_programs: Vec<glow::Program>,
-    /// The source each was linked from, so registering it again is recognised.
+    /// The source each was linked from, so registering it again is recognized.
     runtime_sources: Vec<String>,
     /// A one-pixel opaque white texture, bound where a draw samples nothing.
     ///

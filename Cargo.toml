@@ -56,7 +56,7 @@ thiserror = "1"
 naga = "23"
 
 # --- dev ---
-# A matcher and assertion library modelled on GoogleTest, from Google. Adopted
+# A matcher and assertion library modeled on GoogleTest, from Google. Adopted
 # for one thing the built-in harness does not have: an assertion that records a
 # failure and lets the test continue. Several tests here sweep a set of inputs
 # and want every failure in the set reported, not the first -- which had been

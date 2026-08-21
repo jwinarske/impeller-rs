@@ -112,7 +112,7 @@ regression rather than as a known gap. They ask the node now, exhaustively, so
 the compiler will not let the next kind be added without a decision for each.
 
 This category was larger when it was first written, and wrongly so: it claimed
-a colour filter stated as a blend was among them. It was not. A filter is a
+a color filter stated as a blend was among them. It was not. A filter is a
 matrix by the time a scene carries one, and the constructor that builds one
 from a blend mode had existed for days. Thirty-four blend scenes came across as
 soon as somebody checked the claim instead of repeating it, which is the
@@ -129,7 +129,7 @@ longer version.
 **Things that are deliberately out of scope.** Text, which needs shaping and
 font parsing that `docs/architecture.md` places outside this project. And the
 tests that check an optimization rather than a picture — subpass collapse,
-clear-colour elision, peepholes — which assert about how a frame was rendered
+clear-color elision, peepholes — which assert about how a frame was rendered
 rather than what it looks like, and which this renderer does not implement the
 optimizations for.
 

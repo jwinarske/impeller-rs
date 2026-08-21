@@ -28,7 +28,7 @@ fn context() -> Option<Validated> {
     Validated::new(DevicePreference::Auto).ok()
 }
 
-/// The uniform block, as the effect reads it: two colours and a threshold.
+/// The uniform block, as the effect reads it: two colors and a threshold.
 fn uniforms(left: [f32; 4], right: [f32; 4], threshold: f32) -> Vec<f32> {
     let mut out = vec![0.0; impeller_hal::RUNTIME_FLOATS];
     out[0..4].copy_from_slice(&left);

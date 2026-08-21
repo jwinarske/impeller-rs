@@ -48,7 +48,7 @@ fn vs_main(
     return out;
 }
 
-// A vertical split at a threshold the caller sets, in the two colours the
+// A vertical split at a threshold the caller sets, in the two colors the
 // caller gives. Deliberately something no material here can draw, so a test
 // showing it is a test that the caller's program ran and not that some
 // built-in path produced a similar picture.

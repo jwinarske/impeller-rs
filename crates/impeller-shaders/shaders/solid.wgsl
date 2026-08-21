@@ -202,12 +202,12 @@ fn to_gradient_space(clip: vec2<f32>) -> vec2<f32> {
 /// Done here rather than through the sampler's address mode so that one
 /// sampler serves every draw: the modes are a property of the paint, and
 /// baking them into samplers would mean one sampler per combination.
-/// Snap a coordinate to the centre of the texel it falls in, if this paint
+/// Snap a coordinate to the center of the texel it falls in, if this paint
 /// asked for nearest sampling.
 ///
 /// The sampler stays linear for every draw -- see the note on tile modes for
 /// why one sampler is worth keeping -- and a linear read taken exactly at a
-/// texel's centre has all its weight on that texel. So nearest sampling is a
+/// texel's center has all its weight on that texel. So nearest sampling is a
 /// coordinate adjustment rather than a second binding.
 ///
 /// Sized from the texture rather than passed in, because the recorder that

@@ -55,7 +55,7 @@ fn pixel(pixels: &[u8], x: u32, y: u32) -> [u8; 4] {
 }
 
 #[test]
-fn a_full_quad_covers_the_target_in_the_paint_colour() {
+fn a_full_quad_covers_the_target_in_the_paint_color() {
     let Some(mut ctx) = context() else { return };
     let mut batch = Batch::new();
     batch

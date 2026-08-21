@@ -284,7 +284,7 @@ pub struct Item {
     pub mask_blur: MaskBlur,
     /// Which part of the blurred coverage survives.
     pub mask_blur_style: MaskBlurStyle,
-    /// Filter what this item drew, rather than the colour it computed.
+    /// Filter what this item drew, rather than the color it computed.
     pub image_filter: ImageFilter,
     pub shape: Shape,
     /// Stroke the shape rather than filling it.
@@ -1413,7 +1413,7 @@ pub fn corpus() -> Vec<Scene> {
         // same weights, so a transposed matrix would leave each end its own
         // hue instead of turning both grey.
         Scene::new(
-            "colour-filter-luminance",
+            "color-filter-luminance",
             vec![Item::filled(
                 Shape::Rect {
                     min: [4.0, 4.0],

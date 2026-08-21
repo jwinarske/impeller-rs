@@ -551,7 +551,7 @@ impl drm::buffer::PlanarBuffer for ImportedBuffer {
 
     fn format(&self) -> drm::buffer::DrmFourcc {
         // The fourcc travelled here as the packed code the kernel uses, which
-        // is what this enum is over, so an unrecognised one is a format drm-rs
+        // is what this enum is over, so an unrecognized one is a format drm-rs
         // has no name for rather than a wrong number.
         drm::buffer::DrmFourcc::try_from(self.fourcc.0).unwrap_or(drm::buffer::DrmFourcc::Xrgb8888)
     }

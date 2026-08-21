@@ -81,9 +81,9 @@ reason.
 | `drawImageRect` | yes | `Paint::with_source_pixels` | `a_sprite_can_be_drawn_from_a_sheet_by_naming_its_texels` |
 | `drawImageNine` | yes | `draw_image_nine`: corners kept, edges stretched along one axis, middle along both | `a_nine_patch_stretches_its_middle_and_keeps_its_corners` |
 | `drawPaint` | yes | `draw_paint`, which fills the clip rather than the target — not a rectangle a caller can easily write once a transform is in force | `drawing_the_paint_fills_the_clip_rather_than_the_target` |
-| `drawColor` | yes | `draw_color`, which blends and obeys the clip where `clear` replaces and ignores it | `drawing_a_colour_blends_where_clearing_replaces` |
+| `drawColor` | yes | `draw_color`, which blends and obeys the clip where `clear` replaces and ignores it | `drawing_a_color_blends_where_clearing_replaces` |
 | `drawParagraph` | out of scope | shaping and layout are not this project's; `draw_glyphs` takes a positioned run and an atlas | glyph tests |
-| `drawVertices` | yes | `draw_vertices`, with positions, texture coordinates and per-vertex colors | `a_mesh_interpolates_the_colours_its_vertices_carry` |
+| `drawVertices` | yes | `draw_vertices`, with positions, texture coordinates and per-vertex colors | `a_mesh_interpolates_the_colors_its_vertices_carry` |
 | `drawAtlas`, `drawRawAtlas` | yes | `draw_atlas`, one draw for the whole batch, each sprite with its own transform and color | `an_atlas_tints_each_sprite_on_its_own_in_one_draw` |
 | `drawPoints`, `drawRawPoints` | yes | `draw_points`, in all three modes. A point is a segment of no length, so the cap is the whole shape | `a_point_is_drawn_as_the_cap_it_would_have_had` |
 | `drawDRRect` | yes | `draw_drrect`: two contours filled even-odd, which is what makes the inner one a hole | `a_double_rounded_rect_is_a_ring_rather_than_two_shapes` |
@@ -118,7 +118,7 @@ reason.
 | `blendMode` | yes | `with_blend`, all of Porter-Duff and the fifteen advanced modes where the device offers them | `advanced-blend-*` |
 | `shader` | yes | linear, radial, sweep and conical gradients, images, and a caller's own fragment program | `a_caller_can_fill_a_shape_with_their_own_fragment_program` |
 | `colorFilter` | yes | `with_color_filter`: a color matrix, the sRGB transfer function in either direction, and any blend against a constant that is affine in what it blends. Not the advanced blend modes, which the paint's own blend mode covers | `the_gamma_filter_follows_the_curve_at_both_ends_of_it` |
-| `imageFilter` | yes | `with_image_filter`: a blur, a matrix, dilate, erode and any composition of them, applied to what the paint drew rather than to the colour it computed | `composing_an_erosion_with_a_dilation_depends_on_which_runs_first` |
+| `imageFilter` | yes | `with_image_filter`: a blur, a matrix, dilate, erode and any composition of them, applied to what the paint drew rather than to the color it computed | `composing_an_erosion_with_a_dilation_depends_on_which_runs_first` |
 | `maskFilter` | yes | `with_mask_blur` and `with_mask_blur_style`: a blur of a shape's coverage in all four styles. Solid colors only, since the identity it rests on holds for nothing else | `each_mask_blur_style_keeps_the_part_of_the_blur_it_names` |
 | `filterQuality` | yes | `with_sampling`: nearest, linear, the Mitchell bicubic `high` means, and the mip chain `medium` does. An image states whether it carries a chain when it is created, since it costs a third again in memory | `mipmapped_sampling_reads_the_level_built_for_the_size_it_is_drawn_at` |
 | `invertColors` | via | a color filter whose matrix negates each channel and adds one | |

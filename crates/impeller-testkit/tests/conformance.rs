@@ -514,7 +514,7 @@ fn a_scene_on_an_opaque_background_stays_opaque() {
 }
 
 #[test]
-fn colour_never_exceeds_the_alpha_it_is_multiplied_by() {
+fn color_never_exceeds_the_alpha_it_is_multiplied_by() {
     // Everything here stores premultiplied color: a render target holds it,
     // an uploaded image is required to, and the blend equations assume it. The
     // property that follows is that no channel can exceed the alpha it was

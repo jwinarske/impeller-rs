@@ -61,7 +61,7 @@ fn destroying_a_context_leaves_the_validation_layer_with_nothing_to_say() {
     assert!(
         errors.is_empty(),
         "destroying the context produced {} validation error(s). An object \
-         outliving its device is undefined behaviour, not a leak that ends with \
+         outliving its device is undefined behavior, not a leak that ends with \
          the process: {errors:#?}",
         errors.len()
     );

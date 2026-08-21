@@ -96,7 +96,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn the_manifests_two_distributions_ship_are_both_recognised() {
+    fn the_manifests_two_distributions_ship_are_both_recognized() {
         assert!(is_lavapipe_manifest("lvp_icd.x86_64.json"));
         assert!(is_lavapipe_manifest("lvp_icd.aarch64.json"));
         assert!(is_lavapipe_manifest("lvp_icd.i686.json"));

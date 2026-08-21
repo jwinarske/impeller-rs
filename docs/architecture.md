@@ -491,8 +491,8 @@ is in a command-list renderer.
 **Sampling quality lives in the shader too, for the same reason tile modes do.**
 A sampler built with a filter would mean one sampler per combination of filter
 and address mode, and a descriptor set per draw that used a different one. A
-linear read taken exactly at a texel's centre has all its weight on that texel,
-so nearest sampling is the coordinate snapped to the nearest centre before the
+linear read taken exactly at a texel's center has all its weight on that texel,
+so nearest sampling is the coordinate snapped to the nearest center before the
 read — one multiply, floor and divide, and no bindings at all. The texture's
 size comes from the shader rather than from the material, because the recorder
 that built the material has never seen the texture.
@@ -507,8 +507,8 @@ Catmull-Rom. Its weights are a partition of unity, so nothing is normalized
 afterward and a flat image comes back exactly flat, and they go slightly
 negative between one and two texels out, which is the sharpening rather than a
 fault in it. That overshoot is also why the result is clamped back into
-premultiplied form: colour and alpha ring by different amounts wherever they
-step differently, and a channel above its own alpha is not a colour.
+premultiplied form: color and alpha ring by different amounts wherever they
+step differently, and a channel above its own alpha is not a color.
 
 **A batch merges adjacent draws that differ in nothing.** Two draws with the
 same material, filter, blend, clip and stencil are one draw over a longer index
@@ -691,7 +691,7 @@ shape, taking its bounds from the vertices since there is no path to take them
 from. The mask blur is refused instead of implemented, which is the same answer
 `draw_masked` gives a gradient and for the same reason: blurring coverage and
 then filling is the same picture as blurring the result only where the fill does
-not vary, and a mesh carries a colour per vertex.
+not vary, and a mesh carries a color per vertex.
 
 The two routes are written out separately rather than shared behind a closure.
 They differ in exactly two places -- where the bounds come from, and which draw
@@ -1162,7 +1162,7 @@ several `dart:ui` allows, which is what an image-based effect wants; several is
 the second descriptor set, and still worth deferring until something asks.
 
 **A program is a pipeline, not a material kind.** Every material today shares
-one fragment shader and picks its behaviour by branching on a kind. A runtime
+one fragment shader and picks its behavior by branching on a kind. A runtime
 effect replaces that shader, so it is a property of the pipeline instead: the
 pipeline key names the program, the context holds the registered ones, and a
 draw carries which it uses. This is the first thing in this renderer to make
@@ -1560,7 +1560,7 @@ The answer is the limit of the shrinking gradient. Every point but the center
 runs off the end of the ramp, so clamp settles on the last stop and decal draws
 nothing, because past the end is where decal draws nothing. Repeat and mirror
 have no limit -- the parameter oscillates faster and faster -- and take clamp's
-answer, since a stable colour is worth more than an arbitrary one that shimmers.
+answer, since a stable color is worth more than an arbitrary one that shimmers.
 
 The limit rather than a refusal, on the same reasoning that makes a mask blur of
 zero the sharp shape and a morphology of zero the unfiltered one: a caller

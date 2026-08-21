@@ -37,7 +37,7 @@ fn stops_of(stops: &[crate::scene::Stop]) -> Vec<GradientStop> {
 /// The shader half of a paint.
 ///
 /// Separate from the rest because a node that is not an item has a fill and
-/// nothing else to say: no stroke, no dash, no mask blur, no colour filter.
+/// nothing else to say: no stroke, no dash, no mask blur, no color filter.
 /// A mesh is the case that needed it.
 fn shader_for(fill: &Fill) -> Shader {
     match fill {

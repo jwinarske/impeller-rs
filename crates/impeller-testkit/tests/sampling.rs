@@ -329,7 +329,7 @@ where
 }
 
 #[test]
-fn a_vertex_colour_reaches_the_shader_the_same_way_on_both_backends() {
+fn a_vertex_color_reaches_the_shader_the_same_way_on_both_backends() {
     let check = |pixels: &[u8], backend: &str| {
         // Well inside each corner, where its own color dominates. The corner
         // order is `FULL`'s, and the target's rows run the other way from clip
@@ -364,7 +364,7 @@ fn a_vertex_colour_reaches_the_shader_the_same_way_on_both_backends() {
 
 #[test]
 fn nearest_sampling_steps_between_texels_on_both_backends() {
-    // Nearest is a coordinate snapped to a texel centre rather than a second
+    // Nearest is a coordinate snapped to a texel center rather than a second
     // sampler, and the snap needs the texture's size -- which the two
     // translations reach differently. So this is a place the two can disagree
     // while each looks plausible on its own, which is what this file is for.

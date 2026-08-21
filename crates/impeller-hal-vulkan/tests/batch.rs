@@ -164,7 +164,7 @@ fn mixed_blend_modes_compose_the_same_way_in_one_pass() {
 fn a_batch_binds_a_pipeline_only_when_it_changes() {
     let mut batch = Batch::new();
     let verts = band(-1.0, 1.0);
-    // A different colour each time, so no two of these merge into one draw.
+    // A different color each time, so no two of these merge into one draw.
     // With identical draws the count would collapse to the number of binds and
     // this test would be comparing a number with itself.
     for (i, blend) in [
