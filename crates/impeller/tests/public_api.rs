@@ -8984,3 +8984,187 @@ fn a_mask_blur_on_a_mesh_is_refused_rather_than_dropped() {
         "a mask blur on a mesh should be refused, got {outcome:?}"
     );
 }
+
+#[test]
+fn every_draw_that_takes_a_paint_honours_its_image_filter() {
+    // The check that would have caught a mesh dropping its filter, written as a
+    // sweep rather than one test per call. A filter is noticed in `draw_path`,
+    // and every entry point that does not pass through there has to notice it
+    // itself -- which is a thing to forget once per entry point rather than
+    // once. It was forgotten for meshes, and so for every sprite batch.
+    //
+    // A dilation of ten is the probe because its effect is exact: the drawing
+    // reaches ten further each way and not an approximate amount, so a call
+    // that dropped it lands on its own unfiltered extent rather than near the
+    // right answer.
+    let Some(mut ctx) = context() else { return };
+    let mut image = ctx
+        .create_image(Extent2D::new(4, 4), PixelFormat::Rgba8Unorm)
+        .expect("image");
+    ctx.write_image(&mut image, &quadrant_image())
+        .expect("upload");
+
+    let white = Color::linear(1.0, 1.0, 1.0, 1.0);
+    let square = Rect::new(40.0, 40.0, 88.0, 88.0);
+    let mut builder = PathBuilder::new();
+    builder
+        .move_to(Vec2::new(40.0, 40.0))
+        .line_to(Vec2::new(88.0, 40.0))
+        .line_to(Vec2::new(88.0, 88.0))
+        .line_to(Vec2::new(40.0, 88.0))
+        .close();
+    let path = builder.build();
+    let mesh = square_mesh(white);
+
+    let span = |ctx: &mut Context, name: &str, filter: ImageFilter| -> (u32, u32) {
+        let mut canvas = Canvas::new(SIZE);
+        canvas.clear(Color::linear(0.0, 0.0, 0.0, 1.0));
+        let paint = Paint::fill(white)
+            .with_anti_alias(false)
+            .with_image_filter(filter.clone());
+        match name {
+            "draw_path" => canvas.draw_path(&path, &paint).map(|_| ()),
+            "draw_rect" => canvas.draw_rect(square, &paint).map(|_| ()),
+            "draw_rrect" => canvas.draw_rrect(square, 8.0, &paint).map(|_| ()),
+            "draw_circle" => canvas
+                .draw_circle(Vec2::new(64.0, 64.0), 24.0, &paint)
+                .map(|_| ()),
+            "draw_oval" => canvas
+                .draw_oval(Rect::new(40.0, 44.0, 88.0, 84.0), &paint)
+                .map(|_| ()),
+            "draw_drrect" => canvas
+                .draw_drrect(square, 8.0, Rect::new(56.0, 56.0, 72.0, 72.0), 4.0, &paint)
+                .map(|_| ()),
+            "draw_line" => canvas
+                .draw_line(
+                    Vec2::new(40.0, 64.0),
+                    Vec2::new(88.0, 64.0),
+                    &Paint::stroke(white, 12.0).with_image_filter(filter.clone()),
+                )
+                .map(|_| ()),
+            "draw_points" => canvas
+                .draw_points(
+                    PointMode::Points,
+                    &[Vec2::new(64.0, 64.0)],
+                    &Paint::fill(white)
+                        .with_style(Style::Stroke(StrokeStyle {
+                            cap: LineCap::Round,
+                            ..StrokeStyle::new(40.0)
+                        }))
+                        .with_image_filter(filter.clone()),
+                )
+                .map(|_| ()),
+            "draw_vertices" => canvas.draw_vertices(&mesh, &paint).map(|_| ()),
+            "draw_atlas" => canvas
+                .draw_atlas(
+                    &[Sprite {
+                        source: SourceRect {
+                            x: 0.0,
+                            y: 0.0,
+                            width: 4.0,
+                            height: 4.0,
+                        },
+                        color: white,
+                        transform: Affine2::from_scale_angle_translation(
+                            Vec2::splat(12.0),
+                            0.0,
+                            Vec2::new(40.0, 40.0),
+                        ),
+                    }],
+                    Extent2D::new(4, 4),
+                    &Paint::image(0, Rect::from_size(4.0, 4.0)).with_image_filter(filter.clone()),
+                )
+                .map(|_| ()),
+            "draw_image_nine" => canvas
+                .draw_image_nine(
+                    0,
+                    Extent2D::new(4, 4),
+                    Rect::new(1.0, 1.0, 3.0, 3.0),
+                    square,
+                    &paint,
+                )
+                .map(|_| ()),
+            other => unreachable!("{other}"),
+        }
+        .unwrap_or_else(|e| panic!("{name}: {e}"));
+
+        let mut surface = ctx
+            .create_surface(SIZE, PixelFormat::Rgba8Unorm)
+            .expect("surface");
+        ctx.draw_with_images(&mut surface, &canvas.finish(), &[&image])
+            .expect("draw");
+        let pixels = ctx.read(&mut surface).expect("read");
+        ctx.destroy_surface(surface);
+        let lit: Vec<u32> = (0..SIZE.width)
+            .filter(|x| {
+                let texel = pixel(&pixels, *x, 64);
+                texel[0] > 0 || texel[1] > 0 || texel[2] > 0
+            })
+            .collect();
+        (
+            *lit.first().unwrap_or_else(|| panic!("{name} drew nothing")),
+            *lit.last().expect("drew nothing"),
+        )
+    };
+
+    for name in [
+        "draw_path",
+        "draw_rect",
+        "draw_rrect",
+        "draw_circle",
+        "draw_oval",
+        "draw_drrect",
+        "draw_line",
+        "draw_points",
+        "draw_vertices",
+        "draw_atlas",
+        "draw_image_nine",
+    ] {
+        let (left, right) = span(&mut ctx, name, ImageFilter::None);
+        let filtered = span(
+            &mut ctx,
+            name,
+            ImageFilter::Dilate {
+                radius_x: 10.0,
+                radius_y: 10.0,
+            },
+        );
+        assert_eq!(
+            filtered,
+            (left - 10, right + 10),
+            "{name} did not apply a dilation of ten. Its own unfiltered extent \
+             of ({left}, {right}) means the filter was accepted and dropped"
+        );
+    }
+    ctx.destroy_image(image);
+
+    // `draw_paint` fills the clip, so a dilation has nowhere to show -- the
+    // spread happens and the clip removes it, which is correct and invisible.
+    // A blur is what shows there, softening the edge on the inside where the
+    // unfiltered fill meets the clip as a wall.
+    let clip = Rect::new(40.0, 40.0, 88.0, 88.0);
+    let edge = |ctx: &mut Context, filter: ImageFilter| {
+        let mut canvas = Canvas::new(SIZE);
+        canvas.clear(Color::linear(0.0, 0.0, 0.0, 1.0));
+        let _ = canvas.clip_rect(clip);
+        canvas
+            .draw_paint(
+                &Paint::fill(white)
+                    .with_anti_alias(false)
+                    .with_image_filter(filter),
+            )
+            .expect("paint");
+        pixel(&render(ctx, canvas), 41, 64)[0]
+    };
+    assert_eq!(
+        edge(&mut ctx, ImageFilter::None),
+        255,
+        "unfiltered, the fill meets the clip as a wall"
+    );
+    let blurred = edge(&mut ctx, ImageFilter::Blur { sigma: 6.0 });
+    assert!(
+        blurred < 200,
+        "a blurred paint should soften on the inside of its clip, but the pixel \
+         beside the edge reads {blurred}"
+    );
+}
