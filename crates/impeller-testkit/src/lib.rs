@@ -21,7 +21,7 @@ pub mod scene;
 pub mod shape;
 
 pub use catalog::catalog;
-pub use executor::{record_scene, render_corpus, render_scene};
+pub use executor::{record_scene, render_corpus, render_scene, Fixtures};
 pub use image::{accepts, compare, Difference, Image, Tolerance};
 pub use scene::{corpus, Fill, Item, LayerSpec, Node, Scene, Stop, StrokeSpec, Transform};
 // The stroke settings a scene states, so a test can vary one without reaching

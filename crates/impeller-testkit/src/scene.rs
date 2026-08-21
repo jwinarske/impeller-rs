@@ -912,7 +912,19 @@ impl Scene {
         if self.samples > 1 {
             return crate::image::Tolerance::MULTISAMPLED;
         }
+        // A glyph run is computed whatever else the scene holds: its coverage
+        // comes from a texture and is multiplied by the paint's color per
+        // fragment, which is the same arithmetic a translucent draw does.
+        //
+        // Asked of the nodes rather than of the items, and that is the whole
+        // point. A run is not an item, so the walk below cannot see it -- the
+        // scene came out `EXACT` and diverged by one unit on every partially
+        // covered pixel the moment it was added. The comment above records the
+        // same trap being sprung by a new *fill* kind; this is a new *node*
+        // kind doing it again, which suggests the lesson is about derivations
+        // that enumerate rather than about either list.
         let computed = self.items.iter().any(Node::has_layer)
+            || self.items.iter().any(Node::uses_glyphs)
             || self.items().any(|item| {
                 item.blend == BlendMode::SrcOver || !matches!(item.fill, Fill::Solid(_))
             });
@@ -2233,6 +2245,69 @@ pub fn corpus() -> Vec<Scene> {
                 ],
             )],
         ),
+        // Text, which the corpus could not describe until a scene could name a
+        // glyph run. What it buys is not another picture but the invariants
+        // this collection already asserts, applied to a path that was outside
+        // them: that a run over an opaque ground leaves no pixel transparent,
+        // that no channel exceeds the alpha it was multiplied by, and that the
+        // same run renders identically twice. Coverage arrives premultiplied
+        // from a texture rather than computed, so none of those followed from
+        // the shape cases.
+        Scene::tree(
+            "glyph-run",
+            vec![Node::Glyphs(Box::new(GlyphRunSpec {
+                // A block rather than a line, because the corpus requires a
+                // scene to cover enough of its target to be testing something
+                // and one row of four glyphs covers under two per cent. Five
+                // rows of seven is text-shaped and covers enough of the frame
+                // for the invariants below to have somewhere to fail.
+                glyphs: (0..5)
+                    .flat_map(|row| {
+                        (0..7).map(move |column| {
+                            (
+                                (row * 7 + column) % 4,
+                                [10.0 + column as f32 * 16.0, 24.0 + row as f32 * 18.0],
+                            )
+                        })
+                    })
+                    .collect(),
+                color: [1.0, 0.85, 0.2, 1.0],
+                blend: BlendMode::SrcOver,
+                transform: Transform::default(),
+                image_filter: ImageFilter::None,
+                mask_blur: 0.0,
+                mask_blur_style: MaskBlurStyle::Normal,
+            }))],
+        )
+        .with_background([0.05, 0.06, 0.09, 1.0]),
+        // The same block over nothing at all. Coverage from a texture is where
+        // premultiplication is easiest to get wrong -- the texel is a coverage
+        // and the color is the paint's, so the multiplication happens in the
+        // shader rather than being carried in -- and the check for it can only
+        // fail where alpha is partial, which over an opaque ground it never is.
+        // The half-covered glyph in the fixture is what makes it partial here.
+        Scene::tree(
+            "glyph-run-over-nothing",
+            vec![Node::Glyphs(Box::new(GlyphRunSpec {
+                glyphs: (0..5)
+                    .flat_map(|row| {
+                        (0..7).map(move |column| {
+                            (
+                                (row * 7 + column) % 4,
+                                [10.0 + column as f32 * 16.0, 24.0 + row as f32 * 18.0],
+                            )
+                        })
+                    })
+                    .collect(),
+                color: [0.4, 0.9, 1.0, 1.0],
+                blend: BlendMode::SrcOver,
+                transform: Transform::default(),
+                image_filter: ImageFilter::None,
+                mask_blur: 0.0,
+                mask_blur_style: MaskBlurStyle::Normal,
+            }))],
+        )
+        .with_background([0.0, 0.0, 0.0, 0.0]),
     ]
 }
 

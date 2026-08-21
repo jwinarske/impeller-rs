@@ -69,8 +69,14 @@ where
     // the layer passes render into targets of their own and the root lands in
     // the acquired image, which is the same shape of work an offscreen render
     // does and the reason this comparison is worth making.
+    // The textures the scene names, through the testkit for the same reason the
+    // recording is: a second copy of that table stopped being right the moment
+    // the corpus first held a scene that reads one, and the failure read as a
+    // fault in presenting rather than in this line.
+    let fixtures = impeller_testkit::Fixtures::<H>::prepare(ctx, scene).expect("fixtures");
     let image = target.acquire(ctx).expect("acquire");
-    impeller_core::execute::<H>(ctx, image, &recording, &[]).expect("submit");
+    impeller_core::execute::<H>(ctx, image, &recording, &fixtures.bound()).expect("submit");
+    fixtures.destroy(ctx);
     target.present(ctx).expect("present");
 
     let image = target.acquire(ctx).expect("re-acquire for readback");
