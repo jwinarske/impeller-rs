@@ -2857,7 +2857,9 @@ fn layers() -> Vec<Scene> {
 /// shape, through a transform, and beside the built-in shader.
 fn runtime_effect() -> Vec<Scene> {
     let effect = |threshold: f32| Fill::RuntimeEffect {
+        program: 0,
         uniforms: crate::fixture::effect_uniforms(RED, BLUE, threshold),
+        images: Vec::new(),
     };
     vec![
         plate(
@@ -2903,6 +2905,34 @@ fn runtime_effect() -> Vec<Scene> {
                 0.2126, 0.7152, 0.0722, 0.0, 0.0, //
                 0.0, 0.0, 0.0, 1.0, 0.0,
             ]))],
+        ),
+        plate(
+            "effect/runtime-effect-sampling-two-textures",
+            // The case that needed the descriptor set layout to grow. The
+            // program differences its two textures, which is the operation that
+            // cannot be mistaken for either alone: where they agree it is black
+            // whatever they hold, so a backend binding one texture twice -- or
+            // leaving the second binding at its placeholder -- does not make
+            // this picture.
+            //
+            // The sheet is slot zero and the glyph atlas slot one, which are
+            // the two textures a scene has. They differ everywhere, the sheet
+            // being color and the atlas coverage.
+            vec![Item::filled(
+                Shape::Rect {
+                    min: [8.0, 8.0],
+                    max: [120.0, 120.0],
+                },
+                Fill::RuntimeEffect {
+                    program: 1,
+                    uniforms: {
+                        let mut out = vec![0.0; impeller_hal::RUNTIME_FLOATS];
+                        out[0..4].copy_from_slice(&[1.0, 1.0, 1.0, 1.0]);
+                        out
+                    },
+                    images: vec![0, 1],
+                },
+            )],
         ),
         plate(
             "effect/runtime-effect-with-transform",

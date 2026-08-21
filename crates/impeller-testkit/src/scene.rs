@@ -239,7 +239,18 @@ pub enum Fill {
     /// has to be writable without a device. It says it uses the one fixture
     /// effect, and the executor registers it.
     RuntimeEffect {
+        /// Which fixture program, by the index the executor registers it at:
+        /// zero is the one that draws two colors either side of a threshold,
+        /// one is the one that differences two textures.
+        program: u32,
         uniforms: Vec<f32>,
+        /// Which fixture textures the program samples, in binding order.
+        ///
+        /// Named as slots rather than as handles, for the reason a scene names
+        /// no texture: zero is the sheet and one is the glyph atlas, which the
+        /// executor uploads and binds. Empty for a program that samples
+        /// nothing, which is what every plate wanted until one wanted two.
+        images: Vec<u32>,
     },
     /// A piece of the fixture sheet, mapped onto a rectangle.
     ///
@@ -709,9 +720,16 @@ impl Node {
     }
 
     fn samples_fixture(&self) -> bool {
+        let reads_sheet = |fill: &Fill| match fill {
+            Fill::Image { .. } => true,
+            // A program naming slot zero reads the sheet as surely as an image
+            // fill does, and the executor has to upload it either way.
+            Fill::RuntimeEffect { images, .. } => images.contains(&0),
+            _ => false,
+        };
         match self {
-            Self::Draw(item) => matches!(item.fill, Fill::Image { .. }),
-            Self::Mesh(mesh) => matches!(mesh.fill, Fill::Image { .. }),
+            Self::Draw(item) => reads_sheet(&item.fill),
+            Self::Mesh(mesh) => reads_sheet(&mesh.fill),
             // A sprite batch is pieces of the sheet by definition.
             Self::Atlas(_) => true,
             // A run reads the glyph atlas, which is a texture of its own rather
@@ -727,9 +745,15 @@ impl Node {
     /// separate texture: the sheet is color and the glyph atlas is coverage,
     /// and a scene may want either, both, or neither.
     fn uses_glyphs(&self) -> bool {
+        let reads_atlas = |fill: &Fill| match fill {
+            Fill::RuntimeEffect { images, .. } => images.contains(&1),
+            _ => false,
+        };
         match self {
             Self::Glyphs(_) => true,
-            Self::Draw(_) | Self::Mesh(_) | Self::Atlas(_) | Self::Shadow(_) => false,
+            Self::Draw(item) => reads_atlas(&item.fill),
+            Self::Mesh(mesh) => reads_atlas(&mesh.fill),
+            Self::Atlas(_) | Self::Shadow(_) => false,
             Self::Layer { children, .. } => children.iter().any(Node::uses_glyphs),
         }
     }

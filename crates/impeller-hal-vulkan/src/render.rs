@@ -1393,7 +1393,7 @@ unsafe fn record_draw(
         // declares the texture whatever the paint is, and a descriptor a
         // pipeline statically uses must be bound even where the branch reading
         // it is unreachable. A draw that samples nothing gets a placeholder.
-        let set = bindings.set_for(draw.material.texture_slot());
+        let set = bindings.set_for(draw.material.texture_slots());
         if state.descriptor_set != Some(set) {
             device.cmd_bind_descriptor_sets(
                 cmd,

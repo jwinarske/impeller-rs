@@ -120,6 +120,18 @@ pub mod kind {
     pub const MORPHOLOGY: f32 = 11.0;
 }
 
+/// How many textures one runtime program may sample.
+///
+/// A fixed ceiling because the descriptor set layout is shared: every pipeline
+/// this renderer builds is built against one layout, so the bindings it
+/// declares are the same for a solid fill and for a caller's program. Raising
+/// this costs an image binding on every draw; removing the ceiling costs a
+/// layout per program.
+///
+/// Four covers what `dart:ui` shaders ask for in practice -- an image and a
+/// mask, an image and a gradient ramp, occasionally a third.
+pub const MAX_EFFECT_TEXTURES: usize = 4;
+
 /// How far one morphology pass reaches, in texels each way.
 ///
 /// The shader's loop has to be bounded, and this is the bound. It is not a
@@ -616,16 +628,19 @@ pub enum Material {
     Runtime {
         program: u32,
         uniforms: Vec<f32>,
-        /// A texture the program may sample, if it declares one.
+        /// The textures the program may sample, in the order it declares them.
         ///
-        /// No new descriptor set. Every draw already binds a texture at the
-        /// one binding this renderer's shader declares -- a placeholder where
-        /// the material samples nothing, because a pipeline that declares a
-        /// binding must have it bound however unreachable the branch reading
-        /// it. An effect declaring the same binding gets whatever this names,
-        /// which is one texture rather than the several `dart:ui` allows, and
-        /// is what the existing machinery already carries.
-        texture: Option<u32>,
+        /// `None` in a position means the program does not read that binding,
+        /// and the backend binds its placeholder there -- a pipeline must have
+        /// every binding it declares bound, however unreachable the branch
+        /// reading it.
+        ///
+        /// The count is fixed rather than free because the descriptor set
+        /// layout every pipeline is built against has to be one layout. Four is
+        /// what that costs: three unused image bindings on a draw that samples
+        /// nothing, against a second set and a second layout for the draws that
+        /// want more than one.
+        textures: [Option<u32>; MAX_EFFECT_TEXTURES],
     },
     /// A texture, sampled at coordinates the vertices carry.
     ///
@@ -895,6 +910,23 @@ impl Material {
     /// samples something and is not listed here reports no slot, so the backend
     /// binds its placeholder and the draw comes out flat white -- a plausible
     /// picture rather than an error, and one nothing else would explain.
+    /// Every texture slot this material samples, in binding order.
+    ///
+    /// One entry for everything but a runtime program, which may declare
+    /// several. A backend building descriptors needs the whole tuple, since a
+    /// set holds all of them at once; a backend asking only which slot to bind
+    /// first has [`Self::texture_slot`].
+    pub fn texture_slots(&self) -> [Option<u32>; MAX_EFFECT_TEXTURES] {
+        match self {
+            Self::Runtime { textures, .. } => *textures,
+            other => {
+                let mut slots = [None; MAX_EFFECT_TEXTURES];
+                slots[0] = other.texture_slot();
+                slots
+            }
+        }
+    }
+
     pub fn texture_slot(&self) -> Option<u32> {
         match self {
             Self::Image { slot, .. }
@@ -912,7 +944,10 @@ impl Material {
             // Whatever a caller named, and `None` where they named nothing --
             // in which case the placeholder is bound and a program that
             // samples anyway reads opaque white.
-            Self::Runtime { texture, .. } => *texture,
+            // The first of them, for the callers that still ask a material for
+            // one slot. `texture_slots` is what a backend binding several
+            // should ask.
+            Self::Runtime { textures, .. } => textures[0],
         }
     }
 

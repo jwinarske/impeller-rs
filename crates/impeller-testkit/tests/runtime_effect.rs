@@ -51,7 +51,7 @@ where
             Material::Runtime {
                 program: id,
                 uniforms: uniforms(0.25),
-                texture: None,
+                textures: [None; impeller_hal::MAX_EFFECT_TEXTURES],
             },
             BlendMode::Src,
         )

@@ -77,19 +77,21 @@ fn shader_for(fill: &Fill) -> Shader {
             stops: stops_of(stops),
             tile: *tile,
         },
-        Fill::RuntimeEffect { uniforms } => Shader::RuntimeEffect {
+        Fill::RuntimeEffect {
+            program,
+            uniforms,
+            images,
+        } => Shader::RuntimeEffect {
             // Program zero, always: a scene names no program, and the
             // executor registers exactly one. Registering is idempotent, so
             // this is the same index every time whatever else a caller has
             // registered before it -- provided they registered this one first,
             // which the executor does.
-            program: 0,
+            program: *program,
             uniforms: uniforms.clone(),
-            // The scene format has no way to say a program samples the sheet
-            // yet, and the fixture effect does not. Adding it is the same
-            // shape of change as the fill that named the sheet, for the day a
-            // plate needs one.
-            image: None,
+            // A scene says which fixture textures its program reads by index,
+            // and the executor turns those into the slots it bound them at.
+            images: images.clone(),
         },
         Fill::Image {
             rect,
@@ -425,11 +427,20 @@ where
     // the scenes name is the one it gets. Idempotent, so a list of scenes
     // costs one program rather than one per scene.
     if scene.uses_effect() {
-        let id = ctx.register_program(&crate::fixture::effect())?;
-        if id != 0 {
-            return Err(impeller_hal::Error::Unsupported(
-                "the fixture effect was not the first program registered with this context",
-            ));
+        // Both, always, and in this order: a scene names a program by the index
+        // it was given, so registering conditionally would make that index
+        // depend on which scene ran first. Registration is idempotent, so the
+        // cost is one link each per context rather than one per scene.
+        for (expected, program) in [
+            (0, crate::fixture::effect()),
+            (1, crate::fixture::two_image_effect()),
+        ] {
+            let id = ctx.register_program(&program)?;
+            if id != expected {
+                return Err(impeller_hal::Error::Unsupported(
+                    "a fixture program was not registered at the index scenes name it by",
+                ));
+            }
         }
     }
     let fixtures = Fixtures::<H>::prepare(ctx, scene)?;

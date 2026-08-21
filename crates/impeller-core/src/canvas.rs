@@ -1276,14 +1276,24 @@ impl Canvas {
             Shader::RuntimeEffect {
                 program,
                 uniforms,
-                image,
+                images,
             } => Material::Runtime {
                 program: *program,
                 uniforms: uniforms.clone(),
                 // Through this pass's own table, like every other texture: a
                 // layer occupies a slot too, so a caller's index and the
                 // pass's are not the same number once one is opened.
-                texture: image.map(|slot| self.slot_for(TextureSource::Image(slot))),
+                textures: {
+                    let mut bound = [None; impeller_hal::MAX_EFFECT_TEXTURES];
+                    // Past the ceiling the extra names are dropped rather than
+                    // refused: a program cannot declare a binding the layout
+                    // does not have, so a caller naming more textures than that
+                    // has named some the program could not read either.
+                    for (slot, into) in images.iter().zip(bound.iter_mut()) {
+                        *into = Some(self.slot_for(TextureSource::Image(*slot)));
+                    }
+                    bound
+                },
             },
             Shader::Image {
                 slot,

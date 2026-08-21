@@ -451,7 +451,8 @@ impl Batch {
         let mut slots: Vec<u32> = self
             .draws
             .iter()
-            .filter_map(|draw| draw.material.texture_slot())
+            .flat_map(|draw| draw.material.texture_slots())
+            .flatten()
             .collect();
         slots.sort_unstable();
         slots.dedup();

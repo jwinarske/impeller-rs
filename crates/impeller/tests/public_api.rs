@@ -8790,7 +8790,7 @@ fn a_color_filter_recolors_what_a_runtime_effect_drew() {
                     .with_shader(Shader::RuntimeEffect {
                         program,
                         uniforms: effect_uniforms(0.5),
-                        image: None,
+                        images: Vec::new(),
                     })
                     .with_color_filter(filter)
                     .with_anti_alias(false),
@@ -10251,4 +10251,99 @@ fn a_recording_lands_where_the_transform_puts_it() {
         pixels.chunks_exact(4).all(|texel| texel == [0, 0, 0, 255]),
         "a picture under a collapsed transform should draw nothing at all"
     );
+}
+
+#[test]
+fn a_runtime_program_can_sample_more_than_one_texture() {
+    // `dart:ui` lets a fragment program declare several samplers, and until now
+    // this renderer carried one. One was what the shared descriptor set already
+    // covered, since every draw binds a texture at the binding this renderer's
+    // own shader declares; several needed that layout to grow, which it can
+    // because a layout may carry bindings a shader never mentions and the solid
+    // pipeline is built against it unchanged.
+    //
+    // The fixture program takes the absolute difference of its two textures.
+    // That operation is chosen for what it rules out: where the two agree it is
+    // black whatever they hold, so binding the same texture twice -- or leaving
+    // the second at the placeholder -- gives a picture this one is not.
+    let Some(mut ctx) = context() else { return };
+    let program = ctx
+        .register_program(&impeller::RuntimeProgram {
+            spirv: impeller_shaders::EFFECT_TWO_IMAGES_SPV.to_vec(),
+            glsl_es: impeller_shaders::EFFECT_TWO_IMAGES_FS_GLSL.to_string(),
+        })
+        .expect("register");
+
+    // Two flat textures whose difference is a known color: one is red, the
+    // other is red plus a half of green.
+    let mut first = ctx
+        .create_image(Extent2D::new(4, 4), PixelFormat::Rgba8Unorm)
+        .expect("first");
+    ctx.write_image(&mut first, &[255u8, 0, 0, 255].repeat(16))
+        .expect("upload first");
+    let mut second = ctx
+        .create_image(Extent2D::new(4, 4), PixelFormat::Rgba8Unorm)
+        .expect("second");
+    ctx.write_image(&mut second, &[255u8, 128, 0, 255].repeat(16))
+        .expect("upload second");
+
+    let draw = |ctx: &mut Context, slots: &[u32]| {
+        let mut canvas = Canvas::new(SIZE);
+        canvas.clear(Color::linear(0.0, 0.0, 0.0, 1.0));
+        canvas
+            .draw_rect(
+                Rect::from_size(128.0, 128.0),
+                &Paint::fill(Color::linear(1.0, 1.0, 1.0, 1.0))
+                    .with_anti_alias(false)
+                    .with_shader(Shader::RuntimeEffect {
+                        program,
+                        uniforms: {
+                            let mut out = vec![0.0; RUNTIME_FLOATS];
+                            // The tint the program multiplies the difference by.
+                            out[0..4].copy_from_slice(&[1.0, 1.0, 1.0, 1.0]);
+                            out
+                        },
+                        images: slots.to_vec(),
+                    }),
+            )
+            .expect("effect");
+        let mut surface = ctx
+            .create_surface(SIZE, PixelFormat::Rgba8Unorm)
+            .expect("surface");
+        ctx.draw_with_images(&mut surface, &canvas.finish(), &[&first, &second])
+            .expect("draw");
+        let pixels = ctx.read(&mut surface).expect("read");
+        ctx.destroy_surface(surface);
+        pixels
+    };
+
+    // Both textures: the difference is a half of green and nothing else.
+    let both = pixel(&draw(&mut ctx, &[0, 1]), 64, 64);
+    assert!(
+        both[0] < 8 && (both[1] as i32 - 128).abs() <= 2 && both[2] < 8,
+        "the difference of the two textures should be half green, got {both:?}"
+    );
+
+    // The same texture named twice: a program reading two bindings that hold
+    // one texture sees no difference at all. This is what the picture looks
+    // like when the second binding was never really bound.
+    let same = pixel(&draw(&mut ctx, &[0, 0]), 64, 64);
+    assert_eq!(
+        same,
+        [0, 0, 0, 255],
+        "a texture differenced with itself is black; got {same:?}, which means \
+         the two bindings held different textures when they were told not to"
+    );
+
+    // Only one named, so the second binding falls to the placeholder -- a
+    // one-pixel white texture, whose difference from red is cyan.
+    let one = pixel(&draw(&mut ctx, &[0]), 64, 64);
+    assert!(
+        one[1] > 200 && one[2] > 200,
+        "an undeclared second texture should read the white placeholder, whose \
+         difference from red is cyan. Got {one:?}"
+    );
+
+    ctx.destroy_image(first);
+    ctx.destroy_image(second);
 }

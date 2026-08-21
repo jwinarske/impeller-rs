@@ -1243,9 +1243,33 @@ one binding this renderer's shader declares — a placeholder where the material
 samples nothing, since a pipeline must have every binding it declares bound
 however unreachable the branch reading it. So a program declaring the same
 binding gets whatever the draw named, and the machinery carrying it is the
-machinery that was already there. What that buys is one texture rather than the
-several `dart:ui` allows, which is what an image-based effect wants; several is
-the second descriptor set, and still worth deferring until something asks.
+machinery that was already there.
+
+**Several textures did not need a second set either, which was the surprise.**
+That was written here as the thing a second descriptor set would be for, and it
+is not: a layout may declare bindings a shader never mentions, so widening the
+one shared layout to four images serves the solid pipeline unchanged and gives a
+caller's program the rest. What a second set would have bought is an unbounded
+count, and the ceiling is what buys a single layout instead — raising it costs an
+image binding on every draw, removing it costs a layout per program.
+
+The numbering is the part both backends have to agree on. Binding zero is the
+first texture, one is the sampler they all share, and two upward are the rest,
+so a program written for one backend is written for both: on Vulkan those are
+descriptor bindings, and on GLES they are the names naga gives its combined
+samplers, `_group_0_binding_N_fs`, which the translator derives from the
+texture's binding and which is therefore contractual.
+
+What changed shape is the descriptor sets themselves. There was one per supplied
+texture; there is now one per distinct *tuple* of slots the batch asks for, since
+a set holds every image a draw reads at once. An ordinary draw contributes a
+one-element tuple, so a batch of image draws allocates exactly what it did.
+
+GLES needed one thing Vulkan did not: a sampler uniform defaults to texture unit
+zero, so a program declaring two would read one texture twice — a picture that
+looks like a binding that never happened. Each sampler is pointed at its unit
+once at link time, since that value is program state rather than something a draw
+sets.
 
 **A program is a pipeline, not a material kind.** Every material today shares
 one fragment shader and picks its behavior by branching on a kind. A runtime

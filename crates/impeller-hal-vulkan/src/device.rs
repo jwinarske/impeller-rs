@@ -611,6 +611,19 @@ impl VulkanContext {
     }
 
     /// The descriptor set bound where a draw samples nothing.
+    /// The view of the one-pixel white texture, for a binding nothing fills.
+    ///
+    /// A layout declaring four images has to have four written whatever a draw
+    /// reads, so the ones a program does not declare get this. It is the same
+    /// view the placeholder set uses, made on the same first call.
+    pub(crate) fn placeholder_view(&mut self) -> Result<vk::ImageView> {
+        self.placeholder_set()?;
+        Ok(self
+            .placeholder_binding
+            .expect("placeholder_set just made it")
+            .1)
+    }
+
     pub(crate) fn placeholder_set(&mut self) -> Result<vk::DescriptorSet> {
         if let Some((_, _, set)) = self.placeholder_binding {
             return Ok(set);

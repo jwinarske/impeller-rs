@@ -367,7 +367,7 @@ impl GlesContext {
             // the direct analogue of binding a different pipeline.
             let mut bound_program: Option<Option<u32>> = None;
             let mut stencil_state: Option<ClipState> = None;
-            let mut bound_texture: Option<Option<u32>> = None;
+            let mut bound_texture: Option<[Option<u32>; impeller_hal::MAX_EFFECT_TEXTURES]> = None;
             for (index, draw) in batch.draws().iter().enumerate() {
                 if current != Some(draw.blend) {
                     apply_blend(gl, draw.blend);
@@ -411,14 +411,22 @@ impl GlesContext {
                 // sampler left pointing at whatever unit a previous frame used
                 // reads a texture that may since have been deleted, so the
                 // placeholder is bound explicitly rather than by omission.
-                let wanted = draw.material.texture_slot();
+                let wanted = draw.material.texture_slots();
                 if bound_texture != Some(wanted) {
-                    let texture = match wanted {
-                        Some(slot) => textures[slot as usize].texture,
-                        None => placeholder,
-                    };
+                    // Every unit the layout has, not only the ones this draw
+                    // reads. A unit left pointing at a previous frame's texture
+                    // is a texture that may since have been deleted, and a
+                    // program declaring more samplers than this draw named
+                    // would read it.
+                    for (index, slot) in wanted.iter().enumerate() {
+                        let texture = match slot {
+                            Some(slot) => textures[*slot as usize].texture,
+                            None => placeholder,
+                        };
+                        gl.active_texture(glow::TEXTURE0 + index as u32);
+                        gl.bind_texture(glow::TEXTURE_2D, Some(texture));
+                    }
                     gl.active_texture(glow::TEXTURE0);
-                    gl.bind_texture(glow::TEXTURE_2D, Some(texture));
                     if let Some(location) = &program.image {
                         gl.uniform_1_i32(Some(location), 0);
                     }
@@ -896,6 +904,21 @@ fn gl_blend_factor(factor: impeller_hal::BlendFactor) -> u32 {
 /// other backend: an effect replaces what a fragment does with a paint, not
 /// how geometry reaches clip space. What it shares beyond that is the paint's
 /// uniform block, bound to the same point, so the same buffer serves both.
+/// The GLSL name the translator gives the sampler at an image binding.
+///
+/// naga combines WGSL's separate texture and sampler into one GLSL sampler and
+/// names it for the texture's group and binding, so the name is part of the
+/// contract rather than an implementation detail -- which is what makes it
+/// possible to find a caller's samplers without being told their variable
+/// names.
+fn sampler_name(index: usize) -> String {
+    // The same numbering the other backend's descriptor layout uses: binding
+    // zero is the first texture, one is the sampler they share, and two upward
+    // are the rest. A program written for one backend is written for both.
+    let binding = if index == 0 { 0 } else { index + 1 };
+    format!("_group_0_binding_{binding}_fs")
+}
+
 pub(crate) fn build_runtime_program(gl: &glow::Context, fragment: &str) -> Result<glow::Program> {
     // SAFETY: a context is current; every object is deleted on the failure
     // paths below.
@@ -953,6 +976,20 @@ pub(crate) fn build_runtime_program(gl: &glow::Context, fragment: &str) -> Resul
                 detail: format!("a runtime program has no {PAINT_BLOCK} uniform block"),
             })?;
         gl.uniform_block_binding(program, block, PAINT_BINDING);
+
+        // Each sampler the program declares, pointed at the texture unit this
+        // backend binds that image to. Set once here rather than per draw
+        // because a sampler's value is program state and survives being
+        // unbound -- and because it has to be set at all: GLES defaults every
+        // sampler to unit zero, so a program declaring two would read one
+        // texture twice and look like a binding that never happened.
+        gl.use_program(Some(program));
+        for index in 0..impeller_hal::MAX_EFFECT_TEXTURES {
+            if let Some(location) = gl.get_uniform_location(program, &sampler_name(index)) {
+                gl.uniform_1_i32(Some(&location), index as i32);
+            }
+        }
+        gl.use_program(None);
         Ok(program)
     }
 }

@@ -162,20 +162,19 @@ receiving recording is appending to. Getting that wrong makes a picture's layer
 sample the host's, which is a plausible picture of something nobody drew, and
 there is a test that catches exactly that.
 
-The one that would matter most to a real application now:
+Runtime effects are complete now, and the note that stood here predicted the
+wrong obstacle. It said several textures needed a descriptor set of their own.
+They did not: a layout may declare bindings a shader never mentions, so widening
+the one shared layout to four images serves the solid pipeline unchanged and
+gives a caller's program the rest. A second set would have bought an unbounded
+count; the ceiling is what buys a single layout, and four is what `dart:ui`
+shaders ask for in practice.
 
-1. **The rest of runtime effects.** A caller's fragment program draws on both
-   backends, through the paint, with the material's own uniform block — fifty-
-   six floats — and one texture, which it gets without a descriptor set of its
-   own because every draw already binds one. What is missing is *several*
-   textures, which `dart:ui` allows and which does need a second set. Worth
-   building when something asks for it.
-
-   This row was described here for a long time as needing a shader pipeline
-   that compiles at run time. That was wrong, and the correction was most of
-   the work: Flutter compiles these ahead of time and ships one payload per
-   backend, so what was needed was a pipeline cache that can hold more than one
-   program, not a compiler. `docs/architecture.md` has the design.
+That row was described here for a long time as needing a shader pipeline
+that compiles at run time. That was wrong too, and the correction was most of
+the work: Flutter compiles these ahead of time and ships one payload per
+backend, so what was needed was a pipeline cache that can hold more than one
+program, not a compiler. `docs/architecture.md` has both designs.
 
 `drawRSuperellipse` and `clipRSuperellipse` were once described here as shapes
 with rules attached, cheap once somebody needed them. That was wrong, and the

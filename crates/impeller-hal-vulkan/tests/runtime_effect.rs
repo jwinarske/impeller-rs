@@ -82,7 +82,7 @@ fn a_registered_program_draws_its_own_picture() {
         Material::Runtime {
             program: id,
             uniforms: uniforms([1.0, 0.0, 0.0, 1.0], [0.0, 0.0, 1.0, 1.0], 0.0),
-            texture: None,
+            textures: [None; impeller_hal::MAX_EFFECT_TEXTURES],
         },
     );
     assert_eq!(pixel(&pixels, 4, 16), [255, 0, 0, 255], "left of the split");
@@ -103,7 +103,7 @@ fn the_uniforms_a_caller_packed_are_the_ones_the_program_reads() {
             Material::Runtime {
                 program: id,
                 uniforms: uniforms([1.0, 0.0, 0.0, 1.0], [0.0, 0.0, 1.0, 1.0], threshold),
-                texture: None,
+                textures: [None; impeller_hal::MAX_EFFECT_TEXTURES],
             },
         )
     };
@@ -132,7 +132,7 @@ fn a_program_nobody_registered_is_refused_rather_than_drawn() {
             Material::Runtime {
                 program: 7,
                 uniforms: uniforms([1.0; 4], [0.0; 4], 0.0),
-                texture: None,
+                textures: [None; impeller_hal::MAX_EFFECT_TEXTURES],
             },
             BlendMode::Src,
         )
@@ -164,7 +164,7 @@ fn a_built_in_material_still_draws_beside_a_registered_one() {
             Material::Runtime {
                 program: id,
                 uniforms: uniforms([1.0, 0.0, 0.0, 1.0], [0.0, 0.0, 1.0, 1.0], 0.0),
-                texture: None,
+                textures: [None; impeller_hal::MAX_EFFECT_TEXTURES],
             },
             BlendMode::Src,
         )
@@ -245,7 +245,7 @@ fn an_effect_reads_the_texture_the_draw_named() {
             Material::Runtime {
                 program: id,
                 uniforms,
-                texture: Some(0),
+                textures: [Some(0), None, None, None],
             },
             BlendMode::Src,
         )
@@ -291,7 +291,7 @@ fn an_effect_naming_no_texture_reads_the_placeholder_rather_than_failing() {
         Material::Runtime {
             program: id,
             uniforms,
-            texture: None,
+            textures: [None; impeller_hal::MAX_EFFECT_TEXTURES],
         },
     );
     assert_eq!(

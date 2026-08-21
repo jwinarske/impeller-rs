@@ -113,14 +113,19 @@ pub enum Shader {
         uniforms: Vec<f32>,
         /// A texture slot the program may sample, if it declares one.
         ///
-        /// The same table an image paint names, so a caller supplies it in the
-        /// same array beside the recording. One rather than several, which is
-        /// what a draw already carries.
+        /// The same table an image paint names, so a caller supplies them in
+        /// the same array beside the recording, in the order the program
+        /// declares its bindings.
         ///
-        /// A program that samples having named nothing here reads a one-pixel
-        /// opaque white texture -- what a solid fill binds, and what keeps a
-        /// pipeline's declared binding satisfied.
-        image: Option<u32>,
+        /// A binding the program declares and this leaves empty reads a
+        /// one-pixel opaque white texture -- what a solid fill binds, and what
+        /// keeps a pipeline's declared binding satisfied. Beyond
+        /// [`MAX_EFFECT_TEXTURES`] a caller is asking for a second descriptor
+        /// set layout, which would be one layout per program; the ceiling is
+        /// what buys a single shared one.
+        ///
+        /// [`MAX_EFFECT_TEXTURES`]: impeller_hal::MAX_EFFECT_TEXTURES
+        images: Vec<u32>,
     },
     /// A gradient between two circles **in user space**, reaching its first
     /// stop on the first circle and its last on the second.
@@ -533,7 +538,7 @@ impl Paint {
             shader: Shader::RuntimeEffect {
                 program,
                 uniforms,
-                image: None,
+                images: Vec::new(),
             },
             ..Default::default()
         }
@@ -542,10 +547,24 @@ impl Paint {
     /// Give a runtime effect a texture to sample.
     ///
     /// Ignored by every other kind of paint, which either samples nothing or
-    /// already names what it samples.
+    /// already names what it samples. Called more than once, the slots stack up
+    /// in the order the program declares its bindings.
     pub fn with_effect_image(mut self, slot: u32) -> Self {
-        if let Shader::RuntimeEffect { image, .. } = &mut self.shader {
-            *image = Some(slot);
+        if let Shader::RuntimeEffect { images, .. } = &mut self.shader {
+            images.push(slot);
+        }
+        self
+    }
+
+    /// Give a runtime effect every texture it samples at once.
+    ///
+    /// The order is the order the program declares its bindings, which for a
+    /// program written in WGSL is the order of the binding numbers rather than
+    /// the order of the declarations.
+    pub fn with_effect_images(mut self, slots: &[u32]) -> Self {
+        if let Shader::RuntimeEffect { images, .. } = &mut self.shader {
+            images.clear();
+            images.extend_from_slice(slots);
         }
         self
     }

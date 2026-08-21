@@ -76,6 +76,20 @@ pub fn effect() -> impeller_hal::RuntimeProgram {
     }
 }
 
+/// A program that samples two textures and shows their difference.
+///
+/// Registered second, so a scene naming it names program one. The difference is
+/// the operation that cannot be mistaken for either texture alone: where the
+/// two agree it is black whatever they hold, so a plate drawn with one texture
+/// bound twice, or with the second binding left at the placeholder, is not the
+/// plate this makes.
+pub fn two_image_effect() -> impeller_hal::RuntimeProgram {
+    impeller_hal::RuntimeProgram {
+        spirv: impeller_shaders::EFFECT_TWO_IMAGES_SPV.to_vec(),
+        glsl_es: impeller_shaders::EFFECT_TWO_IMAGES_FS_GLSL.to_string(),
+    }
+}
+
 /// Lay two colors and a threshold out where [`effect`] reads them.
 pub fn effect_uniforms(left: [f32; 4], right: [f32; 4], threshold: f32) -> Vec<f32> {
     let mut out = vec![0.0; impeller_hal::RUNTIME_FLOATS];

@@ -26,11 +26,18 @@ use impeller_hal::{Batch, Error, Result};
 
 /// The descriptor set layout every pipeline is built against.
 ///
-/// Two bindings rather than one combined image sampler, because that is what
-/// the shader declares: WGSL separates a `texture_2d` from a `sampler`, and
-/// naga carries the separation into SPIR-V.
+/// The image and the sampler are separate bindings rather than one combined
+/// image sampler, because that is what the shader declares: WGSL separates a
+/// `texture_2d` from a `sampler`, and naga carries the separation into SPIR-V.
+///
+/// The sampler is binding one and every image binding is another number, which
+/// is why the images are not zero through three: binding zero is the texture
+/// this renderer's own shader reads, one is the sampler they all share, and two
+/// upward are the extra textures a caller's program may declare. A layout may
+/// carry bindings a shader never mentions, so the solid pipeline is built
+/// against this unchanged.
 pub fn create_descriptor_layout(device: &ash::Device) -> Result<vk::DescriptorSetLayout> {
-    let bindings = [
+    let mut bindings = vec![
         vk::DescriptorSetLayoutBinding::default()
             .binding(0)
             .descriptor_type(vk::DescriptorType::SAMPLED_IMAGE)
@@ -42,9 +49,30 @@ pub fn create_descriptor_layout(device: &ash::Device) -> Result<vk::DescriptorSe
             .descriptor_count(1)
             .stage_flags(vk::ShaderStageFlags::FRAGMENT),
     ];
+    for extra in 1..impeller_hal::MAX_EFFECT_TEXTURES {
+        bindings.push(
+            vk::DescriptorSetLayoutBinding::default()
+                .binding(image_binding(extra))
+                .descriptor_type(vk::DescriptorType::SAMPLED_IMAGE)
+                .descriptor_count(1)
+                .stage_flags(vk::ShaderStageFlags::FRAGMENT),
+        );
+    }
     let info = vk::DescriptorSetLayoutCreateInfo::default().bindings(&bindings);
     unsafe { device.create_descriptor_set_layout(&info, None) }
         .map_err(|e| backend_err("create_descriptor_set_layout", e))
+}
+
+/// Which binding number the `index`th texture a program declares occupies.
+///
+/// Zero for the first, so that everything written before several textures
+/// existed keeps its binding; then two upward, the sampler holding one.
+pub fn image_binding(index: usize) -> u32 {
+    if index == 0 {
+        0
+    } else {
+        index as u32 + 1
+    }
 }
 
 /// The one sampler every image draw uses.
@@ -82,8 +110,17 @@ pub struct Bindings {
     /// placeholder set is needed, which costs no allocation at all.
     pool: Option<vk::DescriptorPool>,
     views: Vec<vk::ImageView>,
-    /// One set per texture slot.
-    sets: Vec<vk::DescriptorSet>,
+    /// One set per distinct tuple of slots a draw asks for, and the tuple it
+    /// answers to.
+    ///
+    /// A tuple rather than a slot because a set holds every image a draw reads
+    /// at once, and a caller's program may read several. Ordinary draws all
+    /// have one-element tuples, so this is the same table it was with one more
+    /// dimension nobody but a runtime program uses.
+    sets: Vec<(
+        [Option<u32>; impeller_hal::MAX_EFFECT_TEXTURES],
+        vk::DescriptorSet,
+    )>,
     /// Owned by the context and outliving any one submission, which is what
     /// lets a deferred submission use it: its descriptor pool would otherwise
     /// have to survive until a fence the caller retires whenever it likes.
@@ -106,11 +143,22 @@ impl Bindings {
     /// A material naming no texture gets the placeholder, which is why this
     /// cannot fail: the table was checked to cover every slot when it was
     /// built.
-    pub fn set_for(&self, slot: Option<u32>) -> vk::DescriptorSet {
-        match slot {
-            Some(slot) => self.sets[slot as usize],
-            None => self.placeholder,
+    pub fn set_for(
+        &self,
+        slots: [Option<u32>; impeller_hal::MAX_EFFECT_TEXTURES],
+    ) -> vk::DescriptorSet {
+        if slots.iter().all(Option::is_none) {
+            return self.placeholder;
         }
+        self.sets
+            .iter()
+            .find(|(held, _)| *held == slots)
+            .map(|(_, set)| *set)
+            // Every tuple a draw asks for was collected before the sets were
+            // built, so this cannot miss. The placeholder is the answer that
+            // draws something wrong rather than reading a descriptor nobody
+            // wrote, which is the safer of the two if it ever does.
+            .unwrap_or(self.placeholder)
     }
 
     pub fn destroy(self, ctx: &VulkanContext) {
@@ -139,10 +187,13 @@ pub fn create_placeholder_binding(
     layout: vk::DescriptorSetLayout,
     sampler: vk::Sampler,
 ) -> Result<(vk::DescriptorPool, vk::ImageView, vk::DescriptorSet)> {
+    // Every image binding the layout declares, not one: a set allocated from
+    // this pool is a set against that layout, so the pool has to have room for
+    // all of them whether or not this set means to use them.
     let sizes = [
         vk::DescriptorPoolSize::default()
             .ty(vk::DescriptorType::SAMPLED_IMAGE)
-            .descriptor_count(1),
+            .descriptor_count(impeller_hal::MAX_EFFECT_TEXTURES as u32),
         vk::DescriptorPoolSize::default()
             .ty(vk::DescriptorType::SAMPLER)
             .descriptor_count(1),
@@ -190,18 +241,26 @@ pub fn create_placeholder_binding(
         .image_view(view)
         .image_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)];
     let sampler_info = [vk::DescriptorImageInfo::default().sampler(sampler)];
-    let writes = [
-        vk::WriteDescriptorSet::default()
-            .dst_set(set)
-            .dst_binding(0)
-            .descriptor_type(vk::DescriptorType::SAMPLED_IMAGE)
-            .image_info(&image_info),
+    // Every image binding, all of them this one texture. A pipeline must have
+    // each binding it declares bound however unreachable the branch reading it,
+    // and this set is what a draw sampling nothing gets -- so all four point at
+    // the one-pixel white texture rather than three of them at nothing.
+    let mut writes: Vec<vk::WriteDescriptorSet> = (0..impeller_hal::MAX_EFFECT_TEXTURES)
+        .map(|index| {
+            vk::WriteDescriptorSet::default()
+                .dst_set(set)
+                .dst_binding(image_binding(index))
+                .descriptor_type(vk::DescriptorType::SAMPLED_IMAGE)
+                .image_info(&image_info)
+        })
+        .collect();
+    writes.push(
         vk::WriteDescriptorSet::default()
             .dst_set(set)
             .dst_binding(1)
             .descriptor_type(vk::DescriptorType::SAMPLER)
             .image_info(&sampler_info),
-    ];
+    );
     // SAFETY: the set comes from the pool above and nothing reads it yet.
     unsafe { device.update_descriptor_sets(&writes, &[]) };
     Ok((pool, view, set))
@@ -238,11 +297,29 @@ pub fn build(
     let sampler = ctx.sampler()?;
     let device = ctx.raw_device().clone();
 
-    let count = textures.len() as u32;
+    // Every distinct tuple the batch asks for. An ordinary draw contributes a
+    // one-element tuple, so a batch that samples nothing but images has one per
+    // image exactly as it did; a batch with a program reading two contributes
+    // that pair as well.
+    let mut tuples: Vec<[Option<u32>; impeller_hal::MAX_EFFECT_TEXTURES]> = Vec::new();
+    for draw in batch.draws() {
+        let slots = draw.material.texture_slots();
+        if slots.iter().all(Option::is_none) {
+            continue;
+        }
+        if !tuples.contains(&slots) {
+            tuples.push(slots);
+        }
+    }
+    if tuples.is_empty() {
+        return Ok(Bindings::placeholder_only(placeholder));
+    }
+
+    let count = tuples.len() as u32;
     let sizes = [
         vk::DescriptorPoolSize::default()
             .ty(vk::DescriptorType::SAMPLED_IMAGE)
-            .descriptor_count(count),
+            .descriptor_count(count * impeller_hal::MAX_EFFECT_TEXTURES as u32),
         vk::DescriptorPoolSize::default()
             .ty(vk::DescriptorType::SAMPLER)
             .descriptor_count(count),
@@ -264,7 +341,7 @@ pub fn build(
     let alloc = vk::DescriptorSetAllocateInfo::default()
         .descriptor_pool(pool)
         .set_layouts(&layouts);
-    bindings.sets = match unsafe { device.allocate_descriptor_sets(&alloc) } {
+    let raw_sets = match unsafe { device.allocate_descriptor_sets(&alloc) } {
         Ok(sets) => sets,
         Err(e) => {
             bindings.destroy(ctx);
@@ -272,15 +349,15 @@ pub fn build(
         }
     };
 
-    let images: Vec<(vk::Image, vk::Format)> = textures
-        .iter()
-        .map(|t| (t.raw_image(), crate::resource::vk_format(t.format())))
-        .collect();
-    for (index, (image, format)) in images.iter().enumerate() {
+    // One view per supplied texture, reused by every set that names it. Views
+    // are per image rather than per set because a set is a tuple of images and
+    // two tuples naming the same texture want the same view.
+    let mut views: Vec<vk::ImageView> = Vec::with_capacity(textures.len());
+    for texture in textures {
         let view_info = vk::ImageViewCreateInfo::default()
-            .image(*image)
+            .image(texture.raw_image())
             .view_type(vk::ImageViewType::TYPE_2D)
-            .format(*format)
+            .format(crate::resource::vk_format(texture.format()))
             .subresource_range(
                 vk::ImageSubresourceRange::default()
                     .aspect_mask(vk::ImageAspectFlags::COLOR)
@@ -292,34 +369,58 @@ pub fn build(
                     .level_count(vk::REMAINING_MIP_LEVELS)
                     .layer_count(1),
             );
-        let view = match unsafe { device.create_image_view(&view_info, None) } {
-            Ok(view) => view,
+        match unsafe { device.create_image_view(&view_info, None) } {
+            Ok(view) => views.push(view),
             Err(e) => {
+                bindings.views = views;
                 bindings.destroy(ctx);
                 return Err(backend_err("create_image_view", e));
             }
-        };
-        bindings.views.push(view);
+        }
+    }
+    bindings.views = views;
 
-        let image_info = [vk::DescriptorImageInfo::default()
-            .image_view(view)
-            .image_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)];
+    // A binding the tuple leaves empty still has to be written, because a
+    // pipeline must have every binding it declares bound however unreachable
+    // the branch reading it. The context's placeholder view is what goes there
+    // -- the same one-pixel white texture a solid fill binds.
+    let blank = ctx.placeholder_view()?;
+    for (index, tuple) in tuples.iter().enumerate() {
+        let set = raw_sets[index];
+        let mut image_infos = Vec::with_capacity(impeller_hal::MAX_EFFECT_TEXTURES);
+        for slot in tuple.iter() {
+            let view = match slot {
+                Some(slot) => bindings.views[*slot as usize],
+                None => blank,
+            };
+            image_infos.push([vk::DescriptorImageInfo::default()
+                .image_view(view)
+                .image_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)]);
+        }
         let sampler_info = [vk::DescriptorImageInfo::default().sampler(sampler)];
-        let writes = [
+        let mut writes: Vec<vk::WriteDescriptorSet> = image_infos
+            .iter()
+            .enumerate()
+            .map(|(position, info)| {
+                vk::WriteDescriptorSet::default()
+                    .dst_set(set)
+                    .dst_binding(image_binding(position))
+                    .descriptor_type(vk::DescriptorType::SAMPLED_IMAGE)
+                    .image_info(info)
+            })
+            .collect();
+        writes.push(
             vk::WriteDescriptorSet::default()
-                .dst_set(bindings.sets[index])
-                .dst_binding(0)
-                .descriptor_type(vk::DescriptorType::SAMPLED_IMAGE)
-                .image_info(&image_info),
-            vk::WriteDescriptorSet::default()
-                .dst_set(bindings.sets[index])
+                .dst_set(set)
                 .dst_binding(1)
                 .descriptor_type(vk::DescriptorType::SAMPLER)
                 .image_info(&sampler_info),
-        ];
-        // SAFETY: the sets come from the pool above, the view outlives the
-        // submission, and nothing is reading these yet.
+        );
+        // SAFETY: the sets come from the pool above, the views outlive the
+        // submission that reads them, and every binding written is one the
+        // layout declares.
         unsafe { device.update_descriptor_sets(&writes, &[]) };
+        bindings.sets.push((*tuple, set));
     }
 
     Ok(bindings)
