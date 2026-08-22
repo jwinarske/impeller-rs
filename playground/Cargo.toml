@@ -22,11 +22,14 @@ publish = false
 license = "BSD-3-Clause"
 
 [dependencies]
-impeller-core = { path = "../crates/impeller-core" }
-impeller-hal = { path = "../crates/impeller-hal" }
-impeller-hal-vulkan = { path = "../crates/impeller-hal-vulkan" }
-impeller-present = { path = "../crates/impeller-present" }
-impeller-present-vk = { path = "../crates/impeller-present-vk" }
+# The facade alone, which is the point rather than a tidy-up: this is the only
+# program outside the workspace, so it is the only check that what a consumer
+# can reach is enough to write something real. It reached past the facade to six
+# crates while `present-wsi` was a feature that enabled nothing.
+#
+# `impeller-testkit` is the exception and stays, being the scene corpus this
+# tool exists to look at rather than any part of the renderer's surface.
+impeller = { path = "../crates/impeller", package = "impeller-rs" }
 impeller-testkit = { path = "../crates/impeller-testkit" }
 
 ash = "0.38"

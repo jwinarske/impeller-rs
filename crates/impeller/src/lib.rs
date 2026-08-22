@@ -41,13 +41,39 @@ pub use impeller_core::{
     TileMode, Vec2, VertexMode, Vertices, MAX_STOPS,
 };
 pub use impeller_hal::{
-    mip_levels_for, BlendFactor, Capabilities, Error, Result, RuntimeProgram, MORPHOLOGY_TAPS,
-    RUNTIME_FLOATS,
+    mip_levels_for, BlendFactor, Capabilities, Error, Hal, Result, RuntimeProgram,
+    TextureDescriptor, TextureUsage, MORPHOLOGY_TAPS, RUNTIME_FLOATS,
 };
+
+/// Draw a recording into a texture this crate did not create.
+///
+/// [`Context::draw`] covers the case where the target came from
+/// [`Context::create_surface`], and that is the ordinary one. This is the other:
+/// a swapchain hands out its own images, and drawing into one means naming a
+/// texture the caller got from somewhere else. Without this the presentation
+/// path re-exported above reached a swapchain and then had nothing to draw into
+/// its images with, which is a window a caller can open and not fill.
+pub use impeller_core::{execute, execute_deferred, execute_layers, render_offscreen};
 
 /// Direct scanout to a display, with no compositor.
 #[cfg(feature = "drm")]
 pub use impeller_present_drm as drm;
+
+/// The Vulkan backend itself.
+///
+/// Re-exported because [`Context`] already exposes it: `Context::Vulkan` is a
+/// public variant holding a `VulkanContext`, so the type was part of this
+/// crate's surface whether or not it could be named. Without this a caller
+/// could match the variant and use what came out by inference, but could not
+/// write its type down -- so no function of theirs could take one, and reaching
+/// the swapchain meant depending on the backend crate separately and matching
+/// its version by hand.
+#[cfg(feature = "vulkan")]
+pub use impeller_hal_vulkan as vulkan;
+
+/// The GLES backend, re-exported for the same reason.
+#[cfg(feature = "gles")]
+pub use impeller_hal_gles as gles;
 
 /// A Vulkan WSI swapchain, for drawing into a window system's surface.
 ///

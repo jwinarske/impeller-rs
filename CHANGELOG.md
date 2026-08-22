@@ -23,8 +23,6 @@ What stands between here and a first release with an API:
   combining a sprite's color with its texels, which needs the blend set written
   into the shader, since advanced blending here is the hardware's.
 - Two operations are absent: `drawRSuperellipse` and `clipRSuperellipse`.
-- Nothing outside the workspace is written against the facade alone. The
-  playground reaches past it, which is the evidence that it is not yet enough.
 
 ## 0.0.0 — 2026-08-22
 

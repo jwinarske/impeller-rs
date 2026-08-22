@@ -560,11 +560,7 @@ version = "0.1.0"
 dependencies = [
  "ash",
  "ash-window",
- "impeller-core",
- "impeller-hal",
- "impeller-hal-vulkan",
- "impeller-present",
- "impeller-present-vk",
+ "impeller-rs",
  "impeller-testkit",
  "raw-window-handle",
  "winit",
@@ -599,6 +595,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "impeller-rs"
+version = "0.1.0"
+dependencies = [
+ "impeller-core",
+ "impeller-hal",
+ "impeller-hal-vulkan",
+ "impeller-present",
+ "impeller-present-vk",
+ "impeller-shaders",
+]
+
+[[package]]
 name = "impeller-shaders"
 version = "0.1.0"
 dependencies = [
@@ -614,6 +622,8 @@ dependencies = [
  "impeller-geometry",
  "impeller-hal",
  "impeller-renderer",
+ "impeller-shaders",
+ "impeller-text",
 ]
 
 [[package]]

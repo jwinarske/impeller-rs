@@ -506,3 +506,55 @@ fn the_scanout_trait_names_nothing_from_the_library_behind_it() {
          checked {checked} files"
     );
 }
+
+/// The one program outside the workspace has to reach everything it needs
+/// through the facade.
+///
+/// It is the only consumer this repository has, so it is the only evidence that
+/// what a caller can reach is enough to write something real with. That
+/// evidence is worth nothing if it is allowed to reach past the facade to the
+/// crates underneath, which it did for as long as `present-wsi` was a feature
+/// that enabled nothing: it named six of them, and the one it could not do
+/// without was the swapchain the facade had no route to.
+///
+/// So the rule is that it names the facade and nothing else from here, with one
+/// exception. `impeller-testkit` is the scene corpus this tool exists to look
+/// at, not part of the renderer's surface, and a consumer who is not a test
+/// harness would never want it.
+#[test]
+fn the_playground_reaches_everything_through_the_facade() {
+    let manifest = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .expect("workspace root")
+        .join("playground/Cargo.toml");
+    let source = std::fs::read_to_string(&manifest)
+        .unwrap_or_else(|e| panic!("reading {}: {e}", manifest.display()));
+
+    let allowed = ["impeller", "impeller-testkit"];
+    let mut named = Vec::new();
+    for line in source.lines() {
+        let trimmed = line.trim_start();
+        if trimmed.starts_with('#') {
+            continue;
+        }
+        let Some((name, _)) = trimmed.split_once('=') else {
+            continue;
+        };
+        let name = name.trim();
+        if name.starts_with("impeller") {
+            named.push(name.to_string());
+        }
+    }
+    assert!(
+        !named.is_empty(),
+        "the playground names no crate from here, which cannot be right"
+    );
+    for name in &named {
+        assert!(
+            allowed.contains(&name.as_str()),
+            "the playground depends on {name}, reaching past the facade.\n\
+             Whatever it needed from there is missing from `impeller`, and \
+             adding the dependency hides that instead of fixing it."
+        );
+    }
+}

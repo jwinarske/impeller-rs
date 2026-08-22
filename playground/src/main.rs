@@ -25,11 +25,11 @@
 
 mod live;
 
-use impeller_core::{Canvas, Color, Paint, Rect, TileMode};
-use impeller_hal::{Extent2D, PixelFormat, TextureDescriptor};
-use impeller_hal_vulkan::{DevicePreference, VulkanContext, VulkanHal, VulkanTexture};
-use impeller_present::PresentTarget;
-use impeller_present_vk::{PresentMode, SwapchainTarget};
+use impeller::present::PresentTarget;
+use impeller::vulkan::{DevicePreference, VulkanContext, VulkanHal, VulkanTexture};
+use impeller::wsi::{PresentMode, SwapchainTarget};
+use impeller::{Canvas, Color, Paint, Rect, TileMode};
+use impeller::{Extent2D, PixelFormat, TextureDescriptor};
 use impeller_testkit::{corpus, record_scene, Scene};
 use raw_window_handle::{HasDisplayHandle, HasWindowHandle};
 use winit::application::ApplicationHandler;
@@ -250,7 +250,7 @@ impl Stage {
             Ok(texture) => texture,
             Err(e) => return eprintln!("cannot allocate a target for {}: {e}", scene.name),
         };
-        match impeller_core::execute::<VulkanHal>(&mut self.ctx, &mut texture, &recording, &[]) {
+        match impeller::execute::<VulkanHal>(&mut self.ctx, &mut texture, &recording, &[]) {
             Ok(()) => self.scene_texture = Some((texture, extent)),
             Err(e) => {
                 eprintln!("cannot render {}: {e}", scene.name);
@@ -260,7 +260,7 @@ impl Stage {
     }
 
     /// Compose a corpus scene's texture into the window, centered and scaled.
-    fn corpus_frame(&mut self, scene: &Scene) -> Option<impeller_core::Recording> {
+    fn corpus_frame(&mut self, scene: &Scene) -> Option<impeller::Recording> {
         self.ensure_scene_texture(scene);
         let (_, scene_extent) = self.scene_texture.as_ref()?;
         let window = self.target.extent();
@@ -324,7 +324,7 @@ impl Stage {
         self.scene_texture = Some((texture, extent));
     }
 
-    fn submit(&mut self, recording: &impeller_core::Recording, images: &[&VulkanTexture]) {
+    fn submit(&mut self, recording: &impeller::Recording, images: &[&VulkanTexture]) {
         if let Err(e) = self.target.acquire(&mut self.ctx) {
             return eprintln!("acquire: {e}");
         }
@@ -474,7 +474,7 @@ impl ApplicationHandler for App {
             } = stage;
             target.destroy(&mut ctx);
             // SAFETY: the swapchain built on it has just been destroyed.
-            unsafe { impeller_present_vk::destroy_surface(&ctx, surface) };
+            unsafe { impeller::wsi::destroy_surface(&ctx, surface) };
         }
     }
 }
