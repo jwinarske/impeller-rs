@@ -2315,6 +2315,95 @@ fn atlas_scenes() -> Vec<Scene> {
                 alpha: 1.0,
             },
         ),
+        // Every plate above leaves the batch blend at its default, so the
+        // field had never been anything else and a batch that ignored it would
+        // have drawn all five correctly. These two overlap deliberately: under
+        // `Plus` the overlaps are where the mode shows, and a sprite drawn on
+        // its own says nothing about what combining means.
+        atlas(
+            "atlas/sprites-added-where-they-overlap",
+            AtlasSpec {
+                sprites: (0..5)
+                    .map(|i| SpriteSpec {
+                        source: [0.0, 0.0, 8.0, 8.0],
+                        rotate: 0.0,
+                        scale: 7.0,
+                        // Sixteen apart against a width of fifty-six, so each
+                        // overlaps its neighbor by well over half and the run
+                        // has single, double and triple coverage in it.
+                        translate: [18.0 + i as f32 * 16.0, 36.0],
+                        color: [0.35, 0.2, 0.5, 1.0],
+                    })
+                    .collect(),
+                blend: BlendMode::Plus,
+                alpha: 1.0,
+            },
+        ),
+        atlas(
+            "atlas/sprites-multiplied-into-what-is-behind",
+            // `Multiply` reads the destination, which a batch drawn in one
+            // call has to get right within itself as well as against the
+            // background: the sprites overlap, so some fragments multiply
+            // against another sprite rather than against the ground.
+            AtlasSpec {
+                sprites: (0..4)
+                    .map(|i| {
+                        let (sx, sy) = ((i % 2) as f32 * 4.0, (i / 2) as f32 * 4.0);
+                        SpriteSpec {
+                            source: [sx, sy, sx + 4.0, sy + 4.0],
+                            rotate: 0.0,
+                            scale: 9.0,
+                            translate: [22.0 + i as f32 * 22.0, 46.0],
+                            color: WHITE,
+                        }
+                    })
+                    .collect(),
+                blend: BlendMode::Multiply,
+                alpha: 1.0,
+            },
+        ),
+        atlas(
+            "atlas/sprites-of-different-sizes-from-one-sheet",
+            // One sheet, four source rectangles of different extents, each
+            // scaled differently again. What this asks is that a sprite's
+            // coordinates come from its own source rather than from a size
+            // shared by the batch -- which four equal quadrants could not ask,
+            // being indistinguishable from a batch that assumed them.
+            AtlasSpec {
+                sprites: vec![
+                    SpriteSpec {
+                        source: [0.0, 0.0, 8.0, 8.0],
+                        rotate: 0.0,
+                        scale: 6.0,
+                        translate: [8.0, 8.0],
+                        color: WHITE,
+                    },
+                    SpriteSpec {
+                        source: [4.0, 0.0, 8.0, 4.0],
+                        rotate: 0.0,
+                        scale: 9.0,
+                        translate: [64.0, 12.0],
+                        color: WHITE,
+                    },
+                    SpriteSpec {
+                        source: [0.0, 4.0, 2.0, 8.0],
+                        rotate: 0.0,
+                        scale: 14.0,
+                        translate: [10.0, 66.0],
+                        color: WHITE,
+                    },
+                    SpriteSpec {
+                        source: [2.0, 2.0, 6.0, 6.0],
+                        rotate: 0.4,
+                        scale: 8.0,
+                        translate: [78.0, 62.0],
+                        color: WHITE,
+                    },
+                ],
+                blend: BlendMode::SrcOver,
+                alpha: 1.0,
+            },
+        ),
         atlas(
             "atlas/draw-atlas-advanced-and-transform",
             AtlasSpec {

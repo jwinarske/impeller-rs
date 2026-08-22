@@ -10727,3 +10727,71 @@ fn a_skew_is_a_transform_class_of_its_own() {
          against {upright}"
     );
 }
+
+#[test]
+fn an_atlas_batch_honors_the_paint_s_blend() {
+    // A batch is one draw, so its blend is one piece of pipeline state shared
+    // by every sprite in it -- and where two sprites overlap, the mode is being
+    // asked how a fragment combines with something the same draw put down a
+    // moment earlier. Nothing had asked before: every plate and every other
+    // test of this call left the blend at its default, so a batch that dropped
+    // it on the floor would have satisfied all of them.
+    let Some(mut ctx) = context() else { return };
+    let mut image = ctx
+        .create_image(Extent2D::new(4, 4), PixelFormat::Rgba8Unorm)
+        .expect("image");
+    ctx.write_image(&mut image, &quadrant_image())
+        .expect("upload");
+
+    // One quadrant of the sheet rather than the whole of it, so the sprite is
+    // a flat color and a sampled texel does not depend on where in the sprite
+    // it was taken. Tinted to half, because then the sum of two is exactly one
+    // and a mode that saturated would read the same as one that added.
+    let sprite = |x: f32| {
+        let mut sprite = Sprite::new(
+            SourceRect::new(2.0, 2.0, 2.0, 2.0),
+            Affine2::from_scale_angle_translation(Vec2::splat(24.0), 0.0, Vec2::new(x, 40.0)),
+        );
+        sprite.color = Color::linear(0.5, 0.5, 0.5, 1.0);
+        sprite
+    };
+    let sprites = [sprite(28.0), sprite(52.0)];
+
+    let overlap = |ctx: &mut Context, blend: BlendMode| -> [u8; 4] {
+        let mut canvas = Canvas::new(SIZE);
+        canvas.clear(Color::BLACK);
+        canvas
+            .draw_atlas(
+                &sprites,
+                Extent2D::new(4, 4),
+                &Paint::image(0, Rect::from_size(128.0, 128.0)).with_blend(blend),
+            )
+            .expect("atlas");
+        let mut surface = ctx
+            .create_surface(SIZE, PixelFormat::Rgba8Unorm)
+            .expect("surface");
+        ctx.draw_with_images(&mut surface, &canvas.finish(), &[&image])
+            .expect("draw");
+        let pixels = ctx.read(&mut surface).expect("read");
+        ctx.destroy_surface(surface);
+        // Inside both sprites: the first spans 28 to 76, the second 52 to 100.
+        pixel(&pixels, 60, 52)
+    };
+
+    let over = overlap(&mut ctx, BlendMode::SrcOver);
+    let plus = overlap(&mut ctx, BlendMode::Plus);
+    ctx.destroy_image(image);
+
+    // The sprites are opaque, so `SrcOver` leaves the upper one and nothing of
+    // the one beneath: the overlap reads as either sprite alone does.
+    assert!(
+        (100..160).contains(&over[0]),
+        "SrcOver should leave the top sprite's half brightness, got {over:?}"
+    );
+    // Added, the two halves make a whole. A different number, not merely a
+    // brighter-looking one.
+    assert!(
+        plus[0] > 230,
+        "Plus should add the two halves to full brightness, got {plus:?}"
+    );
+}
