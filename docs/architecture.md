@@ -1776,12 +1776,24 @@ What decides whether a Yocto release can build this at all is `rust-version`
 in the workspace manifest, which is separate and deliberately lower. At 1.85 it
 also admits whinlatter's 1.90, checked. Walnascar's 1.84.1 misses by a single
 release, and not on anything written here: a transitive `getrandom` needs
-edition 2024, which stabilized in 1.85. Scarthgap's 1.75 is further out than
-its number suggests -- its Cargo predates the lockfile version this workspace
-uses and cannot read `Cargo.lock` at all, so the question of whether the code
-would compile never arises. Supporting the current LTS would mean an older
-lockfile and a dependency set ten releases back, which is a different project
-from this one.
+edition 2024, which stabilized in 1.85.
+
+Scarthgap's 1.75 is the LTS and so worth knowing the price of rather than
+guessing at, and the price is not what the ten-release gap suggests. Measured
+rather than assumed: every crate in the workspace compiles on 1.75, and what
+stands between is four things, three of them mechanical. The lockfile has to be
+version three, which the newer resolver will produce when asked for a lower
+minimum. Two `c"..."` literals in the Vulkan backend want 1.77, and one
+`Option::is_none_or` in the GLES one wants 1.82; both have plain equivalents.
+
+The fourth is not mechanical. `naga` 23 floors at 1.76 across the whole line,
+so the shader pipeline would have to move back to 22 -- and the snapshots say
+that is not a free substitution. The same shader translates to the same number
+of SPIR-V words and a different hash, so the emitted code differs and would
+need validating on hardware rather than assumed equivalent. That, and not the
+language version, is what supporting the LTS actually costs. The test targets
+are a separate matter again, where an older `googletest`'s `Result` alias takes
+one parameter where the current one takes two.
 
 A pinned toolchain also makes the gate mean the same thing everywhere, which
 matters here more than it would elsewhere: the lint step denies warnings, and a
