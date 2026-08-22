@@ -26,7 +26,13 @@ default = ["vulkan", "present-wsi"]
 vulkan = ["dep:impeller-hal-vulkan"]
 gles = ["dep:impeller-hal-gles"]
 drm = ["dep:impeller-present-drm"]
-present-wsi = []
+# A presentation path and a rendering backend are orthogonal axes, and `drm` is
+# the proof: it names no backend and composes with either. These two are not
+# counter-examples to that. A Vulkan swapchain is Vulkan's own object and an EGL
+# surface is GLES's, so each implies the backend whose API it belongs to --
+# which is a property of those window systems rather than of this arrangement.
+present-wsi = ["vulkan", "dep:impeller-present-vk"]
+present-egl = ["gles", "dep:impeller-present-egl"]
 
 [dev-dependencies]
 googletest = { workspace = true }
@@ -48,3 +54,5 @@ impeller-present = { workspace = true }
 impeller-hal-vulkan = { workspace = true, optional = true }
 impeller-hal-gles = { workspace = true, optional = true }
 impeller-present-drm = { workspace = true, optional = true }
+impeller-present-vk = { workspace = true, optional = true }
+impeller-present-egl = { workspace = true, optional = true }

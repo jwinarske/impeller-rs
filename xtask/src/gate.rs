@@ -75,7 +75,17 @@ const STEPS: &[Step] = &[
 /// The two axes are meant to compose independently, and the way that stops
 /// being true is a crate quietly depending on a backend it did not name. Each
 /// of these is a build that would fail if one did.
-const FEATURES: &[&str] = &["vulkan", "gles", "vulkan,gles,drm"];
+const FEATURES: &[&str] = &[
+    "vulkan",
+    "gles",
+    "vulkan,gles,drm",
+    // The presentation axes, which were absent here for as long as one of them
+    // was a feature that enabled nothing: a matrix that never turned a feature
+    // on cannot notice that turning it on does nothing.
+    "present-wsi",
+    "gles,present-egl",
+    "vulkan,gles,drm,present-wsi,present-egl",
+];
 
 /// Run the gate. Returns whether everything passed.
 pub fn run(software: bool) -> bool {

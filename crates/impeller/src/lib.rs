@@ -49,5 +49,20 @@ pub use impeller_hal::{
 #[cfg(feature = "drm")]
 pub use impeller_present_drm as drm;
 
+/// A Vulkan WSI swapchain, for drawing into a window system's surface.
+///
+/// This was a feature name that enabled nothing for as long as it existed:
+/// `present-wsi` was in the default set and gated no dependency, and the crate
+/// implementing it was not one. So the facade's default build advertised a
+/// presentation path it had no route to, and a caller wanting a window had to
+/// reach past this crate to `impeller-present-vk` -- which the playground does,
+/// and which was the visible symptom nobody read as one.
+#[cfg(feature = "present-wsi")]
+pub use impeller_present_vk as wsi;
+
+/// An EGL window surface, which is the GLES backend's way to the same place.
+#[cfg(feature = "present-egl")]
+pub use impeller_present_egl as egl;
+
 /// Presentation targets and format negotiation.
 pub use impeller_present as present;

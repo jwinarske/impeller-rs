@@ -207,12 +207,15 @@ jobs:
       # If a dependency ever starts compiling C, this stops being about the
       # linker and starts failing here, which is the point.
       #
-      # All three axes at once, because that compiles the most code and is what
-      # a board actually enables.
+      # Every axis at once, because that compiles the most code and is what a
+      # board actually enables. The presentation features are named here too:
+      # one of them enabled nothing for as long as it existed, and a check that
+      # never turns a feature on cannot notice that turning it on does nothing.
       - name: Check
         run: |
           cargo check -p impeller-rs --no-default-features \
-            --features vulkan,gles,drm --target ${{ matrix.target }} --locked
+            --features vulkan,gles,drm,present-wsi,present-egl \
+            --target ${{ matrix.target }} --locked
 
   supply-chain:
     name: supply chain

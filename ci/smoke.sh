@@ -52,7 +52,7 @@ step "example" cargo run -q -p impeller-rs --example frame -- "$(mktemp -u).ppm"
 step "gallery" cargo run -q -p xtask -- gallery "$(mktemp -u).ppm"
 
 echo "feature matrix"
-for features in vulkan gles vulkan,gles,drm; do
+for features in vulkan gles vulkan,gles,drm present-wsi gles,present-egl vulkan,gles,drm,present-wsi,present-egl; do
     step "$features" cargo check -p impeller-rs --no-default-features --features "$features"
 done
 

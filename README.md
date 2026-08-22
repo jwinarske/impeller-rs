@@ -131,11 +131,18 @@ downgrade that changes the emitted SPIR-V; `docs/architecture.md` has the
 measurements.
 
 ```sh
-cargo build                              # default: vulkan + WSI
-cargo build --features gles,drm          # the classic embedded GBM path
-cargo build --features vulkan,gles,drm   # one binary that picks at runtime
+cargo build                                   # default: vulkan + WSI
+cargo build --features gles,present-egl       # GLES into an EGL window
+cargo build --features gles,drm               # the classic embedded GBM path
+cargo build --features vulkan,gles,drm        # one binary that picks at runtime
 cargo test
 ```
+
+The two axes are named separately because they are separate. `drm` names no
+backend and composes with either, which is the orthogonality the whole design
+rests on. `present-wsi` and `present-egl` each imply a backend, not because the
+axes are coupled but because a Vulkan swapchain is Vulkan's own object and an
+EGL surface is GLES's.
 
 A test that finds no device prints why and returns, and `cargo test` captures
 the output of a passing test — so a run with nothing to run on looks exactly
@@ -243,7 +250,7 @@ do — a backend and a presentation path are orthogonal, and a combination that
 only builds because another feature happened to be on is a coupling:
 
 ```sh
-for f in vulkan gles vulkan,gles,drm; do
+for f in vulkan gles vulkan,gles,drm present-wsi gles,present-egl vulkan,gles,drm,present-wsi,present-egl; do
   cargo check -p impeller-rs --no-default-features --features "$f" || break
 done
 ```

@@ -431,6 +431,8 @@ dependencies = [
  "impeller-hal-vulkan",
  "impeller-present",
  "impeller-present-drm",
+ "impeller-present-egl",
+ "impeller-present-vk",
  "impeller-rs",
  "impeller-shaders",
 ]

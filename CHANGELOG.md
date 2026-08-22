@@ -17,9 +17,6 @@ the build.
 
 What stands between here and a first release with an API:
 
-- The facade cannot present to a window. `present-wsi` is in its default
-  feature set and gates nothing, and `impeller-present-vk` is not a dependency
-  of it. A consumer reaching a swapchain has to go around the facade.
 - Two operations are partial against `dart:ui`. `transform` takes a 2D affine
   where `dart:ui` takes a 4×4 and so admits perspective, which is a deliberate
   design limit rather than an omission. `drawAtlas` takes no blend mode for
