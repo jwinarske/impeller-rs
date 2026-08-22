@@ -1772,6 +1772,14 @@ into a failure on a developer's machine rather than one found in a bitbake
 build. The pin has no effect on a bitbake build itself, which uses the
 toolchain its own recipe provides and never reads this file.
 
+What moves the number is the deployment target moving, not a new release
+appearing upstream: it tracks whichever Yocto release this is meant to run on,
+so it follows that recipe rather than the calendar. Moving it means running the
+gate under the new version, and the shader snapshots are the part worth looking
+at rather than trusting -- not because the compiler translates anything, but
+because a Yocto release that moves Rust tends to move `naga` too, and that does
+change the emitted SPIR-V.
+
 What decides whether a Yocto release can build this at all is `rust-version`
 in the workspace manifest, which is separate and deliberately lower. At 1.85 it
 also admits whinlatter's 1.90, checked. Walnascar's 1.84.1 misses by a single
