@@ -314,6 +314,27 @@ rectangular; the test for that is relative rather than exact, since `cos` of a
 right angle in `f32` is about `-4.4e-8` and an exact comparison would refuse
 precisely what the caller asked for.
 
+**A difference clip narrows by the complement, which is two contours and an
+even-odd rule.** `dart:ui` spells it `clipRect` with `ClipOp.difference`, and it
+is the only clip that operation applies to there -- `clipPath` and `clipRRect`
+intersect and take no operation. It can never be a scissor whatever the
+transform, the complement of a rectangle not being one, so it narrows through
+the stencil like an arbitrary shape: the target with the rectangle taken out of
+it, which is the target's contour and the rectangle's filled by even-odd. A ring
+is built the same way.
+
+Both contours are in device coordinates and filled through the identity rather
+than in user space through the transform, and the reason is the target: it is a
+device rectangle, and expressing it in user space would mean inverting a
+transform that may not be invertible. The rectangle's own corners go through the
+transform instead, so a rotation removes the quadrilateral rather than a box
+around one -- which is a third again more area, and is what the test measures.
+
+The tracked clip bounds are deliberately not narrowed. Removing a rectangle from
+the middle of a region leaves its bounding box where it was, and removing one at
+the edge leaves a box that is too large -- the safe direction, since those bounds
+decide how much a caller draws and how large a layer is allocated.
+
 **The stencil holds a clip's nesting depth, not a mask of which clips apply.**
 The obvious encoding gives each clip a bit, which caps nesting at eight and
 makes intersecting two clips a per-bit affair. A depth fits a stack of any size

@@ -765,6 +765,84 @@ impl Canvas {
         Ok(self)
     }
 
+    /// Narrow the clip to everything *outside* a rectangle in user space.
+    ///
+    /// `dart:ui` spells this `clipRect` with `ClipOp.difference`, and it is the
+    /// only clip that operation applies to there -- `clipPath` and `clipRRect`
+    /// intersect and take no operation.
+    ///
+    /// Never a scissor, whatever the transform: the complement of a rectangle
+    /// is not one, and a scissor is. So this goes through the stencil like an
+    /// arbitrary shape, and the shape it narrows by is the target with the
+    /// rectangle taken out of it -- two contours filled by the even-odd rule,
+    /// which is what makes the second a hole in the first rather than a second
+    /// region drawn over it. `draw_drrect` builds a ring the same way.
+    ///
+    /// Both contours are built in device coordinates and filled through the
+    /// identity, rather than in user space through the transform. The reason is
+    /// the target: it is a device rectangle, and expressing it in user space
+    /// would mean inverting a transform that may not be invertible. The
+    /// rectangle's own corners go through the transform here instead, so a
+    /// rotation gives the quadrilateral it should rather than a box around one.
+    pub fn clip_out_rect(&mut self, rect: Rect) -> Result<&mut Self> {
+        if self.clip.is_some_and(Scissor::is_empty) {
+            return Ok(self);
+        }
+        let mut builder = PathBuilder::new().with_fill_rule(FillRule::EvenOdd);
+        // The whole target, which is what "outside the rectangle" is measured
+        // against.
+        let target = Rect::new(
+            self.target.origin.x,
+            self.target.origin.y,
+            self.target.origin.x + self.target.extent.width as f32,
+            self.target.origin.y + self.target.extent.height as f32,
+        );
+        builder
+            .move_to(Vec2::new(target.left, target.top))
+            .line_to(Vec2::new(target.right, target.top))
+            .line_to(Vec2::new(target.right, target.bottom))
+            .line_to(Vec2::new(target.left, target.bottom))
+            .close();
+        // The rectangle's corners under the transform, in the order that keeps
+        // the contour simple. A degenerate one encloses no area and takes
+        // nothing out, which is the right answer for a clip that removes an
+        // empty rectangle.
+        let corners = [
+            Vec2::new(rect.left, rect.top),
+            Vec2::new(rect.right, rect.top),
+            Vec2::new(rect.right, rect.bottom),
+            Vec2::new(rect.left, rect.bottom),
+        ]
+        .map(|corner| self.transform.transform_point2(corner));
+        if !corners.iter().all(|corner| corner.is_finite()) {
+            // A corner that is not a number describes no rectangle, so there is
+            // nothing to take out and the clip is left as it was.
+            return Ok(self);
+        }
+        builder.move_to(corners[0]);
+        for corner in &corners[1..] {
+            builder.line_to(*corner);
+        }
+        builder.close();
+
+        let paint = RenderPaint {
+            material: Material::solid([1.0, 1.0, 1.0, 1.0]),
+            filter: ColorFilter::None,
+            blend: BlendMode::Src,
+            clip: self.clip,
+            stencil: ClipState::narrow(self.depth),
+        };
+        self.renderer
+            .fill_into(&mut self.batch, &builder.build(), Affine2::IDENTITY, &paint)?;
+        self.depth += 1;
+        // The tracked bounds are left alone, and that is not an oversight.
+        // Removing a rectangle from the middle of a region leaves its bounding
+        // box exactly where it was, and removing one from the edge leaves a box
+        // that is too large -- which is the safe direction, since these bounds
+        // decide how much a caller draws and how large a layer is allocated.
+        Ok(self)
+    }
+
     /// Narrow the clip to an arbitrary path in user space.
     ///
     /// Intersects with the clip already in force, like [`Self::clip_rect`], and

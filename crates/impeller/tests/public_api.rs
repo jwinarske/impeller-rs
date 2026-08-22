@@ -10347,3 +10347,83 @@ fn a_runtime_program_can_sample_more_than_one_texture() {
     ctx.destroy_image(first);
     ctx.destroy_image(second);
 }
+
+#[test]
+fn a_difference_clip_removes_the_rectangle_and_nothing_else() {
+    // `dart:ui` spells this `clipRect` with `ClipOp.difference`, and it is the
+    // only clip that operation applies to there. This table said `clipRect`
+    // was complete while it took no operation at all, which is the kind of
+    // overstatement a parity table exists not to make.
+    //
+    // Areas, because they are exact. A thirty-two square removed from a frame
+    // of sixteen thousand three hundred and eighty-four leaves fifteen thousand
+    // three hundred and sixty, and nothing about that number is a matter of
+    // taste -- a clip that removed a bounding box, or antialiased its edge into
+    // the count, would miss it.
+    let Some(mut ctx) = context() else { return };
+
+    let lit = |ctx: &mut Context, setup: &dyn Fn(&mut Canvas)| -> usize {
+        let mut canvas = Canvas::new(SIZE);
+        canvas.clear(Color::linear(0.0, 0.0, 0.0, 1.0));
+        canvas.save();
+        setup(&mut canvas);
+        canvas
+            .draw_rect(
+                Rect::from_size(128.0, 128.0),
+                &Paint::fill(Color::linear(1.0, 0.0, 0.0, 1.0)).with_anti_alias(false),
+            )
+            .expect("fill");
+        canvas.restore();
+        render(ctx, canvas)
+            .chunks_exact(4)
+            .filter(|texel| texel[0] > 0)
+            .count()
+    };
+
+    let whole = lit(&mut ctx, &|_| {});
+    assert_eq!(whole, 16384, "the unclipped fill covers the frame");
+
+    // A square taken out of the middle: the frame less its area, and the middle
+    // is what went.
+    let holed = lit(&mut ctx, &|c: &mut Canvas| {
+        c.clip_out_rect(Rect::new(48.0, 48.0, 80.0, 80.0))
+            .expect("out");
+    });
+    assert_eq!(
+        holed,
+        whole - 32 * 32,
+        "a difference clip should remove exactly the rectangle it names"
+    );
+
+    // Composed with an ordinary clip, which is the property that makes a clip
+    // stack a stack: each one may only narrow what the last allowed.
+    let both = lit(&mut ctx, &|c: &mut Canvas| {
+        c.clip_rect(Rect::new(24.0, 24.0, 104.0, 104.0))
+            .expect("in");
+        c.clip_out_rect(Rect::new(48.0, 48.0, 80.0, 80.0))
+            .expect("out");
+    });
+    assert_eq!(
+        both,
+        80 * 80 - 32 * 32,
+        "an intersect and a difference should compose to the one less the other"
+    );
+
+    // Under a rotation the rectangle is a quadrilateral, and a difference clip
+    // has to remove that rather than a box around it. Its area is what a
+    // rotation preserves, so the count is the same as the unrotated case even
+    // though the shape is not -- and a bounding box would take out half as much
+    // again. The transform is undone before the fill, so what is missing from
+    // the frame is the quadrilateral alone.
+    let turned = lit(&mut ctx, &|c: &mut Canvas| {
+        c.rotate(0.4);
+        c.clip_out_rect(Rect::new(30.0, 10.0, 70.0, 50.0))
+            .expect("out");
+        c.rotate(-0.4);
+    });
+    assert_eq!(
+        turned,
+        whole - 40 * 40,
+        "a rotated difference clip should remove the quadrilateral's own area"
+    );
+}

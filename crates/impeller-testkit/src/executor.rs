@@ -354,6 +354,11 @@ fn record_node(canvas: &mut Canvas, node: &Node, anti_alias: bool) -> Result<()>
             if let Some(shape) = &item.clip_shape {
                 canvas.clip_path(&shape.to_path())?;
             }
+            // After the narrowing clips, which is the order that makes a scene
+            // stating both mean what it reads as: keep to this, then not that.
+            if let Some(out) = item.clip_out {
+                canvas.clip_out_rect(rect_of(out))?;
+            }
             let paint = paint_for(item, anti_alias);
             // A rounded rectangle goes through the call the public API offers
             // for it rather than through its path, so the corpus exercises

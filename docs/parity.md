@@ -90,7 +90,7 @@ reason.
 | `drawShadow` | yes | `draw_shadow`: offset, blur and alpha all from the elevation, under one light | `a_shadow_falls_below_what_casts_it_and_widens_with_elevation` |
 | `drawRSuperellipse` | no | | |
 | `drawPicture` | yes | `draw_recording`, which composes a finished recording into this one. Tessellated rather than replayed -- see below for what that costs | `a_recording_drawn_into_another_keeps_its_own_layers_and_ramps` |
-| `clipRect` | yes | `clip_rect` | `clipped-circle`, `shape-clip-and-scissor-together` |
+| `clipRect` | yes | `clip_rect`, and `clip_out_rect` for `ClipOp.difference` | `a_difference_clip_removes_the_rectangle_and_nothing_else` |
 | `clipPath` | yes | `clip_path` | `clip-varies-between-draws`, `shape-clipped-fill` |
 | `clipRRect` | via | `clip_path` of `Rect::to_rounded_path` | |
 | `clipRSuperellipse` | no | | |

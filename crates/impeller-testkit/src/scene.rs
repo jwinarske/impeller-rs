@@ -352,6 +352,13 @@ pub struct Item {
     /// Confine this item to a rectangle, given in the item's own space as
     /// `[left, top, right, bottom]` and carried through its transform.
     pub clip: Option<[f32; 4]>,
+    /// Keep this item out of a rectangle, stated the same way.
+    ///
+    /// `dart:ui` spells it `clipRect` with `ClipOp.difference`, and it applies
+    /// after [`Self::clip`] so a scene can state both -- which is the case
+    /// worth having, since a difference clip alone leaves the bounds it was
+    /// given untouched.
+    pub clip_out: Option<[f32; 4]>,
     /// Confine this item to an arbitrary shape, in the item's own space.
     ///
     /// Needs the stencil rather than the scissor, and so exercises a quite
@@ -391,6 +398,7 @@ impl Item {
             color_filter: ColorFilter::None,
             blend: BlendMode::Src,
             clip: None,
+            clip_out: None,
             clip_shape: None,
         }
     }
@@ -421,6 +429,7 @@ impl Item {
             color_filter: ColorFilter::None,
             blend: BlendMode::Src,
             clip: None,
+            clip_out: None,
             clip_shape: None,
         }
     }
@@ -437,6 +446,7 @@ impl Item {
             color_filter: ColorFilter::None,
             blend: BlendMode::Src,
             clip: None,
+            clip_out: None,
             clip_shape: None,
         }
     }
@@ -469,6 +479,12 @@ impl Item {
     }
 
     /// Confine this item to `[left, top, right, bottom]` in its own space.
+    /// Keep this item out of a rectangle. See [`Self::clip_out`].
+    pub fn with_clip_out(mut self, rect: [f32; 4]) -> Self {
+        self.clip_out = Some(rect);
+        self
+    }
+
     pub fn with_clip(mut self, clip: [f32; 4]) -> Self {
         self.clip = Some(clip);
         self

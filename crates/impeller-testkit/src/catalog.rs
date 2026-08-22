@@ -1177,6 +1177,41 @@ fn gradient() -> Vec<Scene> {
 fn clip() -> Vec<Scene> {
     vec![
         plate(
+            "clip/difference-clip-keeps-what-is-outside",
+            // `clipRect` with `ClipOp.difference`, which is the one clip that
+            // operation applies to. Stated with an ordinary clip as well, since
+            // that is the arrangement where the two have to compose rather than
+            // the difference simply removing a square from a full frame.
+            vec![Item::fill(
+                Shape::Rect {
+                    min: [0.0, 0.0],
+                    max: [128.0, 128.0],
+                },
+                YELLOW,
+            )
+            .with_clip([16.0, 16.0, 112.0, 112.0])
+            .with_clip_out([48.0, 48.0, 80.0, 80.0])],
+        ),
+        plate(
+            "clip/difference-clip-under-a-rotation",
+            // Turned, the rectangle is a quadrilateral and the clip has to
+            // remove that rather than a box around it. The corners of the hole
+            // are what says which happened.
+            vec![Item::fill(
+                Shape::Rect {
+                    min: [0.0, 0.0],
+                    max: [128.0, 128.0],
+                },
+                GREEN,
+            )
+            .with_clip_out([34.0, 34.0, 94.0, 94.0])
+            .with_transform(Transform {
+                rotate: 0.4,
+                translate: [26.0, -22.0],
+                ..Transform::default()
+            })],
+        ),
+        plate(
             "clip/can-render-nested-clips",
             vec![Item::fill(
                 Shape::Rect {

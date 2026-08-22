@@ -54,7 +54,7 @@ blocked and are not any more.
 | `aiks_dl_basic_unittests.cc` | ~85 | 33 | superellipses, perspective, subpass optimizations |
 | `aiks_dl_path_unittests.cc` | ~31 | 18 | difference-of-rounded-rects, perspective |
 | `aiks_dl_gradient_unittests.cc` | ~40 | 23 | dithering |
-| `aiks_dl_clip_unittests.cc` | ~5 | 3 | difference clips |
+| `aiks_dl_clip_unittests.cc` | ~5 | 5 | nothing; this file is covered |
 | `aiks_dl_opacity_unittests.cc` | ~3 | 2 | subpass collapse |
 | `aiks_dl_blend_unittests.cc` | ~79 | 36 | framebuffer fetch, wide gamut, subpass collapse |
 | `aiks_dl_blur_unittests.cc` | ~59 | 25 | backdrop identity keys, mask blurs over a gradient |
@@ -66,7 +66,7 @@ blocked and are not any more.
 | `aiks_dl_runtime_effect_unittests.cc` | — | 5 | bounded by having two fixture programs rather than by the renderer |
 | `aiks_dl_unittests.cc` | ~39 | 10 | mostly internal optimizations; the picture cases are here now |
 
-The catalog holds one hundred and eighty-nine scenes of roughly four hundred,
+The catalog holds one hundred and ninety-one scenes of roughly four hundred,
 and the proportion is less interesting than which ones: the arithmetic of drawing is largely covered, and
 what is missing is either a capability this renderer does not have or a thing
 the scene model cannot describe.
