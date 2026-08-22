@@ -83,7 +83,7 @@ reason.
 | `drawPaint` | yes | `draw_paint`, which fills the clip rather than the target — not a rectangle a caller can easily write once a transform is in force | `drawing_the_paint_fills_the_clip_rather_than_the_target` |
 | `drawColor` | yes | `draw_color`, which blends and obeys the clip where `clear` replaces and ignores it | `drawing_a_color_blends_where_clearing_replaces` |
 | `drawParagraph` | out of scope | shaping and layout are not this project's; `draw_glyphs` takes a positioned run and an atlas | glyph tests |
-| `drawVertices` | yes | `draw_vertices`, with positions, texture coordinates and per-vertex colors | `a_mesh_interpolates_the_colors_its_vertices_carry` |
+| `drawVertices` | partial | `draw_vertices`, with positions, texture coordinates and per-vertex colors — but those colors multiply into the shader's result, where `dart:ui` takes a blend mode to say how they should combine | `a_mesh_interpolates_the_colors_its_vertices_carry` |
 | `drawAtlas`, `drawRawAtlas` | partial | `draw_atlas`, one draw for the whole batch, each sprite with its own transform and color — but the color multiplies, where `dart:ui` takes a blend mode to say how it should combine | `an_atlas_tints_each_sprite_on_its_own_in_one_draw` |
 | `drawPoints`, `drawRawPoints` | yes | `draw_points`, in all three modes. A point is a segment of no length, so the cap is the whole shape | `a_point_is_drawn_as_the_cap_it_would_have_had` |
 | `drawDRRect` | yes | `draw_drrect`: two contours filled even-odd, which is what makes the inner one a hole | `the_ring_between_two_rounded_rectangles_is_hollow` |
@@ -137,7 +137,7 @@ above it or not at all:
 
 ## Where that leaves it
 
-Of forty-seven rows across `Canvas` and `Paint`: thirty-seven exist, two are
+Of forty-seven rows across `Canvas` and `Paint`: thirty-six exist, three are
 partial, five are expressible by a caller who assembles them, two are absent,
 and one is out of scope. Counting them is the least interesting thing
 about the table -- the absences are not equal, and a reader deciding whether
@@ -187,6 +187,21 @@ in this repository could check the transcription — there is no reference here
 to compare against. Drawing *a* rounded superellipse under that name instead
 would be the substitution this renderer refuses everywhere else. So it stays
 absent, and the reason is a decision rather than a gap in the work.
+
+`drawVertices` and `drawAtlas` are partial for the same reason and would stop
+being so together. Both hand the fragment stage two colors — what the paint
+produced and what the caller attached to a vertex or a sprite — and `dart:ui`
+takes a blend mode saying how to combine them. Here they are multiplied, which
+is one of the modes and is not a choice.
+
+An earlier note in this repository said fixing that meant deciding where
+blending lives, on the grounds that advanced blending here is the hardware's.
+That was wrong and the correction matters, because it made the work sound
+architectural when it is arithmetic. The hardware extensions exist to blend
+against the framebuffer, which a fragment shader cannot read. These two colors
+are both already in the shader, so combining them needs no extension, no
+framebuffer fetch, and no decision about where anything lives — only the
+formulas, written once and applied to two call sites.
 
 ## What this table does not tell you
 
