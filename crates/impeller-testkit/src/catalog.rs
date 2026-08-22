@@ -34,8 +34,8 @@
 //! scene here with no counterpart there would be visible as one.
 
 use crate::scene::{
-    AtlasSpec, Fill, GlyphRunSpec, Item, LayerSpec, MeshSpec, NinePatchSpec, Node, PictureSpec,
-    PointsSpec, Scene, ShadowSpec, SpriteSpec, Stop, StrokeSpec, Transform,
+    AtlasSpec, Fill, GlyphRunSpec, Item, LayerSpec, MeshSpec, NinePatchSpec, Node, PaintSpec,
+    PictureSpec, PointsSpec, Scene, ShadowSpec, SpriteSpec, Stop, StrokeSpec, Transform,
 };
 use crate::shape::Shape;
 use impeller_core::{Affine2, ImageFilter, MaskBlurStyle, PointMode, Vec2, VertexMode};
@@ -82,6 +82,18 @@ pub fn catalog() -> Vec<Scene> {
 }
 
 /// A scene on the catalog's own ground, which is dark so a white shape shows.
+fn paint_plate(name: &'static str, specs: Vec<PaintSpec>) -> Scene {
+    Scene::tree(
+        name,
+        specs
+            .into_iter()
+            .map(|s| Node::Paint(Box::new(s)))
+            .collect(),
+    )
+    .with_background(DARK)
+    .with_samples(4)
+}
+
 fn nine_plate(name: &'static str, specs: Vec<NinePatchSpec>) -> Scene {
     Scene::tree(
         name,
@@ -222,6 +234,67 @@ fn basic() -> Vec<Scene> {
                 translate: [-20.0, 0.0],
                 ..Transform::default()
             })],
+        ),
+        paint_plate(
+            "basic/a-color-fills-what-the-clip-admits",
+            // `drawColor` fills the clip rather than the target, and the
+            // difference only shows where the clip is not the target. Four
+            // fills, each admitting a different region, so the picture is the
+            // clips rather than the color.
+            //
+            // The areas were checked once and are exact, which is what says
+            // each of the four painted rather than two of them painting and the
+            // plate agreeing with itself on the other backend: eighteen
+            // hundred and seventy-two for the plain rectangle, fifteen hundred
+            // and ninety-two for the one with a hole, and fifteen hundred and
+            // eighty-four for the sheared one -- a shear preserving area, so
+            // that last is the unsheared rectangle's own.
+            vec![
+                // A plain rectangle.
+                PaintSpec {
+                    color: BLUE,
+                    blend: BlendMode::SrcOver,
+                    clip: Some([6.0, 6.0, 58.0, 42.0]),
+                    clip_out: None,
+                    transform: Transform::default(),
+                },
+                // With a hole taken out of it, which is the clip stack rather
+                // than one clip.
+                PaintSpec {
+                    color: GREEN,
+                    blend: BlendMode::SrcOver,
+                    clip: Some([68.0, 6.0, 122.0, 42.0]),
+                    clip_out: Some([84.0, 16.0, 106.0, 32.0]),
+                    transform: Transform::default(),
+                },
+                // Under a rotation, where the region admitted is not a device
+                // rectangle and the fill has to cover the turned one rather
+                // than a box around it.
+                PaintSpec {
+                    color: RED,
+                    blend: BlendMode::SrcOver,
+                    clip: Some([-24.0, -16.0, 24.0, 16.0]),
+                    clip_out: None,
+                    transform: Transform {
+                        rotate: 0.5,
+                        translate: [36.0, 78.0],
+                        ..Transform::default()
+                    },
+                },
+                // Under a shear, which is the transform no axis survives, and
+                // added rather than drawn over so the overlap is visible.
+                PaintSpec {
+                    color: [0.9, 0.75, 0.2, 1.0],
+                    blend: BlendMode::Plus,
+                    clip: Some([-22.0, -18.0, 22.0, 18.0]),
+                    clip_out: None,
+                    transform: Transform {
+                        skew: [0.6, 0.0],
+                        translate: [92.0, 84.0],
+                        ..Transform::default()
+                    },
+                },
+            ],
         ),
         nine_plate(
             "basic/a-nine-patch-stretched-wide-and-tall",

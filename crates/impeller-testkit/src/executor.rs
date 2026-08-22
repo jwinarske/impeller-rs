@@ -215,6 +215,26 @@ fn record_node(canvas: &mut Canvas, node: &Node, anti_alias: bool) -> Result<()>
                 return Err(e);
             }
         }
+        Node::Paint(paint) => {
+            canvas.save();
+            canvas.concat(paint.transform.to_affine());
+            if let Some(clip) = paint.clip {
+                canvas.clip_rect(rect_of(clip))?;
+            }
+            if let Some(out) = paint.clip_out {
+                canvas.clip_out_rect(rect_of(out))?;
+            }
+            // `draw_color` rather than `draw_paint` with a solid shader,
+            // because that is the call `dart:ui` names for this and the two
+            // reach the same place by different routes -- one of which takes
+            // the blend as an argument and is therefore the one that can be
+            // wrong about it.
+            let result = canvas
+                .draw_color(color_of(paint.color), paint.blend)
+                .map(|_| ());
+            canvas.restore();
+            result?;
+        }
         Node::NinePatch(nine) => {
             canvas.save();
             canvas.concat(nine.transform.to_affine());
