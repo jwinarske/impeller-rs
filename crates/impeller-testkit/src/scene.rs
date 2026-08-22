@@ -982,6 +982,64 @@ impl Node {
         }
     }
 
+    /// Whether this subtree carries anything whose only job is to change how
+    /// what it draws looks.
+    ///
+    /// An image filter, a mask blur, and a mode combining a carried color with
+    /// a paint's result are all of that kind: each is asked for by a scene, and
+    /// each can be dropped on the floor without any other test noticing. A
+    /// tolerance comparison between two backends is silent about a feature both
+    /// of them ignore.
+    fn carries_a_visual_feature(&self) -> bool {
+        let item_does =
+            |item: &Item| !matches!(item.image_filter, ImageFilter::None) || item.mask_blur > 0.0;
+        match self {
+            Self::Draw(item) => item_does(item),
+            Self::Mesh(mesh) => {
+                !matches!(mesh.image_filter, ImageFilter::None)
+                    || mesh.tint_blend != BlendMode::Modulate
+            }
+            Self::Atlas(atlas) => atlas.tint_blend != BlendMode::Modulate,
+            Self::Glyphs(run) => run.mask_blur > 0.0,
+            Self::Shadow(_) | Self::Points(_) | Self::NinePatch(_) | Self::Paint(_) => false,
+            Self::Picture(picture) => picture.children.iter().any(Node::carries_a_visual_feature),
+            Self::Layer {
+                layer, children, ..
+            } => {
+                layer.blur > 0.0
+                    || layer.backdrop_blur > 0.0
+                    || layer.morphology.is_some()
+                    || children.iter().any(Node::carries_a_visual_feature)
+            }
+        }
+    }
+
+    /// Take those features away, leaving the geometry and the color.
+    fn plain(&mut self) {
+        match self {
+            Self::Draw(item) => {
+                item.image_filter = ImageFilter::None;
+                item.mask_blur = 0.0;
+            }
+            Self::Mesh(mesh) => {
+                mesh.image_filter = ImageFilter::None;
+                mesh.tint_blend = BlendMode::Modulate;
+            }
+            Self::Atlas(atlas) => atlas.tint_blend = BlendMode::Modulate,
+            Self::Glyphs(run) => run.mask_blur = 0.0,
+            Self::Shadow(_) | Self::Points(_) | Self::NinePatch(_) | Self::Paint(_) => {}
+            Self::Picture(picture) => picture.children.iter_mut().for_each(Node::plain),
+            Self::Layer {
+                layer, children, ..
+            } => {
+                layer.blur = 0.0;
+                layer.backdrop_blur = 0.0;
+                layer.morphology = None;
+                children.iter_mut().for_each(Node::plain);
+            }
+        }
+    }
+
     fn unbound(&mut self) {
         if let Self::Layer {
             bounds, children, ..
@@ -1061,6 +1119,22 @@ impl Scene {
     pub fn unbounded(&self) -> Self {
         let mut stripped = self.clone();
         stripped.items.iter_mut().for_each(Node::unbound);
+        stripped
+    }
+
+    /// Whether anything here asks for a feature that only changes appearance.
+    pub fn carries_a_visual_feature(&self) -> bool {
+        self.items.iter().any(Node::carries_a_visual_feature)
+    }
+
+    /// The same scene with those features taken away.
+    ///
+    /// The pair is what makes a feature checkable at all. Comparing backends
+    /// says they agree; it cannot say they did anything, and a filter silently
+    /// dropped would agree perfectly with itself.
+    pub fn plain(&self) -> Self {
+        let mut stripped = self.clone();
+        stripped.items.iter_mut().for_each(Node::plain);
         stripped
     }
 

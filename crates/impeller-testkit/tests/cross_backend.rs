@@ -15,7 +15,7 @@ use impeller_hal_gles::Validated as GlesValidated;
 use impeller_hal_gles::{DisplayTarget, GlesHal};
 use impeller_hal_vulkan::Validated;
 use impeller_hal_vulkan::{DevicePreference, VulkanHal};
-use impeller_testkit::{accepts, compare, corpus, render_scene, Scene};
+use impeller_testkit::{accepts, catalog, compare, corpus, render_scene, Scene};
 
 #[test]
 fn the_corpus_matches_across_backends() {
@@ -324,4 +324,59 @@ where
         scene.name
     );
     1
+}
+
+#[test]
+fn a_feature_a_scene_asks_for_has_to_change_the_picture() {
+    // The gap every other test here leaves open. Comparing two backends says
+    // they agree, and two backends agree perfectly about a feature both of
+    // them ignore. Comparing against a stored image would catch it, and there
+    // are no stored images here on purpose. So the check is against the same
+    // scene with the feature taken out: if the two render the same, the scene
+    // asked for something that did nothing.
+    //
+    // Three plates in a row needed this asked by hand -- a blurred image, a
+    // sprite batch combining colors, a flood fill through a clip -- and each
+    // time the hand-written check was itself wrong before the renderer was.
+    // Asking it of every scene that carries a feature costs one render each
+    // and cannot be forgotten.
+    let mut vulkan = Validated::new(DevicePreference::Auto).ok();
+    let gles = GlesValidated::new(DisplayTarget::Surfaceless).ok();
+    if vulkan.is_none() && gles.is_none() {
+        eprintln!("skipping: no backend available");
+        return;
+    }
+
+    let mut checked = 0;
+    for scene in catalog()
+        .into_iter()
+        .chain(corpus())
+        .filter(Scene::carries_a_visual_feature)
+    {
+        let plain = scene.plain();
+        // The stripping has to have done something, or the comparison below is
+        // between a scene and itself and proves nothing.
+        assert!(
+            !plain.carries_a_visual_feature(),
+            "{} kept its features after stripping",
+            scene.name
+        );
+
+        if let Some(ctx) = vulkan.as_mut() {
+            let with = render_scene::<VulkanHal>(ctx, &scene).expect("featured");
+            let without = render_scene::<VulkanHal>(ctx, &plain).expect("plain");
+            assert_ne!(
+                with.pixels, without.pixels,
+                "{} renders the same with its features stripped, so whatever it \
+                 asks for is not reaching the picture",
+                scene.name
+            );
+            checked += 1;
+        }
+    }
+    assert!(
+        checked > 0,
+        "no scene in either list carries a feature, which cannot be right"
+    );
+    eprintln!("checked {checked} scene(s) for a feature that does nothing");
 }

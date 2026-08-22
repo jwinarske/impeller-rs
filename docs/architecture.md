@@ -1882,6 +1882,25 @@ is, so a new feature adds scenes once and the matrix multiplies coverage.
 Every rendering bug fixed adds a regression-pin scene, and that set grows
 monotonically.
 
+**A feature a scene asks for has to change the picture.** Comparing two
+backends says they agree, and two backends agree perfectly about a feature both
+of them ignore — so the comparison is silent about exactly the failure it looks
+like it would catch. Every scene carrying an image filter, a mask blur, a
+layer's blur or a mode combining a carried color renders twice: once as
+written, once with those taken away, and the two must differ. It found one
+scene on its first run. `blur/can-render-backdrop-blur` put its layer over a
+flat background with nothing behind it, and a backdrop blur of one color is
+that color, so a plate named for the filter had never been able to show it.
+
+**The suite is near a GPU memory ceiling.** `cargo test --workspace` runs test
+binaries concurrently and each holds its own context, so peak allocation is the
+sum across them rather than the largest. A run has been seen to fail with
+`out of memory allocating texture memory` in one binary while another was
+rendering, and to pass on the next attempt with nothing changed. It is memory
+pressure rather than a leak — every path frees what it takes, and a binary run
+on its own has room to spare. Worth knowing before reading such a failure as a
+logic error, and worth watching: the headroom shrinks as the corpus grows.
+
 What that means today, stated precisely because the aspiration and the state
 are easy to confuse. The corpus is Rust: a couple of dozen `Scene` values built
 in `impeller-testkit`. The intent is for scenes to be data — a versioned

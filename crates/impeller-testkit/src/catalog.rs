@@ -3323,6 +3323,40 @@ fn pair() -> Vec<Node> {
     ]
 }
 
+/// Stripes to sit behind a layer, so a backdrop filter has something to act on.
+///
+/// A backdrop blur reads what is already on the target. Over a flat background
+/// it reads one color and blurs it into the same color, which is why the two
+/// backdrop plates below used to render identically to themselves with the
+/// blur removed -- they asked for the filter and could not show it.
+fn behind() -> Vec<Node> {
+    (0..8)
+        .map(|i| {
+            Node::Draw(Box::new(Item::fill(
+                Shape::Rect {
+                    min: [i as f32 * 16.0, 0.0],
+                    max: [i as f32 * 16.0 + 8.0, 128.0],
+                },
+                if i % 2 == 0 { GREEN } else { WHITE },
+            )))
+        })
+        .collect()
+}
+
+/// A layer over a striped ground, for the filters that read what is behind.
+fn grouped_over(name: &'static str, layer: LayerSpec, bounds: Option<[f32; 4]>) -> Scene {
+    let mut items = behind();
+    items.push(Node::Layer {
+        layer: Box::new(layer),
+        bounds,
+        transform: Transform::default(),
+        children: pair(),
+    });
+    Scene::tree(name, items)
+        .with_background(DARK)
+        .with_samples(4)
+}
+
 fn grouped(name: &'static str, layer: LayerSpec, bounds: Option<[f32; 4]>) -> Scene {
     Scene::tree(
         name,
@@ -3587,7 +3621,7 @@ fn blur_variants() -> Vec<Scene> {
     // back into a multisampled one. So the two do not compose, and a scene
     // asking for both is refused by the backend rather than drawn wrongly.
     scenes.push(
-        grouped(
+        grouped_over(
             "blur/can-render-backdrop-blur",
             LayerSpec::default().with_backdrop_blur(6.0),
             Some([24.0, 44.0, 104.0, 84.0]),
@@ -3595,7 +3629,7 @@ fn blur_variants() -> Vec<Scene> {
         .with_samples(1),
     );
     scenes.push(
-        grouped(
+        grouped_over(
             "blur/can-render-backdrop-blur-huge-sigma",
             LayerSpec::default().with_backdrop_blur(40.0),
             Some([24.0, 44.0, 104.0, 84.0]),
