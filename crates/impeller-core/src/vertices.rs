@@ -300,6 +300,60 @@ fn expand(mode: VertexMode, order: &[u32]) -> Vec<u32> {
 mod tests {
     use super::*;
 
+    /// The signed area of a triangle, whose sign is its winding.
+    fn winding(a: Vec2, b: Vec2, c: Vec2) -> f32 {
+        (b.x - a.x) * (c.y - a.y) - (c.x - a.x) * (b.y - a.y)
+    }
+
+    #[test]
+    fn a_strip_comes_out_consistently_wound() {
+        // The claim the alternation exists to make, and the only one that says
+        // why it is there: emitted in strip order the triangles would alternate
+        // front and back faces, and a mesh whose triangles disagree about which
+        // way they face is wrong the moment anything culls -- and wrong in a way
+        // that draws correctly until something does.
+        //
+        // Beside the test that pins the index sequence rather than instead of
+        // it. That one builds its strip from `points`, which are collinear, so
+        // every triangle in it encloses nothing and has no winding to be
+        // consistent about: it fixes the ordering, and this fixes what the
+        // ordering is for.
+        //
+        // A zigzag rather than a straight run, because a degenerate strip has no
+        // winding to be consistent about: three collinear points enclose nothing
+        // and their signed area is zero, which agrees with everything.
+        let strip: Vec<Vec2> = (0..6)
+            .map(|i| Vec2::new(i as f32 * 10.0, if i % 2 == 0 { 0.0 } else { 12.0 }))
+            .collect();
+        let indices = expand(VertexMode::TriangleStrip, &[0, 1, 2, 3, 4, 5]);
+        assert_eq!(indices.len(), 4 * 3, "six points make four triangles");
+
+        let signs: Vec<f32> = indices
+            .chunks_exact(3)
+            .map(|t| {
+                winding(
+                    strip[t[0] as usize],
+                    strip[t[1] as usize],
+                    strip[t[2] as usize],
+                )
+                .signum()
+            })
+            .collect();
+        assert!(
+            signs.iter().all(|s| *s == signs[0]),
+            "every triangle in a strip should wind the same way, got {signs:?}"
+        );
+
+        // And the alternation is a reordering rather than a different set: each
+        // triangle still covers the three points the strip says it does.
+        for (i, t) in indices.chunks_exact(3).enumerate() {
+            let mut got = [t[0], t[1], t[2]];
+            got.sort_unstable();
+            let want = [i as u32, i as u32 + 1, i as u32 + 2];
+            assert_eq!(got, want, "triangle {i} covers the wrong points");
+        }
+    }
+
     fn points(n: usize) -> Vec<Vec2> {
         (0..n).map(|i| Vec2::new(i as f32, 0.0)).collect()
     }

@@ -2529,6 +2529,45 @@ fn vertices() -> Vec<Scene> {
             ],
         ),
         mesh(
+            "vertices/a-strip-and-a-fan-cover-what-a-list-would",
+            // `TriangleStrip` was in no plate, so the index expansion that
+            // makes a strip out of a run of points had never been put in front
+            // of both backends. A zigzag, because a straight strip is
+            // degenerate: its triangles enclose nothing, which is a picture
+            // that agrees with every wrong answer.
+            MeshSpec {
+                mode: VertexMode::TriangleStrip,
+                colors: vec![RED, GREEN, BLUE, WHITE, GREEN, RED],
+                ..mesh_of(
+                    (0..6)
+                        .map(|i| [10.0 + i as f32 * 21.0, if i % 2 == 0 { 16.0 } else { 58.0 }])
+                        .collect(),
+                    Fill::Solid(WHITE),
+                )
+            },
+        ),
+        mesh(
+            "vertices/a-fan-around-one-point",
+            // Every triangle shares the first position, so the picture is a
+            // wedge rather than a band and a fan drawn as a strip is visibly
+            // not this.
+            MeshSpec {
+                mode: VertexMode::TriangleFan,
+                colors: vec![WHITE, RED, GREEN, BLUE, GREEN, RED],
+                ..mesh_of(
+                    {
+                        let mut points = vec![[64.0, 118.0]];
+                        points.extend((0..5).map(|i| {
+                            let t = 0.6 + i as f32 * 0.45;
+                            [64.0 + 48.0 * t.cos(), 118.0 - 48.0 * t.sin()]
+                        }));
+                        points
+                    },
+                    Fill::Solid(WHITE),
+                )
+            },
+        ),
+        mesh(
             "vertices/a-mesh-filled-by-a-runtime-effect",
             // The inventory listed runtime effects as blocking this file. They
             // do not: a mesh without texture coordinates takes its material
