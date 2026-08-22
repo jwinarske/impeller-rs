@@ -1,0 +1,18 @@
+# The compiler this repository is built with, pinned rather than left to
+# whatever `stable` resolves to on the day.
+#
+# The version is not arbitrary: it is the one Yocto's wrynose release ships,
+# from `rust_1.94.1.bb` in openembedded-core. Building here with the compiler
+# the embedded target will use is what turns a version incompatibility into a
+# local failure rather than one found in a bitbake build.
+#
+# This file has no effect on a bitbake build itself -- that uses the toolchain
+# its own recipe provides and never reads this. What decides whether a Yocto
+# release can build this at all is `rust-version` in Cargo.toml, which is
+# separate and deliberately lower: at 1.85 it also admits whinlatter's 1.90.
+# Scarthgap's 1.75 is out of reach in both senses, its Cargo predating the
+# lockfile version this workspace uses.
+[toolchain]
+channel = "1.94.1"
+# Named so a fresh clone can run the gate, which lints and checks formatting.
+components = ["clippy", "rustfmt"]

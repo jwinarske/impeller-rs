@@ -1764,6 +1764,29 @@ crate whose job is to compile, locate, or generate bindings to something that is
 not Rust. That needs nothing installed, which matters for a rule whose whole
 value is that it holds on a machine nobody has configured.
 
+**Which Rust toolchain is pinned, and to what.** `rust-toolchain.toml` names
+1.94.1, and the number is not a preference: it is what Yocto's wrynose release
+ships, from `rust_1.94.1.bb` in openembedded-core. Building here with the
+compiler the embedded target will use is what turns a version incompatibility
+into a failure on a developer's machine rather than one found in a bitbake
+build. The pin has no effect on a bitbake build itself, which uses the
+toolchain its own recipe provides and never reads this file.
+
+What decides whether a Yocto release can build this at all is `rust-version`
+in the workspace manifest, which is separate and deliberately lower. At 1.85 it
+also admits whinlatter's 1.90, checked. Walnascar's 1.84.1 misses by a single
+release, and not on anything written here: a transitive `getrandom` needs
+edition 2024, which stabilized in 1.85. Scarthgap's 1.75 is further out than
+its number suggests -- its Cargo predates the lockfile version this workspace
+uses and cannot read `Cargo.lock` at all, so the question of whether the code
+would compile never arises. Supporting the current LTS would mean an older
+lockfile and a dependency set ten releases back, which is a different project
+from this one.
+
+A pinned toolchain also makes the gate mean the same thing everywhere, which
+matters here more than it would elsewhere: the lint step denies warnings, and a
+floating compiler turns a new lint into a red build on an unrelated change.
+
 The known footgun is `khronos-egl`'s `static` feature, which pulls in link-time
 libEGL via pkg-config. It is pinned to `dynamic`, which dlopens instead.
 
