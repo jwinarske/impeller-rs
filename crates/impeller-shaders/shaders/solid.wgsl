@@ -751,6 +751,175 @@ fn filtered(premultiplied: vec4<f32>) -> vec4<f32> {
     return vec4<f32>(clamp(out.rgb, vec3<f32>(0.0), vec3<f32>(alpha)), alpha);
 }
 
+/// Hard light, which overlay is also built from.
+fn hard_light(cb: f32, cs: f32) -> f32 {
+    if (cs <= 0.5) {
+        return cb * (2.0 * cs);
+    }
+    let d = 2.0 * cs - 1.0;
+    return cb + d - cb * d;
+}
+
+/// One channel of the separable blend function `B(Cb, Cs)`, unpremultiplied.
+///
+/// The compositing specification's definitions, and a transcription of the
+/// same statement `separable_blend` makes on the CPU rather than a second
+/// opinion about what the modes mean. The two are checked against each other,
+/// which is only worth doing because neither was derived from the other.
+fn separable_b(mode: i32, cb: f32, cs: f32) -> f32 {
+    switch mode {
+        // Multiply
+        case 14: { return cb * cs; }
+        // Screen
+        case 15: { return cb + cs - cb * cs; }
+        // Overlay is hard-light with the two sides exchanged.
+        case 16: { return hard_light(cs, cb); }
+        // Darken
+        case 17: { return min(cb, cs); }
+        // Lighten
+        case 18: { return max(cb, cs); }
+        // ColorDodge. The order of the cases is load-bearing: a black backdrop
+        // stays black under a full-strength source, and only then does a
+        // full-strength source saturate.
+        case 19: {
+            if (cb <= 0.0) { return 0.0; }
+            if (cs >= 1.0) { return 1.0; }
+            return min(cb / (1.0 - cs), 1.0);
+        }
+        // ColorBurn
+        case 20: {
+            if (cb >= 1.0) { return 1.0; }
+            if (cs <= 0.0) { return 0.0; }
+            return 1.0 - min((1.0 - cb) / cs, 1.0);
+        }
+        // HardLight
+        case 21: { return hard_light(cb, cs); }
+        // SoftLight
+        case 22: {
+            let d = select(
+                (16.0 * cb - 12.0) * cb + 4.0,
+                inverseSqrt(max(cb, 1e-8)),
+                cb > 0.25,
+            );
+            let dd = select(d * cb, sqrt(max(cb, 0.0)), cb > 0.25);
+            if (cs <= 0.5) {
+                return cb - (1.0 - 2.0 * cs) * cb * (1.0 - cb);
+            }
+            return cb + (2.0 * cs - 1.0) * (dd - cb);
+        }
+        // Difference
+        case 23: { return abs(cb - cs); }
+        // Exclusion
+        case 24: { return cb + cs - 2.0 * cb * cs; }
+        default: { return cs; }
+    }
+}
+
+fn lum(c: vec3<f32>) -> f32 {
+    return dot(c, vec3<f32>(0.3, 0.59, 0.11));
+}
+
+/// Move a color to a given luminosity, clipping back into range.
+fn set_lum(c: vec3<f32>, l: f32) -> vec3<f32> {
+    let shifted = c + vec3<f32>(l - lum(c));
+    let low = min(shifted.r, min(shifted.g, shifted.b));
+    let high = max(shifted.r, max(shifted.g, shifted.b));
+    let luma = lum(shifted);
+    var out = shifted;
+    // Clipping toward the luminosity rather than to the unit range, so a color
+    // pushed out of gamut desaturates instead of shifting hue.
+    if (low < 0.0) {
+        out = luma + (out - luma) * luma / max(luma - low, 1e-8);
+    }
+    if (high > 1.0) {
+        out = luma + (out - luma) * (1.0 - luma) / max(high - luma, 1e-8);
+    }
+    return out;
+}
+
+fn sat(c: vec3<f32>) -> f32 {
+    return max(c.r, max(c.g, c.b)) - min(c.r, min(c.g, c.b));
+}
+
+/// Rescale to a saturation, keeping which channel is which.
+///
+/// By index rather than by sorting the components, because the result has to
+/// go back where it came from: the middle channel of the input stays the
+/// middle channel of the output.
+fn set_sat(c: vec3<f32>, s: f32) -> vec3<f32> {
+    let low = min(c.r, min(c.g, c.b));
+    let high = max(c.r, max(c.g, c.b));
+    if (high <= low) {
+        // A flat color has no saturation to scale, so it stays flat at zero
+        // rather than being given one arbitrarily.
+        return vec3<f32>(0.0);
+    }
+    return (c - vec3<f32>(low)) * s / (high - low);
+}
+
+/// The non-separable blend functions, which mix the channels.
+fn nonseparable_b(mode: i32, cb: vec3<f32>, cs: vec3<f32>) -> vec3<f32> {
+    switch mode {
+        // Hue
+        case 25: { return set_lum(set_sat(cs, sat(cb)), lum(cb)); }
+        // Saturation
+        case 26: { return set_lum(set_sat(cb, sat(cs)), lum(cb)); }
+        // Color
+        case 27: { return set_lum(cs, lum(cb)); }
+        // Luminosity
+        case 28: { return set_lum(cb, lum(cs)); }
+        default: { return cs; }
+    }
+}
+
+/// Combine two colors this shader already holds, both premultiplied.
+///
+/// This is not the blending a target does. A fragment stage cannot read the
+/// framebuffer, which is why the advanced modes against a *destination* need
+/// an extension -- but neither of these colors is in the framebuffer. What a
+/// caller attaches to a vertex or a sprite and what the paint produced are
+/// both here, so combining them is arithmetic and every mode is available.
+fn blend_tint(mode: i32, src: vec4<f32>, dst: vec4<f32>) -> vec4<f32> {
+    let sa = src.a;
+    let da = dst.a;
+    switch mode {
+        case 0: { return vec4<f32>(0.0); }
+        case 1: { return src; }
+        case 2: { return dst; }
+        case 3: { return src + dst * (1.0 - sa); }
+        case 4: { return dst + src * (1.0 - da); }
+        case 5: { return src * da; }
+        case 6: { return dst * sa; }
+        case 7: { return src * (1.0 - da); }
+        case 8: { return dst * (1.0 - sa); }
+        case 9: { return src * da + dst * (1.0 - sa); }
+        case 10: { return dst * sa + src * (1.0 - da); }
+        case 11: { return src * (1.0 - da) + dst * (1.0 - sa); }
+        case 12: { return min(src + dst, vec4<f32>(1.0)); }
+        case 13: { return src * dst; }
+        default: {}
+    }
+
+    // Everything past here is an advanced mode, whose formulas are stated on
+    // unpremultiplied color and composited back afterwards.
+    let cs = select(src.rgb / sa, vec3<f32>(0.0), sa <= 0.0);
+    let cb = select(dst.rgb / da, vec3<f32>(0.0), da <= 0.0);
+    var mixed: vec3<f32>;
+    if (mode >= 25) {
+        mixed = nonseparable_b(mode, cb, cs);
+    } else {
+        mixed = vec3<f32>(
+            separable_b(mode, cb.r, cs.r),
+            separable_b(mode, cb.g, cs.g),
+            separable_b(mode, cb.b, cs.b),
+        );
+    }
+    // The general compositing formula: the source where the backdrop is not,
+    // the backdrop where the source is not, and the blend where both are.
+    let rgb = sa * (1.0 - da) * cs + sa * da * mixed + (1.0 - sa) * da * cb;
+    return vec4<f32>(rgb, sa + da * (1.0 - sa));
+}
+
 @fragment
 fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     // The vertex color multiplies the material, and the filter applies to what
@@ -760,7 +929,9 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     // Both sides are premultiplied, so this is a componentwise product and
     // stays premultiplied. Multiplying by a straight color instead would leave
     // the alpha applied once to the color and twice to itself.
-    return filtered(shade(in) * in.tint);
+    // The caller's color is the source and the paint's result the backdrop,
+    // which is the order `dart:ui` states for both of the calls that carry one.
+    return filtered(blend_tint(i32(paint.filter_params.y + 0.5), in.tint, shade(in)));
 }
 
 /// The color this paint produces, premultiplied, before any filter.

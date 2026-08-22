@@ -2009,6 +2009,7 @@ fn mesh(name: &'static str, spec: MeshSpec) -> Scene {
 
 fn mesh_of(positions: Vec<[f32; 2]>, fill: Fill) -> MeshSpec {
     MeshSpec {
+        tint_blend: BlendMode::Modulate,
         mode: VertexMode::Triangles,
         positions,
         colors: Vec::new(),
@@ -2275,6 +2276,7 @@ fn atlas_scenes() -> Vec<Scene> {
         atlas(
             "atlas/draw-atlas-no-color",
             AtlasSpec {
+                tint_blend: BlendMode::Modulate,
                 sprites: quadrants(WHITE),
                 blend: BlendMode::SrcOver,
                 alpha: 1.0,
@@ -2283,6 +2285,7 @@ fn atlas_scenes() -> Vec<Scene> {
         atlas(
             "atlas/draw-atlas-with-color-simple",
             AtlasSpec {
+                tint_blend: BlendMode::Modulate,
                 sprites: (0..4)
                     .map(|i| SpriteSpec {
                         color: ALL_CORNERS[i],
@@ -2296,6 +2299,7 @@ fn atlas_scenes() -> Vec<Scene> {
         atlas(
             "atlas/draw-atlas-with-opacity",
             AtlasSpec {
+                tint_blend: BlendMode::Modulate,
                 sprites: quadrants(WHITE),
                 blend: BlendMode::SrcOver,
                 alpha: 0.4,
@@ -2304,6 +2308,7 @@ fn atlas_scenes() -> Vec<Scene> {
         atlas(
             "atlas/draw-atlas-no-color-full-size",
             AtlasSpec {
+                tint_blend: BlendMode::Modulate,
                 sprites: vec![SpriteSpec {
                     source: [0.0, 0.0, 8.0, 8.0],
                     rotate: 0.0,
@@ -2323,6 +2328,7 @@ fn atlas_scenes() -> Vec<Scene> {
         atlas(
             "atlas/sprites-added-where-they-overlap",
             AtlasSpec {
+                tint_blend: BlendMode::Modulate,
                 sprites: (0..5)
                     .map(|i| SpriteSpec {
                         source: [0.0, 0.0, 8.0, 8.0],
@@ -2346,6 +2352,7 @@ fn atlas_scenes() -> Vec<Scene> {
             // background: the sprites overlap, so some fragments multiply
             // against another sprite rather than against the ground.
             AtlasSpec {
+                tint_blend: BlendMode::Modulate,
                 sprites: (0..4)
                     .map(|i| {
                         let (sx, sy) = ((i % 2) as f32 * 4.0, (i / 2) as f32 * 4.0);
@@ -2370,6 +2377,7 @@ fn atlas_scenes() -> Vec<Scene> {
             // shared by the batch -- which four equal quadrants could not ask,
             // being indistinguishable from a batch that assumed them.
             AtlasSpec {
+                tint_blend: BlendMode::Modulate,
                 sprites: vec![
                     SpriteSpec {
                         source: [0.0, 0.0, 8.0, 8.0],
@@ -2407,6 +2415,7 @@ fn atlas_scenes() -> Vec<Scene> {
         atlas(
             "atlas/draw-atlas-advanced-and-transform",
             AtlasSpec {
+                tint_blend: BlendMode::Modulate,
                 sprites: (0..6)
                     .map(|i| {
                         let t = i as f32 / 6.0;

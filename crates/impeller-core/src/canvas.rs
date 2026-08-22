@@ -2451,7 +2451,7 @@ impl Canvas {
             })
             .collect();
 
-        self.batch.push_mesh(
+        self.batch.push_mesh_tinted(
             &vertices,
             mesh.indices(),
             material,
@@ -2459,6 +2459,7 @@ impl Canvas {
             paint.blend,
             self.clip,
             ClipState::content(self.depth),
+            paint.tint_blend,
         )?;
         Ok(self)
     }

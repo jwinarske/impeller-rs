@@ -108,6 +108,8 @@ pub struct MeshSpec {
     /// Three per triangle, or empty for the positions in order.
     pub indices: Vec<u32>,
     pub fill: Fill,
+    /// How each vertex's color combines with the fill.
+    pub tint_blend: BlendMode,
     pub blend: BlendMode,
     pub transform: Transform,
     /// Filter what the mesh drew. See [`Item::image_filter`].
@@ -186,6 +188,8 @@ pub struct SpriteSpec {
 #[derive(Debug, Clone, PartialEq)]
 pub struct AtlasSpec {
     pub sprites: Vec<SpriteSpec>,
+    /// How each sprite's color combines with the sheet's texels.
+    pub tint_blend: BlendMode,
     pub blend: BlendMode,
     /// Scales every sprite.
     pub alpha: f32,

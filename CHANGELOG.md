@@ -17,11 +17,9 @@ the build.
 
 What stands between here and a first release with an API:
 
-- Two operations are partial against `dart:ui`. `transform` takes a 2D affine
+- One operation is partial against `dart:ui`. `transform` takes a 2D affine
   where `dart:ui` takes a 4×4 and so admits perspective, which is a deliberate
-  design limit rather than an omission. `drawAtlas` takes no blend mode for
-  combining a sprite's color with its texels, which needs the blend set written
-  into the shader, since advanced blending here is the hardware's.
+  design limit rather than an omission.
 - Two operations are absent: `drawRSuperellipse` and `clipRSuperellipse`.
 
 ## 0.0.0 — 2026-08-22

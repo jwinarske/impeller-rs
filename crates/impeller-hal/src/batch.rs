@@ -195,6 +195,15 @@ pub struct BatchDraw {
     pub clip: Option<Scissor>,
     /// What this draw does with the stencil buffer.
     pub stencil: ClipState,
+    /// How a color the caller attached to a vertex or a sprite combines with
+    /// what the material produced.
+    ///
+    /// [`BlendMode::Modulate`] multiplies them, which is what every draw did
+    /// before this existed and is what a paint with no per-vertex color wants:
+    /// white is the identity under it. Distinct from [`Self::blend`], which is
+    /// how the result then reaches the target -- these two colors are both in
+    /// the shader, so this one needs no extension and every mode is available.
+    pub tint_blend: BlendMode,
 }
 
 impl BatchDraw {
@@ -207,6 +216,7 @@ impl BatchDraw {
     pub fn to_uniform(&self) -> [f32; crate::MATERIAL_FLOATS] {
         let mut out = self.material.to_uniform();
         self.filter.pack_into(&mut out);
+        out[crate::material::layout::FILTER_PARAMS + 1] = self.tint_blend.code();
         out
     }
 }
@@ -310,6 +320,37 @@ impl Batch {
         clip: Option<Scissor>,
         stencil: ClipState,
     ) -> Result<()> {
+        self.push_mesh_tinted(
+            vertices,
+            indices,
+            material,
+            filter,
+            blend,
+            clip,
+            stencil,
+            BlendMode::Modulate,
+        )
+    }
+
+    /// Append a mesh, saying how its vertex colors combine with the material.
+    ///
+    /// Separate from [`Self::push_mesh`] rather than an extra parameter on it,
+    /// for the reason [`Self::push_clipped`] is separate: the mode is
+    /// `Modulate` for everything that does not ask, white being the identity
+    /// under it, and threading a parameter through every call site to say so
+    /// would be noise at all of them and a decision at none.
+    #[allow(clippy::too_many_arguments)]
+    pub fn push_mesh_tinted(
+        &mut self,
+        vertices: &[Vertex],
+        indices: &[u32],
+        material: Material,
+        filter: ColorFilter,
+        blend: BlendMode,
+        clip: Option<Scissor>,
+        stencil: ClipState,
+        tint_blend: BlendMode,
+    ) -> Result<()> {
         if clip.is_some_and(Scissor::is_empty) {
             return Ok(());
         }
@@ -358,6 +399,7 @@ impl Batch {
                 && last.blend == blend
                 && last.clip == clip
                 && last.stencil == stencil
+                && last.tint_blend == tint_blend
             {
                 last.index_count += indices.len() as u32;
                 return Ok(());
@@ -372,6 +414,7 @@ impl Batch {
             blend,
             clip,
             stencil,
+            tint_blend,
         });
         Ok(())
     }

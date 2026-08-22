@@ -437,6 +437,20 @@ pub struct Paint {
     /// one.
     pub mask_blur: f32,
     pub blend: BlendMode,
+    /// How a color carried per vertex or per sprite combines with what this
+    /// paint produced.
+    ///
+    /// `dart:ui` passes this as an argument to `drawVertices` and `drawAtlas`
+    /// rather than on the paint. It sits here instead because those are the
+    /// only two calls that can carry such a color, and an argument every other
+    /// call would have to pass and ignore is worse than a field they leave
+    /// alone. [`BlendMode::Modulate`] multiplies, which is the identity for the
+    /// white a caller who supplied no color gets.
+    ///
+    /// Distinct from [`Self::blend`], which decides how the result reaches the
+    /// target. Both colors here are in the shader already, so every mode is
+    /// available to this one without an extension.
+    pub tint_blend: BlendMode,
     /// Whether to antialias this shape's edges.
     ///
     /// Recorded per paint but applied per pass, because multisampling is a
@@ -456,6 +470,7 @@ impl Default for Paint {
             dash: None,
             mask_blur: 0.0,
             blend: BlendMode::SrcOver,
+            tint_blend: BlendMode::Modulate,
             anti_alias: true,
         }
     }
@@ -789,6 +804,15 @@ impl Paint {
 
     pub fn with_blend(mut self, blend: BlendMode) -> Self {
         self.blend = blend;
+        self
+    }
+
+    /// How a per-vertex or per-sprite color combines with this paint's result.
+    ///
+    /// Ignored by every call that carries no such color, there being nothing to
+    /// combine.
+    pub fn with_tint_blend(mut self, tint_blend: BlendMode) -> Self {
+        self.tint_blend = tint_blend;
         self
     }
 

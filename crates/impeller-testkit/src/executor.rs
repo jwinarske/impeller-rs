@@ -148,6 +148,9 @@ fn paint_for(item: &Item, anti_alias: bool) -> Paint {
     let shader = shader_for(&item.fill);
     Paint {
         shader,
+        // A shape carries no color of its own to combine, so this is the
+        // identity. Meshes and sprite batches set it from their own spec.
+        tint_blend: impeller_hal::BlendMode::Modulate,
         color_filter: item.color_filter,
         // Not described by the corpus, and for a reason the color filter's
         // presence there makes clearer by contrast. A color filter is
@@ -281,6 +284,7 @@ fn record_node(canvas: &mut Canvas, node: &Node, anti_alias: bool) -> Result<()>
             )?;
             let mut paint = paint_from(&mesh.fill, anti_alias);
             paint.blend = mesh.blend;
+            paint.tint_blend = mesh.tint_blend;
             paint.image_filter = mesh.image_filter.clone();
             // Restored before the error is raised, or a mesh a device refuses
             // would leave the canvas inside a save nobody closes and every
@@ -316,7 +320,8 @@ fn record_node(canvas: &mut Canvas, node: &Node, anti_alias: bool) -> Result<()>
             // so this only has to be a well-formed one.
             let paint = Paint::image(crate::fixture::SLOT, Rect::new(0.0, 0.0, 1.0, 1.0))
                 .with_image_alpha(atlas.alpha)
-                .with_blend(atlas.blend);
+                .with_blend(atlas.blend)
+                .with_tint_blend(atlas.tint_blend);
             let result = canvas
                 .draw_atlas(&sprites, crate::fixture::SIZE, &paint)
                 .map(|_| ());

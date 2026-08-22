@@ -219,6 +219,46 @@ impl BlendMode {
     /// Callers check [`Capabilities::advanced_blend`] before using one, and a
     /// backend without it refuses rather than substituting something that looks
     /// close: a silently wrong blend mode is a picture nobody can debug from.
+    /// The number a shader reads to identify this mode.
+    ///
+    /// Spelled out rather than cast from the discriminant, because the
+    /// discriminant is an implementation detail a reordering would change and
+    /// this number is written into a uniform buffer that a shader decodes. The
+    /// two must agree, and only one of them is visible from the shader.
+    pub const fn code(self) -> f32 {
+        match self {
+            Self::Clear => 0.0,
+            Self::Src => 1.0,
+            Self::Dst => 2.0,
+            Self::SrcOver => 3.0,
+            Self::DstOver => 4.0,
+            Self::SrcIn => 5.0,
+            Self::DstIn => 6.0,
+            Self::SrcOut => 7.0,
+            Self::DstOut => 8.0,
+            Self::SrcATop => 9.0,
+            Self::DstATop => 10.0,
+            Self::Xor => 11.0,
+            Self::Plus => 12.0,
+            Self::Modulate => 13.0,
+            Self::Multiply => 14.0,
+            Self::Screen => 15.0,
+            Self::Overlay => 16.0,
+            Self::Darken => 17.0,
+            Self::Lighten => 18.0,
+            Self::ColorDodge => 19.0,
+            Self::ColorBurn => 20.0,
+            Self::HardLight => 21.0,
+            Self::SoftLight => 22.0,
+            Self::Difference => 23.0,
+            Self::Exclusion => 24.0,
+            Self::Hue => 25.0,
+            Self::Saturation => 26.0,
+            Self::Color => 27.0,
+            Self::Luminosity => 28.0,
+        }
+    }
+
     pub const fn is_advanced(self) -> bool {
         !matches!(
             self,
