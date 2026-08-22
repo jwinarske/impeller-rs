@@ -121,6 +121,15 @@ where edition 2024 stabilized and is a floor the dependency graph sets rather
 than the code: naga translates the shaders at build time and reaches indexmap.
 CI builds the workspace on exactly that toolchain, so this figure is checked.
 
+`rust-toolchain.toml` pins the compiler this is *built* with to 1.94.1, which
+is a separate question from the floor and answered from a different place: it
+is the version Yocto's wrynose release ships, so a build here uses the compiler
+an embedded target will. The floor stays lower deliberately — at 1.85 it also
+admits whinlatter's 1.90, which is checked. Walnascar's 1.84.1 misses by one
+release on a dependency's edition, and scarthgap's 1.75 would cost a `naga`
+downgrade that changes the emitted SPIR-V; `docs/architecture.md` has the
+measurements.
+
 ```sh
 cargo build                              # default: vulkan + WSI
 cargo build --features gles,drm          # the classic embedded GBM path
@@ -201,6 +210,38 @@ policy, explicit synchronization, the ownership boundary with drm-rs, format
 and modifier negotiation, the shader pipeline, dependency purity, and the
 testing model. Read it before proposing structural changes — a fair number of
 alternatives were considered and rejected for recorded reasons.
+
+## Contributing
+
+Run these in order before committing, and do not commit on a failure:
+
+```sh
+cargo clippy --workspace --all-targets --fix --allow-dirty   # lint, applying fixes
+cargo fmt --all                                              # format
+cargo build --workspace --all-targets                        # smoke test
+cargo test --workspace
+```
+
+`cargo xtask gate` is all of that as one exit code, and is what CI runs. Read
+the test count rather than the exit code when running the pieces by hand: a
+suite that compiled nothing and a suite that passed everything both exit zero.
+
+The feature axes are meant to compose independently, so check that they still
+do — a backend and a presentation path are orthogonal, and a combination that
+only builds because another feature happened to be on is a coupling:
+
+```sh
+for f in vulkan gles vulkan,gles,drm; do
+  cargo check -p impeller --no-default-features --features "$f" || break
+done
+```
+
+Two conventions about writing rather than building. American English
+throughout — code, comments, documentation, commit messages. And a commit
+message should explain why a change is shaped the way it is rather than
+restate what moved, in prose paragraphs rather than bullet lists; the diff
+already says what changed, and the reasoning is the part that is expensive to
+recover later.
 
 ## License
 
