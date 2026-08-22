@@ -87,11 +87,19 @@ the scene model cannot describe.
 Three different kinds of obstacle, worth separating because only one of them is
 about the renderer.
 
-**Capabilities this renderer lacks.** An effect's own textures — a caller's
-program gets the material's uniform block and nothing else. Perspective
-transforms, which the transform type is affine and two-dimensional by design.
-Dithering. These are the rows of `docs/parity.md`, and the scenes that need
-them arrive when the row does.
+**Capabilities this renderer lacks.** Perspective transforms, the transform
+type being affine and two-dimensional by design; that one is a row of
+`docs/parity.md`, where `transform` is marked partial for it, and the scenes
+that need it arrive when the row changes. Dithering is the other, and it is not
+a row there and should not be looked for as one: it is not a `dart:ui` method
+but a quality behavior inside gradient rendering, which is where the banding it
+exists to break up appears.
+
+An effect's own textures used to head this list, on the grounds that a caller's
+program got the material's uniform block and nothing else. That stopped being
+true when the effect material grew texture slots, and the paragraph outlived the
+limitation by some days -- which is the same failure the blocked column above is
+warned about, in the prose that does the warning.
 
 **Things the scene model could not describe.** This category is empty now, and
 what was in it is worth keeping because of how it was closed rather than that
