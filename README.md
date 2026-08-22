@@ -205,9 +205,12 @@ Bring your own text shaping and layout (`cosmic-text`, `parley`), font parsing
 Scene graph, retained mode, animation, and 3D are out of scope, as is GLES 2.0.
 
 This is a renderer, not a compositor: it draws to planes it is given.
-Multi-client composition belongs elsewhere. KMS internals — connector probing,
-EDID parsing, mode selection policy, session management — belong to drm-rs or
-the application.
+Multi-client composition belongs elsewhere. KMS internals belong outside it,
+and which outside differs by concern: connector and plane probing is drm-rs's,
+while EDID parsing, mode selection policy, session and seat handoff, and
+hotplug detection are the application's or its session manager's — drm-rs
+reports the modes but does not choose one, and hotplug needs udev, which
+nothing here uses.
 
 ## Documentation
 

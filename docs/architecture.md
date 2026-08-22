@@ -1374,18 +1374,34 @@ degradation.
 
 ### DRM/KMS direct scanout (`impeller-present-drm`)
 
-Built on drm-rs, the Rust port of drm-cxx. **The dependency direction is
-one-way and this crate reimplements no KMS logic.**
+Built on [drm-rs](https://github.com/Smithay/drm-rs), which is Smithay's own
+Rust binding to the kernel interface and not a port of anything. This section
+described it as the Rust port of drm-cxx, which was wrong twice over: drm-rs
+has no such lineage, and no Rust port of drm-cxx exists. The correction matters
+more than a misattributed name, because a boundary drawn against a library that
+does not exist can assign it work nobody does — which is what had happened to
+one row below.
+
+**The dependency direction is one-way and this crate reimplements no KMS
+logic.**
 
 | Concern | Owner |
 |---|---|
-| Device open, master acquisition, seat handoff | drm-rs, plus app or session manager |
-| Connector, CRTC, and plane discovery; mode selection | drm-rs |
-| Atomic commit construction, page-flip events, hotplug | drm-rs |
+| Device open, master acquisition | drm-rs |
+| Seat and session handoff | the application or its session manager; not drm-rs |
+| Connector, CRTC, and plane discovery | drm-rs |
+| Mode selection policy | the application; drm-rs reports the modes |
+| Atomic commit construction, page-flip events | drm-rs |
+| Hotplug detection | nobody here: it needs udev, drm-rs does not provide it, and this crate does not do it |
 | dma-buf to framebuffer import | drm-rs |
-| HDR metadata, VRR, plane rotation properties | drm-rs |
+| HDR metadata, VRR, plane rotation properties | drm-rs, through generic property access rather than a typed surface |
 | Buffer allocation, image import and export | impeller-present-drm |
 | Frame pacing against flip completion, fence plumbing | impeller-present-drm |
+
+The rows this crate does not own are not aspirations: `drm::control::Device`,
+`ClientCapability::Atomic` and `UniversalPlanes`, connector state, `DrmFourcc`
+and `DrmModifier`, and `receive_events` with `PAGE_FLIP_EVENT` are what it
+calls today, and the vkms lane exercises them without a display.
 
 The required surface is expressed as a trait (`ScanoutOutput`) rather than
 consumed directly. That states exactly what drm-rs must provide, so the two
