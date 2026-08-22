@@ -116,6 +116,23 @@ pub struct MeshSpec {
     pub image_filter: ImageFilter,
 }
 
+/// A sheet stretched by its middle, keeping its corners.
+///
+/// Its own node because it is nine draws rather than one, and which of the nine
+/// stretches in which direction is the whole of what a nine-patch means. A
+/// scene naming the pieces would be describing the answer; naming the center
+/// and the destination leaves the arithmetic where the call is.
+#[derive(Debug, Clone, PartialEq)]
+pub struct NinePatchSpec {
+    /// The part of the sheet that may stretch, in texels.
+    pub center: [f32; 4],
+    /// Where the whole thing goes.
+    pub into: [f32; 4],
+    pub alpha: f32,
+    pub blend: BlendMode,
+    pub transform: Transform,
+}
+
 /// Points, segments or an open run through a list of positions.
 ///
 /// Its own node rather than a shape, because what a point *is* here is the
@@ -691,6 +708,8 @@ pub enum Node {
     Glyphs(Box<GlyphRunSpec>),
     /// Points, segments, or an open run through a list of positions.
     Points(Box<PointsSpec>),
+    /// The fixture sheet stretched by its middle, keeping its corners.
+    NinePatch(Box<NinePatchSpec>),
     /// A recording of its own, drawn into this one.
     Picture(Box<PictureSpec>),
     /// The shadow a shape at some elevation casts.
@@ -763,7 +782,8 @@ impl Node {
             | Self::Atlas(_)
             | Self::Shadow(_)
             | Self::Glyphs(_)
-            | Self::Points(_) => Box::new(std::iter::empty()),
+            | Self::Points(_)
+            | Self::NinePatch(_) => Box::new(std::iter::empty()),
             Self::Picture(picture) => Box::new(picture.children.iter().flat_map(Node::items)),
             Self::Layer { children, .. } => Box::new(children.iter().flat_map(Node::items)),
         }
@@ -776,7 +796,8 @@ impl Node {
             | Self::Atlas(_)
             | Self::Shadow(_)
             | Self::Glyphs(_)
-            | Self::Points(_) => Box::new(std::iter::empty()),
+            | Self::Points(_)
+            | Self::NinePatch(_) => Box::new(std::iter::empty()),
             Self::Picture(picture) => {
                 Box::new(picture.children.iter_mut().flat_map(Node::items_mut))
             }
@@ -795,7 +816,8 @@ impl Node {
             | Self::Atlas(_)
             | Self::Shadow(_)
             | Self::Glyphs(_)
-            | Self::Points(_) => false,
+            | Self::Points(_)
+            | Self::NinePatch(_) => false,
             Self::Layer { .. } => true,
         }
     }
@@ -810,7 +832,11 @@ impl Node {
         match self {
             Self::Draw(item) => matches!(item.fill, Fill::RuntimeEffect { .. }),
             Self::Mesh(mesh) => matches!(mesh.fill, Fill::RuntimeEffect { .. }),
-            Self::Atlas(_) | Self::Shadow(_) | Self::Glyphs(_) | Self::Points(_) => false,
+            Self::Atlas(_)
+            | Self::Shadow(_)
+            | Self::Glyphs(_)
+            | Self::Points(_)
+            | Self::NinePatch(_) => false,
             Self::Picture(picture) => picture.children.iter().any(Node::uses_effect),
             Self::Layer { children, .. } => children.iter().any(Node::uses_effect),
         }
@@ -831,6 +857,8 @@ impl Node {
             Self::Atlas(_) => true,
             // A run reads the glyph atlas, which is a texture of its own rather
             // than the sheet -- see `uses_glyphs`.
+            // A nine-patch is pieces of the sheet, like a sprite batch.
+            Self::NinePatch(_) => true,
             // Points are stroked geometry in a solid color; they sample nothing.
             Self::Shadow(_) | Self::Glyphs(_) | Self::Points(_) => false,
             Self::Picture(picture) => picture.children.iter().any(Node::samples_fixture),
@@ -854,7 +882,7 @@ impl Node {
             Self::Mesh(mesh) => reads_atlas(&mesh.fill),
             // Points are stroked geometry in a solid color, reading no texture
             // of either kind.
-            Self::Atlas(_) | Self::Shadow(_) | Self::Points(_) => false,
+            Self::Atlas(_) | Self::Shadow(_) | Self::Points(_) | Self::NinePatch(_) => false,
             Self::Picture(picture) => picture.children.iter().any(Node::uses_glyphs),
             Self::Layer { children, .. } => children.iter().any(Node::uses_glyphs),
         }
@@ -870,6 +898,7 @@ impl Node {
             Self::Shadow(_) => Box::new(std::iter::once(BlendMode::SrcOver)),
             Self::Glyphs(run) => Box::new(std::iter::once(run.blend)),
             Self::Points(points) => Box::new(std::iter::once(points.blend)),
+            Self::NinePatch(nine) => Box::new(std::iter::once(nine.blend)),
             Self::Picture(picture) => Box::new(
                 std::iter::once(picture.blend)
                     .chain(picture.children.iter().flat_map(Node::blends)),
@@ -890,7 +919,8 @@ impl Node {
             | Self::Atlas(_)
             | Self::Shadow(_)
             | Self::Glyphs(_)
-            | Self::Points(_) => false,
+            | Self::Points(_)
+            | Self::NinePatch(_) => false,
             Self::Layer {
                 bounds, children, ..
             } => bounds.is_some() || children.iter().any(Node::has_bounded_layer),
@@ -912,7 +942,8 @@ impl Node {
             | Self::Atlas(_)
             | Self::Shadow(_)
             | Self::Glyphs(_)
-            | Self::Points(_) => false,
+            | Self::Points(_)
+            | Self::NinePatch(_) => false,
             Self::Layer {
                 layer, children, ..
             } => layer.backdrop_blur > 0.0 || children.iter().any(Node::filters_its_backdrop),

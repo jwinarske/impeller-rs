@@ -215,6 +215,35 @@ fn record_node(canvas: &mut Canvas, node: &Node, anti_alias: bool) -> Result<()>
                 return Err(e);
             }
         }
+        Node::NinePatch(nine) => {
+            canvas.save();
+            canvas.concat(nine.transform.to_affine());
+            // The sheet's own size, which the executor knows and the scene
+            // must not: a scene names no texture and so cannot name its
+            // extent. The center is in texels of that sheet.
+            // The paint's shader is replaced per piece by the call, so what
+            // it carries here is the alpha, the blend and the antialiasing.
+            let mut paint = Paint::image(crate::fixture::SLOT, rect_of(nine.into))
+                .with_blend(nine.blend)
+                .with_anti_alias(anti_alias);
+            // The call replaces the shader for each of the nine pieces, so a
+            // scene fading the whole thing sets the alpha on the one it starts
+            // from and lets that be carried across.
+            if let Shader::Image { alpha, .. } = &mut paint.shader {
+                *alpha = nine.alpha;
+            }
+            let result = canvas
+                .draw_image_nine(
+                    crate::fixture::SLOT,
+                    crate::fixture::SIZE,
+                    rect_of(nine.center),
+                    rect_of(nine.into),
+                    &paint,
+                )
+                .map(|_| ());
+            canvas.restore();
+            result?;
+        }
         Node::Points(points) => {
             canvas.save();
             canvas.concat(points.transform.to_affine());

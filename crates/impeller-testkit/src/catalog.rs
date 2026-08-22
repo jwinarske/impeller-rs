@@ -34,8 +34,8 @@
 //! scene here with no counterpart there would be visible as one.
 
 use crate::scene::{
-    AtlasSpec, Fill, GlyphRunSpec, Item, LayerSpec, MeshSpec, Node, PictureSpec, PointsSpec, Scene,
-    ShadowSpec, SpriteSpec, Stop, StrokeSpec, Transform,
+    AtlasSpec, Fill, GlyphRunSpec, Item, LayerSpec, MeshSpec, NinePatchSpec, Node, PictureSpec,
+    PointsSpec, Scene, ShadowSpec, SpriteSpec, Stop, StrokeSpec, Transform,
 };
 use crate::shape::Shape;
 use impeller_core::{Affine2, ImageFilter, MaskBlurStyle, PointMode, Vec2, VertexMode};
@@ -82,6 +82,18 @@ pub fn catalog() -> Vec<Scene> {
 }
 
 /// A scene on the catalog's own ground, which is dark so a white shape shows.
+fn nine_plate(name: &'static str, specs: Vec<NinePatchSpec>) -> Scene {
+    Scene::tree(
+        name,
+        specs
+            .into_iter()
+            .map(|s| Node::NinePatch(Box::new(s)))
+            .collect(),
+    )
+    .with_background(DARK)
+    .with_samples(4)
+}
+
 fn points_plate(name: &'static str, spec: PointsSpec) -> Scene {
     Scene::tree(name, vec![Node::Points(Box::new(spec))])
         .with_background(DARK)
@@ -210,6 +222,50 @@ fn basic() -> Vec<Scene> {
                 translate: [-20.0, 0.0],
                 ..Transform::default()
             })],
+        ),
+        nine_plate(
+            "basic/a-nine-patch-stretched-wide-and-tall",
+            // The whole of what a nine-patch means is which pieces stretch in
+            // which direction, so one destination cannot show it: a square
+            // would look the same as a plain image drawn to the same place.
+            // These two are stretched along opposite axes from the same center,
+            // so a corner that stretched, or an edge that stretched along the
+            // wrong axis, differs between them rather than looking merely odd.
+            vec![
+                NinePatchSpec {
+                    center: [3.0, 3.0, 5.0, 5.0],
+                    into: [6.0, 8.0, 122.0, 46.0],
+                    alpha: 1.0,
+                    blend: BlendMode::SrcOver,
+                    transform: Transform::default(),
+                },
+                NinePatchSpec {
+                    center: [3.0, 3.0, 5.0, 5.0],
+                    into: [8.0, 54.0, 46.0, 122.0],
+                    alpha: 1.0,
+                    blend: BlendMode::SrcOver,
+                    transform: Transform::default(),
+                },
+                // Smaller than the sheet in both directions, where the middle
+                // has to shrink rather than stretch and the corners still may
+                // not: the case that separates a nine-patch from a scale.
+                NinePatchSpec {
+                    center: [3.0, 3.0, 5.0, 5.0],
+                    into: [64.0, 60.0, 96.0, 92.0],
+                    alpha: 1.0,
+                    blend: BlendMode::SrcOver,
+                    transform: Transform::default(),
+                },
+                // Faded, so the alpha the paint carries is shown to reach all
+                // nine pieces rather than the first one drawn.
+                NinePatchSpec {
+                    center: [3.0, 3.0, 5.0, 5.0],
+                    into: [98.0, 56.0, 124.0, 124.0],
+                    alpha: 0.45,
+                    blend: BlendMode::SrcOver,
+                    transform: Transform::default(),
+                },
+            ],
         ),
         points_plate(
             "basic/points-in-all-three-modes",
