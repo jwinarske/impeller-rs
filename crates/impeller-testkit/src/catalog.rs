@@ -2001,6 +2001,15 @@ fn triangle() -> Vec<[f32; 2]> {
     vec![[64.0, 16.0], [116.0, 108.0], [12.0, 108.0]]
 }
 
+fn mesh_group(name: &'static str, specs: Vec<MeshSpec>) -> Scene {
+    Scene::tree(
+        name,
+        specs.into_iter().map(|s| Node::Mesh(Box::new(s))).collect(),
+    )
+    .with_background(DARK)
+    .with_samples(4)
+}
+
 fn mesh(name: &'static str, spec: MeshSpec) -> Scene {
     Scene::tree(name, vec![Node::Mesh(Box::new(spec))])
         .with_background(DARK)
@@ -2157,6 +2166,166 @@ fn vertices() -> Vec<Scene> {
                     sheet(SHEET, ALL, TileMode::Clamp, Sampling::Linear),
                 )
             },
+        ),
+        mesh_group(
+            "vertices/vertex-colors-combined-by-each-separable-mode",
+            // Twelve modes over one fill, each on its own quad whose four vertices carry
+            // four different colors -- so every mode is exercised across a gradient of
+            // sources rather than at one value, where several of them agree.
+            vec![
+                MeshSpec {
+                    tint_blend: BlendMode::Multiply,
+                    colors: vec![RED, GREEN, BLUE, WHITE],
+                    indices: vec![0, 1, 2, 0, 2, 3],
+                    ..mesh_of(
+                        vec![[4.0, 4.0], [31.0, 4.0], [31.0, 31.0], [4.0, 31.0]],
+                        Fill::Solid([0.25, 0.6, 0.9, 1.0]),
+                    )
+                },
+                MeshSpec {
+                    tint_blend: BlendMode::Screen,
+                    colors: vec![RED, GREEN, BLUE, WHITE],
+                    indices: vec![0, 1, 2, 0, 2, 3],
+                    ..mesh_of(
+                        vec![[35.0, 4.0], [62.0, 4.0], [62.0, 31.0], [35.0, 31.0]],
+                        Fill::Solid([0.25, 0.6, 0.9, 1.0]),
+                    )
+                },
+                MeshSpec {
+                    tint_blend: BlendMode::Overlay,
+                    colors: vec![RED, GREEN, BLUE, WHITE],
+                    indices: vec![0, 1, 2, 0, 2, 3],
+                    ..mesh_of(
+                        vec![[66.0, 4.0], [93.0, 4.0], [93.0, 31.0], [66.0, 31.0]],
+                        Fill::Solid([0.25, 0.6, 0.9, 1.0]),
+                    )
+                },
+                MeshSpec {
+                    tint_blend: BlendMode::Darken,
+                    colors: vec![RED, GREEN, BLUE, WHITE],
+                    indices: vec![0, 1, 2, 0, 2, 3],
+                    ..mesh_of(
+                        vec![[97.0, 4.0], [124.0, 4.0], [124.0, 31.0], [97.0, 31.0]],
+                        Fill::Solid([0.25, 0.6, 0.9, 1.0]),
+                    )
+                },
+                MeshSpec {
+                    tint_blend: BlendMode::Lighten,
+                    colors: vec![RED, GREEN, BLUE, WHITE],
+                    indices: vec![0, 1, 2, 0, 2, 3],
+                    ..mesh_of(
+                        vec![[4.0, 35.0], [31.0, 35.0], [31.0, 62.0], [4.0, 62.0]],
+                        Fill::Solid([0.25, 0.6, 0.9, 1.0]),
+                    )
+                },
+                MeshSpec {
+                    tint_blend: BlendMode::ColorDodge,
+                    colors: vec![RED, GREEN, BLUE, WHITE],
+                    indices: vec![0, 1, 2, 0, 2, 3],
+                    ..mesh_of(
+                        vec![[35.0, 35.0], [62.0, 35.0], [62.0, 62.0], [35.0, 62.0]],
+                        Fill::Solid([0.25, 0.6, 0.9, 1.0]),
+                    )
+                },
+                MeshSpec {
+                    tint_blend: BlendMode::ColorBurn,
+                    colors: vec![RED, GREEN, BLUE, WHITE],
+                    indices: vec![0, 1, 2, 0, 2, 3],
+                    ..mesh_of(
+                        vec![[66.0, 35.0], [93.0, 35.0], [93.0, 62.0], [66.0, 62.0]],
+                        Fill::Solid([0.25, 0.6, 0.9, 1.0]),
+                    )
+                },
+                MeshSpec {
+                    tint_blend: BlendMode::HardLight,
+                    colors: vec![RED, GREEN, BLUE, WHITE],
+                    indices: vec![0, 1, 2, 0, 2, 3],
+                    ..mesh_of(
+                        vec![[97.0, 35.0], [124.0, 35.0], [124.0, 62.0], [97.0, 62.0]],
+                        Fill::Solid([0.25, 0.6, 0.9, 1.0]),
+                    )
+                },
+                MeshSpec {
+                    tint_blend: BlendMode::SoftLight,
+                    colors: vec![RED, GREEN, BLUE, WHITE],
+                    indices: vec![0, 1, 2, 0, 2, 3],
+                    ..mesh_of(
+                        vec![[4.0, 66.0], [31.0, 66.0], [31.0, 93.0], [4.0, 93.0]],
+                        Fill::Solid([0.25, 0.6, 0.9, 1.0]),
+                    )
+                },
+                MeshSpec {
+                    tint_blend: BlendMode::Difference,
+                    colors: vec![RED, GREEN, BLUE, WHITE],
+                    indices: vec![0, 1, 2, 0, 2, 3],
+                    ..mesh_of(
+                        vec![[35.0, 66.0], [62.0, 66.0], [62.0, 93.0], [35.0, 93.0]],
+                        Fill::Solid([0.25, 0.6, 0.9, 1.0]),
+                    )
+                },
+                MeshSpec {
+                    tint_blend: BlendMode::Exclusion,
+                    colors: vec![RED, GREEN, BLUE, WHITE],
+                    indices: vec![0, 1, 2, 0, 2, 3],
+                    ..mesh_of(
+                        vec![[66.0, 66.0], [93.0, 66.0], [93.0, 93.0], [66.0, 93.0]],
+                        Fill::Solid([0.25, 0.6, 0.9, 1.0]),
+                    )
+                },
+                MeshSpec {
+                    tint_blend: BlendMode::Plus,
+                    colors: vec![RED, GREEN, BLUE, WHITE],
+                    indices: vec![0, 1, 2, 0, 2, 3],
+                    ..mesh_of(
+                        vec![[97.0, 66.0], [124.0, 66.0], [124.0, 93.0], [97.0, 93.0]],
+                        Fill::Solid([0.25, 0.6, 0.9, 1.0]),
+                    )
+                },
+            ],
+        ),
+        mesh_group(
+            "vertices/vertex-colors-combined-by-each-nonseparable-mode",
+            // The four modes that mix channels rather than acting on each alone. They
+            // are the half most likely to translate differently, carrying a sort and a
+            // luminosity clip that the separable ones do not.
+            vec![
+                MeshSpec {
+                    tint_blend: BlendMode::Hue,
+                    colors: vec![RED, GREEN, BLUE, WHITE],
+                    indices: vec![0, 1, 2, 0, 2, 3],
+                    ..mesh_of(
+                        vec![[4.0, 4.0], [31.0, 4.0], [31.0, 31.0], [4.0, 31.0]],
+                        Fill::Solid([0.25, 0.6, 0.9, 1.0]),
+                    )
+                },
+                MeshSpec {
+                    tint_blend: BlendMode::Saturation,
+                    colors: vec![RED, GREEN, BLUE, WHITE],
+                    indices: vec![0, 1, 2, 0, 2, 3],
+                    ..mesh_of(
+                        vec![[35.0, 4.0], [62.0, 4.0], [62.0, 31.0], [35.0, 31.0]],
+                        Fill::Solid([0.25, 0.6, 0.9, 1.0]),
+                    )
+                },
+                MeshSpec {
+                    tint_blend: BlendMode::Color,
+                    colors: vec![RED, GREEN, BLUE, WHITE],
+                    indices: vec![0, 1, 2, 0, 2, 3],
+                    ..mesh_of(
+                        vec![[66.0, 4.0], [93.0, 4.0], [93.0, 31.0], [66.0, 31.0]],
+                        Fill::Solid([0.25, 0.6, 0.9, 1.0]),
+                    )
+                },
+                MeshSpec {
+                    tint_blend: BlendMode::Luminosity,
+                    colors: vec![RED, GREEN, BLUE, WHITE],
+                    indices: vec![0, 1, 2, 0, 2, 3],
+                    ..mesh_of(
+                        vec![[97.0, 4.0], [124.0, 4.0], [124.0, 31.0], [97.0, 31.0]],
+                        Fill::Solid([0.25, 0.6, 0.9, 1.0]),
+                    )
+                },
+            ],
         ),
         mesh(
             "vertices/a-mesh-filled-by-a-runtime-effect",
@@ -2366,6 +2535,31 @@ fn atlas_scenes() -> Vec<Scene> {
                     })
                     .collect(),
                 blend: BlendMode::Multiply,
+                alpha: 1.0,
+            },
+        ),
+        atlas(
+            "atlas/sprite-colors-combined-by-a-mode-that-is-not-a-multiply",
+            // The batch's own blend decides how the result reaches the target;
+            // this is the other one, deciding how each sprite's color meets the
+            // texels it covers. `Difference` because it is nothing like a
+            // multiply: a sprite that vanished under `Modulate` shows here, so
+            // the plate says which of the two settings it is reading.
+            AtlasSpec {
+                tint_blend: BlendMode::Difference,
+                sprites: (0..4)
+                    .map(|i| {
+                        let (sx, sy) = ((i % 2) as f32 * 4.0, (i / 2) as f32 * 4.0);
+                        SpriteSpec {
+                            source: [sx, sy, sx + 4.0, sy + 4.0],
+                            rotate: 0.0,
+                            scale: 7.0,
+                            translate: [12.0 + i as f32 * 26.0, 46.0],
+                            color: [0.9, 0.55, 0.2, 1.0],
+                        }
+                    })
+                    .collect(),
+                blend: BlendMode::SrcOver,
                 alpha: 1.0,
             },
         ),
