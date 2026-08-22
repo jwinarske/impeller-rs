@@ -319,6 +319,11 @@ dependencies = [
 [[package]]
 name = "impeller-entity"
 version = "0.1.0"
+dependencies = [
+ "glam",
+ "impeller-geometry",
+ "impeller-hal",
+]
 
 [[package]]
 name = "impeller-geometry"

@@ -7,6 +7,11 @@ publish.workspace = true
 license.workspace = true
 repository.workspace = true
 homepage.workspace = true
-description = "Planned entity and contents layer for impeller-rs. A stub; nothing is built yet."
-keywords = ["graphics", "renderer", "stub"]
+description = "Entity and contents layer for impeller-rs: coverage computation for culling and offscreen sizing."
+keywords = ["graphics", "renderer", "coverage", "culling"]
 categories = ["graphics"]
+
+[dependencies]
+glam = { workspace = true }
+impeller-geometry = { workspace = true }
+impeller-hal = { workspace = true }

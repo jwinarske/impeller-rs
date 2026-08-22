@@ -50,7 +50,7 @@ at first, so it says which parts are drawings of intent rather than of code.
 │  Public API (impeller-core)                                   │
 │  Canvas, Paint, Path, Layer, Recording                        │
 ├───────────────────────────────────────────────────────────────┤
-│  Entity layer (impeller-entity)   planned; backend-agnostic   │
+│  Entity layer (impeller-entity)   coverage only; not routed   │
 ├───────────────────────────────────────────────────────────────┤
 │  Renderer (impeller-renderer)  — generic over Hal             │
 │  Tessellation into clip space, batch assembly                 │
@@ -1594,13 +1594,35 @@ every fragment walks, which is the cost specialization would remove.
   four times faster than the `atan2` per vertex the definition suggests. Both
   are in the tree and a test requires them to agree, so the cheap one has
   something to be checked against.
-- **Entity layer** (`impeller-entity`): **not built.** The crate is two lines
-  of module comment. The design is that an entity carries transform, blend,
-  clip depth, contents, and geometry, with a `Contents` implementation per
-  material and coverage computation for culling — and nothing needs it yet,
-  because the canvas records into a batch directly and the layer would sit
-  between two things that already fit. Building it before there is a caller
+- **Entity layer** (`impeller-entity`): **coverage only, and nothing routes
+  through it.** The design is that an entity carries transform, blend, clip
+  depth, contents, and geometry, with a `Contents` implementation per material
+  and coverage computation for culling. The canvas still records into a batch
+  directly, so the layer sits beside the pipeline rather than in it, and the
+  reason for that has not changed: building the rest before there is a caller
   would fix its shape around a guess.
+
+  Coverage is built because it is the part that is not a guess. The canvas
+  computes it today in four places by hand — bounds grown by a stroke, a
+  layer's outward reach, what a mask blur covers, and the device bounds a save
+  layer is sized to — and each is the same composition written again. It is
+  stated once here, in order: geometry bounds, carried through the transform,
+  grown by how far the contents reach, then narrowed by the clip.
+
+  Both ends of that order are load-bearing and both are tested by making the
+  other order fail. A filter's reach is a distance on the target, so growing
+  before the transform would send the reach through it and a shape drawn at ten
+  times the scale would blur ten times as far. And the clip narrows last
+  because it applies to the finished picture: clipping before growing lets a
+  blur back out past the clip, and the same coverage sizes an offscreen target,
+  which would then be too large by the reach on every side.
+
+  Coverage is three cases rather than a rectangle. Nothing drawn has no bounds
+  and must not read as a zero-area rectangle at the origin, which is a real
+  place that a collapsed transform produces and that a caller must not cull.
+  And `drawPaint` covers whatever the clip admits, which stays unbounded until
+  a clip resolves it — a very large rectangle would be a number somebody chose,
+  and wrong at some scale.
 - **Passes** (`impeller-renderer`): draws are accumulated into a batch and
   submitted as one pass, in submission order rather than sorted by pipeline
   (see above). Save layers become offscreen
@@ -1723,7 +1745,7 @@ its reasons.
 |---|---|
 | `impeller` | Public facade; carries the feature flags |
 | `impeller-core` | Public API: Canvas, Paint, Path, Recording, glyph runs |
-| `impeller-entity` | Entity and Contents layer — **a stub; nothing is built** |
+| `impeller-entity` | Entity and Contents layer — **coverage only**; nothing routes through it |
 | `impeller-geometry` | Path types, flattening, tessellation, stroking, dashing |
 | `impeller-renderer` | Render pass encoding, generic over the HAL |
 | `impeller-text` | Glyph atlas: packing, compaction, growth. Not rasterization |
