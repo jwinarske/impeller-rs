@@ -5,6 +5,11 @@ edition.workspace = true
 rust-version.workspace = true
 publish.workspace = true
 license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+description = "DRM/KMS direct-scanout presentation target for impeller-rs."
+keywords = ["drm", "kms", "scanout", "embedded", "display"]
+categories = ["graphics", "embedded"]
 
 [dependencies]
 drm = { version = "0.15.0", default-features = false }
@@ -15,4 +20,4 @@ log = { workspace = true }
 rustix = { version = "1.1.4", default-features = false, features = ["fs"] }
 
 [dev-dependencies]
-impeller-hal-vulkan = { workspace = true }
+impeller-hal-vulkan = { path = "../impeller-hal-vulkan" }

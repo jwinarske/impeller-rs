@@ -5,6 +5,11 @@ edition.workspace = true
 rust-version.workspace = true
 publish.workspace = true
 license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+description = "GLES 3.0 rendering backend for impeller-rs."
+keywords = ["gles", "opengl", "backend", "graphics", "hal"]
+categories = ["graphics", "rendering::graphics-api"]
 
 [dependencies]
 glow = { workspace = true }

@@ -1,10 +1,21 @@
 [package]
-name = "impeller"
+name = "impeller-rs"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 publish.workspace = true
 license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+description = "A Flutter-class 2D renderer: Vulkan and GLES backends, WSI and DRM/KMS presentation."
+keywords = ["renderer", "vulkan", "gles", "graphics", "flutter"]
+categories = ["graphics", "rendering::engine"]
+
+# The package is `impeller-rs` because `impeller` on crates.io is an unrelated
+# crate that got there first. The library keeps the plain name, so a consumer
+# writes `use impeller::...` either way and only the dependency line differs.
+[lib]
+name = "impeller"
 
 # `drm` is presentation-only and composes with either rendering backend:
 #   --features vulkan,drm       Vulkan rendering with KMS scanout
@@ -27,7 +38,7 @@ googletest = { workspace = true }
 # had been silently absent since they were written. Enabling the feature here
 # rather than asking for a flag is what makes them run under a plain
 # `cargo test`, which is the only kind that gets run.
-impeller = { path = ".", features = ["gles"] }
+impeller = { path = ".", package = "impeller-rs", features = ["gles"] }
 
 [dependencies]
 impeller-core = { workspace = true }

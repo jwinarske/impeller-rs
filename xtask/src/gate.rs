@@ -118,7 +118,7 @@ pub fn run(software: bool) -> bool {
             "check",
             "-q",
             "-p",
-            "impeller",
+            "impeller-rs",
             "--no-default-features",
             "--features",
             features,

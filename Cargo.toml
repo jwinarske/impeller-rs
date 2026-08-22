@@ -20,6 +20,8 @@ publish = false
 # architecture from lives. Any code ported from there keeps its own copyright
 # notice alongside ours.
 license = "BSD-3-Clause"
+repository = "https://github.com/jwinarske/impeller-rs"
+homepage = "https://github.com/jwinarske/impeller-rs"
 
 # Dependency versions are pinned here and inherited by every member via
 # `dep = { workspace = true }`, so a bump is a single reviewed edit.
@@ -70,20 +72,20 @@ cosmic-text = "0.12"
 usvg = "0.43"
 
 # --- internal ---
-impeller-core = { path = "crates/impeller-core" }
-impeller-entity = { path = "crates/impeller-entity" }
-impeller-geometry = { path = "crates/impeller-geometry" }
-impeller-hal = { path = "crates/impeller-hal" }
-impeller-hal-gles = { path = "crates/impeller-hal-gles" }
-impeller-hal-vulkan = { path = "crates/impeller-hal-vulkan" }
-impeller-present = { path = "crates/impeller-present" }
-impeller-present-drm = { path = "crates/impeller-present-drm" }
-impeller-present-egl = { path = "crates/impeller-present-egl" }
-impeller-present-vk = { path = "crates/impeller-present-vk" }
-impeller-renderer = { path = "crates/impeller-renderer" }
-impeller-shaders = { path = "crates/impeller-shaders" }
-impeller-testkit = { path = "crates/impeller-testkit" }
-impeller-text = { path = "crates/impeller-text" }
+impeller-core = { path = "crates/impeller-core", version = "0.1.0" }
+impeller-entity = { path = "crates/impeller-entity", version = "0.1.0" }
+impeller-geometry = { path = "crates/impeller-geometry", version = "0.1.0" }
+impeller-hal = { path = "crates/impeller-hal", version = "0.1.0" }
+impeller-hal-gles = { path = "crates/impeller-hal-gles", version = "0.1.0" }
+impeller-hal-vulkan = { path = "crates/impeller-hal-vulkan", version = "0.1.0" }
+impeller-present = { path = "crates/impeller-present", version = "0.1.0" }
+impeller-present-drm = { path = "crates/impeller-present-drm", version = "0.1.0" }
+impeller-present-egl = { path = "crates/impeller-present-egl", version = "0.1.0" }
+impeller-present-vk = { path = "crates/impeller-present-vk", version = "0.1.0" }
+impeller-renderer = { path = "crates/impeller-renderer", version = "0.1.0" }
+impeller-shaders = { path = "crates/impeller-shaders", version = "0.1.0" }
+impeller-testkit = { path = "crates/impeller-testkit", version = "0.1.0" }
+impeller-text = { path = "crates/impeller-text", version = "0.1.0" }
 
 [profile.release]
 lto = "thin"

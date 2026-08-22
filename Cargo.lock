@@ -299,21 +299,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "dfa686283ad6dd069f105e5ab091b04c62850d3e4cf5d67debad1933f55023df"
 
 [[package]]
-name = "impeller"
-version = "0.1.0"
-dependencies = [
- "googletest",
- "impeller",
- "impeller-core",
- "impeller-hal",
- "impeller-hal-gles",
- "impeller-hal-vulkan",
- "impeller-present",
- "impeller-present-drm",
- "impeller-shaders",
-]
-
-[[package]]
 name = "impeller-capi"
 version = "0.1.0"
 dependencies = [
@@ -428,6 +413,21 @@ dependencies = [
  "impeller-geometry",
  "impeller-hal",
  "impeller-hal-vulkan",
+]
+
+[[package]]
+name = "impeller-rs"
+version = "0.1.0"
+dependencies = [
+ "googletest",
+ "impeller-core",
+ "impeller-hal",
+ "impeller-hal-gles",
+ "impeller-hal-vulkan",
+ "impeller-present",
+ "impeller-present-drm",
+ "impeller-rs",
+ "impeller-shaders",
 ]
 
 [[package]]

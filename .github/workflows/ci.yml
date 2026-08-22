@@ -211,7 +211,7 @@ jobs:
       # a board actually enables.
       - name: Check
         run: |
-          cargo check -p impeller --no-default-features \
+          cargo check -p impeller-rs --no-default-features \
             --features vulkan,gles,drm --target ${{ matrix.target }} --locked
 
   supply-chain:

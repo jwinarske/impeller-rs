@@ -5,6 +5,11 @@ edition.workspace = true
 rust-version.workspace = true
 publish.workspace = true
 license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+description = "Rendering hardware abstraction layer for impeller-rs."
+keywords = ["hal", "graphics", "vulkan", "gles", "renderer"]
+categories = ["graphics", "rendering::graphics-api"]
 
 [dependencies]
 thiserror = { workspace = true }

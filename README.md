@@ -97,7 +97,7 @@ let pixels = ctx.read(&mut surface)?;
 ## Running it
 
 ```sh
-cargo run -p impeller --example frame -- frame.ppm
+cargo run -p impeller-rs --example frame -- frame.ppm
 ```
 
 Draws one frame through the public API — a gradient, a group composited through
@@ -232,7 +232,7 @@ only builds because another feature happened to be on is a coupling:
 
 ```sh
 for f in vulkan gles vulkan,gles,drm; do
-  cargo check -p impeller --no-default-features --features "$f" || break
+  cargo check -p impeller-rs --no-default-features --features "$f" || break
 done
 ```
 

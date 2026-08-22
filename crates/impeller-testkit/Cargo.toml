@@ -5,6 +5,11 @@ edition.workspace = true
 rust-version.workspace = true
 publish.workspace = true
 license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+description = "Shared test harness for impeller-rs: scene corpus and cross-backend comparison."
+keywords = ["testing", "graphics", "harness", "golden"]
+categories = ["development-tools::testing", "graphics"]
 
 [dependencies]
 glam = { workspace = true }
@@ -17,5 +22,5 @@ impeller-renderer = { workspace = true }
 
 [dev-dependencies]
 googletest = { workspace = true }
-impeller-hal-vulkan = { workspace = true }
-impeller-hal-gles = { workspace = true }
+impeller-hal-vulkan = { path = "../impeller-hal-vulkan" }
+impeller-hal-gles = { path = "../impeller-hal-gles" }

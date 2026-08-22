@@ -5,6 +5,11 @@ edition.workspace = true
 rust-version.workspace = true
 publish.workspace = true
 license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+description = "Impeller C API (libimpeller) for impeller-rs, ABI-compatible with the Flutter Engine's."
+keywords = ["ffi", "capi", "impeller", "flutter", "bindings"]
+categories = ["external-ffi-bindings", "graphics"]
 
 [lib]
 # Produces libimpeller.so / .dylib / impeller.dll, the artifact a C API

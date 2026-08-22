@@ -5,6 +5,11 @@ edition.workspace = true
 rust-version.workspace = true
 publish.workspace = true
 license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+description = "Render pass encoding for impeller-rs, generic over the rendering HAL."
+keywords = ["renderer", "graphics", "render-pass", "2d"]
+categories = ["graphics", "rendering"]
 
 [dependencies]
 glam = { workspace = true }
@@ -14,4 +19,4 @@ impeller-hal = { workspace = true }
 [dev-dependencies]
 # A concrete backend is needed to check that geometry lands on the pixels it
 # should. This is a test-only dependency; the renderer itself stays generic.
-impeller-hal-vulkan = { workspace = true }
+impeller-hal-vulkan = { path = "../impeller-hal-vulkan" }

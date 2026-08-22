@@ -5,6 +5,11 @@ edition.workspace = true
 rust-version.workspace = true
 publish.workspace = true
 license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+description = "Drawing API for impeller-rs: Canvas, Paint, Color, recording and execution."
+keywords = ["canvas", "renderer", "graphics", "2d", "paint"]
+categories = ["graphics", "rendering"]
 
 [dependencies]
 glam = { workspace = true }

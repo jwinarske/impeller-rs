@@ -5,6 +5,11 @@ edition.workspace = true
 rust-version.workspace = true
 publish.workspace = true
 license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+description = "Presentation target trait and format negotiation for impeller-rs."
+keywords = ["presentation", "swapchain", "graphics", "display"]
+categories = ["graphics", "rendering"]
 
 [dependencies]
 impeller-hal = { workspace = true }
@@ -14,7 +19,7 @@ log = { workspace = true }
 # Only the frame-loop test, which presents a recording. The library itself
 # stays below the canvas: a presentation target hands out a texture and knows
 # nothing about what is drawn into it.
-impeller-core = { workspace = true }
-impeller-hal-vulkan = { workspace = true }
-impeller-testkit = { workspace = true }
-impeller-renderer = { workspace = true }
+impeller-core = { path = "../impeller-core" }
+impeller-hal-vulkan = { path = "../impeller-hal-vulkan" }
+impeller-testkit = { path = "../impeller-testkit" }
+impeller-renderer = { path = "../impeller-renderer" }

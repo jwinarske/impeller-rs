@@ -5,6 +5,11 @@ edition.workspace = true
 rust-version.workspace = true
 publish.workspace = true
 license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+description = "Vulkan rendering backend for impeller-rs."
+keywords = ["vulkan", "backend", "graphics", "renderer", "hal"]
+categories = ["graphics", "rendering::graphics-api"]
 
 [dependencies]
 ash = { workspace = true }
@@ -13,5 +18,5 @@ impeller-hal = { workspace = true }
 impeller-shaders = { workspace = true }
 
 [dev-dependencies]
-impeller-present = { workspace = true }
+impeller-present = { path = "../impeller-present" }
 rustix = { version = "1.1.4", default-features = false, features = ["event", "std"] }

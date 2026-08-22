@@ -12,7 +12,7 @@
 //! layer was given — which is a thing to look at rather than assert.
 //!
 //! ```sh
-//! cargo run -p impeller --example frame -- frame.ppm
+//! cargo run -p impeller-rs --example frame -- frame.ppm
 //! ```
 //!
 //! The output is a binary PPM, which every image viewer reads and which needs
