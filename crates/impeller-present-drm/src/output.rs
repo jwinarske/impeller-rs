@@ -2,15 +2,23 @@
 //!
 //! Everything to do with KMS — connector and plane discovery, mode selection,
 //! atomic commit construction, page-flip events, framebuffer import — belongs
-//! to drm-rs. This crate reimplements none of it, and the dependency runs one
-//! way: drm-rs knows nothing about rendering.
+//! to the KMS binding. This crate reimplements none of it, and the dependency
+//! runs one way: the binding knows nothing about rendering.
 //!
 //! That surface is expressed here as a trait rather than consumed directly, for
-//! two reasons. It states exactly what drm-rs must provide, so the two projects
-//! can be sequenced against each other rather than discovering the mismatch at
+//! two reasons. It states what a binding must provide, so the two projects can
+//! be sequenced against each other rather than discovering the mismatch at
 //! integration. And it makes the frame loop testable without a display: the
 //! parts most worth testing are the ring accounting and the fence plumbing,
 //! neither of which needs real hardware to get wrong.
+//!
+//! "A binding" rather than the one in use, because a second is expected and the
+//! first has no special claim. drm-rs implements this today, in `kms.rs` and
+//! `device.rs`, and those two files are the only ones in the crate permitted to
+//! name it — this file, the frame loop, and the types below name nothing from
+//! it, which is what makes replacing it a matter of writing another
+//! implementation rather than editing this one. A test enforces that, because
+//! a single convenient import would end it silently.
 
 use impeller_hal::{Extent2D, FormatModifierSet, Fourcc, Modifier, Result};
 

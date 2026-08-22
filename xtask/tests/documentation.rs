@@ -436,3 +436,73 @@ fn the_tree_is_written_in_american_english() {
         found.join("\n  ")
     );
 }
+
+/// The scanout seam has to stay free of the library behind it.
+///
+/// `ScanoutOutput` exists so the KMS library can be replaced without this
+/// renderer reimplementing KMS logic, and the architecture says as much: the
+/// surface is stated as a trait "so the two projects can be sequenced against
+/// each other rather than discovering a mismatch at integration". That is only
+/// true while the trait, the types in its signatures, and the frame loop that
+/// drives it name no type from whichever library currently implements it.
+///
+/// It is true today and was measured rather than assumed: every mention of
+/// `drm::` in the crate is in the two files implementing the trait. This test
+/// is here because that is an invariant a single convenient import would end,
+/// silently, in a crate where importing it is otherwise ordinary -- and a
+/// second implementation is planned, which is exactly when it would be found
+/// out the expensive way.
+#[test]
+fn the_scanout_trait_names_nothing_from_the_library_behind_it() {
+    let crate_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .expect("workspace root")
+        .join("crates/impeller-present-drm/src");
+
+    // Where the binding may be named: the implementation of the trait, and the
+    // device handling underneath it. Everything else is the seam.
+    let implementation = ["kms.rs", "device.rs"];
+
+    let entries = std::fs::read_dir(&crate_dir)
+        .unwrap_or_else(|e| panic!("reading {}: {e}", crate_dir.display()));
+    let mut checked = 0;
+    for entry in entries {
+        let path = entry.expect("dir entry").path();
+        if path.extension().and_then(|e| e.to_str()) != Some("rs") {
+            continue;
+        }
+        let name = path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .expect("file name")
+            .to_string();
+        if implementation.contains(&name.as_str()) {
+            continue;
+        }
+        let source = std::fs::read_to_string(&path).unwrap_or_default();
+        // Prose may discuss the library; code may not name it. The comment
+        // marker is enough to tell them apart here, every mention in this crate
+        // being either an import or a path in an expression.
+        for (number, line) in source.lines().enumerate() {
+            let trimmed = line.trim_start();
+            if trimmed.starts_with("//") || trimmed.starts_with("*") {
+                continue;
+            }
+            assert!(
+                !line.contains("drm::"),
+                "{name}:{} names the KMS binding, which the seam may not: {}\n\
+                 A type from it in the trait, in a type the trait mentions, or \
+                 in the frame loop is what would stop a second implementation \
+                 from being a drop-in.",
+                number + 1,
+                line.trim()
+            );
+        }
+        checked += 1;
+    }
+    assert!(
+        checked >= 3,
+        "expected the trait, the frame loop and the crate root at least, \
+         checked {checked} files"
+    );
+}
