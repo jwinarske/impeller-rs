@@ -60,6 +60,21 @@ pub enum Shape {
         /// rather than an outline that crosses itself.
         radius: f32,
     },
+    /// The ring between two rounded rectangles -- `dart:ui`'s `drawDRRect`.
+    ///
+    /// Two contours in one path under the even-odd rule, which is the whole of
+    /// what makes the inner one a hole rather than a second ring drawn over
+    /// the first. Not expressible as two items: drawing the inner one in the
+    /// background color would match only over a background of that color, and
+    /// would still be wrong under any blend or through any layer.
+    DiffRoundedRect {
+        /// Minimum and maximum corners of the outer rectangle.
+        outer: [[f32; 2]; 2],
+        outer_radius: f32,
+        /// Minimum and maximum corners of the inner rectangle.
+        inner: [[f32; 2]; 2],
+        inner_radius: f32,
+    },
     /// An arc, open for a ring or closed through the center for a slice.
     ///
     /// The two shapes an arc is actually used for, and they differ in the one
@@ -162,36 +177,17 @@ impl Shape {
                     .close();
             }
             Self::RoundedRect { min, max, radius } => {
-                let (l, t) = (min[0], min[1]);
-                let (r, bo) = (max[0], max[1]);
-                let radius = radius.min((r - l) / 2.0).min((bo - t) / 2.0).max(0.0);
-                let k = KAPPA * radius;
-                b.move_to(Vec2::new(l + radius, t))
-                    .line_to(Vec2::new(r - radius, t))
-                    .cubic_to(
-                        Vec2::new(r - radius + k, t),
-                        Vec2::new(r, t + radius - k),
-                        Vec2::new(r, t + radius),
-                    )
-                    .line_to(Vec2::new(r, bo - radius))
-                    .cubic_to(
-                        Vec2::new(r, bo - radius + k),
-                        Vec2::new(r - radius + k, bo),
-                        Vec2::new(r - radius, bo),
-                    )
-                    .line_to(Vec2::new(l + radius, bo))
-                    .cubic_to(
-                        Vec2::new(l + radius - k, bo),
-                        Vec2::new(l, bo - radius + k),
-                        Vec2::new(l, bo - radius),
-                    )
-                    .line_to(Vec2::new(l, t + radius))
-                    .cubic_to(
-                        Vec2::new(l, t + radius - k),
-                        Vec2::new(l + radius - k, t),
-                        Vec2::new(l + radius, t),
-                    )
-                    .close();
+                rounded_contour(&mut b, *min, *max, *radius);
+            }
+            Self::DiffRoundedRect {
+                outer,
+                outer_radius,
+                inner,
+                inner_radius,
+            } => {
+                b = b.with_fill_rule(FillRule::EvenOdd);
+                rounded_contour(&mut b, outer[0], outer[1], *outer_radius);
+                rounded_contour(&mut b, inner[0], inner[1], *inner_radius);
             }
             Self::Circle { center, radius } => {
                 let (cx, cy) = (center[0], center[1]);
@@ -252,6 +248,47 @@ fn trace(b: &mut PathBuilder, points: &[[f32; 2]]) {
             b.line_to(Vec2::from(*p));
         }
     }
+}
+
+/// Trace a rounded rectangle as one closed contour.
+///
+/// Shared by [`Shape::RoundedRect`] and [`Shape::DiffRoundedRect`] rather than
+/// written twice, since a ring whose two contours were built by different code
+/// could be a ring of uneven thickness and still look plausible.
+fn rounded_contour(b: &mut PathBuilder, min: [f32; 2], max: [f32; 2], radius: f32) {
+    let (l, t) = (min[0], min[1]);
+    let (r, bo) = (max[0], max[1]);
+    if r <= l || bo <= t {
+        return;
+    }
+    let radius = radius.min((r - l) / 2.0).min((bo - t) / 2.0).max(0.0);
+    let k = KAPPA * radius;
+    b.move_to(Vec2::new(l + radius, t))
+        .line_to(Vec2::new(r - radius, t))
+        .cubic_to(
+            Vec2::new(r - radius + k, t),
+            Vec2::new(r, t + radius - k),
+            Vec2::new(r, t + radius),
+        )
+        .line_to(Vec2::new(r, bo - radius))
+        .cubic_to(
+            Vec2::new(r, bo - radius + k),
+            Vec2::new(r - radius + k, bo),
+            Vec2::new(r - radius, bo),
+        )
+        .line_to(Vec2::new(l + radius, bo))
+        .cubic_to(
+            Vec2::new(l + radius - k, bo),
+            Vec2::new(l, bo - radius + k),
+            Vec2::new(l, bo - radius),
+        )
+        .line_to(Vec2::new(l, t + radius))
+        .cubic_to(
+            Vec2::new(l, t + radius - k),
+            Vec2::new(l + radius - k, t),
+            Vec2::new(l + radius, t),
+        )
+        .close();
 }
 
 #[cfg(test)]

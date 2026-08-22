@@ -6,7 +6,7 @@
 //! what keeps the authoring cost flat as the matrix grows.
 
 use crate::shape::Shape;
-use glam::{Affine2, Vec2};
+use glam::{Affine2, Mat2, Vec2};
 use impeller_core::{ImageFilter, MaskBlurStyle, VertexMode};
 use impeller_geometry::stroke::{LineCap, LineJoin, StrokeStyle};
 use impeller_geometry::FillRule;
@@ -19,6 +19,15 @@ pub struct Transform {
     pub scale: [f32; 2],
     /// Rotation in radians, applied after scale and before translation.
     pub rotate: f32,
+    /// Shear coefficients: how much of Y is added to X, and of X to Y.
+    ///
+    /// A class of its own rather than a special case of the other two. A shear
+    /// is the only transform here that is not conformal -- it takes the right
+    /// angles of a rectangle and leaves a parallelogram, so no axis survives
+    /// it and a scissor cannot express a clip under one. It is also what tells
+    /// a packed inverse matrix from a transposed one: under a scale, or a
+    /// rotation of a symmetric shape, the two agree.
+    pub skew: [f32; 2],
     pub translate: [f32; 2],
 }
 
@@ -27,6 +36,7 @@ impl Default for Transform {
         Self {
             scale: [1.0, 1.0],
             rotate: 0.0,
+            skew: [0.0, 0.0],
             translate: [0.0, 0.0],
         }
     }
@@ -47,12 +57,22 @@ impl Transform {
         }
     }
 
+    /// Scale, then shear, then rotate, then translate.
+    ///
+    /// The order is stated because it is not recoverable from the result: a
+    /// shear before a rotation and one after it are different transforms, and
+    /// a scene that did not say which it meant would mean different things to
+    /// a reader and to the executor. Scale comes first so a shear coefficient
+    /// is read in the shape's own units rather than in scaled ones.
     pub fn to_affine(self) -> Affine2 {
-        Affine2::from_scale_angle_translation(
-            Vec2::from(self.scale),
-            self.rotate,
-            Vec2::from(self.translate),
-        )
+        let shear = Affine2::from_mat2(Mat2::from_cols(
+            Vec2::new(1.0, self.skew[1]),
+            Vec2::new(self.skew[0], 1.0),
+        ));
+        Affine2::from_translation(Vec2::from(self.translate))
+            * Affine2::from_angle(self.rotate)
+            * shear
+            * Affine2::from_scale(Vec2::from(self.scale))
     }
 }
 
@@ -660,7 +680,11 @@ pub enum Node {
     /// frame. `None` asks for a full-size target, which is what a caller who
     /// does not know gets.
     Layer {
-        layer: LayerSpec,
+        /// Boxed like every other variant here, and now for a reason the
+        /// others did not have: a layer carries a whole paint's worth of
+        /// filters, and adding a shear to a transform was enough to make this
+        /// the largest variant and every node in a tree the size of it.
+        layer: Box<LayerSpec>,
         bounds: Option<[f32; 4]>,
         /// Applied before the layer opens, so it moves the bounds along with
         /// the contents rather than only the contents.
@@ -680,7 +704,7 @@ impl Node {
     /// does not know what the group covers.
     pub fn layer(layer: LayerSpec, children: Vec<Node>) -> Self {
         Self::Layer {
-            layer,
+            layer: Box::new(layer),
             bounds: None,
             transform: Transform::default(),
             children,
@@ -690,7 +714,7 @@ impl Node {
     /// A group that promises to stay inside `[left, top, right, bottom]`.
     pub fn bounded_layer(layer: LayerSpec, bounds: [f32; 4], children: Vec<Node>) -> Self {
         Self::Layer {
-            layer,
+            layer: Box::new(layer),
             bounds: Some(bounds),
             transform: Transform::default(),
             children,
@@ -1326,6 +1350,7 @@ pub fn corpus() -> Vec<Scene> {
                 .with_transform(Transform {
                     scale: [1.0, 1.0],
                     rotate: std::f32::consts::FRAC_PI_2,
+                    skew: [0.0, 0.0],
                     translate: [72.0, 56.0],
                 })
                 .with_clip([-40.0, -40.0, 10.0, 24.0]),
@@ -1386,6 +1411,7 @@ pub fn corpus() -> Vec<Scene> {
                 // An eighth turn, which no scissor expresses: the clip becomes
                 // a diamond and its bounding box is visibly larger.
                 rotate: std::f32::consts::FRAC_PI_4,
+                skew: [0.0, 0.0],
                 translate: [64.0, 64.0],
             })
             .with_clip_shape(Shape::Rect {
@@ -1440,6 +1466,7 @@ pub fn corpus() -> Vec<Scene> {
                 .with_transform(Transform {
                     scale: [3.0, 1.5],
                     rotate: 0.4,
+                    skew: [0.0, 0.0],
                     translate: [64.0, 64.0],
                 }),
             ],
@@ -1509,6 +1536,7 @@ pub fn corpus() -> Vec<Scene> {
             .with_transform(Transform {
                 scale: [1.5, 1.5],
                 rotate: 0.6,
+                skew: [0.0, 0.0],
                 translate: [40.0, 16.0],
             })],
         ),
@@ -2141,7 +2169,7 @@ pub fn corpus() -> Vec<Scene> {
                 )
                 .into(),
                 Node::Layer {
-                    layer: LayerSpec::default().with_backdrop_blur(5.0),
+                    layer: Box::new(LayerSpec::default().with_backdrop_blur(5.0)),
                     bounds: Some([16.0, 40.0, 112.0, 88.0]),
                     transform: Transform::default(),
                     // Composited, not the corpus default of `Src`. The layer
@@ -2316,6 +2344,7 @@ pub fn corpus() -> Vec<Scene> {
                     .with_transform(Transform {
                         scale: [1.0, 1.0],
                         rotate: 0.0,
+                        skew: [0.0, 0.0],
                         translate: [4.0, 6.0],
                     }),
                 ],
@@ -2392,6 +2421,59 @@ mod tests {
     use super::*;
 
     #[test]
+    fn a_shear_composes_in_the_order_the_transform_states() {
+        // `to_affine` names an order -- scale, shear, rotate, translate -- and
+        // an order stated in prose and nowhere else is one a refactor can
+        // reverse silently. The two arrangements differ, which is what makes
+        // this checkable at all: a shear before a rotation and one after it
+        // are not the same transform.
+        let skewed = Transform {
+            skew: [0.5, 0.0],
+            ..Transform::default()
+        };
+        // The shear adds half of Y to X, so the unit Y vector leans and the
+        // unit X vector does not. Reading the columns says which axis moved,
+        // and a transposed matrix would move the other one.
+        let m = skewed.to_affine();
+        assert_eq!(m.transform_vector2(Vec2::X), Vec2::X, "X is untouched");
+        assert_eq!(
+            m.transform_vector2(Vec2::Y),
+            Vec2::new(0.5, 1.0),
+            "Y leans by the coefficient"
+        );
+
+        // Scale first, so the coefficient is read in the shape's own units.
+        // Were the shear applied after the scale, doubling X would double the
+        // lean as well, and a scene that scaled a sheared shape would slant
+        // differently for having been written the other way round.
+        let scaled = Transform {
+            skew: [0.5, 0.0],
+            scale: [2.0, 1.0],
+            ..Transform::default()
+        };
+        assert_eq!(
+            scaled.to_affine().transform_vector2(Vec2::Y),
+            Vec2::new(0.5, 1.0),
+            "the lean is in unscaled units"
+        );
+
+        // And the rotation is outside the shear rather than inside it: a
+        // quarter turn carries the leaning Y axis onto a leaning X axis. The
+        // other order would lean the axis the turn had already moved, and the
+        // two results are not the same vector.
+        let turned = Transform {
+            skew: [0.5, 0.0],
+            rotate: std::f32::consts::FRAC_PI_2,
+            ..Transform::default()
+        };
+        let y = turned.to_affine().transform_vector2(Vec2::Y);
+        assert!(
+            (y - Vec2::new(-1.0, 0.5)).length() < 1e-6,
+            "a quarter turn should carry the sheared axis, got {y:?}"
+        );
+    }
+
+    #[test]
     fn every_scene_has_a_distinct_name() {
         // Names key report rows and tolerance tables, so a duplicate would make
         // two scenes indistinguishable in results.
@@ -2438,6 +2520,7 @@ mod tests {
         let t = Transform {
             scale: [2.0, 2.0],
             rotate: 0.0,
+            skew: [0.0, 0.0],
             translate: [10.0, 5.0],
         };
         let p = t.to_affine().transform_point2(Vec2::new(1.0, 1.0));

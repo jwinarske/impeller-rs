@@ -86,7 +86,7 @@ reason.
 | `drawVertices` | yes | `draw_vertices`, with positions, texture coordinates and per-vertex colors | `a_mesh_interpolates_the_colors_its_vertices_carry` |
 | `drawAtlas`, `drawRawAtlas` | yes | `draw_atlas`, one draw for the whole batch, each sprite with its own transform and color | `an_atlas_tints_each_sprite_on_its_own_in_one_draw` |
 | `drawPoints`, `drawRawPoints` | yes | `draw_points`, in all three modes. A point is a segment of no length, so the cap is the whole shape | `a_point_is_drawn_as_the_cap_it_would_have_had` |
-| `drawDRRect` | yes | `draw_drrect`: two contours filled even-odd, which is what makes the inner one a hole | `a_double_rounded_rect_is_a_ring_rather_than_two_shapes` |
+| `drawDRRect` | yes | `draw_drrect`: two contours filled even-odd, which is what makes the inner one a hole | `the_ring_between_two_rounded_rectangles_is_hollow` |
 | `drawShadow` | yes | `draw_shadow`: offset, blur and alpha all from the elevation, under one light | `a_shadow_falls_below_what_casts_it_and_widens_with_elevation` |
 | `drawRSuperellipse` | no | | |
 | `drawPicture` | yes | `draw_recording`, which composes a finished recording into this one. Tessellated rather than replayed -- see below for what that costs | `a_recording_drawn_into_another_keeps_its_own_layers_and_ramps` |

@@ -382,6 +382,20 @@ fn record_node(canvas: &mut Canvas, node: &Node, anti_alias: bool) -> Result<()>
                         &paint,
                     )?;
                 }
+                Shape::DiffRoundedRect {
+                    outer,
+                    outer_radius,
+                    inner,
+                    inner_radius,
+                } => {
+                    canvas.draw_drrect(
+                        Rect::new(outer[0][0], outer[0][1], outer[1][0], outer[1][1]),
+                        *outer_radius,
+                        Rect::new(inner[0][0], inner[0][1], inner[1][0], inner[1][1]),
+                        *inner_radius,
+                        &paint,
+                    )?;
+                }
                 shape => {
                     canvas.draw_path(&shape.to_path(), &paint)?;
                 }

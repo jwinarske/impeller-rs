@@ -6568,42 +6568,6 @@ fn a_point_is_drawn_as_the_cap_it_would_have_had() {
 }
 
 #[test]
-fn a_double_rounded_rect_is_a_ring_rather_than_two_shapes() {
-    // Two contours wound the same way fill solid under the nonzero rule and
-    // hollow under even-odd, and a border wants the second. So the test is
-    // that the middle is untouched -- not that something was drawn, which
-    // both rules satisfy.
-    let Some(mut ctx) = context() else { return };
-    let mut canvas = Canvas::new(SIZE);
-    canvas.clear(Color::BLACK);
-    canvas
-        .draw_drrect(
-            Rect::new(16.0, 16.0, 112.0, 112.0),
-            18.0,
-            Rect::new(40.0, 40.0, 88.0, 88.0),
-            10.0,
-            &Paint::fill(Color::linear(1.0, 1.0, 1.0, 1.0)).with_anti_alias(false),
-        )
-        .expect("ring");
-    let pixels = render(&mut ctx, canvas);
-
-    assert_eq!(
-        pixel(&pixels, 64, 64),
-        [0, 0, 0, 255],
-        "the inner rectangle should be a hole"
-    );
-    assert!(
-        pixel(&pixels, 64, 28)[0] > 240,
-        "the band between them should be filled"
-    );
-    assert_eq!(
-        pixel(&pixels, 4, 4),
-        [0, 0, 0, 255],
-        "and nothing outside the outer one"
-    );
-}
-
-#[test]
 fn the_clip_bounds_narrow_with_every_kind_of_clip() {
     // What a caller culls against. A scissor and a stencil clip narrow what
     // may be drawn by quite different means -- one is recorder state, the
@@ -10425,5 +10389,341 @@ fn a_difference_clip_removes_the_rectangle_and_nothing_else() {
         turned,
         whole - 40 * 40,
         "a rotated difference clip should remove the quadrilateral's own area"
+    );
+}
+
+#[test]
+fn the_ring_between_two_rounded_rectangles_is_hollow() {
+    // `dart:ui` spells this `drawDRRect`, and what makes it a ring rather than
+    // two shapes is the fill rule: two contours wound the same way fill solid
+    // under the nonzero rule and hollow under even-odd. The rule is the whole
+    // of the feature, so the test is arranged to fail if it changes.
+    //
+    // Both radii are zero here, which makes both contours plain rectangles and
+    // the ring's area exact -- a rounded one could only be asserted to within a
+    // corner's worth, and a test that has to allow slack in the number cannot
+    // tell a hollow ring from a solid one filled a little differently.
+    let Some(mut ctx) = context() else { return };
+
+    let lit = |ctx: &mut Context, setup: &dyn Fn(&mut Canvas)| -> usize {
+        let mut canvas = Canvas::new(SIZE);
+        canvas.clear(Color::linear(0.0, 0.0, 0.0, 1.0));
+        setup(&mut canvas);
+        render(ctx, canvas)
+            .chunks_exact(4)
+            .filter(|texel| texel[0] > 0)
+            .count()
+    };
+
+    let paint = Paint::fill(Color::linear(1.0, 0.0, 0.0, 1.0)).with_anti_alias(false);
+    let outer = Rect::new(16.0, 16.0, 112.0, 112.0);
+    let inner = Rect::new(48.0, 48.0, 80.0, 80.0);
+
+    let ring = lit(&mut ctx, &|c: &mut Canvas| {
+        c.draw_drrect(outer, 0.0, inner, 0.0, &paint).expect("ring");
+    });
+    assert_eq!(
+        ring,
+        96 * 96 - 32 * 32,
+        "the ring should be the outer rectangle less the inner one; a nonzero \
+         fill rule would leave it solid at {}",
+        96 * 96
+    );
+
+    // An inner rectangle with no area is not a degenerate case to reject but
+    // the ordinary way to ask for the outer shape alone, and a ring of no hole
+    // is that shape -- so it has to come out solid rather than vanish.
+    //
+    // Both spellings, because they take different routes. A rectangle of zero
+    // size is not `is_empty` -- that test is a strict inequality -- so it
+    // traces a contour of no area and the even-odd rule ignores it. An
+    // inverted one is caught by the guard, and has to be: traced, its corners
+    // still enclose a region, and the rule does not care which way a contour
+    // is wound, so it would cut a hole where the caller asked for none.
+    for hollow in [
+        Rect::new(64.0, 64.0, 64.0, 64.0),
+        Rect::new(80.0, 80.0, 48.0, 48.0),
+    ] {
+        let solid = lit(&mut ctx, &|c: &mut Canvas| {
+            c.draw_drrect(outer, 0.0, hollow, 0.0, &paint)
+                .expect("solid");
+        });
+        assert_eq!(
+            solid,
+            96 * 96,
+            "an inner rectangle of no area should leave the outer shape, got \
+             {solid} for {hollow:?}"
+        );
+    }
+
+    // The radii have to reach the geometry rather than being carried and
+    // dropped, and a corner is where that shows: rounding the outer one takes
+    // its corners off, rounding the inner one puts area back.
+    let rounded_outside = lit(&mut ctx, &|c: &mut Canvas| {
+        c.draw_drrect(outer, 24.0, inner, 0.0, &paint)
+            .expect("ring");
+    });
+    assert!(
+        rounded_outside < ring,
+        "rounding the outer rectangle should remove its corners, got \
+         {rounded_outside} against {ring}"
+    );
+    let rounded_inside = lit(&mut ctx, &|c: &mut Canvas| {
+        c.draw_drrect(outer, 0.0, inner, 12.0, &paint)
+            .expect("ring");
+    });
+    assert!(
+        rounded_inside > ring,
+        "rounding the hole should shrink it and so light more, got \
+         {rounded_inside} against {ring}"
+    );
+
+    // Areas alone would be satisfied by a ring drawn in the wrong place, so
+    // three points say where it is: the middle empty, the band between the two
+    // rectangles filled, and nothing outside the outer one. Rounded, since the
+    // arms above are square and a hole is easiest to lose at a corner.
+    let mut canvas = Canvas::new(SIZE);
+    canvas.clear(Color::BLACK);
+    canvas
+        .draw_drrect(outer, 18.0, Rect::new(40.0, 40.0, 88.0, 88.0), 10.0, &paint)
+        .expect("ring");
+    let pixels = render(&mut ctx, canvas);
+    assert_eq!(
+        pixel(&pixels, 64, 64),
+        [0, 0, 0, 255],
+        "the inner rectangle should be a hole"
+    );
+    assert!(
+        pixel(&pixels, 64, 28)[0] > 240,
+        "the band between them should be filled"
+    );
+    assert_eq!(
+        pixel(&pixels, 4, 4),
+        [0, 0, 0, 255],
+        "and nothing outside the outer one"
+    );
+}
+
+#[test]
+fn a_mesh_takes_a_runtime_effect_unless_it_is_textured() {
+    // The playground inventory listed runtime effects as blocking the vertices
+    // file. They do not block it: a mesh without texture coordinates takes its
+    // material from the paint's shader like any other geometry, so a caller's
+    // program reaches it through the ordinary path and nothing special was
+    // needed. What is refused is a textured mesh under an effect, and that is
+    // a stated error rather than a gap -- the coordinates would have no image
+    // to read, since the shader a caller registered is what replaced it.
+    let Some(mut ctx) = context() else { return };
+    let program = ctx
+        .register_program(&impeller::RuntimeProgram {
+            spirv: impeller_shaders::EFFECT_SPV.to_vec(),
+            glsl_es: impeller_shaders::EFFECT_FS_GLSL.to_string(),
+        })
+        .expect("register");
+
+    // A triangle spanning the middle, so the program's vertical split falls
+    // across geometry that is not a rectangle. A fill that ignored the mesh
+    // would color the frame; one that ignored the program would be solid.
+    let mesh = Vertices::new(
+        VertexMode::Triangles,
+        vec![
+            Vec2::new(16.0, 112.0),
+            Vec2::new(112.0, 112.0),
+            Vec2::new(64.0, 16.0),
+        ],
+    )
+    .expect("mesh");
+    let mut canvas = Canvas::new(SIZE);
+    canvas.clear(Color::BLACK);
+    canvas
+        .draw_vertices(
+            &mesh,
+            &Paint::runtime_effect(program, effect_uniforms(0.0)).with_anti_alias(false),
+        )
+        .expect("effect on a mesh");
+    let pixels = render(&mut ctx, canvas);
+
+    assert_eq!(
+        pixel(&pixels, 44, 100),
+        [255, 0, 0, 255],
+        "inside the triangle, left of the split"
+    );
+    assert_eq!(
+        pixel(&pixels, 84, 100),
+        [0, 178, 51, 255],
+        "inside the triangle, right of it"
+    );
+    // Above the apex and below the base are both outside the mesh, and the
+    // ground has to show through both -- an effect that filled its own bounds
+    // would pass the first pair of assertions and fail these.
+    assert_eq!(
+        pixel(&pixels, 64, 8),
+        [0, 0, 0, 255],
+        "above the apex is outside the mesh"
+    );
+    assert_eq!(
+        pixel(&pixels, 20, 20),
+        [0, 0, 0, 255],
+        "and so is the corner the triangle does not reach"
+    );
+
+    // Texture coordinates with no image to read is the one refusal, and it has
+    // to be an error rather than a picture drawn from whatever was bound.
+    let textured = Vertices::full(
+        VertexMode::Triangles,
+        vec![
+            Vec2::new(16.0, 112.0),
+            Vec2::new(112.0, 112.0),
+            Vec2::new(64.0, 16.0),
+        ],
+        vec![Vec2::ZERO, Vec2::X, Vec2::Y],
+        Vec::new(),
+        vec![0, 1, 2],
+    )
+    .expect("mesh");
+    let mut canvas = Canvas::new(SIZE);
+    assert!(
+        canvas
+            .draw_vertices(
+                &textured,
+                &Paint::runtime_effect(program, effect_uniforms(0.0)),
+            )
+            .is_err(),
+        "a textured mesh under an effect has no image for its coordinates"
+    );
+}
+
+#[test]
+fn a_skew_is_a_transform_class_of_its_own() {
+    // Nothing else here renders under a shear, and it is the transform that
+    // breaks the assumptions the others satisfy: it is not conformal, so a
+    // circle becomes an ellipse at an angle, no axis survives, and a scissor
+    // -- which is a device rectangle and can be nothing else -- cannot express
+    // what a clip under one admits.
+    //
+    // What makes it measurable is that a shear preserves area exactly. Its
+    // determinant is one whatever the coefficient, so a shape's straight-edged
+    // area is the same sheared as upright, and the count is not a matter of
+    // taste at either.
+    let Some(mut ctx) = context() else { return };
+
+    let sheared = |ctx: &mut Context, k: f32, draw: &dyn Fn(&mut Canvas, &Paint)| -> usize {
+        let mut canvas = Canvas::new(SIZE);
+        canvas.clear(Color::BLACK);
+        canvas.save();
+        // About the middle of the target, so the sheared shape stays inside
+        // the frame and the count is the shape's area rather than the part of
+        // it that fell in.
+        canvas.translate(64.0, 64.0);
+        let mut shear = Affine2::IDENTITY;
+        shear.matrix2.y_axis.x = k;
+        canvas.concat(shear);
+        canvas.translate(-64.0, -64.0);
+        draw(
+            &mut canvas,
+            &Paint::fill(Color::linear(1.0, 0.0, 0.0, 1.0)).with_anti_alias(false),
+        );
+        canvas.restore();
+        render(ctx, canvas)
+            .chunks_exact(4)
+            .filter(|texel| texel[0] > 0)
+            .count()
+    };
+
+    let square = Rect::new(48.0, 48.0, 80.0, 80.0);
+
+    // A filled rectangle: the parallelogram has the square's area, and every
+    // coefficient gives the same number because that is what a determinant of
+    // one means.
+    for k in [0.0, 0.25, 0.5, 1.0] {
+        let lit = sheared(&mut ctx, k, &|c: &mut Canvas, p: &Paint| {
+            c.draw_rect(square, p).expect("fill");
+        });
+        assert_eq!(lit, 32 * 32, "a shear of {k} should preserve the area");
+    }
+
+    // Area alone would be satisfied by a shear that never reached the
+    // geometry, since the upright square has the same one. So two points say
+    // the shape moved: at a twelfth of the way up from the middle the
+    // parallelogram has slid left, and below it right, and each point is
+    // inside one of the two shapes and outside the other.
+    let where_lit = |ctx: &mut Context, k: f32, at: (u32, u32)| -> bool {
+        let mut canvas = Canvas::new(SIZE);
+        canvas.clear(Color::BLACK);
+        canvas.translate(64.0, 64.0);
+        let mut shear = Affine2::IDENTITY;
+        shear.matrix2.y_axis.x = k;
+        canvas.concat(shear);
+        canvas.translate(-64.0, -64.0);
+        canvas
+            .draw_rect(
+                square,
+                &Paint::fill(Color::linear(1.0, 0.0, 0.0, 1.0)).with_anti_alias(false),
+            )
+            .expect("fill");
+        pixel(&render(ctx, canvas), at.0, at.1)[0] > 0
+    };
+    for at in [(44, 52), (84, 76)] {
+        assert!(
+            where_lit(&mut ctx, 0.5, at),
+            "{at:?} is inside the sheared parallelogram"
+        );
+        assert!(
+            !where_lit(&mut ctx, 0.0, at),
+            "{at:?} is outside the upright square, so a shear that never \
+             reached the geometry would leave it dark"
+        );
+    }
+
+    // The clip is where a skew has somewhere to go wrong, and the number says
+    // which way it went. A clip under a shear admits a parallelogram; the
+    // scissor path cannot express one, so it has to decline and leave the
+    // stencil to it. Taking the bounding box instead would admit half again as
+    // much -- forty-eight wide by thirty-two tall -- and would look like a
+    // clip that worked.
+    let clipped = sheared(&mut ctx, 0.5, &|c: &mut Canvas, p: &Paint| {
+        c.clip_rect(square).expect("clip");
+        c.draw_rect(Rect::from_size(128.0, 128.0), p).expect("fill");
+    });
+    assert_eq!(
+        clipped,
+        32 * 32,
+        "a clip under a shear should admit the parallelogram, not its bounding \
+         box of {}",
+        48 * 32
+    );
+
+    // The analytic paths evaluate their shape per fragment through the inverse
+    // of the transform, which is a general two-by-two here and so has a skew
+    // in it like anything else. A rounded rectangle and a circle keep their
+    // areas across the shear too -- to within a percent rather than exactly,
+    // since a curved edge meets the sampling grid differently once it is no
+    // longer symmetric about an axis, and that difference is the rasterizer's
+    // rather than the transform's.
+    for (radius, name) in [(0.0, "square corners"), (8.0, "rounded corners")] {
+        let upright = sheared(&mut ctx, 0.0, &|c: &mut Canvas, p: &Paint| {
+            c.draw_rrect(square, radius, p).expect("rrect");
+        });
+        let slanted = sheared(&mut ctx, 0.5, &|c: &mut Canvas, p: &Paint| {
+            c.draw_rrect(square, radius, p).expect("rrect");
+        });
+        assert!(
+            upright.abs_diff(slanted) * 100 <= upright,
+            "a sheared rounded rectangle with {name} should keep its area, got \
+             {slanted} against {upright}"
+        );
+    }
+    let upright = sheared(&mut ctx, 0.0, &|c: &mut Canvas, p: &Paint| {
+        c.draw_circle(Vec2::new(64.0, 64.0), 16.0, p)
+            .expect("circle");
+    });
+    let slanted = sheared(&mut ctx, 0.5, &|c: &mut Canvas, p: &Paint| {
+        c.draw_circle(Vec2::new(64.0, 16.0 + 48.0), 16.0, p)
+            .expect("circle");
+    });
+    assert!(
+        upright.abs_diff(slanted) * 100 <= upright,
+        "a sheared circle is an ellipse of the same area, got {slanted} \
+         against {upright}"
     );
 }

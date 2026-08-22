@@ -313,9 +313,10 @@ fn the_playground_inventory_counts_each_file_correctly() {
             })
             .count()
     };
-    // The C++ file each topic mirrors. Files with no counterpart here --
-    // text, primitive shapes -- are absent because they have nothing to
-    // check; the total test still covers what they would contribute.
+    // The C++ file each topic mirrors. Primitive shapes are absent because
+    // the catalog holds nothing under that topic yet, so there would be
+    // nothing to check; the total test still covers what it would contribute
+    // once there is.
     let mirrors = [
         ("aiks_dl_basic_unittests.cc", "basic"),
         ("aiks_dl_path_unittests.cc", "path"),

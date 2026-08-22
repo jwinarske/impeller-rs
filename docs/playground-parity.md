@@ -44,21 +44,32 @@ drifts from what it inventories is worse than none.
 
 The last column says what stops the rest, and it is worth reading with some
 suspicion: an entry there is a claim about this renderer, and a claim nobody
-tests goes stale quietly. Two of them just did. Blurs under rotation and
+tests goes stale quietly. Four of them have now. Blurs under rotation and
 clipping together were listed as blocked and were merely unwritten -- both
 render, and both agree across the backends. Mipmapped cases were genuinely
-blocked and are not any more.
+blocked and are not any more. Runtime effects were listed as blocking the
+vertices file and never did: a mesh without texture coordinates takes its
+material from the paint's shader like any other geometry, so a caller's
+program reached it through the ordinary path and nothing had to be built.
+
+Difference-of-rounded-rects was the interesting one, because it was half
+true. `draw_drrect` existed and had a test, so the renderer was not what
+stopped it -- the scene format was, having no shape to say it with. A
+capability the catalog cannot express is not covered by the catalog whatever
+the API can do, and the cross-backend comparison is the thing being missed:
+the only bug found so far in a backend's sampler bindings passed every test
+on the other backend and was caught by a plate.
 
 | File | Scenes there | Here | Blocked on |
 |---|---|---|---|
-| `aiks_dl_basic_unittests.cc` | ~85 | 33 | superellipses, perspective, subpass optimizations |
-| `aiks_dl_path_unittests.cc` | ~31 | 18 | difference-of-rounded-rects, perspective |
+| `aiks_dl_basic_unittests.cc` | ~85 | 36 | superellipses, perspective, subpass optimizations |
+| `aiks_dl_path_unittests.cc` | ~31 | 20 | perspective |
 | `aiks_dl_gradient_unittests.cc` | ~40 | 23 | dithering |
 | `aiks_dl_clip_unittests.cc` | ~5 | 5 | nothing; this file is covered |
 | `aiks_dl_opacity_unittests.cc` | ~3 | 2 | subpass collapse |
 | `aiks_dl_blend_unittests.cc` | ~79 | 36 | framebuffer fetch, wide gamut, subpass collapse |
 | `aiks_dl_blur_unittests.cc` | ~59 | 25 | backdrop identity keys, mask blurs over a gradient |
-| `aiks_dl_vertices_unittests.cc` | ~16 | 12 | runtime effects, mask filters on a mesh |
+| `aiks_dl_vertices_unittests.cc` | ~16 | 14 | mask filters on a mesh |
 | `aiks_dl_atlas_unittests.cc` | ~15 | 5 | advanced blends per sprite, wide gamut, geometry-level cases |
 | `aiks_dl_shadow_unittests.cc` | ~30 | 12 | a convex-shadow optimization this renderer does not have, and perspective |
 | `aiks_dl_primitive_shape_unittests.cc` | ~2 | 0 | one is a playground harness, one is a hairline skew |
@@ -66,7 +77,7 @@ blocked and are not any more.
 | `aiks_dl_runtime_effect_unittests.cc` | — | 5 | bounded by having two fixture programs rather than by the renderer |
 | `aiks_dl_unittests.cc` | ~39 | 10 | mostly internal optimizations; the picture cases are here now |
 
-The catalog holds one hundred and ninety-one scenes of roughly four hundred,
+The catalog holds one hundred and ninety-eight scenes of roughly four hundred,
 and the proportion is less interesting than which ones: the arithmetic of drawing is largely covered, and
 what is missing is either a capability this renderer does not have or a thing
 the scene model cannot describe.

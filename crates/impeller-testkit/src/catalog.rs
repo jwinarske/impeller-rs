@@ -103,6 +103,108 @@ fn basic() -> Vec<Scene> {
         ),
         // Wide enough that a naive stroke would overlap itself at the corners,
         // which is what the original is checking for.
+        // A shear, which nothing else in the catalog uses and which is the
+        // one transform class here that is not conformal: it leaves a
+        // rectangle a parallelogram, so no axis survives it and a clip under
+        // one cannot be a scissor. It is also the only transform that tells a
+        // packed two-by-two from its transpose -- under a scale, or a rotation
+        // of a symmetric shape, the two agree and a backend that swapped them
+        // would draw the same picture as one that did not.
+        plate(
+            "basic/shapes-under-a-shear",
+            vec![
+                Item::fill(
+                    Shape::Rect {
+                        min: [16.0, 12.0],
+                        max: [76.0, 40.0],
+                    },
+                    BLUE,
+                )
+                .with_transform(Transform {
+                    skew: [0.55, 0.0],
+                    translate: [-30.0, 0.0],
+                    ..Transform::default()
+                }),
+                // The analytic paths, which evaluate their shape per fragment
+                // through the inverse of this transform rather than from
+                // tessellated geometry -- so they are where a skew has to
+                // survive an inversion rather than a vertex multiply.
+                Item::fill(
+                    Shape::RoundedRect {
+                        min: [16.0, 50.0],
+                        max: [76.0, 78.0],
+                        radius: 12.0,
+                    },
+                    GREEN,
+                )
+                .with_transform(Transform {
+                    skew: [0.55, 0.0],
+                    translate: [-30.0, 0.0],
+                    ..Transform::default()
+                }),
+                Item::fill(
+                    Shape::Circle {
+                        center: [46.0, 104.0],
+                        radius: 22.0,
+                    },
+                    RED,
+                )
+                .with_transform(Transform {
+                    skew: [0.55, 0.0],
+                    translate: [-30.0, 0.0],
+                    ..Transform::default()
+                }),
+            ],
+        ),
+        plate(
+            "basic/a-gradient-under-a-shear",
+            // A gradient reaches the fragment stage as a mapping back into
+            // paint space, which is exactly the inverse this transform makes
+            // non-symmetric. The bands have to lean with the shape; bands that
+            // stayed square would be a mapping that dropped the off-diagonal,
+            // and the shape would look right while the paint did not.
+            vec![Item::filled(
+                Shape::Rect {
+                    min: [20.0, 20.0],
+                    max: [108.0, 108.0],
+                },
+                Fill::LinearGradient {
+                    start: [20.0, 20.0],
+                    end: [108.0, 108.0],
+                    stops: vec![Stop::new(RED, 0.0), Stop::new(BLUE, 1.0)],
+                    tile: TileMode::Clamp,
+                },
+            )
+            .with_transform(Transform {
+                skew: [0.0, 0.4],
+                translate: [0.0, -26.0],
+                ..Transform::default()
+            })],
+        ),
+        plate(
+            "basic/an-image-under-a-shear",
+            // The same question for a sampled image, where the mapping decides
+            // which texel each fragment reads. A sheared image is the case a
+            // separable resampling shortcut cannot take, so what this asks is
+            // that both backends read through the transform they were given.
+            vec![Item::filled(
+                Shape::Rect {
+                    min: [24.0, 24.0],
+                    max: [104.0, 104.0],
+                },
+                sheet(
+                    [24.0, 24.0, 104.0, 104.0],
+                    ALL,
+                    TileMode::Clamp,
+                    Sampling::Linear,
+                ),
+            )
+            .with_transform(Transform {
+                skew: [0.35, 0.0],
+                translate: [-20.0, 0.0],
+                ..Transform::default()
+            })],
+        ),
         plate(
             "basic/can-render-wide-stroked-rect-without-overlap",
             vec![Item::stroke(
@@ -693,6 +795,70 @@ fn path() -> Vec<Scene> {
                     )
                 })
                 .collect(),
+        ),
+        plate(
+            "path/rings-between-two-rounded-rectangles",
+            // `drawDRRect`, at four ratios of hole to shape. What is being
+            // drawn is one path of two contours under the even-odd rule, so a
+            // rule applied per contour rather than per path would fill every
+            // one of these solid and the plate would be four rectangles.
+            (0..4)
+                .map(|i| {
+                    let left = 4.0 + i as f32 * 31.0;
+                    let inset = [2.0, 6.0, 10.0, 13.0][i];
+                    Item::filled(
+                        Shape::DiffRoundedRect {
+                            outer: [[left, 40.0], [left + 28.0, 88.0]],
+                            outer_radius: [0.0, 6.0, 14.0, 14.0][i],
+                            inner: [
+                                [left + inset, 40.0 + inset],
+                                [left + 28.0 - inset, 88.0 - inset],
+                            ],
+                            inner_radius: [0.0, 2.0, 8.0, 0.0][i],
+                        },
+                        Fill::Solid(BLUE),
+                    )
+                })
+                .collect(),
+        ),
+        plate(
+            "path/a-ring-under-a-rotation",
+            // The hole has to turn with the shape. Two contours transformed
+            // apart -- or a hole positioned from untransformed coordinates --
+            // stay concentric only while the transform is a translation, so an
+            // upright frame would hide it and this one does not.
+            vec![
+                Item::filled(
+                    Shape::DiffRoundedRect {
+                        outer: [[-36.0, -22.0], [36.0, 22.0]],
+                        outer_radius: 12.0,
+                        inner: [[-24.0, -10.0], [24.0, 10.0]],
+                        inner_radius: 6.0,
+                    },
+                    Fill::Solid(BLUE),
+                )
+                .with_transform(Transform {
+                    rotate: 0.5,
+                    translate: [64.0, 64.0],
+                    ..Transform::default()
+                }),
+                // A second ring at a different angle, so the plate says
+                // something about the angle rather than about one of them.
+                Item::filled(
+                    Shape::DiffRoundedRect {
+                        outer: [[-30.0, -14.0], [30.0, 14.0]],
+                        outer_radius: 14.0,
+                        inner: [[-18.0, -6.0], [18.0, 6.0]],
+                        inner_radius: 6.0,
+                    },
+                    Fill::Solid(RED),
+                )
+                .with_transform(Transform {
+                    rotate: -1.1,
+                    translate: [64.0, 64.0],
+                    ..Transform::default()
+                }),
+            ],
         ),
         plate(
             "path/cubic-with-a-cusp",
@@ -1316,7 +1482,7 @@ fn opacity() -> Vec<Scene> {
             // give the same discs but is a different operation, and on shapes
             // that overlapped it would give a different answer.
             vec![Node::Layer {
-                layer: LayerSpec::eroded(7.0, 7.0),
+                layer: Box::new(LayerSpec::eroded(7.0, 7.0)),
                 bounds: Some([0.0, 0.0, 128.0, 128.0]),
                 transform: Transform::default(),
                 children: vec![
@@ -1352,10 +1518,10 @@ fn opacity() -> Vec<Scene> {
                 // The picture that distinguishes a group's opacity from each
                 // member's: where the two circles overlap, a group at half
                 // alpha shows one blend and two half-alpha circles show two.
-                layer: LayerSpec {
+                layer: Box::new(LayerSpec {
                     alpha: 0.5,
                     ..LayerSpec::default()
-                },
+                }),
                 bounds: None,
                 transform: Transform::default(),
                 children: overlapping(),
@@ -1366,10 +1532,10 @@ fn opacity() -> Vec<Scene> {
         Scene::tree(
             "opacity/draw-opacity-peephole",
             vec![Node::Layer {
-                layer: LayerSpec {
+                layer: Box::new(LayerSpec {
                     alpha: 0.5,
                     ..LayerSpec::default()
-                },
+                }),
                 bounds: Some([12.0, 24.0, 116.0, 104.0]),
                 transform: Transform::default(),
                 children: vec![Node::Draw(Box::new(Item::fill(
@@ -1992,6 +2158,60 @@ fn vertices() -> Vec<Scene> {
             },
         ),
         mesh(
+            "vertices/a-mesh-filled-by-a-runtime-effect",
+            // The inventory listed runtime effects as blocking this file. They
+            // do not: a mesh without texture coordinates takes its material
+            // from the paint's shader like any other geometry, and a caller's
+            // program is one of those. What is refused is a *textured* mesh
+            // under one, since the coordinates would have nothing to read
+            // from -- and that refusal is a stated error rather than a gap.
+            mesh_of(
+                vec![
+                    [12.0, 20.0],
+                    [116.0, 44.0],
+                    [12.0, 68.0],
+                    [116.0, 60.0],
+                    [12.0, 84.0],
+                    [116.0, 108.0],
+                ],
+                Fill::RuntimeEffect {
+                    program: 0,
+                    uniforms: crate::fixture::effect_uniforms(RED, BLUE, 0.0),
+                    images: Vec::new(),
+                },
+            ),
+        ),
+        mesh(
+            "vertices/a-mesh-under-a-transform-filled-by-a-runtime-effect",
+            // The same triangles turned. The program splits on the clip-space
+            // coordinate, so the split stays vertical through the middle of
+            // the target while the geometry it covers does not -- which is the
+            // picture that says the transform reached the vertices and not the
+            // fragment program, and they are separate stages for that reason.
+            MeshSpec {
+                transform: Transform {
+                    rotate: 0.6,
+                    translate: [64.0, 64.0],
+                    ..Transform::default()
+                },
+                ..mesh_of(
+                    vec![
+                        [-52.0, -34.0],
+                        [52.0, -34.0],
+                        [-52.0, 6.0],
+                        [52.0, 10.0],
+                        [-52.0, 34.0],
+                        [52.0, 34.0],
+                    ],
+                    Fill::RuntimeEffect {
+                        program: 0,
+                        uniforms: crate::fixture::effect_uniforms(GREEN, BLUE, 0.0),
+                        images: Vec::new(),
+                    },
+                )
+            },
+        ),
+        mesh(
             "vertices/vertices-geometry-uv-position-data-with-translate",
             MeshSpec {
                 positions: triangle(),
@@ -2356,6 +2576,7 @@ fn pictures() -> Vec<Scene> {
                 transform: Transform {
                     scale: [1.9, 1.9],
                     rotate: 0.0,
+                    skew: [0.0, 0.0],
                     translate: [4.0, 4.0],
                 },
                 blend: BlendMode::SrcOver,
@@ -2369,7 +2590,7 @@ fn pictures() -> Vec<Scene> {
             PictureSpec {
                 size: Extent2D::new(64, 64),
                 children: vec![Node::Layer {
-                    layer: LayerSpec::opacity(0.5),
+                    layer: Box::new(LayerSpec::opacity(0.5)),
                     bounds: Some([0.0, 0.0, 64.0, 64.0]),
                     transform: Transform::default(),
                     children: contents(),
@@ -2574,7 +2795,7 @@ fn grouped(name: &'static str, layer: LayerSpec, bounds: Option<[f32; 4]>) -> Sc
     Scene::tree(
         name,
         vec![Node::Layer {
-            layer,
+            layer: Box::new(layer),
             bounds,
             transform: Transform::default(),
             children: pair(),
@@ -2802,11 +3023,12 @@ fn blur_variants() -> Vec<Scene> {
             // would come out four times wider than tall and turned with the
             // shape; blurred on the target it is the same distance every way.
             vec![Node::Layer {
-                layer: LayerSpec::default().with_blur(5.0),
+                layer: Box::new(LayerSpec::default().with_blur(5.0)),
                 bounds: Some([0.0, 0.0, 128.0, 128.0]),
                 transform: Transform {
                     scale: [2.0, 0.5],
                     rotate: 0.6,
+                    skew: [0.0, 0.0],
                     translate: [64.0, 64.0],
                 },
                 children: vec![Node::Draw(Box::new(Item::fill(
@@ -2832,7 +3054,7 @@ fn blur_variants() -> Vec<Scene> {
             // is the opposite picture from clipping a blurred result -- where
             // the cut would stay hard and the halo would stop dead at it.
             vec![Node::Layer {
-                layer: LayerSpec::default().with_blur(5.0),
+                layer: Box::new(LayerSpec::default().with_blur(5.0)),
                 bounds: Some([0.0, 0.0, 128.0, 128.0]),
                 transform: Transform {
                     rotate: 0.6,
@@ -2892,10 +3114,10 @@ fn layers() -> Vec<Scene> {
             "dl/sibling-save-layer-bounds-are-respected",
             vec![
                 Node::Layer {
-                    layer: LayerSpec {
+                    layer: Box::new(LayerSpec {
                         alpha: 0.6,
                         ..LayerSpec::default()
-                    },
+                    }),
                     bounds: Some([8.0, 8.0, 64.0, 64.0]),
                     transform: Transform::default(),
                     children: vec![Node::Draw(Box::new(Item::fill(
@@ -2909,10 +3131,10 @@ fn layers() -> Vec<Scene> {
                 // A second group beside it: each is confined to its own
                 // bounds, and one leaking into the other is what this catches.
                 Node::Layer {
-                    layer: LayerSpec {
+                    layer: Box::new(LayerSpec {
                         alpha: 0.6,
                         ..LayerSpec::default()
-                    },
+                    }),
                     bounds: Some([64.0, 64.0, 120.0, 120.0]),
                     transform: Transform::default(),
                     children: vec![Node::Draw(Box::new(
@@ -2936,10 +3158,10 @@ fn layers() -> Vec<Scene> {
                 .map(|i| {
                     let x = 20.0 + i as f32 * 15.0;
                     Node::Layer {
-                        layer: LayerSpec {
+                        layer: Box::new(LayerSpec {
                             alpha: 0.7,
                             ..LayerSpec::default()
-                        },
+                        }),
                         bounds: Some([x, 50.0, x + 22.0, 78.0]),
                         transform: Transform::default(),
                         children: vec![Node::Draw(Box::new(
@@ -3135,7 +3357,7 @@ fn image_filters() -> Vec<Scene> {
         Scene::tree(
             "dl/matrix-save-layer-filter",
             vec![Node::Layer {
-                layer: LayerSpec {
+                layer: Box::new(LayerSpec {
                     // The group is resampled on the way back rather than its
                     // contents drawn larger, which is what a matrix filter on
                     // a save layer means.
@@ -3145,7 +3367,7 @@ fn image_filters() -> Vec<Scene> {
                         ..Transform::default()
                     }),
                     ..LayerSpec::default()
-                },
+                }),
                 bounds: Some([32.0, 32.0, 96.0, 96.0]),
                 transform: Transform::default(),
                 children: vec![
