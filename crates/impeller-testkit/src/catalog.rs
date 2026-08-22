@@ -3394,6 +3394,70 @@ fn blur_variants() -> Vec<Scene> {
                 .with_mask_blur_style(MaskBlurStyle::Outer)],
         ),
         plate(
+            "blur/a-blurred-image",
+            // Nothing in this file blurred an image. Every blur here softens
+            // coverage a tessellator produced -- a shape, a run of glyphs, a
+            // layer of those -- and a blurred photograph is the commonest blur
+            // there is. What differs is the source: the passes read a sampled
+            // texture rather than a computed coverage, so the sheet's own
+            // sampling and the blur's taps compose, and where the image ends is
+            // where the tile mode decides what the taps outside it read.
+            //
+            // Checked once that the filter does something, which agreement
+            // between the backends cannot say -- both would agree on a filter
+            // that was dropped. Four texels left of the blurred rectangle the
+            // ground has been disturbed; four texels right of the unblurred one
+            // it is still exactly the background. The blurred sample is darker
+            // than the ground rather than brighter, the sheet's edge there
+            // being dark, so a check by luminosity would have called the blur
+            // absent.
+            vec![
+                Item::filled(
+                    Shape::Rect {
+                        min: [8.0, 8.0],
+                        max: [60.0, 60.0],
+                    },
+                    sheet(
+                        [8.0, 8.0, 60.0, 60.0],
+                        ALL,
+                        TileMode::Clamp,
+                        Sampling::Linear,
+                    ),
+                )
+                .with_image_filter(ImageFilter::Blur { sigma: 4.0 }),
+                // Beside it unblurred at the same size, so the plate shows the
+                // blur rather than the image.
+                Item::filled(
+                    Shape::Rect {
+                        min: [68.0, 8.0],
+                        max: [120.0, 60.0],
+                    },
+                    sheet(
+                        [68.0, 8.0, 120.0, 60.0],
+                        ALL,
+                        TileMode::Clamp,
+                        Sampling::Linear,
+                    ),
+                ),
+                // And a stronger one over a smaller piece of the sheet, where
+                // the reach is a larger share of the image and the edges carry
+                // most of the picture.
+                Item::filled(
+                    Shape::Rect {
+                        min: [30.0, 72.0],
+                        max: [98.0, 120.0],
+                    },
+                    sheet(
+                        [30.0, 72.0, 98.0, 120.0],
+                        [0.25, 0.25, 0.75, 0.75],
+                        TileMode::Clamp,
+                        Sampling::Linear,
+                    ),
+                )
+                .with_image_filter(ImageFilter::Blur { sigma: 9.0 }),
+            ],
+        ),
+        plate(
             "blur/blur-has-no-edge",
             vec![
                 // Larger than the plate, so the halo is cut by the frame. A
