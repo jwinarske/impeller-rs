@@ -20,19 +20,26 @@
 //! against a hardware one and reports every antialiased edge as a difference.
 //! So this pairs them, or does neither.
 //!
-//! # Why the ordinary run names its drivers too
+//! # What the ordinary run does not do
 //!
-//! A segmentation fault in the suite was diagnosed to the Vulkan loader
-//! unloading driver libraries on one thread while another looked a device up in
-//! them. It runs that unload for every ICD that reports no device, and this
-//! machine has twelve manifests installed of which two find anything. Naming
-//! the two leaves the loader nothing to scan and nothing to unload.
+//! It names nothing, and inherits whatever the environment already says. That
+//! is deliberate. A segmentation fault in the suite was diagnosed to the Vulkan
+//! loader unloading driver libraries on one thread while another looked a
+//! device up in them, and naming the drivers avoids it -- but naming them means
+//! naming *files*, which means this file holding a list of GPU vendors, which
+//! is the kind of thing that goes stale without anyone noticing.
 //!
-//! Both of them, not one. The conformance suite compares a scene across
-//! devices, and the two it uses are the hardware Vulkan driver and the software
-//! reference -- so naming only the first would trade a crash for a test that
-//! silently stopped comparing anything. `docs/architecture.md` has the core
-//! dump this came from.
+//! The remedy belongs in the environment of whoever is affected, not in the
+//! build tooling of a renderer. `docs/architecture.md` records the diagnosis
+//! and the variable to set.
+//!
+//! The name-based selectors are not the remedy, which is worth writing down
+//! because they look like it. `VK_LOADER_DRIVERS_SELECT` and
+//! `VK_LOADER_DRIVERS_DISABLE` choose which drivers are *used*, after the
+//! loader has opened every manifest it found: with either of them set, all
+//! twelve libraries on this machine are still opened and still unloaded.
+//! `VK_DRIVER_FILES` is the only one that stops them being opened, which is why
+//! the software lane below uses it.
 
 use std::path::PathBuf;
 
@@ -78,54 +85,13 @@ fn is_manifest_for(name: &str, driver: &str) -> bool {
     name.contains(driver) && name.ends_with(".json")
 }
 
-/// Which drivers a run should name.
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub enum Mode {
-    /// The drivers that actually have a device here: the hardware Vulkan one
-    /// and the software reference. Both, because the conformance suite compares
-    /// a scene across the two of them.
-    Devices,
-    /// The CPU implementations of both APIs, which is what CI uses.
-    Software,
-}
-
-/// The hardware Vulkan drivers worth naming, in the order they are preferred.
-///
-/// A short list rather than a discovery, and the honest reason is that
-/// discovering it means enumerating devices, which is the call that crashes.
-/// The first present wins; if none is, the loader is left to scan as it did
-/// before and the run says so.
-const HARDWARE: [&str; 4] = ["radeon", "intel", "nouveau", "virtio"];
-
 /// The variables that put both backends on the CPU, or why they could not be
 /// set.
 ///
 /// Returned as a pair rather than applied here, so the caller can print what it
 /// is about to do. A run that silently used a different device than the one
 /// named would be the failure this whole module exists to avoid.
-pub fn environment(mode: Mode) -> Result<Vec<(&'static str, String)>, String> {
-    if mode == Mode::Devices {
-        // The software reference is named alongside the hardware driver rather
-        // than instead of it, because the conformance suite renders the same
-        // scene on both and compares. Naming one would leave that test with a
-        // single device and nothing to compare, which is a quieter failure than
-        // the crash it is avoiding.
-        let mut named: Vec<String> = Vec::new();
-        if let Some(path) = HARDWARE.iter().find_map(|driver| icd(driver)) {
-            named.push(path.display().to_string());
-        }
-        if let Some(path) = lavapipe_icd() {
-            named.push(path.display().to_string());
-        }
-        if named.is_empty() {
-            // Nothing recognized, so nothing is named and the loader scans as
-            // it always did. Refusing here would turn a machine this list does
-            // not know about into a machine the suite will not run on.
-            return Ok(Vec::new());
-        }
-        return Ok(vec![("VK_DRIVER_FILES", named.join(":"))]);
-    }
-
+pub fn environment() -> Result<Vec<(&'static str, String)>, String> {
     let Some(icd) = lavapipe_icd() else {
         let listing = std::fs::read_dir(ICD_DIR)
             .map(|entries| {
@@ -214,28 +180,5 @@ mod tests {
         // and handing the loader one of those names it a file it cannot parse.
         assert!(!is_manifest_for("lvp_icd.x86_64.json.rpmsave", "lvp"));
         assert!(!is_manifest_for("lvp_icd.x86_64.json.disabled", "lvp"));
-    }
-
-    #[test]
-    fn an_ordinary_run_names_the_software_reference_as_well_as_the_hardware() {
-        // Not a preference but a requirement: the conformance suite renders the
-        // same scene on the hardware driver and on the software one and
-        // compares them. Naming only the first would trade a crash in the
-        // loader for a test that silently stopped comparing anything, which is
-        // the quieter of the two failures and therefore the worse.
-        let Ok(env) = environment(Mode::Devices) else {
-            return;
-        };
-        let Some((_, named)) = env.first() else {
-            // No manifest this list recognizes, so nothing was named and the
-            // loader scans as it always did. Nothing to assert about.
-            return;
-        };
-        if lavapipe_icd().is_some() {
-            assert!(
-                named.contains("lvp"),
-                "the software reference is installed and was not named: {named}"
-            );
-        }
     }
 }

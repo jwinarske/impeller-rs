@@ -81,30 +81,30 @@ const FEATURES: &[&str] = &["vulkan", "gles", "vulkan,gles,drm"];
 pub fn run(software: bool) -> bool {
     // Resolved before anything is built, so a missing driver is reported in a
     // second rather than after a full compile.
-    let mode = if software {
-        crate::drivers::Mode::Software
-    } else {
-        crate::drivers::Mode::Devices
-    };
-    let env = match crate::drivers::environment(mode) {
-        Ok(env) if env.is_empty() => {
-            // Nothing recognized in the ICD directory, so the loader is left to
-            // scan. Said rather than passed over: that is the arrangement the
-            // crash came out of.
-            println!("== letting the loader choose its drivers ==");
-            env
-        }
-        Ok(env) => {
-            println!("== naming the drivers, so the loader scans nothing else ==");
-            for (key, value) in &env {
-                println!("   {key}={value}");
+    let env = if software {
+        match crate::drivers::environment() {
+            Ok(env) => {
+                println!("== on the CPU implementations of both APIs ==");
+                for (key, value) in &env {
+                    println!("   {key}={value}");
+                }
+                env
             }
-            env
+            Err(why) => {
+                eprintln!("{why}");
+                return false;
+            }
         }
-        Err(why) => {
-            eprintln!("{why}");
-            return false;
+    } else {
+        // Nothing named, and whatever the environment already says is
+        // inherited. Reported when it says something, so a run records which
+        // drivers it was against -- see the note in `drivers` for why that is
+        // worth knowing and why this does not decide it.
+        if let Some(named) = std::env::var_os("VK_DRIVER_FILES") {
+            println!("== drivers named by the environment ==");
+            println!("   VK_DRIVER_FILES={}", named.to_string_lossy());
         }
+        Vec::new()
     };
 
     for step in STEPS {

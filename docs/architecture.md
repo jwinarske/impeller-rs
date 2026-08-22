@@ -1985,23 +1985,40 @@ several threads is explicitly permitted, and the test harness does it because
 each device test takes a fresh context, which is the arrangement in which state
 left behind by a previous frame cannot be seen.
 
-Nothing here is doing anything it may not, so what changed is what the suite
-tells the loader rather than what it asks of Vulkan. Every run now names its
-drivers, and the loader has nothing left to scan and nothing to unload --
-`--software` already did this for the CPU drivers, which is why that path never
-crashed.
+Nothing here is doing anything it may not, so nothing here is changed. The
+remedy is one variable in the environment of whoever is affected:
 
-Two drivers, not one, and that is the part worth stating. The conformance suite
+```sh
+export VK_DRIVER_FILES=/usr/share/vulkan/icd.d/radeon_icd.x86_64.json:/usr/share/vulkan/icd.d/lvp_icd.x86_64.json
+```
+
+Naming the manifests directly is what keeps the loader from opening the others,
+and opening them is what leads to unloading them. The paths differ by
+distribution; `ls /usr/share/vulkan/icd.d/` is where they are.
+
+Two of them, not one, and that is the part worth stating. The conformance suite
 renders the same scene on the hardware Vulkan driver and on the software
-reference and compares them, so naming only the first would have traded a crash
-for a test that silently stopped comparing anything. That is the quieter of the
-two failures and therefore the worse.
+reference and compares them, so naming only the first trades a crash for a test
+that silently stops comparing anything -- the quieter of the two failures and
+therefore the worse.
 
-The list of hardware drivers to prefer is short and written down rather than
-discovered, and the honest reason is that discovering it means enumerating
-devices, which is the call that crashes. A machine whose driver is not on that
-list has nothing named and gets the loader's own scan, as before, and the run
-says which of the two happened.
+The name-based selectors look like the tidier answer and are not the answer at
+all, which is worth recording because the next person will reach for them.
+`VK_LOADER_DRIVERS_SELECT` and `VK_LOADER_DRIVERS_DISABLE` choose which drivers
+are *used*, after the loader has opened every manifest it found. Measured on
+this machine by counting which driver libraries actually get opened: with
+neither set, twelve; with `SELECT` naming two, still twelve; with `DISABLE`
+naming ten, still twelve; with `VK_DRIVER_FILES` naming two, two. Only the last
+prevents the open, and only preventing the open prevents the unload.
+
+This is not done for you. Naming the files means holding a list of GPU vendors
+somewhere, and a renderer's build tooling is the wrong place for one -- it would
+go stale on the first machine nobody tested. `cargo xtask gate` names nothing
+and inherits whatever the environment says, reporting it when it says
+something, so a run records which drivers it was against without deciding them.
+The software lane is the exception and is not a vendor guess: `--software` names
+lavapipe because lavapipe *is* what that lane means, and it is why that lane has
+never crashed.
 
 **Every context in the suite reports what the driver said about it.** On
 Vulkan that is the validation layer; on GLES it is `GL_KHR_debug`, which every
