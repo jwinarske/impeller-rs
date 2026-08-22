@@ -84,7 +84,7 @@ reason.
 | `drawColor` | yes | `draw_color`, which blends and obeys the clip where `clear` replaces and ignores it | `drawing_a_color_blends_where_clearing_replaces` |
 | `drawParagraph` | out of scope | shaping and layout are not this project's; `draw_glyphs` takes a positioned run and an atlas | glyph tests |
 | `drawVertices` | yes | `draw_vertices`, with positions, texture coordinates and per-vertex colors | `a_mesh_interpolates_the_colors_its_vertices_carry` |
-| `drawAtlas`, `drawRawAtlas` | yes | `draw_atlas`, one draw for the whole batch, each sprite with its own transform and color | `an_atlas_tints_each_sprite_on_its_own_in_one_draw` |
+| `drawAtlas`, `drawRawAtlas` | partial | `draw_atlas`, one draw for the whole batch, each sprite with its own transform and color — but the color multiplies, where `dart:ui` takes a blend mode to say how it should combine | `an_atlas_tints_each_sprite_on_its_own_in_one_draw` |
 | `drawPoints`, `drawRawPoints` | yes | `draw_points`, in all three modes. A point is a segment of no length, so the cap is the whole shape | `a_point_is_drawn_as_the_cap_it_would_have_had` |
 | `drawDRRect` | yes | `draw_drrect`: two contours filled even-odd, which is what makes the inner one a hole | `the_ring_between_two_rounded_rectangles_is_hollow` |
 | `drawShadow` | yes | `draw_shadow`: offset, blur and alpha all from the elevation, under one light | `a_shadow_falls_below_what_casts_it_and_widens_with_elevation` |
@@ -137,7 +137,7 @@ above it or not at all:
 
 ## Where that leaves it
 
-Of forty-seven rows across `Canvas` and `Paint`: thirty-eight exist, one is
+Of forty-seven rows across `Canvas` and `Paint`: thirty-seven exist, two are
 partial, five are expressible by a caller who assembles them, two are absent,
 and one is out of scope. Counting them is the least interesting thing
 about the table -- the absences are not equal, and a reader deciding whether
