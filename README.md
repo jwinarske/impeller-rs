@@ -211,6 +211,18 @@ and modifier negotiation, the shader pipeline, dependency purity, and the
 testing model. Read it before proposing structural changes — a fair number of
 alternatives were considered and rejected for recorded reasons.
 
+## Releases
+
+Nothing is released. `impeller-rs 0.0.0` exists on crates.io and contains **no
+API**: it reserves the name, which the plain `impeller` had already lost to an
+unrelated crate, and it says so in its own description. Do not depend on it;
+the first version with anything in it will be `0.1.0` or later.
+
+Every crate in this workspace is still `publish = false`. The manifests are
+otherwise ready — versions on internal dependencies, metadata filled in — so
+publishing is a decision rather than a task. [`CHANGELOG.md`](CHANGELOG.md)
+tracks what would go into the first release that has one.
+
 ## Contributing
 
 Run these in order before committing, and do not commit on a failure:
