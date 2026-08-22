@@ -95,6 +95,29 @@ a row there and should not be looked for as one: it is not a `dart:ui` method
 but a quality behavior inside gradient rendering, which is where the banding it
 exists to break up appears.
 
+Dithering is also not the small feature its one-word entry suggests, and the
+reason is worth recording so the size of it is not rediscovered. Breaking up a
+band means perturbing a color by about half of one quantization step before it
+is quantized, and half a step is not a fixed quantity here: the target decides
+it. Into a linear eight-bit surface a step is a flat 1/255 of light. Into an
+sRGB one the hardware encodes on write, and the slope of that transfer runs
+from 12.92 at black to roughly 0.44 at white -- so the same offset that is half
+a step on one surface is six steps on the other in shadow, and a fifth of one in
+highlight. No single amplitude serves both.
+
+Which means dithering wants to know the format it is drawing into, and the
+pipeline deliberately does not: the color policy has the conversion belong to
+the target format rather than to a shader, so nothing before the write knows
+whether one will happen. That is a good rule and this is a real exception to
+it, so the feature is waiting on a decision about the rule rather than on the
+work, which is why it is filed here and not as an unwritten scene.
+
+Dithering the gradient's parameter rather than its color was the obvious way
+around it and does not work: jittering where a band edge falls, rather than
+what value it steps to, needs no knowledge of the target, but the jitter is
+half a pixel wide while the band is widest exactly when the gradient changes
+slowest. It is weakest where banding is worst.
+
 An effect's own textures used to head this list, on the grounds that a caller's
 program got the material's uniform block and nothing else. That stopped being
 true when the effect material grew texture slots, and the paragraph outlived the
