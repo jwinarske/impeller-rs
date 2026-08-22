@@ -34,11 +34,11 @@
 //! scene here with no counterpart there would be visible as one.
 
 use crate::scene::{
-    AtlasSpec, Fill, GlyphRunSpec, Item, LayerSpec, MeshSpec, Node, PictureSpec, Scene, ShadowSpec,
-    SpriteSpec, Stop, StrokeSpec, Transform,
+    AtlasSpec, Fill, GlyphRunSpec, Item, LayerSpec, MeshSpec, Node, PictureSpec, PointsSpec, Scene,
+    ShadowSpec, SpriteSpec, Stop, StrokeSpec, Transform,
 };
 use crate::shape::Shape;
-use impeller_core::{Affine2, ImageFilter, MaskBlurStyle, Vec2, VertexMode};
+use impeller_core::{Affine2, ImageFilter, MaskBlurStyle, PointMode, Vec2, VertexMode};
 use impeller_geometry::stroke::{LineCap, LineJoin};
 use impeller_geometry::FillRule;
 use impeller_hal::{BlendMode, ColorFilter, Extent2D, Sampling, TileMode};
@@ -82,6 +82,12 @@ pub fn catalog() -> Vec<Scene> {
 }
 
 /// A scene on the catalog's own ground, which is dark so a white shape shows.
+fn points_plate(name: &'static str, spec: PointsSpec) -> Scene {
+    Scene::tree(name, vec![Node::Points(Box::new(spec))])
+        .with_background(DARK)
+        .with_samples(4)
+}
+
 fn plate(name: &'static str, items: Vec<Item>) -> Scene {
     Scene::new(name, items)
         .with_background(DARK)
@@ -204,6 +210,72 @@ fn basic() -> Vec<Scene> {
                 translate: [-20.0, 0.0],
                 ..Transform::default()
             })],
+        ),
+        points_plate(
+            "basic/points-in-all-three-modes",
+            // `drawPoints` is marked complete in the parity table and had no
+            // plate, so the three modes had never been put in front of the
+            // second backend. A point is a segment of no length, so what is
+            // drawn is the cap alone -- which makes this a test of cap
+            // generation at a degenerate length rather than of geometry.
+            PointsSpec {
+                mode: PointMode::Points,
+                points: (0..6).map(|i| [16.0 + i as f32 * 19.0, 24.0]).collect(),
+                stroke: StrokeSpec {
+                    cap: LineCap::Round,
+                    ..StrokeSpec::new(13.0)
+                },
+                color: BLUE,
+                blend: BlendMode::SrcOver,
+                transform: Transform::default(),
+            },
+        ),
+        points_plate(
+            "basic/points-as-separate-segments",
+            // Pairs, and an odd point at the end that is drawn as nothing --
+            // the rule that distinguishes this mode from the run below, and
+            // the one a backend can quietly get wrong by drawing the leftover.
+            PointsSpec {
+                mode: PointMode::Lines,
+                points: vec![
+                    [14.0, 52.0],
+                    [52.0, 74.0],
+                    [66.0, 52.0],
+                    [110.0, 78.0],
+                    [90.0, 100.0],
+                ],
+                stroke: StrokeSpec {
+                    cap: LineCap::Square,
+                    ..StrokeSpec::new(9.0)
+                },
+                color: GREEN,
+                blend: BlendMode::SrcOver,
+                transform: Transform::default(),
+            },
+        ),
+        points_plate(
+            "basic/points-as-one-open-run",
+            // One run through all of them, so every interior position is a
+            // join rather than two caps. A butt cap makes the two ends the only
+            // place a cap appears, which is what separates this picture from
+            // the same points drawn as segments.
+            PointsSpec {
+                mode: PointMode::Polygon,
+                points: vec![
+                    [12.0, 108.0],
+                    [38.0, 86.0],
+                    [58.0, 116.0],
+                    [82.0, 84.0],
+                    [116.0, 110.0],
+                ],
+                stroke: StrokeSpec {
+                    cap: LineCap::Butt,
+                    ..StrokeSpec::new(7.0)
+                },
+                color: RED,
+                blend: BlendMode::SrcOver,
+                transform: Transform::default(),
+            },
         ),
         plate(
             "basic/can-render-wide-stroked-rect-without-overlap",

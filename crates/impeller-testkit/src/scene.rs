@@ -7,7 +7,7 @@
 
 use crate::shape::Shape;
 use glam::{Affine2, Mat2, Vec2};
-use impeller_core::{ImageFilter, MaskBlurStyle, VertexMode};
+use impeller_core::{ImageFilter, MaskBlurStyle, PointMode, VertexMode};
 use impeller_geometry::stroke::{LineCap, LineJoin, StrokeStyle};
 use impeller_geometry::FillRule;
 use impeller_hal::{BlendMode, Extent2D, TileMode};
@@ -114,6 +114,22 @@ pub struct MeshSpec {
     pub transform: Transform,
     /// Filter what the mesh drew. See [`Item::image_filter`].
     pub image_filter: ImageFilter,
+}
+
+/// Points, segments or an open run through a list of positions.
+///
+/// Its own node rather than a shape, because what a point *is* here is the
+/// stroke's cap applied to a segment of no length -- so a paint with no stroke
+/// draws nothing, and the mode decides how many segments the list becomes
+/// rather than what shape it is.
+#[derive(Debug, Clone, PartialEq)]
+pub struct PointsSpec {
+    pub mode: PointMode,
+    pub points: Vec<[f32; 2]>,
+    pub stroke: StrokeSpec,
+    pub color: [f32; 4],
+    pub blend: BlendMode,
+    pub transform: Transform,
 }
 
 /// A finished recording, drawn into the scene that holds it.
@@ -673,6 +689,8 @@ pub enum Node {
     Atlas(Box<AtlasSpec>),
     /// A run of glyphs read from the fixture glyph atlas as coverage.
     Glyphs(Box<GlyphRunSpec>),
+    /// Points, segments, or an open run through a list of positions.
+    Points(Box<PointsSpec>),
     /// A recording of its own, drawn into this one.
     Picture(Box<PictureSpec>),
     /// The shadow a shape at some elevation casts.
@@ -741,9 +759,11 @@ impl Node {
             // derivations need from them is asked for separately, by
             // `samples_fixture` and `blends`, which are exhaustive over this
             // enum so that a node kind cannot be added without deciding.
-            Self::Mesh(_) | Self::Atlas(_) | Self::Shadow(_) | Self::Glyphs(_) => {
-                Box::new(std::iter::empty())
-            }
+            Self::Mesh(_)
+            | Self::Atlas(_)
+            | Self::Shadow(_)
+            | Self::Glyphs(_)
+            | Self::Points(_) => Box::new(std::iter::empty()),
             Self::Picture(picture) => Box::new(picture.children.iter().flat_map(Node::items)),
             Self::Layer { children, .. } => Box::new(children.iter().flat_map(Node::items)),
         }
@@ -752,9 +772,11 @@ impl Node {
     fn items_mut(&mut self) -> Box<dyn Iterator<Item = &mut Item> + '_> {
         match self {
             Self::Draw(item) => Box::new(std::iter::once(item.as_mut())),
-            Self::Mesh(_) | Self::Atlas(_) | Self::Shadow(_) | Self::Glyphs(_) => {
-                Box::new(std::iter::empty())
-            }
+            Self::Mesh(_)
+            | Self::Atlas(_)
+            | Self::Shadow(_)
+            | Self::Glyphs(_)
+            | Self::Points(_) => Box::new(std::iter::empty()),
             Self::Picture(picture) => {
                 Box::new(picture.children.iter_mut().flat_map(Node::items_mut))
             }
@@ -768,9 +790,12 @@ impl Node {
             // A picture is composited from a target of its own whatever it
             // holds, which is the same per-fragment arithmetic a layer is.
             Self::Picture(_) => true,
-            Self::Draw(_) | Self::Mesh(_) | Self::Atlas(_) | Self::Shadow(_) | Self::Glyphs(_) => {
-                false
-            }
+            Self::Draw(_)
+            | Self::Mesh(_)
+            | Self::Atlas(_)
+            | Self::Shadow(_)
+            | Self::Glyphs(_)
+            | Self::Points(_) => false,
             Self::Layer { .. } => true,
         }
     }
@@ -785,7 +810,7 @@ impl Node {
         match self {
             Self::Draw(item) => matches!(item.fill, Fill::RuntimeEffect { .. }),
             Self::Mesh(mesh) => matches!(mesh.fill, Fill::RuntimeEffect { .. }),
-            Self::Atlas(_) | Self::Shadow(_) | Self::Glyphs(_) => false,
+            Self::Atlas(_) | Self::Shadow(_) | Self::Glyphs(_) | Self::Points(_) => false,
             Self::Picture(picture) => picture.children.iter().any(Node::uses_effect),
             Self::Layer { children, .. } => children.iter().any(Node::uses_effect),
         }
@@ -806,7 +831,8 @@ impl Node {
             Self::Atlas(_) => true,
             // A run reads the glyph atlas, which is a texture of its own rather
             // than the sheet -- see `uses_glyphs`.
-            Self::Shadow(_) | Self::Glyphs(_) => false,
+            // Points are stroked geometry in a solid color; they sample nothing.
+            Self::Shadow(_) | Self::Glyphs(_) | Self::Points(_) => false,
             Self::Picture(picture) => picture.children.iter().any(Node::samples_fixture),
             Self::Layer { children, .. } => children.iter().any(Node::samples_fixture),
         }
@@ -826,7 +852,9 @@ impl Node {
             Self::Glyphs(_) => true,
             Self::Draw(item) => reads_atlas(&item.fill),
             Self::Mesh(mesh) => reads_atlas(&mesh.fill),
-            Self::Atlas(_) | Self::Shadow(_) => false,
+            // Points are stroked geometry in a solid color, reading no texture
+            // of either kind.
+            Self::Atlas(_) | Self::Shadow(_) | Self::Points(_) => false,
             Self::Picture(picture) => picture.children.iter().any(Node::uses_glyphs),
             Self::Layer { children, .. } => children.iter().any(Node::uses_glyphs),
         }
@@ -841,6 +869,7 @@ impl Node {
             // A shadow blends against what is under it and nothing else.
             Self::Shadow(_) => Box::new(std::iter::once(BlendMode::SrcOver)),
             Self::Glyphs(run) => Box::new(std::iter::once(run.blend)),
+            Self::Points(points) => Box::new(std::iter::once(points.blend)),
             Self::Picture(picture) => Box::new(
                 std::iter::once(picture.blend)
                     .chain(picture.children.iter().flat_map(Node::blends)),
@@ -856,9 +885,12 @@ impl Node {
     fn has_bounded_layer(&self) -> bool {
         match self {
             Self::Picture(picture) => picture.children.iter().any(Node::has_bounded_layer),
-            Self::Draw(_) | Self::Mesh(_) | Self::Atlas(_) | Self::Shadow(_) | Self::Glyphs(_) => {
-                false
-            }
+            Self::Draw(_)
+            | Self::Mesh(_)
+            | Self::Atlas(_)
+            | Self::Shadow(_)
+            | Self::Glyphs(_)
+            | Self::Points(_) => false,
             Self::Layer {
                 bounds, children, ..
             } => bounds.is_some() || children.iter().any(Node::has_bounded_layer),
@@ -875,9 +907,12 @@ impl Node {
     fn filters_its_backdrop(&self) -> bool {
         match self {
             Self::Picture(picture) => picture.children.iter().any(Node::filters_its_backdrop),
-            Self::Draw(_) | Self::Mesh(_) | Self::Atlas(_) | Self::Shadow(_) | Self::Glyphs(_) => {
-                false
-            }
+            Self::Draw(_)
+            | Self::Mesh(_)
+            | Self::Atlas(_)
+            | Self::Shadow(_)
+            | Self::Glyphs(_)
+            | Self::Points(_) => false,
             Self::Layer {
                 layer, children, ..
             } => layer.backdrop_blur > 0.0 || children.iter().any(Node::filters_its_backdrop),

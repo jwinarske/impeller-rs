@@ -215,6 +215,20 @@ fn record_node(canvas: &mut Canvas, node: &Node, anti_alias: bool) -> Result<()>
                 return Err(e);
             }
         }
+        Node::Points(points) => {
+            canvas.save();
+            canvas.concat(points.transform.to_affine());
+            let positions: Vec<Vec2> = points.points.iter().copied().map(Vec2::from).collect();
+            let mut paint = Paint::stroke(color_of(points.color), points.stroke.width);
+            paint.style = Style::Stroke(points.stroke.to_style());
+            paint.blend = points.blend;
+            paint.anti_alias = anti_alias;
+            let result = canvas
+                .draw_points(points.mode, &positions, &paint)
+                .map(|_| ());
+            canvas.restore();
+            result?;
+        }
         Node::Glyphs(run) => {
             canvas.save();
             canvas.concat(run.transform.to_affine());
