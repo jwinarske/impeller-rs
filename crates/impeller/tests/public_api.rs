@@ -11619,3 +11619,109 @@ fn a_wide_color_survives_a_layer_when_the_root_can_hold_it() {
     );
     assert!((inside[0] - 1.224_940_2).abs() < 0.02, "red {}", inside[0]);
 }
+
+/// A layer with nothing asked of it must not change the picture.
+///
+/// `saveLayer` with full opacity and no filter is an identity: the content is
+/// drawn into a target of its own and composited straight back. Whether that
+/// round trip is lossless depends on what the target holds, and for a long time
+/// it held linear eight-bit color whatever the frame was landing in.
+///
+/// Eight bits of *linear* color band visibly in the darks -- this repository
+/// argues exactly that about gradient ramps, and the argument is stronger for a
+/// full-frame layer than for a 256-texel table. Against an sRGB surface the two
+/// paths disagreed by seven levels, and a dark ramp that resolved into forty
+/// distinct values drawn directly came back as six through a layer.
+#[test]
+fn a_layer_that_asks_for_nothing_keeps_the_tones_of_what_it_holds() {
+    // Asked of both backends rather than of whichever one comes first, because
+    // the two arrive at an sRGB attachment differently -- one encodes on write
+    // to an sRGB image view, the other to an `SRGB8_ALPHA8` framebuffer with no
+    // control over whether it does -- and nothing else in the suite renders
+    // into an sRGB surface through a layer.
+    //
+    // And twice on each, with antialiasing off and on, because a multisampled
+    // layer resolves before it is composited: whether that resolve happens on
+    // linear values or encoded ones is the second thing an sRGB attachment
+    // changes, and averaging encoded values is exactly the mistake the color
+    // policy exists to prevent.
+    for preference in [BackendPreference::Vulkan, BackendPreference::Gles] {
+        let Ok(mut ctx) = Context::new(preference) else {
+            eprintln!("skipping {preference:?}: no such backend here");
+            continue;
+        };
+        for anti_alias in [false, true] {
+            tones_survive_a_layer(&mut ctx, anti_alias, preference);
+        }
+    }
+}
+
+fn tones_survive_a_layer(ctx: &mut Context, anti_alias: bool, backend: BackendPreference) {
+    let draw = |ctx: &mut Context, layered: bool| {
+        let mut canvas = Canvas::new(SIZE);
+        canvas.clear(Color::BLACK);
+        if layered {
+            canvas.save_layer(Layer::opacity(1.0));
+        }
+        canvas
+            .draw_rect(
+                Rect::from_size(128.0, 128.0),
+                // Dark, because that is where linear eight-bit quantization is
+                // coarse and the transfer function is steep. The same ramp in
+                // the midtones would hide the difference.
+                &Paint::linear_gradient(
+                    Vec2::ZERO,
+                    Vec2::new(128.0, 0.0),
+                    vec![
+                        GradientStop::new(Color::linear(0.0, 0.0, 0.0, 1.0), 0.0),
+                        GradientStop::new(Color::linear(0.02, 0.02, 0.02, 1.0), 1.0),
+                    ],
+                )
+                .with_anti_alias(anti_alias),
+            )
+            .expect("gradient");
+        if layered {
+            canvas.restore();
+        }
+        // An sRGB surface, because that is what makes the question visible: the
+        // frame spaces its eight bits through the transfer function, and a
+        // layer that does not is throwing away tones the frame could have held.
+        let mut surface = ctx
+            .create_surface(SIZE, PixelFormat::Rgba8UnormSrgb)
+            .expect("srgb surface");
+        ctx.draw(&mut surface, &canvas.finish()).expect("draw");
+        let pixels = ctx.read(&mut surface).expect("read");
+        ctx.destroy_surface(surface);
+        pixels
+    };
+
+    let direct = draw(ctx, false);
+    let layered = draw(ctx, true);
+
+    let distinct = |p: &[u8]| {
+        (0..128u32)
+            .map(|x| pixel(p, x, 64)[0])
+            .collect::<std::collections::BTreeSet<_>>()
+            .len()
+    };
+    let worst = (0..128u32)
+        .map(|x| (pixel(&direct, x, 64)[0] as i32 - pixel(&layered, x, 64)[0] as i32).abs())
+        .max()
+        .expect("a row");
+
+    assert!(
+        worst <= 2,
+        "{backend:?} with anti_alias {anti_alias}: a layer changed the picture by \
+         {worst} levels, {} distinct tones drawn directly against {} through the \
+         layer",
+        distinct(&direct),
+        distinct(&layered)
+    );
+    // And the ramp really is a ramp, so the comparison above is between two
+    // pictures rather than two flat fields that trivially agree.
+    assert!(
+        distinct(&direct) > 20,
+        "the probe ramp resolved only {} tones, so it cannot show quantization",
+        distinct(&direct)
+    );
+}

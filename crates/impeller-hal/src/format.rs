@@ -83,11 +83,18 @@ impl PixelFormat {
     /// opacity -- a value that gets composited -- rather than a scanout channel
     /// nothing reads back.
     ///
-    /// Today this is the identity on every format anything actually renders
-    /// into, which is why introducing it moves no pixel.
+    /// An sRGB root gives an sRGB layer, and that is not cosmetic. Eight bits
+    /// of *linear* color band visibly in the darks, which is the argument this
+    /// tree already makes about a gradient ramp and which is stronger for a
+    /// full-frame layer than for a 256-texel table: a dark ramp resolving forty
+    /// distinct tones drawn straight into an sRGB frame came back as six
+    /// through a layer that held linear eight-bit color. Spacing a layer's bits
+    /// the way the frame spaces its own costs exactly the same memory and the
+    /// same bandwidth.
     pub const fn intermediate(self) -> Self {
         match self {
             Self::Rgba16Float => Self::Rgba16Float,
+            Self::Rgba8UnormSrgb | Self::Bgra8UnormSrgb => Self::Rgba8UnormSrgb,
             _ => Self::Rgba8Unorm,
         }
     }
