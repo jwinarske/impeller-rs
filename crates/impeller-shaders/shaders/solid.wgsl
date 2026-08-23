@@ -306,9 +306,26 @@ fn cubic_weight(x: f32) -> f32 {
 /// falls -- so nothing is normalized afterward and a flat image stays exactly
 /// flat. What they are not is non-negative: between one and two texels out the
 /// curve dips below zero, which is what sharpens an edge and what makes a
-/// bright edge overshoot into the dark side of it. The result is clamped back
-/// into the premultiplied form the rest of this shader assumes, since a channel
-/// above its own alpha is not a color.
+/// bright edge overshoot into the dark side of it.
+///
+/// That overshoot is suppressed at the end, and this is the one place in this
+/// shader where a color is still held inside the sRGB primaries' triangle. The
+/// reason is that here, and only here, the thing exceeding the range is an
+/// artifact rather than a color: a reconstruction kernel with negative lobes
+/// invents values no texel it read contains. Everywhere else a component past
+/// one is a color a caller asked for, and is carried.
+///
+/// The two cannot be told apart by looking. At this point a ringing overshoot
+/// and a component describing a color outside the triangle are the same number,
+/// and the source's own range is not knowable here -- so suppressing the first
+/// means suppressing the second with it. What that costs is stated rather than
+/// hidden: an image whose colors leave the sRGB primaries, read at this
+/// sampling quality, is brought back inside them. `Sampling::Linear` has no
+/// negative lobes, needs no such clamp, and carries the full range.
+///
+/// Clamping instead to the range of the sixteen texels read was the obvious
+/// narrower answer and is worse: it removes exactly the overshoot that does the
+/// sharpening, which is this filter's whole reason for existing.
 fn cubic(coord: vec2<f32>, low: vec2<f32>, high: vec2<f32>) -> vec4<f32> {
     let size = vec2<f32>(textureDimensions(image_texture));
     // Texel centers sit at half-integers, so the coordinate is shifted by half
@@ -796,16 +813,25 @@ fn filtered(premultiplied: vec4<f32>) -> vec4<f32> {
     }
 
     if (straight) {
-        out = clamp(out, vec4<f32>(0.0), vec4<f32>(1.0));
-        return vec4<f32>(out.rgb * out.a, out.a);
+        // Alpha is coverage and cannot mean anything outside the unit range, so
+        // it is still bounded. Color is not: a component outside that range
+        // describes a color the sRGB primaries cannot hold rather than an
+        // invalid one, and a color matrix is exactly the operation a caller
+        // reaches for to produce one deliberately.
+        let a = clamp(out.a, 0.0, 1.0);
+        return vec4<f32>(out.rgb * a, a);
     }
     // Premultiplied already, so the invariant to keep is the one that form
-    // carries: no channel may exceed the alpha it was multiplied by. A filter
-    // is free to produce a color that does, and a color brighter than its own
-    // alpha is not a color -- it composites as though it were lit from
+    // actually carries. `rgb <= alpha` was two claims sharing a clamp: that a
+    // straight component lies between zero and one, which is a statement about
+    // the sRGB primaries' triangle and is the thing an extended range
+    // deliberately gives up; and that a component is alpha times something
+    // finite, which is still true and has exactly one visible consequence --
+    // where alpha is zero the color is zero, because a finite number times zero
+    // is zero. A pixel that is not covered at all still cannot be lit from
     // nowhere.
     let alpha = clamp(out.a, 0.0, 1.0);
-    return vec4<f32>(clamp(out.rgb, vec3<f32>(0.0), vec3<f32>(alpha)), alpha);
+    return vec4<f32>(select(out.rgb, vec3<f32>(0.0), alpha <= 0.0), alpha);
 }
 
 /// Hard light, which overlay is also built from.
@@ -957,10 +983,32 @@ fn blend_tint(mode: i32, src: vec4<f32>, dst: vec4<f32>) -> vec4<f32> {
         default: {}
     }
 
-    // Everything past here is an advanced mode, whose formulas are stated on
-    // unpremultiplied color and composited back afterwards.
-    let cs = select(src.rgb / sa, vec3<f32>(0.0), sa <= 0.0);
-    let cb = select(dst.rgb / da, vec3<f32>(0.0), da <= 0.0);
+    // Everything past here is an advanced mode, whose formulas the compositing
+    // specification states on unpremultiplied color between zero and one and
+    // does not define outside it. Overlay and hard light branch on a midpoint
+    // that only means something there; color dodge and burn saturate at one;
+    // soft light uses a curve defined on the unit interval; and the four
+    // non-separable modes clip against a gamut their own definition states as
+    // the unit cube.
+    //
+    // That domain is the specification's rather than this shader's, and the
+    // hardware unit a paint's own blend mode reaches has the same one and
+    // cannot be extended. So it is stated here, at the place it applies, rather
+    // than enforced three functions upstream by a clamp that also had to gate
+    // colors nothing was wrong with. An operand outside the sRGB primaries'
+    // triangle is brought to the triangle's edge before the mode is evaluated.
+    // The fourteen modes above are linear, have no such domain, and never reach
+    // this line.
+    let cs = clamp(
+        select(src.rgb / sa, vec3<f32>(0.0), sa <= 0.0),
+        vec3<f32>(0.0),
+        vec3<f32>(1.0),
+    );
+    let cb = clamp(
+        select(dst.rgb / da, vec3<f32>(0.0), da <= 0.0),
+        vec3<f32>(0.0),
+        vec3<f32>(1.0),
+    );
     var mixed: vec3<f32>;
     if (mode >= 25) {
         mixed = nonseparable_b(mode, cb, cs);

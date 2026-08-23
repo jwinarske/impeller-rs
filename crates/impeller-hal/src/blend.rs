@@ -588,9 +588,21 @@ pub fn blend_advanced(mode: BlendMode, source: [f32; 4], backdrop: [f32; 4]) -> 
     // Dividing by a zero alpha would give a NaN that then propagates through a
     // term the same alpha multiplies away, so the color under a fully
     // transparent side is taken as zero rather than computed.
+    //
+    // Clamped for a second reason, stated separately because it is a different
+    // one: the formulas below are defined on channels between zero and one and
+    // not outside, so a component describing a color the sRGB primaries cannot
+    // hold has to be brought to the triangle's edge before a mode is evaluated.
+    // The shader states the same domain at the same place, because these two
+    // exist to be checked against each other and a domain named in one and not
+    // the other is how they begin to disagree.
     let straight = |c: [f32; 4], a: f32| {
         if a > 0.0 {
-            [c[0] / a, c[1] / a, c[2] / a]
+            [
+                (c[0] / a).clamp(0.0, 1.0),
+                (c[1] / a).clamp(0.0, 1.0),
+                (c[2] / a).clamp(0.0, 1.0),
+            ]
         } else {
             [0.0; 3]
         }

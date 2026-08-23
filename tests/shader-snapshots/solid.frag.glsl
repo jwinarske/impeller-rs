@@ -463,17 +463,15 @@ vec4 filtered(vec4 premultiplied) {
         out_1 = (((((_e41 * _e43) + (_e48 * _e50)) + (_e56 * _e58)) + (_e64 * _e66)) + _e71);
     }
     if (straight) {
-        vec4 _e73 = out_1;
-        out_1 = clamp(_e73, vec4(0.0), vec4(1.0));
-        vec4 _e79 = out_1;
-        float _e82 = out_1.w;
-        float _e85 = out_1.w;
-        return vec4((_e79.xyz * _e82), _e85);
+        float _e74 = out_1.w;
+        float a = clamp(_e74, 0.0, 1.0);
+        vec4 _e78 = out_1;
+        return vec4((_e78.xyz * a), a);
     }
-    float _e88 = out_1.w;
-    float alpha_4 = clamp(_e88, 0.0, 1.0);
-    vec4 _e92 = out_1;
-    return vec4(clamp(_e92.xyz, vec3(0.0), vec3(alpha_4)), alpha_4);
+    float _e83 = out_1.w;
+    float alpha_4 = clamp(_e83, 0.0, 1.0);
+    vec4 _e87 = out_1;
+    return vec4(((alpha_4 <= 0.0) ? vec3(0.0) : _e87.xyz), alpha_4);
 }
 
 float hard_light(float cb, float cs) {
@@ -664,19 +662,19 @@ vec4 blend_tint(int mode_2, vec4 src, vec4 dst) {
             break;
         }
     }
-    vec3 cs_3 = ((sa <= 0.0) ? vec3(0.0) : (src.xyz / vec3(sa)));
-    vec3 cb_3 = ((da <= 0.0) ? vec3(0.0) : (dst.xyz / vec3(da)));
+    vec3 cs_3 = clamp(((sa <= 0.0) ? vec3(0.0) : (src.xyz / vec3(sa))), vec3(0.0), vec3(1.0));
+    vec3 cb_3 = clamp(((da <= 0.0) ? vec3(0.0) : (dst.xyz / vec3(da))), vec3(0.0), vec3(1.0));
     if ((mode_2 >= 25)) {
-        vec3 _e64 = nonseparable_b(mode_2, cb_3, cs_3);
-        mixed = _e64;
+        vec3 _e74 = nonseparable_b(mode_2, cb_3, cs_3);
+        mixed = _e74;
     } else {
-        float _e67 = separable_b(mode_2, cb_3.x, cs_3.x);
-        float _e70 = separable_b(mode_2, cb_3.y, cs_3.y);
-        float _e73 = separable_b(mode_2, cb_3.z, cs_3.z);
-        mixed = vec3(_e67, _e70, _e73);
+        float _e77 = separable_b(mode_2, cb_3.x, cs_3.x);
+        float _e80 = separable_b(mode_2, cb_3.y, cs_3.y);
+        float _e83 = separable_b(mode_2, cb_3.z, cs_3.z);
+        mixed = vec3(_e77, _e80, _e83);
     }
-    vec3 _e80 = mixed;
-    vec3 rgb = ((((sa * (1.0 - da)) * cs_3) + ((sa * da) * _e80)) + (((1.0 - sa) * da) * cb_3));
+    vec3 _e90 = mixed;
+    vec3 rgb = ((((sa * (1.0 - da)) * cs_3) + ((sa * da) * _e90)) + (((1.0 - sa) * da) * cb_3));
     return vec4(rgb, (sa + (da * (1.0 - sa))));
 }
 
@@ -725,16 +723,16 @@ vec4 shade(VertexOutput in_1) {
                     float separation = _group_1_binding_0_fs.params.w;
                     float r0_ = _group_1_binding_0_fs.geometry.z;
                     float dr = _group_1_binding_0_fs.geometry.w;
-                    float a = ((separation * separation) - (dr * dr));
+                    float a_1 = ((separation * separation) - (dr * dr));
                     float b = ((_e100.x * separation) + (r0_ * dr));
                     float c_6 = (dot(_e100, _e100) - (r0_ * r0_));
                     float magnitude = max((separation * separation), (dr * dr));
-                    if ((abs(a) > (magnitude * 1e-5))) {
-                        float disc = ((b * b) - (a * c_6));
+                    if ((abs(a_1) > (magnitude * 1e-5))) {
+                        float disc = ((b * b) - (a_1 * c_6));
                         if ((disc >= 0.0)) {
                             float root = sqrt(disc);
-                            float far = max(((b + root) / a), ((b - root) / a));
-                            float near = min(((b + root) / a), ((b - root) / a));
+                            float far = max(((b + root) / a_1), ((b - root) / a_1));
+                            float near = min(((b + root) / a_1), ((b - root) / a_1));
                             if (((r0_ + (far * dr)) >= 0.0)) {
                                 t_3 = far;
                                 covered = true;

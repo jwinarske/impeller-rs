@@ -283,19 +283,19 @@ vec4 blend_tint(int mode_2, vec4 src, vec4 dst) {
             break;
         }
     }
-    vec3 cs_3 = ((sa <= 0.0) ? vec3(0.0) : (src.xyz / vec3(sa)));
-    vec3 cb_3 = ((da <= 0.0) ? vec3(0.0) : (dst.xyz / vec3(da)));
+    vec3 cs_3 = clamp(((sa <= 0.0) ? vec3(0.0) : (src.xyz / vec3(sa))), vec3(0.0), vec3(1.0));
+    vec3 cb_3 = clamp(((da <= 0.0) ? vec3(0.0) : (dst.xyz / vec3(da))), vec3(0.0), vec3(1.0));
     if ((mode_2 >= 25)) {
-        vec3 _e64 = nonseparable_b(mode_2, cb_3, cs_3);
-        mixed = _e64;
+        vec3 _e74 = nonseparable_b(mode_2, cb_3, cs_3);
+        mixed = _e74;
     } else {
-        float _e67 = separable_b(mode_2, cb_3.x, cs_3.x);
-        float _e70 = separable_b(mode_2, cb_3.y, cs_3.y);
-        float _e73 = separable_b(mode_2, cb_3.z, cs_3.z);
-        mixed = vec3(_e67, _e70, _e73);
+        float _e77 = separable_b(mode_2, cb_3.x, cs_3.x);
+        float _e80 = separable_b(mode_2, cb_3.y, cs_3.y);
+        float _e83 = separable_b(mode_2, cb_3.z, cs_3.z);
+        mixed = vec3(_e77, _e80, _e83);
     }
-    vec3 _e80 = mixed;
-    vec3 rgb = ((((sa * (1.0 - da)) * cs_3) + ((sa * da) * _e80)) + (((1.0 - sa) * da) * cb_3));
+    vec3 _e90 = mixed;
+    vec3 rgb = ((((sa * (1.0 - da)) * cs_3) + ((sa * da) * _e90)) + (((1.0 - sa) * da) * cb_3));
     return vec4(rgb, (sa + (da * (1.0 - sa))));
 }
 
