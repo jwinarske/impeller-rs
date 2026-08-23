@@ -11189,3 +11189,231 @@ fn a_caller_can_assemble_the_mask_blur_a_gradient_is_refused() {
     // Far outside, nothing was drawn at all.
     assert_eq!(pixel(&pixels, 4, 64), [0, 0, 0, 255], "beyond the blur");
 }
+
+/// One drawing operation and the name a failure should report it by.
+type NamedDrawing = (&'static str, Box<dyn Fn(&mut Canvas)>);
+
+/// `docs/parity.md` says `transform` is *yes*, which is a claim about every
+/// drawing operation and not only the ones perspective was built against.
+///
+/// Each of these reaches clip space by a different route -- a tessellated path,
+/// an analytic distance field, a stroke expanded from points, a shadow made of
+/// blurred layers -- and the type change that carried perspective through was
+/// checked by a compiler, which can say the transform arrived and cannot say it
+/// was used. So each is drawn twice, once under a transform carrying
+/// perspective and once under the affine that transform reduces to, and asked
+/// to differ. An operation that ignored the perspective row would render the
+/// same picture both times and pass everything else here.
+#[test]
+fn every_drawing_operation_answers_to_a_transform_with_perspective() {
+    let Some(mut ctx) = context() else { return };
+    let paint = Paint::fill(Color::WHITE).with_anti_alias(false);
+    let stroked = Paint::stroke(Color::WHITE, 6.0).with_anti_alias(false);
+    let square = Rect::new(24.0, 24.0, 104.0, 104.0);
+
+    let mut wedge = PathBuilder::new();
+    wedge
+        .move_to(Vec2::new(24.0, 104.0))
+        .line_to(Vec2::new(64.0, 24.0))
+        .line_to(Vec2::new(104.0, 104.0));
+    let wedge = wedge.build();
+
+    // Named so a failure says which route stopped carrying the transform.
+    let operations: Vec<NamedDrawing> = vec![
+        ("draw_path", {
+            let wedge = wedge.clone();
+            let paint = paint.clone();
+            Box::new(move |c: &mut Canvas| {
+                c.draw_path(&wedge, &paint).expect("path");
+            })
+        }),
+        ("draw_rect", {
+            let paint = paint.clone();
+            Box::new(move |c: &mut Canvas| {
+                c.draw_rect(square, &paint).expect("rect");
+            })
+        }),
+        ("draw_rrect", {
+            let paint = paint.clone();
+            Box::new(move |c: &mut Canvas| {
+                c.draw_rrect(square, 16.0, &paint).expect("rrect");
+            })
+        }),
+        ("draw_circle", {
+            let paint = paint.clone();
+            Box::new(move |c: &mut Canvas| {
+                c.draw_circle(Vec2::new(64.0, 64.0), 40.0, &paint)
+                    .expect("circle");
+            })
+        }),
+        ("draw_oval", {
+            let paint = paint.clone();
+            Box::new(move |c: &mut Canvas| {
+                c.draw_oval(Rect::new(20.0, 36.0, 108.0, 92.0), &paint)
+                    .expect("oval");
+            })
+        }),
+        ("draw_drrect", {
+            let paint = paint.clone();
+            Box::new(move |c: &mut Canvas| {
+                c.draw_drrect(square, 20.0, Rect::new(48.0, 48.0, 80.0, 80.0), 8.0, &paint)
+                    .expect("drrect");
+            })
+        }),
+        ("draw_line", {
+            let stroked = stroked.clone();
+            Box::new(move |c: &mut Canvas| {
+                c.draw_line(Vec2::new(16.0, 96.0), Vec2::new(112.0, 32.0), &stroked)
+                    .expect("line");
+            })
+        }),
+        ("draw_points", {
+            let stroked = stroked.clone();
+            Box::new(move |c: &mut Canvas| {
+                c.draw_points(
+                    PointMode::Lines,
+                    &[
+                        Vec2::new(24.0, 32.0),
+                        Vec2::new(104.0, 48.0),
+                        Vec2::new(24.0, 80.0),
+                        Vec2::new(104.0, 96.0),
+                    ],
+                    &stroked,
+                )
+                .expect("points");
+            })
+        }),
+        ("draw_shadow", {
+            let wedge = wedge.clone();
+            Box::new(move |c: &mut Canvas| {
+                c.draw_shadow(&wedge, Color::WHITE, 6.0, false)
+                    .expect("shadow");
+            })
+        }),
+        ("stroked path", {
+            let wedge = wedge.clone();
+            let stroked = stroked.clone();
+            Box::new(move |c: &mut Canvas| {
+                c.draw_path(&wedge, &stroked).expect("stroke");
+            })
+        }),
+        // A picture is placed rather than redrawn, so it reaches clip space
+        // through a material's mapping instead of through its own vertices --
+        // and that mapping was rebuilt from scratch by this work.
+        ("draw_recording", {
+            let mut inner = Canvas::new(Extent2D::new(64, 64));
+            inner.clear(Color::linear(0.0, 0.0, 0.0, 0.0));
+            inner
+                .draw_rect(
+                    Rect::new(8.0, 8.0, 56.0, 56.0),
+                    &Paint::fill(Color::WHITE).with_anti_alias(false),
+                )
+                .expect("rect");
+            let picture = inner.finish();
+            Box::new(move |c: &mut Canvas| {
+                c.draw_recording(&picture, &Paint::fill(Color::WHITE))
+                    .expect("recording");
+            })
+        }),
+    ];
+
+    for (name, draw) in operations {
+        let render_with = |ctx: &mut Context, slope: f32| {
+            let mut canvas = Canvas::new(SIZE);
+            canvas.clear(Color::BLACK);
+            canvas.concat_4x4(&receding(slope, 0.0));
+            draw(&mut canvas);
+            render(ctx, canvas)
+        };
+        let perspective = render_with(&mut ctx, 0.006);
+        let flat = render_with(&mut ctx, 0.0);
+
+        assert!(
+            perspective.iter().any(|&v| v != 0),
+            "{name} drew nothing at all under perspective"
+        );
+        assert!(
+            perspective != flat,
+            "{name} renders the same with the perspective row dropped, so it is \
+             not carrying the transform it was given"
+        );
+    }
+}
+
+/// The last drawing route left out of the sweep above, because it needs an
+/// atlas uploaded before it can draw anything.
+///
+/// Worth its own test rather than skipping: a glyph run is the one geometry
+/// here whose texture coordinates come per vertex instead of from the
+/// material, and its quads are built by the canvas itself rather than by the
+/// tessellator -- a line this work changed to carry a divisor, and the only
+/// caller of it that a mesh does not also exercise.
+#[test]
+fn a_glyph_run_answers_to_a_transform_with_perspective() {
+    let Some(mut ctx) = context() else { return };
+    let (atlas, solid, _) = two_glyph_atlas();
+    let image = upload_atlas(&mut ctx, &atlas);
+
+    let run = |ctx: &mut Context, slope: f32| {
+        let mut canvas = Canvas::new(SIZE);
+        canvas.clear(Color::linear(0.0, 0.0, 0.0, 1.0));
+        canvas.concat_4x4(&receding(slope, 0.0));
+        let glyphs: Vec<PositionedGlyph> = (0..5)
+            .map(|i| {
+                PositionedGlyph::new(
+                    solid,
+                    [8.0 + i as f32 * 22.0, 56.0],
+                    atlas.get(solid).unwrap(),
+                )
+            })
+            .collect();
+        canvas
+            .draw_glyphs(&glyphs, &atlas, 0, &Paint::fill(Color::WHITE))
+            .expect("glyphs");
+        let mut surface = ctx
+            .create_surface(SIZE, PixelFormat::Rgba8Unorm)
+            .expect("surface");
+        ctx.draw_with_images(&mut surface, &canvas.finish(), &[&image])
+            .expect("draw");
+        let pixels = ctx.read(&mut surface).expect("read");
+        ctx.destroy_surface(surface);
+        pixels
+    };
+
+    let perspective = run(&mut ctx, 0.006);
+    let flat = run(&mut ctx, 0.0);
+    ctx.destroy_image(image);
+
+    assert!(
+        perspective.iter().any(|&v| v != 0),
+        "the run drew nothing under perspective"
+    );
+    assert_ne!(
+        perspective, flat,
+        "a glyph run renders the same with the perspective row dropped"
+    );
+
+    // Evenly spaced in their own coordinates, the glyphs must not stay evenly
+    // spaced on the target: the divisor grows to the right, so each gap comes
+    // out narrower than the one before it. Spacing rather than mere difference,
+    // because a run that moved bodily would differ too and would mean the
+    // transform reached the placement without reaching the shape of the run.
+    // Columns rather than a single row: the divisor scales y as well as x, so
+    // the run slants and no one scanline crosses all of it.
+    let lit: Vec<u32> = (0..SIZE.width)
+        .filter(|x| (0..SIZE.height).any(|y| pixel(&perspective, *x, y)[0] > 128))
+        .collect();
+    let gaps: Vec<u32> = lit
+        .windows(2)
+        .filter(|w| w[1] - w[0] > 1)
+        .map(|w| w[1] - w[0])
+        .collect();
+    assert!(
+        gaps.len() >= 3,
+        "expected several gaps between glyphs, found {gaps:?}"
+    );
+    assert!(
+        gaps.first() > gaps.last(),
+        "the gaps do not narrow toward the far side: {gaps:?}"
+    );
+}
