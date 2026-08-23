@@ -62,22 +62,22 @@ on the other backend and was caught by a plate.
 
 | File | Scenes there | Here | Blocked on |
 |---|---|---|---|
-| `aiks_dl_basic_unittests.cc` | ~85 | 41 | superellipses, perspective, subpass optimizations |
-| `aiks_dl_path_unittests.cc` | ~31 | 20 | perspective |
+| `aiks_dl_basic_unittests.cc` | ~85 | 42 | superellipses, subpass optimizations |
+| `aiks_dl_path_unittests.cc` | ~31 | 21 | nothing named; see below |
 | `aiks_dl_gradient_unittests.cc` | ~40 | 23 | dithering |
-| `aiks_dl_clip_unittests.cc` | ~5 | 5 | nothing; this file is covered |
+| `aiks_dl_clip_unittests.cc` | ~5 | 6 | nothing; this file is covered |
 | `aiks_dl_opacity_unittests.cc` | ~3 | 2 | subpass collapse |
 | `aiks_dl_blend_unittests.cc` | ~79 | 36 | framebuffer fetch, wide gamut, subpass collapse |
 | `aiks_dl_blur_unittests.cc` | ~59 | 26 | backdrop identity keys, mask blurs over a gradient |
 | `aiks_dl_vertices_unittests.cc` | ~16 | 18 | mask filters on a mesh |
 | `aiks_dl_atlas_unittests.cc` | ~15 | 9 | wide gamut |
-| `aiks_dl_shadow_unittests.cc` | ~30 | 12 | a convex-shadow optimization this renderer does not have, and perspective |
+| `aiks_dl_shadow_unittests.cc` | ~30 | 12 | a convex-shadow optimization this renderer does not have |
 | `aiks_dl_primitive_shape_unittests.cc` | ~2 | 0 | one is a playground harness, one is a hairline skew |
 | `aiks_dl_text_unittests.cc` | — | 5 | shaping and font parsing, which are out of scope; glyph rendering is not, and these use synthetic coverage |
 | `aiks_dl_runtime_effect_unittests.cc` | — | 5 | bounded by having two fixture programs rather than by the renderer |
 | `aiks_dl_unittests.cc` | ~39 | 10 | mostly internal optimizations; the picture cases are here now |
 
-The catalog holds two hundred and twelve scenes of roughly four hundred,
+The catalog holds two hundred and fifteen scenes of roughly four hundred,
 and the proportion is less interesting than which ones: the arithmetic of drawing is largely covered, and
 what is missing is either a capability this renderer does not have or a thing
 the scene model cannot describe.
@@ -87,13 +87,24 @@ the scene model cannot describe.
 Three different kinds of obstacle, worth separating because only one of them is
 about the renderer.
 
-**Capabilities this renderer lacks.** Perspective transforms, the transform
-type being affine and two-dimensional by design; that one is a row of
-`docs/parity.md`, where `transform` is marked partial for it, and the scenes
-that need it arrive when the row changes. Dithering is the other, and it is not
-a row there and should not be looked for as one: it is not a `dart:ui` method
-but a quality behavior inside gradient rendering, which is where the banding it
-exists to break up appears.
+**Capabilities this renderer lacks.** Dithering, and it is the only one now.
+It is not a row of `docs/parity.md` and should not be looked for as one: it is
+not a `dart:ui` method but a quality behavior inside gradient rendering, which
+is where the banding it exists to break up appears.
+
+Perspective transforms were the other, and were described here as a design
+limit -- the transform type being affine and two-dimensional -- with the note
+that the scenes needing it would arrive when the parity row changed. The row
+changed, and three of them arrived: a curve under perspective, a receding
+plane, and a rectangular clip under one. What that promise did not say, and
+what is worth recording in its place, is that the count above moved by three
+and not by the eleven the path chapter is still short. The blocked-on column
+was per-file prose that no test reads, and it named one obstacle where there
+may have been several; nobody has since counted, against the source, how many
+of those scenes actually build a perspective matrix. So the path row now says
+nothing is named rather than that nothing is left, which is the honest state of
+it: the obstacle that was written down is gone, and what holds up the rest has
+not been examined.
 
 Dithering is also not the small feature its one-word entry suggests, and the
 reason is worth recording so the size of it is not rediscovered. Breaking up a

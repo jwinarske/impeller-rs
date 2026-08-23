@@ -206,15 +206,32 @@ fn the_parity_tables_prose_summary_counts_its_own_rows_correctly() {
         };
         format!("{} {}", spell(n), if n == 1 { singular } else { plural })
     };
+    // A category with nothing in it is left out of the sentence rather than
+    // counted at zero. Prose does not say "zero are partial"; it stops
+    // mentioning the thing that is not there. Demanding otherwise would put
+    // this test in the position of requiring a sentence nobody would write,
+    // which is how a document ends up serving its checker instead of a reader.
+    let mut clauses = Vec::new();
+    if count("yes") > 0 {
+        clauses.push(agreeing(count("yes"), "exist"));
+    }
+    for (n, noun) in [
+        (count("partial"), "partial"),
+        (count("via"), "expressible by a caller who assembles them"),
+        (count("no"), "absent"),
+        (count("out of scope"), "out of scope"),
+    ] {
+        if n > 0 {
+            clauses.push(format!("{} {noun}", agreeing(n, "be")));
+        }
+    }
+    let listed = match clauses.split_last() {
+        Some((last, rest)) if !rest.is_empty() => format!("{}, and {last}", rest.join(", ")),
+        _ => clauses.join(""),
+    };
     let claim = format!(
-        "Of {} rows across `Canvas` and `Paint`: {}, {} partial, {} \
-         expressible by a caller who assembles them, {} absent, and {} out of scope.",
+        "Of {} rows across `Canvas` and `Paint`: {listed}.",
         spell(rows.len()),
-        agreeing(count("yes"), "exist"),
-        agreeing(count("partial"), "be"),
-        agreeing(count("via"), "be"),
-        agreeing(count("no"), "be"),
-        agreeing(count("out of scope"), "be"),
     );
 
     // The sentence is wrapped in the source, so compare against the document

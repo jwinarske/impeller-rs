@@ -17,10 +17,22 @@ the build.
 
 What stands between here and a first release with an API:
 
-- One operation is partial against `dart:ui`. `transform` takes a 2D affine
-  where `dart:ui` takes a 4×4 and so admits perspective, which is a deliberate
-  design limit rather than an omission.
 - Two operations are absent: `drawRSuperellipse` and `clipRSuperellipse`.
+
+`transform` was listed here too, taking a 2D affine where `dart:ui` takes a 4×4
+and so admits perspective, and was described as a deliberate design limit
+rather than an omission. That was an assertion with no argument behind it,
+unlike the superellipse decision beside it, and it is no longer true either way:
+`concat_4x4` takes the same matrix `dart:ui` does.
+
+Two things that a caller writing a runtime effect has to know about, and the
+only reason they are not compatibility breaks is that nothing has been
+published. An effect declares the paint's uniform block by hand, and `to_local`
+grew from one vector to three so that a paint's mapping can carry perspective --
+so `params` and everything after it moved. And an effect's program is linked
+from this renderer's own vertex stage, whose varying at location zero is now a
+three-component homogeneous clip position rather than a two-component one; an
+effect reading it divides by the third component to get where it used to be.
 
 ## 0.0.0 — 2026-08-22
 

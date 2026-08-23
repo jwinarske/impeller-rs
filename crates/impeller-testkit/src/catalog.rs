@@ -141,6 +141,45 @@ fn basic() -> Vec<Scene> {
         // of a symmetric shape, the two agree and a backend that swapped them
         // would draw the same picture as one that did not.
         plate(
+            "basic/a-receding-plane",
+            // What a four-by-four admits and a two-by-three cannot say. Three
+            // bars of equal width in their own space, drawn under a divisor
+            // that grows with x -- so they come out unequal, and the spacing
+            // between them closes rather than staying constant. A transform
+            // that merely scaled would keep both.
+            vec![
+                Item::fill(
+                    Shape::Rect {
+                        min: [8.0, 24.0],
+                        max: [32.0, 104.0],
+                    },
+                    BLUE,
+                ),
+                Item::fill(
+                    Shape::Rect {
+                        min: [48.0, 24.0],
+                        max: [72.0, 104.0],
+                    },
+                    GREEN,
+                ),
+                Item::fill(
+                    Shape::Rect {
+                        min: [88.0, 24.0],
+                        max: [112.0, 104.0],
+                    },
+                    YELLOW,
+                ),
+            ]
+            .into_iter()
+            .map(|item| {
+                item.with_transform(Transform {
+                    perspective: [0.006, 0.0],
+                    ..Transform::default()
+                })
+            })
+            .collect(),
+        ),
+        plate(
             "basic/shapes-under-a-shear",
             vec![
                 Item::fill(
@@ -786,6 +825,29 @@ fn path() -> Vec<Scene> {
                 StrokeSpec::new(6.0),
                 WHITE,
             )],
+        ),
+        plate(
+            "path/a-curve-under-perspective",
+            // The chapter perspective alone was holding up. A curve rather than
+            // a rectangle because the curve is what can go wrong: flattening
+            // happens before the transform, so a tolerance taken from one
+            // number for the whole shape leaves the magnified end showing the
+            // polygon it was flattened into. The near half of this stroke is
+            // where that would appear.
+            vec![Item::stroke(
+                Shape::Cubic {
+                    start: [10.0, 100.0],
+                    c0: [30.0, 10.0],
+                    c1: [98.0, 10.0],
+                    end: [118.0, 100.0],
+                },
+                StrokeSpec::new(6.0),
+                WHITE,
+            )
+            .with_transform(Transform {
+                perspective: [0.004, 0.0],
+                ..Transform::default()
+            })],
         ),
         plate(
             "path/can-render-thick-curved-strokes",
@@ -1558,6 +1620,27 @@ fn clip() -> Vec<Scene> {
             )
             .with_clip([16.0, 16.0, 112.0, 112.0])
             .with_clip_out([48.0, 48.0, 80.0, 80.0])],
+        ),
+        plate(
+            "clip/a-rectangular-clip-under-perspective",
+            // The plate that catches a rectangle handed to the scissor unit
+            // when it is no longer one. Under a divisor that varies with x, a
+            // clip rectangle's horizontal edges bow toward the vanishing point
+            // and its box is not the region asked for -- so this has to go
+            // through the stencil, and the shape of the clipped fill is what
+            // says whether it did. A scissor would leave a plain rectangle.
+            vec![Item::fill(
+                Shape::Rect {
+                    min: [0.0, 0.0],
+                    max: [128.0, 128.0],
+                },
+                YELLOW,
+            )
+            .with_clip([16.0, 16.0, 112.0, 112.0])
+            .with_transform(Transform {
+                perspective: [0.006, 0.0],
+                ..Transform::default()
+            })],
         ),
         plate(
             "clip/difference-clip-under-a-rotation",
@@ -3110,6 +3193,7 @@ fn pictures() -> Vec<Scene> {
                     rotate: 0.0,
                     skew: [0.0, 0.0],
                     translate: [4.0, 4.0],
+                    perspective: [0.0, 0.0],
                 },
                 blend: BlendMode::SrcOver,
             },
@@ -3660,6 +3744,7 @@ fn blur_variants() -> Vec<Scene> {
                     rotate: 0.6,
                     skew: [0.0, 0.0],
                     translate: [64.0, 64.0],
+                    perspective: [0.0, 0.0],
                 },
                 children: vec![Node::Draw(Box::new(Item::fill(
                     Shape::Rect {

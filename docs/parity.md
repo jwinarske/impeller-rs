@@ -100,7 +100,7 @@ reason.
 | `getSaveCount` | yes | `save_depth` | `saves_nest` |
 | `translate`, `scale`, `rotate` | yes | same names | `transformed` |
 | `skew` | via | `concat` of the affine | |
-| `transform` | partial | `concat` takes a 2D affine; `dart:ui` takes a 4×4 and so admits perspective | |
+| `transform` | yes | `concat_4x4` takes the same column-major 4×4. The reduction to a 3×3 is exact rather than a narrowing: everything drawn here lies on `z = 0`, where a 4×4 never reads its z column. `concat` still takes an affine, and a layer's matrix filter is affine-only | `perspective`, `a_gradient_under_perspective_is_locked_to_the_shape` |
 | `getTransform` | yes | `transform()` | `save_and_restore_return_the_previous_transform` |
 | `getLocalClipBounds`, `getDestinationClipBounds` | yes | `local_clip_bounds` and `destination_clip_bounds`, conservative and accounting for scissor and stencil clips alike | `the_clip_bounds_narrow_with_every_kind_of_clip` |
 
@@ -137,9 +137,9 @@ above it or not at all:
 
 ## Where that leaves it
 
-Of forty-seven rows across `Canvas` and `Paint`: thirty-eight exist, one is
-partial, five are expressible by a caller who assembles them, two are absent,
-and one is out of scope. Counting them is the least interesting thing
+Of forty-seven rows across `Canvas` and `Paint`: thirty-nine exist, five are
+expressible by a caller who assembles them, two are absent, and one is out of
+scope. Counting them is the least interesting thing
 about the table -- the absences are not equal, and a reader deciding whether
 this renderer is usable should look at which ones rather than how many.
 

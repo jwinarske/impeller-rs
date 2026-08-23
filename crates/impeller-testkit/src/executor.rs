@@ -202,7 +202,7 @@ fn record_node(canvas: &mut Canvas, node: &Node, anti_alias: bool) -> Result<()>
             }
             let recording = inner.finish();
             canvas.save();
-            canvas.concat(picture.transform.to_affine());
+            canvas.concat(picture.transform.to_projective());
             let outcome = canvas
                 .draw_recording(
                     &recording,
@@ -217,7 +217,7 @@ fn record_node(canvas: &mut Canvas, node: &Node, anti_alias: bool) -> Result<()>
         }
         Node::Paint(paint) => {
             canvas.save();
-            canvas.concat(paint.transform.to_affine());
+            canvas.concat(paint.transform.to_projective());
             if let Some(clip) = paint.clip {
                 canvas.clip_rect(rect_of(clip))?;
             }
@@ -237,7 +237,7 @@ fn record_node(canvas: &mut Canvas, node: &Node, anti_alias: bool) -> Result<()>
         }
         Node::NinePatch(nine) => {
             canvas.save();
-            canvas.concat(nine.transform.to_affine());
+            canvas.concat(nine.transform.to_projective());
             // The sheet's own size, which the executor knows and the scene
             // must not: a scene names no texture and so cannot name its
             // extent. The center is in texels of that sheet.
@@ -266,7 +266,7 @@ fn record_node(canvas: &mut Canvas, node: &Node, anti_alias: bool) -> Result<()>
         }
         Node::Points(points) => {
             canvas.save();
-            canvas.concat(points.transform.to_affine());
+            canvas.concat(points.transform.to_projective());
             let positions: Vec<Vec2> = points.points.iter().copied().map(Vec2::from).collect();
             let mut paint = Paint::stroke(color_of(points.color), points.stroke.width);
             paint.style = Style::Stroke(points.stroke.to_style());
@@ -280,7 +280,7 @@ fn record_node(canvas: &mut Canvas, node: &Node, anti_alias: bool) -> Result<()>
         }
         Node::Glyphs(run) => {
             canvas.save();
-            canvas.concat(run.transform.to_affine());
+            canvas.concat(run.transform.to_projective());
             // Built here rather than carried in the scene, for the reason the
             // scene names no texture: an atlas holds device-side coverage and a
             // scene has to be writable without a device. The same indices give
@@ -329,7 +329,7 @@ fn record_node(canvas: &mut Canvas, node: &Node, anti_alias: bool) -> Result<()>
         }
         Node::Mesh(mesh) => {
             canvas.save();
-            canvas.concat(mesh.transform.to_affine());
+            canvas.concat(mesh.transform.to_projective());
             let vertices = Vertices::full(
                 mesh.mode,
                 mesh.positions.iter().copied().map(Vec2::from).collect(),
@@ -393,7 +393,7 @@ fn record_node(canvas: &mut Canvas, node: &Node, anti_alias: bool) -> Result<()>
         }
         Node::Shadow(shadow) => {
             canvas.save();
-            canvas.concat(shadow.transform.to_affine());
+            canvas.concat(shadow.transform.to_projective());
             let path = shadow.shape.to_path();
             let mut result = canvas
                 .draw_shadow(
@@ -415,7 +415,7 @@ fn record_node(canvas: &mut Canvas, node: &Node, anti_alias: bool) -> Result<()>
         }
         Node::Draw(item) => {
             canvas.save();
-            canvas.concat(item.transform.to_affine());
+            canvas.concat(item.transform.to_projective());
             if let Some(clip) = item.clip {
                 canvas.clip_rect(rect_of(clip))?;
             }
@@ -477,7 +477,7 @@ fn record_node(canvas: &mut Canvas, node: &Node, anti_alias: bool) -> Result<()>
             children,
         } => {
             canvas.save();
-            canvas.concat(transform.to_affine());
+            canvas.concat(transform.to_projective());
             let layer = Layer {
                 blur: layer.blur,
                 alpha: layer.alpha,
@@ -487,7 +487,7 @@ fn record_node(canvas: &mut Canvas, node: &Node, anti_alias: bool) -> Result<()>
                 // group, which is a different thing, and conflating the two
                 // would make every existing scene resample where it used to
                 // redraw.
-                matrix: layer.matrix.map(|m| m.to_affine()),
+                matrix: layer.matrix.and_then(|m| m.to_affine()),
                 backdrop_blur: layer.backdrop_blur,
                 color_filter: layer.color_filter,
                 morphology: layer.morphology.map(|m| {

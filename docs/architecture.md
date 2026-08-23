@@ -495,7 +495,7 @@ is not an argument against changing a mechanism when it does have to change.
 **A picture is its passes appended and its root sampled.** `draw_recording` is
 `drawPicture`, and building it needed less than the note below predicted. That
 note expected the work to be carrying clip-space positions and each material's
-own geometry through the composite affine. None of that is done, because the
+own geometry through the composite transform. None of that is done, because the
 pass model already answered it: a layer is a pass another pass samples, so a
 finished recording is its passes taken as they are and its root sampled by the
 canvas drawing it. Nothing is re-recorded and no vertex is touched.
@@ -520,14 +520,45 @@ flattened -- at a tolerance taken from the scale of the transform then in force
 of that survives.
 
 Two consequences. Replaying a recording under a different transform is possible
-in principle, since the composite is affine and both the positions and each
-material's geometry could be carried through it, but the flattening cannot be
-undone: magnified, a curve shows the polygon it was flattened to. And a
+in principle, since both the positions and each material's geometry could be
+carried through the composite -- which holds for a transform carrying
+perspective as readily as for an affine, both being matrices the pair go
+through together. But the flattening cannot be undone: magnified, a curve shows
+the polygon it was flattened to. Perspective sharpens that rather than
+softening it, since a recording replayed toward the viewer is magnified
+unevenly and shows its polygon at the near end first. And a
 recording is not a cache of drawing commands, so it cannot be re-rendered at a
 new resolution without being recorded again. That is the trade for having no
 retained state anywhere below the canvas, and it is the right one here -- but
 it is the reason `drawPicture` would be a convenience rather than the reuse it
 is in a command-list renderer.
+
+**Every vertex writes a depth of zero, and that is what handles the horizon.**
+A transform carrying perspective can send part of a shape past the vanishing
+line, where the divisor passes through zero and the geometry does not collapse
+but inverts. The usual answer is to clip the tessellated triangles against that
+plane before they are drawn, which is real work and is not done here.
+
+It is not needed, because the rasterizer already does it. Both APIs test a
+primitive against the near plane as part of their clip volume -- Vulkan against
+`0 <= z <= w`, GL against `-w <= z <= w` -- and with `z` pinned to zero each of
+those reduces to `w >= 0`. So a primitive behind the vanishing line is
+discarded and one straddling it is cut there, with the new vertices
+interpolated by the hardware. What this costs is emitting a real `w` rather
+than the constant one, which is the change anyway: a point divided by a
+quantity that varies across a triangle has no two-component form to arrive in.
+
+The consequence worth naming is that a decision which was arithmetic is now a
+property of the pipeline. `invert_to_local` substitutes the identity for a
+placement that cannot be inverted, and that was safe because the geometry went
+through the same matrix and so had no area -- an argument about the numbers,
+true unconditionally. Under a homography it fails: a matrix can be non-singular
+and still send part of a shape past the horizon, where geometry blows up toward
+infinity rather than collapsing toward nothing, turning "draws nothing" into
+"draws the entire frame". What restores it is the clip above, which removes
+every fragment whose divisor has the wrong sign before any of them consults the
+mapping. That holds only while `z` stays zero. Emit a depth from somewhere and
+the invariant goes with it, silently.
 
 **Sampling quality lives in the shader too, for the same reason tile modes do.**
 A sampler built with a filter would mean one sampler per combination of filter

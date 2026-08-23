@@ -9,11 +9,12 @@ use crate::shape::Shape;
 use glam::{Affine2, Mat2, Vec2};
 use impeller_core::{ImageFilter, MaskBlurStyle, PointMode, VertexMode};
 use impeller_geometry::stroke::{LineCap, LineJoin, StrokeStyle};
+use impeller_geometry::transform::Transform2D;
 use impeller_geometry::FillRule;
 use impeller_hal::{BlendMode, Extent2D, TileMode};
 use impeller_hal::{ColorFilter, Sampling};
 
-/// An affine transform, as data.
+/// A transform of the plane, as data.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Transform {
     pub scale: [f32; 2],
@@ -29,6 +30,16 @@ pub struct Transform {
     /// rotation of a symmetric shape, the two agree.
     pub skew: [f32; 2],
     pub translate: [f32; 2],
+    /// The divisor's dependence on each axis, which is what makes a scene
+    /// recede rather than merely shrink.
+    ///
+    /// Zero for everything that predates perspective, which is nearly every
+    /// scene, and the reason the field could be added without touching one of
+    /// them. A value here of `p` makes the divisor `1 + p · (x, y)`, so the
+    /// plane is magnified where that falls below one and compressed where it
+    /// rises above -- and reaches the vanishing line where it hits zero, which
+    /// a scene meant to be compared across devices should stay well away from.
+    pub perspective: [f32; 2],
 }
 
 impl Default for Transform {
@@ -38,6 +49,7 @@ impl Default for Transform {
             rotate: 0.0,
             skew: [0.0, 0.0],
             translate: [0.0, 0.0],
+            perspective: [0.0, 0.0],
         }
     }
 }
@@ -57,14 +69,53 @@ impl Transform {
         }
     }
 
-    /// Scale, then shear, then rotate, then translate.
+    /// Divide, then scale, then shear, then rotate, then translate.
     ///
     /// The order is stated because it is not recoverable from the result: a
     /// shear before a rotation and one after it are different transforms, and
     /// a scene that did not say which it meant would mean different things to
-    /// a reader and to the executor. Scale comes first so a shear coefficient
-    /// is read in the shape's own units rather than in scaled ones.
-    pub fn to_affine(self) -> Affine2 {
+    /// a reader and to the executor. Scale comes first among the affine parts
+    /// so a shear coefficient is read in the shape's own units rather than in
+    /// scaled ones, and perspective comes before all of them for the same
+    /// reason: the divisor is read in those units too, so a scene states how
+    /// its own shape recedes rather than how the placed one does.
+    ///
+    /// It matters more here than anywhere else in this order. A perspective
+    /// term before a translation and one after it are not merely different
+    /// transforms; they put the vanishing line in different places.
+    pub fn to_projective(self) -> Transform2D {
+        let perspective = Transform2D::from_column_major_4x4(&[
+            1.0,
+            0.0,
+            0.0,
+            self.perspective[0],
+            0.0,
+            1.0,
+            0.0,
+            self.perspective[1],
+            0.0,
+            0.0,
+            1.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            1.0,
+        ]);
+        Transform2D::from(self.affine_parts()) * perspective
+    }
+
+    /// The affine this is, or `None` if it asks for perspective.
+    ///
+    /// For the one caller that cannot yet take a homography: an image filter's
+    /// matrix. A scene asking for perspective there gets no matrix rather than
+    /// a silently flattened one, which is the failure that would look like a
+    /// rendering bug instead of like a feature that is not built.
+    pub fn to_affine(self) -> Option<Affine2> {
+        (self.perspective == [0.0, 0.0]).then(|| self.affine_parts())
+    }
+
+    fn affine_parts(self) -> Affine2 {
         let shear = Affine2::from_mat2(Mat2::from_cols(
             Vec2::new(1.0, self.skew[1]),
             Vec2::new(self.skew[0], 1.0),
@@ -1528,6 +1579,7 @@ pub fn corpus() -> Vec<Scene> {
                     rotate: std::f32::consts::FRAC_PI_2,
                     skew: [0.0, 0.0],
                     translate: [72.0, 56.0],
+                    perspective: [0.0, 0.0],
                 })
                 .with_clip([-40.0, -40.0, 10.0, 24.0]),
             ],
@@ -1589,6 +1641,7 @@ pub fn corpus() -> Vec<Scene> {
                 rotate: std::f32::consts::FRAC_PI_4,
                 skew: [0.0, 0.0],
                 translate: [64.0, 64.0],
+                perspective: [0.0, 0.0],
             })
             .with_clip_shape(Shape::Rect {
                 min: [-38.0, -38.0],
@@ -1622,6 +1675,51 @@ pub fn corpus() -> Vec<Scene> {
             ],
         ),
         Scene::new(
+            // Perspective, which the transform this schema lowers to could not
+            // state until it stopped being affine. Two shapes rather than one:
+            // a gradient, because a paint's mapping is projective too and a
+            // gradient that stayed straight while its shape converged would be
+            // the visible sign that only half the change landed; and a stroked
+            // curve, because flattening happens before the transform and the
+            // magnified end is where too coarse a tolerance shows as facets.
+            //
+            // Kept mild on purpose. The divisor runs between one and about one
+            // and a half here, nowhere near the vanishing line -- close to it
+            // every rasterization tiebreak is amplified by the square of the
+            // divisor, and a plate placed there would disagree between devices
+            // for reasons that have nothing to do with what it is testing.
+            "perspective",
+            vec![
+                Item::gradient(
+                    Shape::Rect {
+                        min: [8.0, 8.0],
+                        max: [120.0, 120.0],
+                    },
+                    [8.0, 0.0],
+                    [120.0, 0.0],
+                    vec![Stop::new(RED, 0.0), Stop::new(BLUE, 1.0)],
+                )
+                .with_transform(Transform {
+                    perspective: [0.004, 0.0],
+                    ..Transform::default()
+                }),
+                Item::stroke(
+                    Shape::Cubic {
+                        start: [16.0, 112.0],
+                        c0: [36.0, 24.0],
+                        c1: [92.0, 24.0],
+                        end: [112.0, 112.0],
+                    },
+                    StrokeSpec::new(5.0),
+                    WHITE,
+                )
+                .with_transform(Transform {
+                    perspective: [0.004, 0.0],
+                    ..Transform::default()
+                }),
+            ],
+        ),
+        Scene::new(
             "transformed",
             vec![
                 Item::fill(
@@ -1644,6 +1742,7 @@ pub fn corpus() -> Vec<Scene> {
                     rotate: 0.4,
                     skew: [0.0, 0.0],
                     translate: [64.0, 64.0],
+                    perspective: [0.0, 0.0],
                 }),
             ],
         ),
@@ -1714,6 +1813,7 @@ pub fn corpus() -> Vec<Scene> {
                 rotate: 0.6,
                 skew: [0.0, 0.0],
                 translate: [40.0, 16.0],
+                perspective: [0.0, 0.0],
             })],
         ),
         Scene::new(
@@ -2522,6 +2622,7 @@ pub fn corpus() -> Vec<Scene> {
                         rotate: 0.0,
                         skew: [0.0, 0.0],
                         translate: [4.0, 6.0],
+                        perspective: [0.0, 0.0],
                     }),
                 ],
             )],
@@ -2610,7 +2711,7 @@ mod tests {
         // The shear adds half of Y to X, so the unit Y vector leans and the
         // unit X vector does not. Reading the columns says which axis moved,
         // and a transposed matrix would move the other one.
-        let m = skewed.to_affine();
+        let m = skewed.to_affine().expect("no perspective asked for");
         assert_eq!(m.transform_vector2(Vec2::X), Vec2::X, "X is untouched");
         assert_eq!(
             m.transform_vector2(Vec2::Y),
@@ -2628,7 +2729,10 @@ mod tests {
             ..Transform::default()
         };
         assert_eq!(
-            scaled.to_affine().transform_vector2(Vec2::Y),
+            scaled
+                .to_affine()
+                .expect("affine")
+                .transform_vector2(Vec2::Y),
             Vec2::new(0.5, 1.0),
             "the lean is in unscaled units"
         );
@@ -2642,7 +2746,10 @@ mod tests {
             rotate: std::f32::consts::FRAC_PI_2,
             ..Transform::default()
         };
-        let y = turned.to_affine().transform_vector2(Vec2::Y);
+        let y = turned
+            .to_affine()
+            .expect("affine")
+            .transform_vector2(Vec2::Y);
         assert!(
             (y - Vec2::new(-1.0, 0.5)).length() < 1e-6,
             "a quarter turn should carry the sheared axis, got {y:?}"
@@ -2698,8 +2805,12 @@ mod tests {
             rotate: 0.0,
             skew: [0.0, 0.0],
             translate: [10.0, 5.0],
+            perspective: [0.0, 0.0],
         };
-        let p = t.to_affine().transform_point2(Vec2::new(1.0, 1.0));
+        let p = t
+            .to_affine()
+            .expect("affine")
+            .transform_point2(Vec2::new(1.0, 1.0));
         assert!((p - Vec2::new(12.0, 7.0)).length() < 1e-5);
     }
 }
