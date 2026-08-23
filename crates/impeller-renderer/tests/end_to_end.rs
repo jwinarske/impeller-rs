@@ -67,13 +67,19 @@ impl Image {
     }
 }
 
-fn render(ctx: &mut VulkanContext, positions: &[[f32; 2]], indices: &[u32]) -> Image {
+fn render(ctx: &mut VulkanContext, positions: &[[f32; 3]], indices: &[u32]) -> Image {
     render_sized(ctx, positions, indices, TARGET)
 }
 
+/// Homogeneous positions, because that is what the renderer now produces.
+///
+/// Built into a batch here rather than through `draw_indexed`, which is the
+/// convenience for hand-written quads whose divisor is one. Carrying the
+/// divisor through means these tests exercise the path a real frame takes
+/// rather than a narrowed copy of it.
 fn render_sized(
     ctx: &mut VulkanContext,
-    positions: &[[f32; 2]],
+    positions: &[[f32; 3]],
     indices: &[u32],
     extent: Extent2D,
 ) -> Image {
@@ -83,13 +89,29 @@ fn render_sized(
             PixelFormat::Rgba8Unorm,
         ))
         .expect("texture");
-    ctx.draw_indexed(
+    let vertices: Vec<impeller_hal::Vertex> = positions
+        .iter()
+        .map(|p| impeller_hal::Vertex::at_projected(*p))
+        .collect();
+    let mut batch = impeller_hal::Batch::new();
+    batch
+        .push_mesh(
+            &vertices,
+            indices,
+            Material::solid(RED),
+            impeller_hal::ColorFilter::None,
+            BlendMode::Src,
+            None,
+            impeller_hal::ClipState::UNCLIPPED,
+        )
+        .expect("push");
+    ctx.submit_batch(
         &mut tex,
-        positions,
-        indices,
-        Material::solid(RED),
-        BlendMode::Src,
-        Some([0.0, 0.0, 0.0, 1.0]),
+        &batch,
+        impeller_hal::PassDescriptor {
+            clear: Some([0.0, 0.0, 0.0, 1.0]),
+            samples: 1,
+        },
     )
     .expect("draw");
     let pixels = ctx.read_texture(&mut tex).expect("readback");

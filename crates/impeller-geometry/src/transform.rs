@@ -193,7 +193,86 @@ impl Transform2D {
     pub fn to_cols_array(self) -> [f32; 9] {
         self.0.to_cols_array()
     }
+
+    /// The largest factor by which this can stretch a direction anywhere in a
+    /// box, or `None` if the box reaches the vanishing line.
+    ///
+    /// [`max_scale`] answers this for an affine with one number, because an
+    /// affine stretches every part of the plane alike. A homography does not:
+    /// writing it as `(A p + b) / (R · p + s)`, its derivative at `p` is
+    /// `(A - N(p) Rᵀ) / w(p)` for `N` the mapped point and `w` the divisor, so
+    /// the stretch grows as roughly one over `w` squared and the near end of a
+    /// shape needs finer flattening than the far end.
+    ///
+    /// Bounding it over a box rather than solving for the worst point: `w` is
+    /// affine, so its smallest value over a box is at a corner, and while `w`
+    /// stays positive the image of the box is the convex hull of the mapped
+    /// corners, so the largest `‖N‖` is at a corner too. Four evaluations, the
+    /// same four [`transformed_bounds`] already makes.
+    ///
+    /// Taking the largest is conservative in the direction that costs
+    /// triangles rather than correctness: the far end of a shape is flattened
+    /// more finely than it needs, and the near end is flattened finely enough.
+    ///
+    /// For an affine this reduces to [`max_scale`] exactly — `R` is zero and
+    /// `w` is one, leaving the longer basis vector — so no shape already being
+    /// drawn is tessellated any differently than it was.
+    pub fn max_scale_over(self, min: Vec2, max: Vec2) -> Option<f32> {
+        let c = self.0.to_cols_array();
+        let linear = Vec2::new(c[0], c[1])
+            .length()
+            .max(Vec2::new(c[3], c[4]).length());
+        if self.is_affine() {
+            return linear.is_finite().then_some(linear);
+        }
+        let corners = [min, Vec2::new(max.x, min.y), max, Vec2::new(min.x, max.y)];
+        let mut smallest_w = f32::INFINITY;
+        let mut furthest = 0.0f32;
+        for corner in corners {
+            let h = self.project_homogeneous(corner);
+            smallest_w = smallest_w.min(h.z);
+            furthest = furthest.max((h.truncate() / h.z).length());
+        }
+        // At or past the vanishing line there is no bound to give. The caller
+        // decides what to do about it; inventing a number here would be the
+        // one answer that cannot be checked.
+        // NaN tested for by name rather than by inverting the comparison: a
+        // NaN divisor compares false against everything, so `<=` alone would
+        // let it through as though the box were safely in front.
+        if smallest_w.is_nan() || smallest_w <= VANISHING_EPSILON || !furthest.is_finite() {
+            return None;
+        }
+        let perspective_row = Vec2::new(c[2], c[5]).length();
+        let bound = (linear + furthest * perspective_row) / smallest_w;
+        if !bound.is_finite() {
+            return None;
+        }
+        // The bound grows without limit toward the vanishing line, and past
+        // some point the extra subdivision is buying detail no display
+        // resolves. Capping it against the flat part keeps the work within a
+        // fixed multiple of what the same shape costs under an affine.
+        //
+        // The cap matters more than it looks. `MAX_SEGMENTS` is a *silent*
+        // quality floor -- a curve that reaches it is under-flattened and
+        // nothing says so -- and without a cap here ordinary perspective
+        // content would reach it and the picture would quietly go faceted.
+        // With one, a curve needing ten segments flat needs at most six
+        // hundred and forty, and `MAX_SEGMENTS` goes back to being a backstop
+        // against nonsense.
+        Some(bound.min(linear * MAX_PERSPECTIVE_REFINEMENT))
+    }
 }
+
+/// How far past the affine cost a shape may be flattened. See
+/// [`Transform2D::max_scale_over`].
+const MAX_PERSPECTIVE_REFINEMENT: f32 = 64.0;
+
+/// How near the vanishing line counts as on it.
+///
+/// Absolute rather than relative because `w` is already normalized: an affine
+/// lifted here has `w` of exactly one everywhere, so this is a fraction of that
+/// rather than of an arbitrary scale.
+const VANISHING_EPSILON: f32 = 1e-6;
 
 /// Map device pixels onto clip space for a target of the given size.
 ///
@@ -660,5 +739,83 @@ mod tests {
             0.0, 0.0, 0.0, 1.0,
         ]);
         assert!(degenerate.inverse().is_none());
+    }
+
+    /// A perspective transform whose divisor grows with x, so the plane is
+    /// magnified toward negative x and shrunk toward positive.
+    fn receding() -> Transform2D {
+        Transform2D::from_column_major_4x4(&[
+            1.0, 0.0, 0.0, 0.002, //
+            0.0, 1.0, 0.0, 0.0, //
+            0.0, 0.0, 1.0, 0.0, //
+            0.0, 0.0, 0.0, 1.0,
+        ])
+    }
+
+    /// The property that lets this land without retessellating the world: under
+    /// an affine the bound is what `max_scale` always said, whatever box it is
+    /// asked about.
+    #[test]
+    fn an_affine_is_bounded_by_exactly_what_max_scale_reports() {
+        for affine in [
+            Affine2::IDENTITY,
+            Affine2::from_scale(Vec2::new(3.0, 0.5)),
+            Affine2::from_angle(0.7) * Affine2::from_scale(Vec2::new(9.0, 2.0)),
+            Affine2::from_translation(Vec2::new(500.0, -20.0)),
+        ] {
+            let lifted = Transform2D::from(affine);
+            for (min, max) in [
+                (Vec2::ZERO, Vec2::splat(1.0)),
+                (Vec2::splat(-1e4), Vec2::splat(1e4)),
+            ] {
+                assert_eq!(
+                    lifted.max_scale_over(min, max),
+                    Some(max_scale(&affine)),
+                    "{affine:?} over {min:?}..{max:?}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn perspective_is_bounded_more_loosely_where_it_magnifies() {
+        let t = receding();
+        // Toward negative x the divisor is below one, so the plane is
+        // magnified and the same curve needs finer flattening.
+        let near = t
+            .max_scale_over(Vec2::new(-400.0, -10.0), Vec2::new(-300.0, 10.0))
+            .expect("in front");
+        let far = t
+            .max_scale_over(Vec2::new(300.0, -10.0), Vec2::new(400.0, 10.0))
+            .expect("in front");
+        assert!(near > far, "near {near} should exceed far {far}");
+        // And the far end is still bounded below by nothing silly.
+        assert!(far > 0.0);
+    }
+
+    #[test]
+    fn a_box_reaching_the_vanishing_line_has_no_bound_to_give() {
+        let t = receding();
+        // The divisor 1 + 0.002x reaches zero at x = -500.
+        assert_eq!(
+            t.max_scale_over(Vec2::new(-600.0, -10.0), Vec2::new(-400.0, 10.0)),
+            None
+        );
+        assert_eq!(
+            t.max_scale_over(Vec2::new(-500.0, -10.0), Vec2::new(-499.0, 10.0)),
+            None
+        );
+    }
+
+    /// Without a cap the bound runs away as a shape approaches the vanishing
+    /// line, and `MAX_SEGMENTS` -- which is silent when it bites -- becomes the
+    /// thing deciding how a picture looks.
+    #[test]
+    fn the_bound_is_capped_against_what_the_same_shape_costs_flat() {
+        let t = receding();
+        let just_in_front = t
+            .max_scale_over(Vec2::new(-499.9, -1.0), Vec2::new(-499.5, 1.0))
+            .expect("in front");
+        assert_eq!(just_in_front, MAX_PERSPECTIVE_REFINEMENT);
     }
 }

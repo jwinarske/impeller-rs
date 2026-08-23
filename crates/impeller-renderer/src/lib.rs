@@ -5,16 +5,14 @@
 //! this layer owns the coordinate mapping and the tolerance scaling that
 //! depends on it.
 
-use glam::{Affine2, Vec2};
+use glam::{Affine2, Vec2, Vec3};
 use impeller_geometry::dash::{dash_path, Dash};
 use impeller_geometry::stroke::StrokeStyle;
 use impeller_geometry::tessellate::{Tessellator, VertexBuffers};
-use impeller_geometry::transform::{
-    invert_to_local, max_scale, transform_points, viewport_projection, Transform2D,
-};
+use impeller_geometry::transform::{invert_to_local, viewport_projection, Transform2D};
 use impeller_geometry::{flatten::DEFAULT_TOLERANCE, Path};
 use impeller_hal::{
-    Batch, BlendMode, ClipState, ColorFilter, Extent2D, Material, Result, Scissor, Stop,
+    Batch, BlendMode, ClipState, ColorFilter, Extent2D, Material, Result, Scissor, Stop, Vertex,
 };
 
 /// How a shape is painted.
@@ -119,7 +117,7 @@ impl Paint {
 /// call invited the mistake of passing different values within one frame.
 pub struct Renderer {
     tessellator: Tessellator,
-    clip_space: Vec<Vec2>,
+    clip_space: Vec<Vec3>,
     target: Extent2D,
     /// Where the target sits within the frame, in device pixels.
     ///
@@ -179,6 +177,10 @@ impl Renderer {
     }
 
     /// Device pixels to clip space for the target currently aimed at.
+    ///
+    /// Affine, and stays affine however the caller's transform is stated: a
+    /// viewport is a scale and a flip. That is what keeps it out of the
+    /// tolerance argument below -- it contributes no stretch of its own.
     pub fn projection(&self) -> Affine2 {
         viewport_projection(self.target.width, self.target.height)
             * Affine2::from_translation(-self.origin)
@@ -192,8 +194,13 @@ impl Renderer {
     /// device-space quantity, so the scale that matters for flattening is the
     /// path-to-pixel scale alone. Folding the projection in would divide by
     /// the target size and flatten far too coarsely.
-    pub fn fill_path(&mut self, path: &Path, transform: Affine2) -> ClipGeometry<'_> {
-        let path_tolerance = path_space_tolerance(self.tolerance, &transform);
+    pub fn fill_path(
+        &mut self,
+        path: &Path,
+        transform: impl Into<Transform2D>,
+    ) -> ClipGeometry<'_> {
+        let transform = transform.into();
+        let path_tolerance = path_space_tolerance(self.tolerance, transform, path);
         let projection = self.projection();
         let buffers = self.tessellator.fill(path, path_tolerance);
         Self::to_clip_space(&mut self.clip_space, buffers, transform, projection)
@@ -209,9 +216,10 @@ impl Renderer {
         path: &Path,
         style: &StrokeStyle,
         dash: Option<&Dash>,
-        transform: Affine2,
+        transform: impl Into<Transform2D>,
     ) -> ClipGeometry<'_> {
-        let path_tolerance = path_space_tolerance(self.tolerance, &transform);
+        let transform = transform.into();
+        let path_tolerance = path_space_tolerance(self.tolerance, transform, path);
         // Cut before stroking, so each dash is stroked as its own subpath and
         // gets its own caps. Here rather than in the caller because the
         // tolerance a dash is measured against is the one this line computes:
@@ -240,14 +248,14 @@ impl Renderer {
         &mut self,
         batch: &mut Batch,
         path: &Path,
-        transform: Affine2,
+        transform: impl Into<Transform2D>,
         paint: &Paint,
     ) -> Result<()> {
         let geo = self.fill_path(path, transform);
-        let positions = geo.positions();
+        let vertices = geo.vertices();
         let indices = geo.indices.to_vec();
-        batch.push_with(
-            &positions,
+        batch.push_mesh(
+            &vertices,
             &indices,
             paint.material.clone(),
             paint.filter,
@@ -264,14 +272,14 @@ impl Renderer {
         path: &Path,
         style: &StrokeStyle,
         dash: Option<&Dash>,
-        transform: Affine2,
+        transform: impl Into<Transform2D>,
         paint: &Paint,
     ) -> Result<()> {
         let geo = self.stroke_path(path, style, dash, transform);
-        let positions = geo.positions();
+        let vertices = geo.vertices();
         let indices = geo.indices.to_vec();
-        batch.push_with(
-            &positions,
+        batch.push_mesh(
+            &vertices,
             &indices,
             paint.material.clone(),
             paint.filter,
@@ -282,17 +290,24 @@ impl Renderer {
     }
 
     fn to_clip_space<'a>(
-        scratch: &'a mut Vec<Vec2>,
+        scratch: &'a mut Vec<Vec3>,
         buffers: &'a VertexBuffers,
-        transform: Affine2,
+        transform: Transform2D,
         projection: Affine2,
     ) -> ClipGeometry<'a> {
         // One combined transform rather than two passes: composing first means
         // each vertex is touched once and rounds once.
-        let to_clip = projection * transform;
+        let to_clip = Transform2D::from(projection) * transform;
         scratch.clear();
-        scratch.extend_from_slice(&buffers.vertices);
-        transform_points(scratch, &to_clip);
+        // Undivided. The rasterizer does that, and it needs the divisor first
+        // in order to clip against the plane where it reaches zero -- which is
+        // the whole of how geometry crossing the vanishing line is handled.
+        scratch.extend(
+            buffers
+                .vertices
+                .iter()
+                .map(|p| to_clip.project_homogeneous(*p)),
+        );
         ClipGeometry {
             vertices: scratch,
             indices: &buffers.indices,
@@ -302,7 +317,7 @@ impl Renderer {
 
 /// Triangles in clip space, ready for a backend.
 pub struct ClipGeometry<'a> {
-    pub vertices: &'a [Vec2],
+    pub vertices: &'a [Vec3],
     pub indices: &'a [u32],
 }
 
@@ -316,14 +331,42 @@ impl ClipGeometry<'_> {
     }
 
     /// Vertices as a flat array, which is the shape backends take them in.
-    pub fn positions(&self) -> Vec<[f32; 2]> {
-        self.vertices.iter().map(|v| [v.x, v.y]).collect()
+    pub fn positions(&self) -> Vec<[f32; 3]> {
+        self.vertices.iter().map(|v| [v.x, v.y, v.z]).collect()
+    }
+
+    /// The same, as vertices a batch takes directly.
+    ///
+    /// Tessellated geometry has no texture coordinates of its own, and the
+    /// materials it carries locate themselves from the clip position instead.
+    pub fn vertices(&self) -> Vec<Vertex> {
+        self.vertices
+            .iter()
+            .map(|v| Vertex::at_projected([v.x, v.y, v.z]))
+            .collect()
     }
 }
 
 /// Convert a device-space tolerance into path space.
-fn path_space_tolerance(tolerance: f32, transform: &Affine2) -> f32 {
-    impeller_geometry::flatten::tolerance_for_scale(tolerance, max_scale(transform))
+///
+/// The path is what makes this answerable under perspective: the stretch a
+/// homography applies varies from point to point, so the question "how finely
+/// must this be flattened" only has an answer over a region, and the path's own
+/// bounds are that region. Under an affine the bounds make no difference and
+/// the result is what it always was.
+///
+/// A path reaching the vanishing line has no bound to give, and the flat
+/// tolerance stands in. What that produces is a shape flattened as though it
+/// were unmagnified, whose far portion the rasterizer then clips away anyway --
+/// coarse where it survives, rather than an unbounded number of segments spent
+/// on a part of the plane that is not being drawn.
+fn path_space_tolerance(tolerance: f32, transform: Transform2D, path: &Path) -> f32 {
+    let bounds = path.bounds();
+    let scale = transform.max_scale_over(bounds.min, bounds.max);
+    match scale {
+        Some(scale) => impeller_geometry::flatten::tolerance_for_scale(tolerance, scale),
+        None => tolerance,
+    }
 }
 
 /// The default flattening tolerance, in device pixels.
