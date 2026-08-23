@@ -34,6 +34,39 @@ from this renderer's own vertex stage, whose varying at location zero is now a
 three-component homogeneous clip position rather than a two-component one; an
 effect reading it divides by the third component to get where it used to be.
 
+Color states which primaries it is against. `Color` carries a `ColorSpace` --
+sRGB, extended sRGB, or Display P3 -- and converts between them, matching what
+`dart:ui` does; `Color::display_p3` states one exactly, which for a saturated
+red means components outside zero to one, because the sRGB primaries describe a
+smaller triangle than P3's. Nothing between the paint and the target clamps, so
+those components reach a floating-point surface intact, through layers,
+gradients and filters.
+
+Presenting a wide gamut is not built and is not claimed. The swapchain and the
+scanout path are untouched, because the devices available for testing are a
+software rasterizer and a virtual display controller and a Display P3 surface
+cannot be exercised on either.
+
+Two more signature changes, again breaks only because nothing has been
+published. `execute_layers` takes the format its intermediates should use, so
+that a layer can hold what the frame it composites into holds; `execute` derives
+it and none of *its* callers change. And `Context::read` was documented as
+returning tightly packed RGBA8 when it has always returned whatever the surface
+format packs -- eight bytes per pixel for a floating-point surface, as four
+half-floats.
+
+Four defects were found and fixed on the way, none of which needed wide gamut to
+be worth fixing. Both sRGB transfer functions compared the signed value against
+the knee where the standard means the magnitude, so every negative component
+took the near-black linear segment. The GLES backend built a color attachment
+for every texture it created regardless of what the caller asked for, which
+turns a sampling-only texture into a creation failure for any format that is
+filterable and not renderable. Its transfer paths named the channel layout from
+the format and the component type from a literal. And a gradient of more than
+four stops was tabulated through eight bits, so adding a stop that changed
+nothing about a gradient changed the picture by twenty-four levels once a color
+filter brought the difference back into view.
+
 ## 0.0.0 — 2026-08-22
 
 A placeholder holding the name, containing no API.

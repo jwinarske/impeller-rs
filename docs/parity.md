@@ -108,14 +108,14 @@ reason.
 
 | `dart:ui` | Status | Here | Evidence |
 |---|---|---|---|
-| `color` | yes | `Paint::fill` | `rect-fill` |
+| `color` | yes | `Paint::fill`. A color states which primaries it is against — sRGB, extended sRGB, or Display P3 — and converts between them; the pipeline works in linear sRGB primaries with no range limit, so a color the triangle cannot describe is carried rather than clipped, and reaches a floating-point target intact | `a_color_outside_the_srgb_primaries_reaches_a_floating_point_target` |
 | `style` | yes | `with_style` | `rect-fill`, `stroke-polygon-and-curve` |
 | `strokeWidth` | yes | `Style::Stroke` | `stroke-polygon-and-curve`, `rounded-rect-stroked` |
 | `strokeCap` | yes | `StrokeStyle::cap` | `stroke-caps` |
 | `strokeJoin` | yes | `StrokeStyle::join` | `stroke-joins` |
 | `strokeMiterLimit` | yes | `StrokeStyle::miter_limit` | `stroke-joins` |
 | `isAntiAlias` | yes | `with_anti_alias` | `circle-antialiased`, `curve-antialiased` |
-| `blendMode` | yes | `with_blend`, all of Porter-Duff and the fifteen advanced modes where the device offers them | `advanced-blend-*` |
+| `blendMode` | yes | `with_blend`, all of Porter-Duff and the fifteen advanced modes where the device offers them. The Porter-Duff modes are linear and carry a color outside the sRGB primaries; the advanced ones are defined by the compositing specification on components between zero and one, so their operands are brought to the triangle's edge first | `advanced-blend-*` |
 | `shader` | yes | linear, radial, sweep and conical gradients, images, and a caller's own fragment program | `a_caller_can_fill_a_shape_with_their_own_fragment_program` |
 | `colorFilter` | yes | `with_color_filter`: a color matrix, the sRGB transfer function in either direction, and any blend against a constant that is affine in what it blends. Not the advanced blend modes, which the paint's own blend mode covers | `the_gamma_filter_follows_the_curve_at_both_ends_of_it` |
 | `imageFilter` | yes | `with_image_filter`: a blur, a matrix, dilate, erode and any composition of them, applied to what the paint drew rather than to the color it computed | `composing_an_erosion_with_a_dilation_depends_on_which_runs_first` |

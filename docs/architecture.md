@@ -1741,13 +1741,42 @@ every fragment walks, which is the cost specialization would remove.
   quantization, SDF above a threshold size, COLR/CPAL color glyphs, and
   paging — a page boundary would split a glyph run into more than one draw,
   which is why growth was chosen over pages.
-- **Color**: linear f32 internally, with sRGB conversion at the API boundary
-  and at target write. Linear internally because blending and interpolation are
-  operations on light: averaging two encoded bytes is not averaging the two
-  colors, and a gradient built that way is visibly wrong in its middle. The
-  conversion on the way out is the target format's, not a shader's — an sRGB
-  format encodes on write, so nothing in the pipeline knows the difference and
-  a caller picks it when creating the surface.
+- **Color**: linear f32 internally, in sRGB primaries with no range limit, with
+  sRGB conversion at the API boundary and at target write. Linear internally
+  because blending and interpolation are operations on light: averaging two
+  encoded bytes is not averaging the two colors, and a gradient built that way
+  is visibly wrong in its middle. The conversion on the way out is the target
+  format's, not a shader's — an sRGB format encodes on write, so nothing in the
+  pipeline knows the difference and a caller picks it when creating the surface.
+
+  *No range limit* is the second half of that policy and is stated separately
+  because it is a different claim. A color states which primaries it is against,
+  and one stated against Display P3's is carried in sRGB's — which puts
+  components outside zero to one, since the sRGB primaries describe a smaller
+  triangle and saying so takes a number outside it. That is extended sRGB, and
+  it is what upstream uses as its intermediate space too. Nothing between the
+  paint and the target clamps: a floating-point target holds what arrives, and
+  an eight-bit one clamps at the write, which is the target format's business
+  exactly as the transfer function is.
+
+  Two places still hold a color inside the triangle, and both are stated rather
+  than left to be found. The advanced blend modes are defined by the compositing
+  specification on components between zero and one and are not defined outside
+  it — that is the specification's domain rather than this renderer's, the
+  fixed-function unit a paint's blend mode reaches has the same one and cannot
+  be extended, so operands are brought to the edge before a mode is evaluated
+  rather than fed to a formula with no answer. And a bicubic image read clamps,
+  because a kernel with negative lobes invents values no texel it read contains:
+  at the point it would have to be decided, a ringing overshoot and a color
+  outside the triangle are the same number, so suppressing the first suppresses
+  the second with it.
+
+  **Presenting a wide gamut is not built.** The swapchain negotiates
+  `SRGB_NONLINEAR` and the scanout path is untouched. The pipeline is verified
+  to an offscreen floating-point readback and no further, because the devices
+  available are a software rasterizer and a virtual display controller — a
+  Display P3 surface cannot be exercised here, and code whose correctness rests
+  on having read a specification is not what this project ships.
 
   A caller picks the format when creating the surface, and picking the wrong
   one is not an error — it is an image that is arithmetically correct and looks

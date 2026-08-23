@@ -250,7 +250,13 @@ impl Context {
         }
     }
 
-    /// Read a surface back as tightly packed RGBA8.
+    /// Read a surface back, tightly packed, in whatever its format holds.
+    ///
+    /// Four bytes per pixel for the eight-bit formats, which is every surface a
+    /// caller is likely to ask for; eight for `Rgba16Float`, as four
+    /// half-floats. Nothing is converted on the way out -- the bytes are what
+    /// the target holds, and a caller who chose a format wider than eight bits
+    /// did so in order to read what it kept.
     pub fn read(&mut self, surface: &mut Surface) -> Result<Vec<u8>> {
         match (self, surface) {
             #[cfg(feature = "vulkan")]

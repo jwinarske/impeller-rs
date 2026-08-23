@@ -67,10 +67,10 @@ on the other backend and was caught by a plate.
 | `aiks_dl_gradient_unittests.cc` | ~40 | 23 | dithering |
 | `aiks_dl_clip_unittests.cc` | ~5 | 6 | nothing; this file is covered |
 | `aiks_dl_opacity_unittests.cc` | ~3 | 2 | subpass collapse |
-| `aiks_dl_blend_unittests.cc` | ~79 | 36 | framebuffer fetch, wide gamut, subpass collapse |
+| `aiks_dl_blend_unittests.cc` | ~79 | 36 | framebuffer fetch, subpass collapse |
 | `aiks_dl_blur_unittests.cc` | ~59 | 26 | backdrop identity keys, mask blurs over a gradient |
 | `aiks_dl_vertices_unittests.cc` | ~16 | 18 | mask filters on a mesh |
-| `aiks_dl_atlas_unittests.cc` | ~15 | 9 | wide gamut |
+| `aiks_dl_atlas_unittests.cc` | ~15 | 9 | nothing named; see below |
 | `aiks_dl_shadow_unittests.cc` | ~30 | 12 | a convex-shadow optimization this renderer does not have |
 | `aiks_dl_primitive_shape_unittests.cc` | ~2 | 0 | one is a playground harness, one is a hairline skew |
 | `aiks_dl_text_unittests.cc` | — | 5 | shaping and font parsing, which are out of scope; glyph rendering is not, and these use synthetic coverage |
@@ -91,6 +91,23 @@ about the renderer.
 It is not a row of `docs/parity.md` and should not be looked for as one: it is
 not a `dart:ui` method but a quality behavior inside gradient rendering, which
 is where the banding it exists to break up appears.
+
+That sentence was written while two cells above it still said "wide gamut",
+which made this document contradict itself for the length of one commit. Worth
+recording rather than quietly fixing, because it is the failure mode this
+column already has a warning about: prose no test reads goes stale, and the
+person who wrote both halves is not exempt.
+
+The pipeline carries a wide gamut now. Colors state which primaries they are
+against, a color outside the sRGB primaries' triangle keeps the components
+below zero that say so, and it reaches a floating-point target through layers,
+gradients and filters intact. **What is not built is presenting one.** The
+swapchain still negotiates `SRGB_NONLINEAR` and the scanout path is untouched,
+because the devices available here are a software rasterizer and a virtual
+display controller: a Display P3 surface cannot be exercised, and this project
+does not ship what it cannot check. So the two cells above no longer name wide
+gamut, and nobody has counted against the source how many of those scenes
+needed it rather than one of the other things listed.
 
 Perspective transforms were the other, and were described here as a design
 limit -- the transform type being affine and two-dimensional -- with the note
