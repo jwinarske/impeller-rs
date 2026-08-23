@@ -61,6 +61,13 @@ impl From<Affine2> for Transform2D {
     }
 }
 
+/// So that a caller holding an affine by reference need not name the lift.
+impl From<&Affine2> for Transform2D {
+    fn from(affine: &Affine2) -> Self {
+        Self::from_affine(*affine)
+    }
+}
+
 impl std::ops::Mul for Transform2D {
     type Output = Self;
 
@@ -187,6 +194,11 @@ impl Transform2D {
         }
         let inverse = self.0.inverse();
         inverse.is_finite().then_some(Self(inverse))
+    }
+
+    /// [`transformed_bounds`], for a transform already in this form.
+    pub fn transformed_bounds_of(self, min: Vec2, max: Vec2) -> Option<(Vec2, Vec2)> {
+        transformed_bounds(self, min, max)
     }
 
     /// The nine floats, in column order.
@@ -319,9 +331,33 @@ pub fn max_scale(transform: &Affine2) -> f32 {
 /// rectangle is no longer one. The threshold is scaled by the transform's own
 /// magnitude, since an absolute one means something different at a scale of a
 /// thousand than at a scale of a thousandth.
-pub fn preserves_axis_alignment(transform: &Affine2) -> bool {
-    let m = transform.matrix2;
-    let magnitude = max_scale(transform);
+/// # Perspective is never axis-preserving, and the check is exact
+///
+/// A homography carries axis-aligned rectangles to axis-aligned rectangles only
+/// when its bottom row is `(0, 0, s)` — that is, only when it is an affine.
+/// With a bottom row of `(p, 0, 1)` a vertical line stays vertical, but a
+/// horizontal one does not: `y` comes back divided by `p x + 1`, which varies
+/// along the line. So anything that is not exactly affine is refused here.
+///
+/// Refused exactly, not within a tolerance, and deliberately so. The bottom
+/// row's entries have units of inverse length, so there is no scale-free
+/// threshold that could say whether a small one is negligible — it depends on
+/// how far the geometry reaches. Being exact costs a transform with a
+/// vanishingly small perspective term the scissor fast path, which is a stencil
+/// pass nobody will measure; being approximate would cost a wrong clip, which
+/// is a picture with pixels in it the caller removed.
+///
+/// This is the one place in the perspective work where the existing correct
+/// code would have gone wrong without changing: it read the two-by-two and
+/// nothing else, and a pure scale carrying a perspective row would have been
+/// waved through to the scissor unit as a rectangle it is not.
+pub fn preserves_axis_alignment(transform: impl Into<Transform2D>) -> bool {
+    let transform = transform.into();
+    let Some(affine) = transform.to_affine() else {
+        return false;
+    };
+    let m = affine.matrix2;
+    let magnitude = max_scale(&affine);
     if magnitude == 0.0 || !magnitude.is_finite() {
         // A degenerate transform collapses every rectangle to a line or a
         // point. That is a rectangle in the trivial sense and an empty clip in
@@ -337,23 +373,65 @@ pub fn preserves_axis_alignment(transform: &Affine2) -> bool {
     diagonal || anti_diagonal
 }
 
-/// The bounds of a rectangle's corners after a transform.
+/// Bounds standing in for "anywhere", where a mapping gives none.
+///
+/// The conservative answer in the direction that is safe: every caller of
+/// [`transformed_bounds`] narrows something by what it returns, so a bound that
+/// is too large costs the chance to allocate something smaller, and one that is
+/// too small drops a shape that should have been drawn. A layer's bounds are
+/// clamped to its parent's target before anything is allocated, so this becomes
+/// the target rather than a demand for a texture the size of the number.
+///
+/// A quarter of the float range rather than the whole of it, so that a caller
+/// adding a blur's reach to one of these still has a finite number.
+pub fn unbounded() -> (Vec2, Vec2) {
+    let far = f32::MAX / 4.0;
+    (Vec2::splat(-far), Vec2::splat(far))
+}
+
+/// The bounds of a rectangle's corners after a transform, if there are any.
 ///
 /// Exact when [`preserves_axis_alignment`] holds, and the bounding box of a
 /// rotated quadrilateral otherwise — which is why callers that need the clip to
 /// be the region asked for must check that first rather than relying on this to
 /// tell them.
-pub fn transformed_bounds(transform: &Affine2, min: Vec2, max: Vec2) -> (Vec2, Vec2) {
-    let corners = [
-        transform.transform_point2(min),
-        transform.transform_point2(Vec2::new(max.x, min.y)),
-        transform.transform_point2(max),
-        transform.transform_point2(Vec2::new(min.x, max.y)),
-    ];
-    corners.iter().fold(
-        (corners[0], corners[0]),
+///
+/// # Why this can fail, and why it says so rather than guessing
+///
+/// Four corners bound a rectangle's image because a transform carries the
+/// rectangle's convex hull onto the hull of the corners' images. Under a
+/// homography that still holds — but only while the divisor stays positive
+/// across the whole rectangle. Let the rectangle reach the vanishing line and
+/// the corners land on both sides of infinity, and their bounding box is not
+/// merely loose, it is wrong: too small, which is the unsafe direction, because
+/// every caller here narrows something by it and a bound that is too small
+/// drops a shape that should have been drawn.
+///
+/// So that case returns `None` rather than a number. Not an empty rectangle,
+/// which would read as "nothing is there", and not an enormous one, which would
+/// read as "everything is". `None` makes each caller say what it does about a
+/// bound that does not exist, and there are two different right answers among
+/// them: a clip that cannot be narrowed is left alone, and a layer that cannot
+/// be sized is refused.
+pub fn transformed_bounds(
+    transform: impl Into<Transform2D>,
+    min: Vec2,
+    max: Vec2,
+) -> Option<(Vec2, Vec2)> {
+    let transform = transform.into();
+    let corners = [min, Vec2::new(max.x, min.y), max, Vec2::new(min.x, max.y)];
+    let mut mapped = [Vec2::ZERO; 4];
+    for (out, corner) in mapped.iter_mut().zip(corners) {
+        let h = transform.project_homogeneous(corner);
+        if h.z.is_nan() || h.z <= VANISHING_EPSILON {
+            return None;
+        }
+        *out = h.truncate() / h.z;
+    }
+    Some(mapped.iter().fold(
+        (mapped[0], mapped[0]),
         |(lo, hi): (Vec2, Vec2), c: &Vec2| (lo.min(*c), hi.max(*c)),
-    )
+    ))
 }
 
 /// Apply a transform to every point in place.
@@ -445,7 +523,7 @@ mod tests {
                 * Affine2::from_translation(Vec2::new(1.0, 1.0)),
         ] {
             assert!(
-                preserves_axis_alignment(&transform),
+                preserves_axis_alignment(transform),
                 "{transform:?} was rejected"
             );
         }
@@ -461,7 +539,7 @@ mod tests {
             skew,
         ] {
             assert!(
-                !preserves_axis_alignment(&transform),
+                !preserves_axis_alignment(transform),
                 "{transform:?} was accepted"
             );
         }
@@ -475,17 +553,18 @@ mod tests {
         let skew = 1e-3;
         let mut large = Affine2::from_scale(Vec2::splat(1e4));
         large.matrix2.y_axis.x = skew;
-        assert!(preserves_axis_alignment(&large));
+        assert!(preserves_axis_alignment(large));
 
         let mut small = Affine2::from_scale(Vec2::splat(1e-2));
         small.matrix2.y_axis.x = skew;
-        assert!(!preserves_axis_alignment(&small));
+        assert!(!preserves_axis_alignment(small));
     }
 
     #[test]
     fn a_quarter_turn_maps_a_rectangle_onto_the_other_axis() {
         let quarter = Affine2::from_angle(std::f32::consts::FRAC_PI_2);
-        let (min, max) = transformed_bounds(&quarter, Vec2::new(0.0, 0.0), Vec2::new(4.0, 1.0));
+        let (min, max) = transformed_bounds(quarter, Vec2::new(0.0, 0.0), Vec2::new(4.0, 1.0))
+            .expect("an affine always has bounds");
         // Width and height exchange places; the corner positions follow the
         // rotation rather than staying put.
         assert!(
@@ -817,5 +896,71 @@ mod tests {
             .max_scale_over(Vec2::new(-499.9, -1.0), Vec2::new(-499.5, 1.0))
             .expect("in front");
         assert_eq!(just_in_front, MAX_PERSPECTIVE_REFINEMENT);
+    }
+
+    /// The trap this whole change had to avoid, and the one place where code
+    /// that was correct would have become wrong without being touched.
+    ///
+    /// `preserves_axis_alignment` read the two-by-two and nothing else. Widen
+    /// the transform and leave that reading alone, and a pure scale carrying a
+    /// perspective row is waved through to the fixed-function scissor as a
+    /// rectangle -- which it is not, because the divisor varies along a
+    /// horizontal line and carries `y` with it. The clip then admits pixels the
+    /// caller asked to remove, silently, on both backends alike.
+    #[test]
+    fn a_projective_row_is_not_axis_preserving_however_plain_the_two_by_two_looks() {
+        for row in [[0.002, 0.0], [0.0, 0.002], [-1e-4, 3e-5]] {
+            let projective = Transform2D::from_column_major_4x4(&[
+                3.0, 0.0, 0.0, row[0], //
+                0.0, 7.0, 0.0, row[1], //
+                0.0, 0.0, 1.0, 0.0, //
+                20.0, -5.0, 0.0, 1.0,
+            ]);
+            // The two-by-two on its own is a plain scale, and would pass.
+            assert!(preserves_axis_alignment(Affine2::from_scale(Vec2::new(
+                3.0, 7.0
+            ))));
+            assert!(
+                !preserves_axis_alignment(projective),
+                "a perspective row of {row:?} was accepted as axis-preserving"
+            );
+        }
+    }
+
+    #[test]
+    fn an_affine_always_has_bounds_and_a_box_across_the_horizon_has_none() {
+        let t = receding();
+        // Wholly in front: the four corners still bound the image, because a
+        // homography with a positive divisor preserves convexity.
+        let (min, max) = t
+            .transformed_bounds_of(Vec2::new(-100.0, -50.0), Vec2::new(100.0, 50.0))
+            .expect("in front");
+        assert!(min.x < max.x && min.y < max.y);
+        // Reaching the vanishing line at x = -500, where the corners land on
+        // both sides of infinity and their box is too small rather than loose.
+        assert_eq!(
+            t.transformed_bounds_of(Vec2::new(-600.0, -50.0), Vec2::new(-400.0, 50.0)),
+            None
+        );
+        // An affine never fails, which is what keeps every existing caller
+        // taking the answer it always did.
+        assert!(transformed_bounds(
+            Affine2::from_scale(Vec2::new(1e6, 1e-6)),
+            Vec2::splat(-1e3),
+            Vec2::splat(1e3)
+        )
+        .is_some());
+    }
+
+    /// The fallback is wide rather than narrow, and finite enough to add to.
+    #[test]
+    fn unbounded_is_large_and_still_arithmetic() {
+        let (min, max) = unbounded();
+        assert!(min.x < -1e30 && max.x > 1e30);
+        assert!(
+            (max - min).is_finite(),
+            "a reach added to this must stay finite"
+        );
+        assert!((min - Vec2::splat(1e6)).is_finite());
     }
 }

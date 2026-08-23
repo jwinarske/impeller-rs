@@ -30,6 +30,6 @@ pub use path::{Convexity, FillRule, Path, PathBuilder, Rect, Verb};
 pub use stroke::{LineCap, LineJoin, StrokeStyle};
 pub use tessellate::{Tessellator, VertexBuffers};
 pub use transform::{
-    invert_to_local, max_scale, to_local_columns, transform_points, viewport_projection,
+    invert_to_local, max_scale, to_local_columns, transform_points, unbounded, viewport_projection,
     Transform2D,
 };

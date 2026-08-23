@@ -5,7 +5,7 @@ use crate::color::Color;
 use glam::{Affine2, Vec2};
 use impeller_geometry::dash::Dash;
 use impeller_geometry::stroke::StrokeStyle;
-use impeller_geometry::transform::transformed_bounds;
+use impeller_geometry::transform::{transformed_bounds, unbounded};
 use impeller_hal::{BlendMode, Extent2D, TileMode};
 use impeller_hal::{ColorFilter, Sampling};
 
@@ -367,7 +367,12 @@ impl ImageFilter {
                 (min - reach, max + reach)
             }
             Self::Matrix { transform } => {
-                let (moved_min, moved_max) = transformed_bounds(transform, min, max);
+                // A matrix that carries the content across the vanishing line
+                // moves it further than a box can state, and this is a
+                // statement about how far a filter reaches -- so it widens to
+                // everything rather than reporting a reach that is too short.
+                let (moved_min, moved_max) =
+                    transformed_bounds(transform, min, max).unwrap_or_else(unbounded);
                 (min.min(moved_min), max.max(moved_max))
             }
             Self::Compose { outer, inner } => {

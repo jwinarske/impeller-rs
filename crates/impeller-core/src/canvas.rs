@@ -13,7 +13,7 @@ use crate::Color;
 use glam::{Affine2, Mat2, Vec2};
 use impeller_geometry::stroke::{LineCap, StrokeStyle};
 use impeller_geometry::transform::{
-    invert_to_local, preserves_axis_alignment, to_local_columns, transformed_bounds,
+    invert_to_local, preserves_axis_alignment, to_local_columns, transformed_bounds, unbounded,
     viewport_projection, Transform2D,
 };
 use impeller_geometry::{FillRule, Path, PathBuilder};
@@ -688,11 +688,18 @@ impl Canvas {
         if !inverse.is_finite() {
             return Rect::new(0.0, 0.0, 0.0, 0.0);
         }
+        // Two different ways this can have no answer, and they take opposite
+        // ones. A transform that has collapsed leaves nothing reachable, which
+        // the check above answers with an empty rectangle. A transform whose
+        // inverse carries the clip across the vanishing line leaves *more*
+        // reachable than a box can say -- and since this rectangle is a promise
+        // about what lies outside it, the safe failure there is everything.
         let (min, max) = transformed_bounds(
-            &inverse,
+            inverse,
             Vec2::new(self.clip_bounds.left, self.clip_bounds.top),
             Vec2::new(self.clip_bounds.right, self.clip_bounds.bottom),
-        );
+        )
+        .unwrap_or_else(unbounded);
         Rect::new(min.x, min.y, max.x, max.y)
     }
 
@@ -745,14 +752,20 @@ impl Canvas {
         // stencil like any other shape. That the fast path survives is the
         // point: a scissor stays the right answer for an axis-aligned clip even
         // now that the general one exists.
-        if !preserves_axis_alignment(&self.transform) {
+        if !preserves_axis_alignment(self.transform) {
             return self.clip_path(&rect.to_path());
         }
-        let (min, max) = transformed_bounds(
-            &self.transform,
+        let Some((min, max)) = transformed_bounds(
+            self.transform,
             Vec2::new(rect.left, rect.top),
             Vec2::new(rect.right, rect.bottom),
-        );
+        ) else {
+            // Unreachable through the check above, which has already refused
+            // anything but an affine -- and written as a fallback rather than
+            // an assertion because the two are coupled only by argument, and
+            // the stencil path is the right answer either way.
+            return self.clip_path(&rect.to_path());
+        };
         let narrowed = Scissor::from_device_bounds(
             (min - self.target.origin).into(),
             (max - self.target.origin).into(),
@@ -880,8 +893,13 @@ impl Canvas {
         // bounding box rather than the path: this rectangle is a promise about
         // what is *outside* it, and a box around a shape keeps that promise.
         let bounds = path.bounds();
-        let (min, max) = transformed_bounds(&self.transform, bounds.min, bounds.max);
-        self.narrow_bounds(min, max);
+        // A clip whose bounds cannot be computed narrows nothing here. The
+        // stencil still confines it exactly; what is lost is only the tracked
+        // rectangle used to skip work, and leaving it wide is the direction
+        // that costs time rather than pixels.
+        if let Some((min, max)) = transformed_bounds(self.transform, bounds.min, bounds.max) {
+            self.narrow_bounds(min, max);
+        }
         Ok(self)
     }
 
@@ -1084,10 +1102,11 @@ impl Canvas {
     /// there the box would admit pixels the caller asked to remove.
     pub fn save_layer_bounds(&mut self, layer: Layer, bounds: Rect) -> &mut Self {
         let (min, max) = transformed_bounds(
-            &self.transform,
+            self.transform,
             Vec2::new(bounds.left, bounds.top),
             Vec2::new(bounds.right, bounds.bottom),
-        );
+        )
+        .unwrap_or_else(unbounded);
         self.save_layer_device_bounds(layer, min, max)
     }
 
@@ -1640,7 +1659,7 @@ impl Canvas {
                 "a glyph in this run is not at a finite position",
             ));
         }
-        let (min, max) = transformed_bounds(&self.transform, min, max);
+        let (min, max) = transformed_bounds(self.transform, min, max).unwrap_or_else(unbounded);
         let (min, max) = rest.covering(min, max);
         self.save_layer_device_bounds(layer.with_blend(paint.blend), min, max);
         let inner = paint
@@ -1679,7 +1698,7 @@ impl Canvas {
         if !min.is_finite() || !max.is_finite() {
             return Err(Error::Unsupported("a mesh position is not a finite number"));
         }
-        let (min, max) = transformed_bounds(&self.transform, min, max);
+        let (min, max) = transformed_bounds(self.transform, min, max).unwrap_or_else(unbounded);
         let (min, max) = rest.covering(min, max);
         self.save_layer_device_bounds(layer.with_blend(paint.blend), min, max);
         let inner = paint
@@ -1702,10 +1721,11 @@ impl Canvas {
     fn draw_effect_filtered(&mut self, path: &Path, paint: &Paint) -> Result<&mut Self> {
         let bounds = self.filter_bounds(path, paint);
         let (min, max) = transformed_bounds(
-            &self.transform,
+            self.transform,
             Vec2::new(bounds.left, bounds.top),
             Vec2::new(bounds.right, bounds.bottom),
-        );
+        )
+        .unwrap_or_else(unbounded);
         self.save_layer_device_bounds(
             Layer::opacity(1.0)
                 .with_color_filter(paint.color_filter)
@@ -1752,10 +1772,11 @@ impl Canvas {
         // clipped to its parent's, so a target sized for the result alone would
         // crop the content before the inner filter ever ran.
         let (min, max) = transformed_bounds(
-            &self.transform,
+            self.transform,
             Vec2::new(bounds.left, bounds.top),
             Vec2::new(bounds.right, bounds.bottom),
-        );
+        )
+        .unwrap_or_else(unbounded);
         let (min, max) = rest.covering(min, max);
         // The caller's blend rides the outermost composite. Left on the draw
         // inside, it was applied against the layer's own transparent black --
