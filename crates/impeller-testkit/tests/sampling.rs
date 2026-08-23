@@ -1039,3 +1039,44 @@ fn a_half_float_texture_round_trips_on_both_backends() {
     }
     assert!(ran > 0, "no backend available");
 }
+
+#[test]
+fn a_float_render_target_follows_what_the_device_reports() {
+    // The capability exists so that everything above the HAL can ask, rather
+    // than discovering the answer as a framebuffer-incomplete number on one
+    // backend and a driver error on the other. This is what says the two agree:
+    // where a device reports it can render into half-float, creating such a
+    // target must work, and where it does not, the refusal must name the reason
+    // rather than arriving from somewhere further down.
+    let mut ran = 0;
+    let mut check = |offered: bool, made: Result<(), impeller_hal::Error>, backend: &str| {
+        ran += 1;
+        match (offered, made) {
+            (true, Ok(())) | (false, Err(_)) => {}
+            (true, Err(e)) => panic!("{backend} reports float targets and refused one: {e}"),
+            (false, Ok(())) => panic!("{backend} reports no float targets and made one"),
+        }
+    };
+
+    if let Ok(mut ctx) = Validated::new(DevicePreference::Auto) {
+        let offered = ctx.capabilities().float_render_targets;
+        let made = ctx
+            .create_texture(&TextureDescriptor::offscreen(
+                SOURCE,
+                PixelFormat::Rgba16Float,
+            ))
+            .map(|t| ctx.destroy_texture(t));
+        check(offered, made, "vulkan");
+    }
+    if let Ok(mut ctx) = GlesValidated::new(DisplayTarget::Surfaceless) {
+        let offered = ctx.capabilities().float_render_targets;
+        let made = ctx
+            .create_texture(&TextureDescriptor::offscreen(
+                SOURCE,
+                PixelFormat::Rgba16Float,
+            ))
+            .map(|t| ctx.destroy_texture(t));
+        check(offered, made, "gles");
+    }
+    assert!(ran > 0, "no backend available");
+}

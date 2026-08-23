@@ -137,6 +137,7 @@ impl VulkanContext {
         if desc.is_external() {
             return Err(Error::Unsupported("external image import"));
         }
+        self.capabilities().check_texture(desc)?;
         if !self.capabilities().can_allocate(desc.extent) {
             return Err(Error::LimitExceeded {
                 what: "texture dimension",

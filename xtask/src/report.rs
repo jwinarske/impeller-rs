@@ -101,6 +101,10 @@ pub fn text(devices: &[Device]) -> String {
             "  scanout           {}\n",
             yes_no(c.supports_scanout())
         ));
+        out.push_str(&format!(
+            "  float targets     {}\n",
+            if c.float_render_targets { "yes" } else { "no" }
+        ));
         out.push_str(&format!("  render formats    {}\n", c.render_formats.len()));
         out.push('\n');
     }

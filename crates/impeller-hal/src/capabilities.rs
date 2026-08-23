@@ -106,6 +106,20 @@ pub struct Capabilities {
     ///
     /// [`BlendMode::is_advanced`]: crate::BlendMode::is_advanced
     pub advanced_blend: bool,
+    /// Whether a floating-point color attachment can be rendered into.
+    ///
+    /// A color outside the sRGB primaries' triangle has a component outside
+    /// zero to one, and `Rgba16Float` is the only format here that can hold
+    /// one. Whether a device will let it be a target is a separate question
+    /// from whether it will sample one: half-float is filterable in core ES
+    /// 3.0 and renderable only with an extension, and plenty of shipping
+    /// drivers have the first and not the second. Vulkan answers per format
+    /// from its format properties.
+    ///
+    /// Distinct from [`Self::render_formats`], which is the scanout list keyed
+    /// by DRM fourcc and is empty on GLES. A format with no fourcc is
+    /// deliberately absent from that list, so it cannot answer this.
+    pub float_render_targets: bool,
     /// Formats and layouts this device can render into and export.
     ///
     /// One half of format negotiation; the presentation target supplies the
@@ -154,6 +168,26 @@ impl Capabilities {
         if !self.advanced_blend && batch.draws().iter().any(|draw| draw.blend.is_advanced()) {
             return Err(crate::Error::Unsupported(
                 "advanced blend modes; this device has no advanced-blend extension",
+            ));
+        }
+        Ok(())
+    }
+
+    /// Whether this device can create the texture a descriptor asks for.
+    ///
+    /// Here rather than in each backend for the reason
+    /// [`Self::check_blend_modes`] is: two backends refusing the same thing for
+    /// the same reason, in one place, rather than a check written twice that
+    /// eventually disagrees with itself. Without it the failure arrives as a
+    /// framebuffer-incomplete number on one backend and a driver error on the
+    /// other, neither of which names what was missing.
+    pub fn check_texture(&self, desc: &crate::TextureDescriptor) -> crate::Result<()> {
+        if desc.usage.render_target
+            && desc.format == crate::PixelFormat::Rgba16Float
+            && !self.float_render_targets
+        {
+            return Err(crate::Error::Unsupported(
+                "a floating-point render target; this device can sample one but not draw into it",
             ));
         }
         Ok(())
@@ -246,5 +280,35 @@ mod tests {
         assert!(caps.can_allocate(Extent2D::new(4096, 4096)));
         assert!(!caps.can_allocate(Extent2D::new(4097, 16)));
         assert!(!caps.can_allocate(Extent2D::new(16, 4097)));
+    }
+
+    /// Sampling a half-float texture and drawing into one are separate
+    /// permissions, and a device may offer the first without the second.
+    #[test]
+    fn a_float_target_is_refused_where_only_sampling_one_is_offered() {
+        let mut caps = Capabilities {
+            float_render_targets: false,
+            ..Capabilities::default()
+        };
+        let extent = Extent2D::new(4, 4);
+
+        let target = crate::TextureDescriptor::offscreen(extent, crate::PixelFormat::Rgba16Float);
+        assert!(
+            caps.check_texture(&target).is_err(),
+            "a float attachment was allowed where the device offers none"
+        );
+
+        // Sampling one is a different request and is not refused, which is the
+        // whole reason the two are separate: a gradient ramp wants exactly this
+        // and would otherwise be unavailable on the same devices.
+        let sampled = crate::TextureDescriptor::sampled(extent, crate::PixelFormat::Rgba16Float);
+        assert!(caps.check_texture(&sampled).is_ok());
+
+        // And an eight-bit target is never the question.
+        let ordinary = crate::TextureDescriptor::offscreen(extent, crate::PixelFormat::Rgba8Unorm);
+        assert!(caps.check_texture(&ordinary).is_ok());
+
+        caps.float_render_targets = true;
+        assert!(caps.check_texture(&target).is_ok());
     }
 }

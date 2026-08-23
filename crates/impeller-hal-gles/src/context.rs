@@ -209,7 +209,7 @@ impl GlesContext {
         };
 
         let gl_extensions = gl_extension_set(&gl);
-        let capabilities = detect_capabilities(&gl, &egl, &egl_extensions);
+        let capabilities = detect_capabilities(&gl, &egl, &egl_extensions, &gl_extensions);
 
         // Asked for and available are separate questions, and a driver without
         // debug output still renders. `debug_active` reports which happened, so
@@ -619,6 +619,7 @@ fn detect_capabilities(
     gl: &glow::Context,
     egl: &Egl,
     egl_extensions: &HashSet<String>,
+    gl_extensions: &HashSet<String>,
 ) -> Capabilities {
     // SAFETY: a context is current on this thread.
     let (max_texture_size, max_samples, renderer, version) = unsafe {
@@ -658,6 +659,11 @@ fn detect_capabilities(
             export_sync_file: fence,
             import_sync_file: fence,
         },
+        // Core ES 3.0 can sample a half-float texture and cannot render into
+        // one; either extension adds the second. Named separately because the
+        // half-float one is the weaker of the two and is enough for this.
+        float_render_targets: gl_extensions.contains("GL_EXT_color_buffer_float")
+            || gl_extensions.contains("GL_EXT_color_buffer_half_float"),
         render_formats: Vec::new(),
         // Recognized from the renderer string, because GLES offers nothing
         // better: there is no device-type query, and the string is what every

@@ -106,6 +106,7 @@ impl GlesContext {
         if desc.extent.is_empty() {
             return Err(Error::Unsupported("zero-sized texture"));
         }
+        self.capabilities().check_texture(desc)?;
         if !self.capabilities().can_allocate(desc.extent) {
             return Err(Error::LimitExceeded {
                 what: "texture dimension",

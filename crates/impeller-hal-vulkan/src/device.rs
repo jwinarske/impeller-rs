@@ -1083,8 +1083,25 @@ fn detect_capabilities(
     let dma_buf = enabled.contains(ext::EXTERNAL_MEMORY_DMA_BUF);
     let modifiers = enabled.contains(ext::IMAGE_DRM_FORMAT_MODIFIER);
 
+    // Every one of the four matters and the set is not arbitrary: a layer is
+    // drawn into and composited, so it needs to be an attachment and to blend
+    // as one; and it is then sampled, with a linear filter, by the pass above
+    // it. A device offering three of the four cannot carry a floating-point
+    // layer through the pipeline this renderer has.
+    let wanted = vk::FormatFeatureFlags::COLOR_ATTACHMENT
+        | vk::FormatFeatureFlags::COLOR_ATTACHMENT_BLEND
+        | vk::FormatFeatureFlags::SAMPLED_IMAGE
+        | vk::FormatFeatureFlags::SAMPLED_IMAGE_FILTER_LINEAR;
+    let float_render_targets = unsafe {
+        instance
+            .get_physical_device_format_properties(pd, vk::Format::R16G16B16A16_SFLOAT)
+            .optimal_tiling_features
+            .contains(wanted)
+    };
+
     Capabilities {
         advanced_blend,
+        float_render_targets,
         max_texture_size: limits.max_image_dimension2_d,
         sample_counts: SampleCounts::from_mask(sample_mask.as_raw()),
         dma_buf: DmaBufSupport {
