@@ -65,6 +65,11 @@ impl<H: Hal> Transient<H> {
 /// is: the device decodes it on sampling, so eight bits are spaced the way the
 /// eye reads them rather than uniformly across a linear range, where the dark
 /// end of a gradient would band.
+///
+/// Sampled and never drawn into, which is worth saying rather than leaving to
+/// a backend to assume: a ramp asked for a color attachment it had no use for,
+/// and a backend that builds one per texture would refuse a format it could
+/// perfectly well have sampled.
 fn upload_ramps<H: Hal>(ctx: &mut H::Context, recording: &Recording) -> Result<Vec<H::Texture>>
 where
     H::Context: HalContext<Hal = H>,
@@ -73,7 +78,7 @@ where
     for ramp in &recording.ramps {
         let extent = Extent2D::new(RAMP_WIDTH as u32, 1);
         let outcome = ctx
-            .create_texture(&TextureDescriptor::offscreen(
+            .create_texture(&TextureDescriptor::sampled(
                 extent,
                 PixelFormat::Rgba8UnormSrgb,
             ))

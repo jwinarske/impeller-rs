@@ -937,3 +937,41 @@ where
     ctx.destroy_texture(source);
     pixels
 }
+
+#[test]
+fn a_texture_that_is_only_sampled_needs_no_attachment_and_still_reads_back() {
+    // A ramp and an uploaded image are written once and sampled many times, and
+    // never drawn into. Saying so used to change nothing, because one backend
+    // built a color attachment for every texture it made whatever the caller
+    // asked for -- which is invisible until a format is filterable and not
+    // renderable, and then it turns a texture that would have worked into a
+    // creation failure for a target nothing wanted.
+    //
+    // Reading back is a separate permission from being drawn into, and both
+    // backends have to agree about that: the usage here asks for transfer and
+    // not for a render target, so the readback must still work.
+    let want: Vec<u8> = (0..16u8).map(|i| i * 16 + 8).collect();
+    let mut ran = 0;
+
+    if let Ok(mut ctx) = Validated::new(DevicePreference::Auto) {
+        let mut texture = ctx
+            .create_texture(&TextureDescriptor::sampled(SOURCE, PixelFormat::R8Unorm))
+            .expect("vulkan refused a sampled-only texture");
+        ctx.write_texture(&mut texture, &want).expect("upload");
+        let got = ctx.read_texture(&mut texture).expect("vulkan readback");
+        ctx.destroy_texture(texture);
+        assert_eq!(got, want);
+        ran += 1;
+    }
+    if let Ok(mut ctx) = GlesValidated::new(DisplayTarget::Surfaceless) {
+        let mut texture = ctx
+            .create_texture(&TextureDescriptor::sampled(SOURCE, PixelFormat::R8Unorm))
+            .expect("gles refused a sampled-only texture");
+        ctx.write_texture(&mut texture, &want).expect("upload");
+        let got = ctx.read_texture(&mut texture).expect("gles readback");
+        ctx.destroy_texture(texture);
+        assert_eq!(got, want);
+        ran += 1;
+    }
+    assert!(ran > 0, "no backend available");
+}

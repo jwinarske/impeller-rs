@@ -13,10 +13,18 @@ use impeller_hal::{
     Scissor, TextureDescriptor,
 };
 
-/// A color texture and the framebuffer that renders into it.
+/// A color texture and, where it is one, the framebuffer that renders into it.
 pub struct GlesTexture {
     pub(crate) texture: glow::Texture,
-    pub(crate) framebuffer: glow::Framebuffer,
+    /// Present only for a texture created as a render target.
+    ///
+    /// This backend attached one to every texture it made, which reads as
+    /// harmless and is not: a framebuffer whose attachment the device cannot
+    /// render into is incomplete, and creation fails. So a format that is
+    /// perfectly good to sample -- half-float is filterable in core ES 3.0 --
+    /// could not be created at all on a device without the extension that
+    /// makes it renderable, for a target nothing was going to use.
+    pub(crate) framebuffer: Option<glow::Framebuffer>,
     pub(crate) extent: Extent2D,
     pub(crate) format: PixelFormat,
     /// How many mip levels the storage was allocated with, the image included.
@@ -29,7 +37,10 @@ impl GlesTexture {
     /// Exposed for a presentation target, which has to read from it to get the
     /// frame onto a window surface. Reading a texture through its own
     /// framebuffer is what this backend already does everywhere else.
-    pub fn raw_framebuffer(&self) -> glow::Framebuffer {
+    ///
+    /// `None` for a texture that was not created as a render target, which has
+    /// no framebuffer to read through.
+    pub fn raw_framebuffer(&self) -> Option<glow::Framebuffer> {
         self.framebuffer
     }
 
@@ -147,28 +158,37 @@ impl GlesContext {
                 gl.tex_parameter_i32(glow::TEXTURE_2D, axis, glow::CLAMP_TO_EDGE as i32);
             }
 
-            let framebuffer = gl
-                .create_framebuffer()
-                .map_err(|e| gl_err("create_framebuffer", &e))?;
-            gl.bind_framebuffer(glow::FRAMEBUFFER, Some(framebuffer));
-            gl.framebuffer_texture_2d(
-                glow::FRAMEBUFFER,
-                glow::COLOR_ATTACHMENT0,
-                glow::TEXTURE_2D,
-                Some(texture),
-                0,
-            );
+            // Only where the caller asked for a target. A framebuffer over a
+            // texture the device cannot render into is incomplete, so building
+            // one unasked turns a sampling-only texture into a creation
+            // failure on exactly the devices where the distinction matters.
+            let framebuffer = if desc.usage.render_target {
+                let framebuffer = gl
+                    .create_framebuffer()
+                    .map_err(|e| gl_err("create_framebuffer", &e))?;
+                gl.bind_framebuffer(glow::FRAMEBUFFER, Some(framebuffer));
+                gl.framebuffer_texture_2d(
+                    glow::FRAMEBUFFER,
+                    glow::COLOR_ATTACHMENT0,
+                    glow::TEXTURE_2D,
+                    Some(texture),
+                    0,
+                );
 
-            let status = gl.check_framebuffer_status(glow::FRAMEBUFFER);
-            if status != glow::FRAMEBUFFER_COMPLETE {
-                gl.delete_framebuffer(framebuffer);
-                gl.delete_texture(texture);
-                return Err(Error::Backend {
-                    backend: "gles",
-                    detail: format!("framebuffer incomplete: {status:#x}"),
-                });
-            }
-            gl.bind_framebuffer(glow::FRAMEBUFFER, None);
+                let status = gl.check_framebuffer_status(glow::FRAMEBUFFER);
+                if status != glow::FRAMEBUFFER_COMPLETE {
+                    gl.delete_framebuffer(framebuffer);
+                    gl.delete_texture(texture);
+                    return Err(Error::Backend {
+                        backend: "gles",
+                        detail: format!("framebuffer incomplete: {status:#x}"),
+                    });
+                }
+                gl.bind_framebuffer(glow::FRAMEBUFFER, None);
+                Some(framebuffer)
+            } else {
+                None
+            };
             gl.bind_texture(glow::TEXTURE_2D, None);
 
             Ok(GlesTexture {
@@ -186,7 +206,9 @@ impl GlesContext {
         // SAFETY: the caller has given up the texture, and GL calls are
         // sequential on the one thread holding the context.
         unsafe {
-            gl.delete_framebuffer(texture.framebuffer);
+            if let Some(framebuffer) = texture.framebuffer {
+                gl.delete_framebuffer(framebuffer);
+            }
             gl.delete_texture(texture.texture);
         }
     }
@@ -256,9 +278,15 @@ impl GlesContext {
         } else {
             None
         };
-        let render_fbo = multisample
-            .as_ref()
-            .map_or(target.framebuffer, |ms| ms.framebuffer);
+        // A batch has to land somewhere, so a target without a framebuffer is a
+        // caller error rather than something to work around: it asked for a
+        // texture it could sample and is drawing into it.
+        let Some(target_fbo) = target.framebuffer else {
+            return Err(Error::Unsupported(
+                "drawing into a texture that was not created as a render target",
+            ));
+        };
+        let render_fbo = multisample.as_ref().map_or(target_fbo, |ms| ms.framebuffer);
 
         let gl = self.raw_gl();
         // SAFETY: a context is current, and every object bound below was
@@ -567,7 +595,18 @@ impl GlesContext {
         // SAFETY: the framebuffer is complete and the destination is sized for
         // the region being read.
         unsafe {
-            gl.bind_framebuffer(glow::FRAMEBUFFER, Some(texture.framebuffer));
+            // Reading back is a transfer, and a texture asked for that
+            // separately from asking to be drawn into -- so one created only to
+            // be sampled is still readable, and this borrows a framebuffer for
+            // as long as the read takes. The alternative was to refuse, which
+            // would have made this backend disagree with the other one about
+            // what a usage means.
+            let borrowed = match texture.framebuffer {
+                Some(_) => None,
+                None => Some(attach_temporarily(gl, texture)?),
+            };
+            let framebuffer = texture.framebuffer.or(borrowed).expect("one or the other");
+            gl.bind_framebuffer(glow::FRAMEBUFFER, Some(framebuffer));
             gl.pixel_store_i32(glow::PACK_ALIGNMENT, 1);
             gl.read_pixels(
                 0,
@@ -579,6 +618,11 @@ impl GlesContext {
                 glow::PixelPackData::Slice(&mut pixels),
             );
             gl.bind_framebuffer(glow::FRAMEBUFFER, None);
+            // Before the error check below, which returns early: a framebuffer
+            // borrowed for the read has to go back whether the read worked.
+            if let Some(borrowed) = borrowed {
+                gl.delete_framebuffer(borrowed);
+            }
 
             let error = gl.get_error();
             if error != glow::NO_ERROR {
@@ -723,7 +767,7 @@ unsafe fn resolve_and_unbind(
     gl.disable(glow::SCISSOR_TEST);
     if let Some(ms) = multisample {
         gl.bind_framebuffer(glow::READ_FRAMEBUFFER, Some(ms.framebuffer));
-        gl.bind_framebuffer(glow::DRAW_FRAMEBUFFER, Some(target.framebuffer));
+        gl.bind_framebuffer(glow::DRAW_FRAMEBUFFER, target.framebuffer);
         // NEAREST, not LINEAR: a blit whose read buffer is multisampled and
         // whose draw buffer is not must use NEAREST, and the resolve itself is
         // what averages the samples.
@@ -1138,6 +1182,40 @@ fn internal_format(format: PixelFormat) -> u32 {
 /// stores its texels, this says how the bytes a caller hands over are arranged.
 /// A single-channel texture takes and gives one byte per texel, and asking for
 /// four would read three past the end of every row.
+/// A framebuffer over a texture that has none, for the length of one read.
+///
+/// # Safety
+///
+/// A context must be current, and `texture` must have been created by it.
+unsafe fn attach_temporarily(
+    gl: &glow::Context,
+    texture: &GlesTexture,
+) -> Result<glow::Framebuffer> {
+    let framebuffer = gl
+        .create_framebuffer()
+        .map_err(|e| gl_err("create_framebuffer", &e))?;
+    gl.bind_framebuffer(glow::FRAMEBUFFER, Some(framebuffer));
+    gl.framebuffer_texture_2d(
+        glow::FRAMEBUFFER,
+        glow::COLOR_ATTACHMENT0,
+        glow::TEXTURE_2D,
+        Some(texture.texture),
+        0,
+    );
+    let status = gl.check_framebuffer_status(glow::FRAMEBUFFER);
+    if status != glow::FRAMEBUFFER_COMPLETE {
+        gl.delete_framebuffer(framebuffer);
+        gl.bind_framebuffer(glow::FRAMEBUFFER, None);
+        return Err(Error::Backend {
+            backend: "gles",
+            detail: format!(
+                "reading back this format needs an attachment it cannot have: {status:#x}"
+            ),
+        });
+    }
+    Ok(framebuffer)
+}
+
 fn transfer_format(format: PixelFormat) -> u32 {
     match format {
         PixelFormat::R8Unorm => glow::RED,

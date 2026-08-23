@@ -21,6 +21,16 @@ pub struct TextureUsage {
 }
 
 impl TextureUsage {
+    /// Read by a shader and written from the processor, never rendered into.
+    pub const fn sampled() -> Self {
+        Self {
+            sampled: true,
+            render_target: false,
+            transfer: true,
+            scanout: false,
+        }
+    }
+
     /// A plain offscreen render target: the golden and conformance suites run
     /// entirely on these.
     pub const fn offscreen() -> Self {
@@ -113,6 +123,26 @@ impl TextureDescriptor {
             extent,
             format,
             usage: TextureUsage::offscreen(),
+            sample_count: 1,
+            mip_levels: 1,
+            #[cfg(unix)]
+            external: None,
+        }
+    }
+
+    /// A texture only ever read by a shader.
+    ///
+    /// A baked gradient ramp and an uploaded image are both this: written once
+    /// from the processor, sampled many times, never drawn into. Saying so
+    /// costs a backend nothing and saves it a color attachment -- which is not
+    /// merely tidiness on GLES, where a format can be filterable as a texture
+    /// and not renderable as an attachment. Asking for a target a caller does
+    /// not need is how a texture that would have worked fails to be created.
+    pub fn sampled(extent: Extent2D, format: PixelFormat) -> Self {
+        Self {
+            extent,
+            format,
+            usage: TextureUsage::sampled(),
             sample_count: 1,
             mip_levels: 1,
             #[cfg(unix)]

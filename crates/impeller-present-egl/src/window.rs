@@ -167,12 +167,21 @@ impl PresentTarget<GlesHal> for WindowTarget {
             .as_ref()
             .ok_or(Error::Unsupported("this target has been destroyed"))?;
 
+        // The frame is blitted out of the texture's own framebuffer, so a target
+        // built without one has nothing to present from. It cannot happen here
+        // -- this target creates its own texture as a render target -- and
+        // saying so beats binding zero, which would silently present whatever
+        // the default framebuffer held.
+        let framebuffer = texture.raw_framebuffer().ok_or(Error::Unsupported(
+            "presenting a texture that is not a render target",
+        ))?;
+
         let (width, height) = (self.extent.width as i32, self.extent.height as i32);
         let gl = ctx.raw_gl();
         // SAFETY: the surface is current, and both framebuffers are complete
         // and of the extent named here.
         unsafe {
-            gl.bind_framebuffer(glow::READ_FRAMEBUFFER, Some(texture.raw_framebuffer()));
+            gl.bind_framebuffer(glow::READ_FRAMEBUFFER, Some(framebuffer));
             gl.bind_framebuffer(glow::DRAW_FRAMEBUFFER, None);
             // A blit is subject to the scissor test, and a clip left enabled by
             // the last draw would present only the part of the frame that draw
