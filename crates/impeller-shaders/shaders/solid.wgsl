@@ -69,7 +69,7 @@ struct Paint {
 
 struct VertexOutput {
     @builtin(position) position: vec4<f32>,
-    @location(0) clip: vec2<f32>,
+    @location(0) clip: vec3<f32>,
     // Where this vertex reads from a sampled texture. Zero for geometry that
     // samples nothing, which costs an interpolation nobody looks at.
     @location(1) uv: vec2<f32>,
@@ -81,12 +81,22 @@ struct VertexOutput {
 
 @vertex
 fn vs_main(
-    @location(0) position: vec2<f32>,
+    @location(0) position: vec3<f32>,
     @location(1) uv: vec2<f32>,
     @location(2) tint: vec4<f32>,
 ) -> VertexOutput {
     var out: VertexOutput;
-    out.position = vec4<f32>(position, 0.0, 1.0);
+    // Depth is zero for every vertex here, and that is not merely because
+    // nothing is stacked in Z. Both APIs test a primitive against the near
+    // plane as part of their clip volume -- Vulkan against 0 <= z <= w, GL
+    // against -w <= z <= w -- and with z pinned to zero each of those reduces
+    // to w >= 0. So the rasterizer discards whatever fell behind the vanishing
+    // line and cuts a triangle that straddles it, interpolating the new
+    // vertices itself. Nothing on the processor has to find that plane.
+    out.position = vec4<f32>(position.xy, 0.0, position.z);
+    // Undivided, so that whatever scale perspective-correct interpolation
+    // leaves on it arrives in every component alike. `to_gradient_space` is
+    // where it comes back out.
     out.clip = position;
     out.uv = uv;
     out.tint = tint;
@@ -173,8 +183,14 @@ fn gradient_color(t: f32, count: i32) -> vec4<f32> {
 }
 
 /// Map a clip-space position into the gradient's own space.
-fn to_gradient_space(clip: vec2<f32>) -> vec2<f32> {
-    let delta = clip - paint.geometry.xy;
+///
+/// The argument arrives homogeneous, as the vertex stage wrote it, so the
+/// divide that recovers a normalized position happens here. Today every `w` is
+/// one -- no transform upstream can produce anything else yet -- so this is
+/// exactly the position it always was, and the guard against a vanishing
+/// divisor arrives with the transform that can make one.
+fn to_gradient_space(clip: vec3<f32>) -> vec2<f32> {
+    let delta = clip.xy / clip.z - paint.geometry.xy;
     let column0 = vec2<f32>(paint.to_local.x, paint.to_local.y);
     let column1 = vec2<f32>(paint.to_local.z, paint.to_local.w);
     return column0 * delta.x + column1 * delta.y;
@@ -378,7 +394,7 @@ fn sample_mesh(uv: vec2<f32>) -> vec4<f32> {
     return texel * premultiplied * paint.geometry.x;
 }
 
-fn sample_image(clip: vec2<f32>) -> vec4<f32> {
+fn sample_image(clip: vec3<f32>) -> vec4<f32> {
     // The same mapping a radial gradient uses, so an image lands correctly on a
     // target that is not square and under a transform that rotates or scales.
     let uv = to_gradient_space(clip);
@@ -498,7 +514,7 @@ fn rounded_rect_distance(point: vec2<f32>, half_size: vec2<f32>, radius: f32) ->
 /// vertices in proportion to how round it is. The edge antialiases from the
 /// distance the shape already computes, which is a better edge than
 /// multisampling gives and costs one sample rather than four.
-fn rounded_rect_coverage(clip: vec2<f32>) -> vec4<f32> {
+fn rounded_rect_coverage(clip: vec3<f32>) -> vec4<f32> {
     let point = to_gradient_space(clip);
     let half_size = paint.geometry.zw;
     let radius = clamp(paint.params.z, 0.0, min(half_size.x, half_size.y));
@@ -536,7 +552,7 @@ fn rounded_rect_coverage(clip: vec2<f32>) -> vec4<f32> {
 /// place coverage is between nothing and all of it. Measured against a densely
 /// sampled true distance it is within a thousandth of a unit there, and drifts
 /// only well inside, where coverage has saturated and nothing can see it.
-fn ellipse_coverage(clip: vec2<f32>) -> vec4<f32> {
+fn ellipse_coverage(clip: vec3<f32>) -> vec4<f32> {
     let point = to_gradient_space(clip);
     let axes = max(paint.geometry.zw, vec2<f32>(1e-6));
 
@@ -574,7 +590,7 @@ fn ellipse_coverage(clip: vec2<f32>) -> vec4<f32> {
 /// chosen in advance and a branch per size; an exponential per tap is a handful
 /// of instructions on hardware that has one, and this is bandwidth-bound long
 /// before it is arithmetic-bound.
-fn blur_along_axis(clip: vec2<f32>) -> vec4<f32> {
+fn blur_along_axis(clip: vec3<f32>) -> vec4<f32> {
     let uv = to_gradient_space(clip);
     let step = paint.geometry.zw;
     let sigma = max(paint.params.z, 1e-4);
@@ -646,7 +662,7 @@ fn sample_or_nothing(uv: vec2<f32>) -> vec4<f32> {
 /// between them -- a structuring element is a set of positions, not a curve --
 /// so a fractional step would only sample the bilinear blend of two texels and
 /// call the result a maximum of them, which it is not.
-fn morphology_along_axis(clip: vec2<f32>) -> vec4<f32> {
+fn morphology_along_axis(clip: vec3<f32>) -> vec4<f32> {
     let uv = to_gradient_space(clip);
     let step = paint.geometry.zw;
     let taps = paint.params.z;

@@ -15,14 +15,14 @@ struct Paint {
 };
 struct VertexOutput {
     vec4 position;
-    vec2 clip;
+    vec3 clip;
     vec2 uv;
     vec4 tint;
 };
-layout(location = 0) in vec2 _p2vs_location0;
+layout(location = 0) in vec3 _p2vs_location0;
 layout(location = 1) in vec2 _p2vs_location1;
 layout(location = 2) in vec4 _p2vs_location2;
-smooth out vec2 _vs2fs_location0;
+smooth out vec3 _vs2fs_location0;
 smooth out vec2 _vs2fs_location1;
 smooth out vec4 _vs2fs_location2;
 
@@ -298,19 +298,19 @@ vec4 blend_tint(int mode_2, vec4 src, vec4 dst) {
 }
 
 void main() {
-    vec2 position = _p2vs_location0;
+    vec3 position = _p2vs_location0;
     vec2 uv = _p2vs_location1;
     vec4 tint = _p2vs_location2;
-    VertexOutput out_ = VertexOutput(vec4(0.0), vec2(0.0), vec2(0.0), vec4(0.0));
-    out_.position = vec4(position, 0.0, 1.0);
+    VertexOutput out_ = VertexOutput(vec4(0.0), vec3(0.0), vec2(0.0), vec4(0.0));
+    out_.position = vec4(position.xy, 0.0, position.z);
     out_.clip = position;
     out_.uv = uv;
     out_.tint = tint;
-    VertexOutput _e11 = out_;
-    gl_Position = _e11.position;
-    _vs2fs_location0 = _e11.clip;
-    _vs2fs_location1 = _e11.uv;
-    _vs2fs_location2 = _e11.tint;
+    VertexOutput _e12 = out_;
+    gl_Position = _e12.position;
+    _vs2fs_location0 = _e12.clip;
+    _vs2fs_location1 = _e12.uv;
+    _vs2fs_location2 = _e12.tint;
     gl_Position.yz = vec2(-gl_Position.y, gl_Position.z * 2.0 - gl_Position.w);
     return;
 }

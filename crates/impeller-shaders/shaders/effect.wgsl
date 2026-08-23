@@ -25,7 +25,7 @@ struct Paint {
 
 struct VertexOutput {
     @builtin(position) position: vec4<f32>,
-    @location(0) clip: vec2<f32>,
+    @location(0) clip: vec3<f32>,
     @location(1) uv: vec2<f32>,
     @location(2) tint: vec4<f32>,
 };
@@ -36,12 +36,12 @@ struct VertexOutput {
 // with a paint and not how geometry reaches clip space.
 @vertex
 fn vs_main(
-    @location(0) position: vec2<f32>,
+    @location(0) position: vec3<f32>,
     @location(1) uv: vec2<f32>,
     @location(2) tint: vec4<f32>,
 ) -> VertexOutput {
     var out: VertexOutput;
-    out.position = vec4<f32>(position, 0.0, 1.0);
+    out.position = vec4<f32>(position.xy, 0.0, position.z);
     out.clip = position;
     out.uv = uv;
     out.tint = tint;
@@ -55,6 +55,6 @@ fn vs_main(
 @fragment
 fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     let threshold = paint.geometry.x;
-    let color = select(paint.stops[1], paint.stops[0], in.clip.x < threshold);
+    let color = select(paint.stops[1], paint.stops[0], in.clip.x / in.clip.z < threshold);
     return vec4<f32>(color.rgb * color.a, color.a);
 }

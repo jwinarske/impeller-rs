@@ -15,7 +15,7 @@ struct Paint {
 };
 struct VertexOutput {
     vec4 position;
-    vec2 clip;
+    vec3 clip;
     vec2 uv;
     vec4 tint;
 };
@@ -25,14 +25,14 @@ uniform highp sampler2D _group_0_binding_0_fs;
 
 uniform highp sampler2D _group_0_binding_2_fs;
 
-smooth in vec2 _vs2fs_location0;
+smooth in vec3 _vs2fs_location0;
 smooth in vec2 _vs2fs_location1;
 smooth in vec4 _vs2fs_location2;
 layout(location = 0) out vec4 _fs2p_location0;
 
 void main() {
     VertexOutput in_ = VertexOutput(gl_FragCoord, _vs2fs_location0, _vs2fs_location1, _vs2fs_location2);
-    vec2 coord = ((in_.clip * 0.5) + vec2(0.5));
+    vec2 coord = (((in_.clip.xy / vec2(in_.clip.z)) * 0.5) + vec2(0.5));
     vec4 first = textureLod(_group_0_binding_0_fs, vec2(coord), 0.0);
     vec4 second = textureLod(_group_0_binding_2_fs, vec2(coord), 0.0);
     vec4 tint_1 = _group_1_binding_0_fs.stops[0];

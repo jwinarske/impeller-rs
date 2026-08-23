@@ -30,19 +30,19 @@ struct Paint {
 
 struct VertexOutput {
     @builtin(position) position: vec4<f32>,
-    @location(0) clip: vec2<f32>,
+    @location(0) clip: vec3<f32>,
     @location(1) uv: vec2<f32>,
     @location(2) tint: vec4<f32>,
 };
 
 @vertex
 fn vs_main(
-    @location(0) position: vec2<f32>,
+    @location(0) position: vec3<f32>,
     @location(1) uv: vec2<f32>,
     @location(2) tint: vec4<f32>,
 ) -> VertexOutput {
     var out: VertexOutput;
-    out.position = vec4<f32>(position, 0.0, 1.0);
+    out.position = vec4<f32>(position.xy, 0.0, position.z);
     out.clip = position;
     out.uv = uv;
     out.tint = tint;
@@ -55,7 +55,7 @@ fn vs_main(
 // whatever they hold, and where they differ it is exactly how much.
 @fragment
 fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
-    let coord = in.clip * 0.5 + vec2<f32>(0.5);
+    let coord = in.clip.xy / in.clip.z * 0.5 + vec2<f32>(0.5);
     let first = textureSampleLevel(image_texture, image_sampler, coord, 0.0);
     let second = textureSampleLevel(second_texture, image_sampler, coord, 0.0);
     let tint = paint.stops[0];

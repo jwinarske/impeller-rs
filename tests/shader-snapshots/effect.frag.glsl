@@ -15,13 +15,13 @@ struct Paint {
 };
 struct VertexOutput {
     vec4 position;
-    vec2 clip;
+    vec3 clip;
     vec2 uv;
     vec4 tint;
 };
 layout(std140) uniform Paint_block_0Fragment { Paint _group_1_binding_0_fs; };
 
-smooth in vec2 _vs2fs_location0;
+smooth in vec3 _vs2fs_location0;
 smooth in vec2 _vs2fs_location1;
 smooth in vec4 _vs2fs_location2;
 layout(location = 0) out vec4 _fs2p_location0;
@@ -31,7 +31,7 @@ void main() {
     float threshold = _group_1_binding_0_fs.geometry.x;
     vec4 _e8 = _group_1_binding_0_fs.stops[1];
     vec4 _e12 = _group_1_binding_0_fs.stops[0];
-    vec4 color = ((in_.clip.x < threshold) ? _e12 : _e8);
+    vec4 color = (((in_.clip.x / in_.clip.z) < threshold) ? _e12 : _e8);
     _fs2p_location0 = vec4((color.xyz * color.w), color.w);
     return;
 }

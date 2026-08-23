@@ -15,7 +15,7 @@ struct Paint {
 };
 struct VertexOutput {
     vec4 position;
-    vec2 clip;
+    vec3 clip;
     vec2 uv;
     vec4 tint;
 };
@@ -23,7 +23,7 @@ layout(std140) uniform Paint_block_0Fragment { Paint _group_1_binding_0_fs; };
 
 uniform highp sampler2D _group_0_binding_0_fs;
 
-smooth in vec2 _vs2fs_location0;
+smooth in vec3 _vs2fs_location0;
 smooth in vec2 _vs2fs_location1;
 smooth in vec4 _vs2fs_location2;
 layout(location = 0) out vec4 _fs2p_location0;
@@ -88,15 +88,15 @@ vec4 gradient_color(float t_2, int count_1) {
     return _e10;
 }
 
-vec2 to_gradient_space(vec2 clip) {
-    vec4 _e3 = _group_1_binding_0_fs.geometry;
-    vec2 delta = (clip - _e3.xy);
-    float _e9 = _group_1_binding_0_fs.to_local.x;
-    float _e13 = _group_1_binding_0_fs.to_local.y;
-    vec2 column0_ = vec2(_e9, _e13);
-    float _e18 = _group_1_binding_0_fs.to_local.z;
-    float _e22 = _group_1_binding_0_fs.to_local.w;
-    vec2 column1_ = vec2(_e18, _e22);
+vec2 to_gradient_space(vec3 clip) {
+    vec4 _e7 = _group_1_binding_0_fs.geometry;
+    vec2 delta = ((clip.xy / vec2(clip.z)) - _e7.xy);
+    float _e13 = _group_1_binding_0_fs.to_local.x;
+    float _e17 = _group_1_binding_0_fs.to_local.y;
+    vec2 column0_ = vec2(_e13, _e17);
+    float _e22 = _group_1_binding_0_fs.to_local.z;
+    float _e26 = _group_1_binding_0_fs.to_local.w;
+    vec2 column1_ = vec2(_e22, _e26);
     return ((column0_ * delta.x) + (column1_ * delta.y));
 }
 
@@ -234,7 +234,7 @@ vec4 sample_mesh(vec2 uv_2) {
     return ((_e41 * premultiplied_1) * _e46);
 }
 
-vec4 sample_image(vec2 clip_1) {
+vec4 sample_image(vec3 clip_1) {
     vec2 coord_3 = vec2(0.0);
     vec4 texel_1 = vec4(0.0);
     vec2 _e1 = to_gradient_space(clip_1);
@@ -290,7 +290,7 @@ float rounded_rect_distance(vec2 point, vec2 half_size, float radius) {
     return ((min(max(q.x, q.y), 0.0) + length(max(q, vec2(0.0)))) - radius);
 }
 
-vec4 rounded_rect_coverage(vec2 clip_2) {
+vec4 rounded_rect_coverage(vec3 clip_2) {
     vec2 _e1 = to_gradient_space(clip_2);
     vec4 _e4 = _group_1_binding_0_fs.geometry;
     vec2 half_size_1 = _e4.zw;
@@ -308,7 +308,7 @@ vec4 rounded_rect_coverage(vec2 clip_2) {
     return vec4((tint_3.xyz * alpha_1), alpha_1);
 }
 
-vec4 ellipse_coverage(vec2 clip_3) {
+vec4 ellipse_coverage(vec3 clip_3) {
     float stroke = 0.0;
     vec2 _e1 = to_gradient_space(clip_3);
     vec4 _e4 = _group_1_binding_0_fs.geometry;
@@ -334,7 +334,7 @@ vec4 ellipse_coverage(vec2 clip_3) {
     return vec4((tint_4.xyz * alpha_2), alpha_2);
 }
 
-vec4 blur_along_axis(vec2 clip_4) {
+vec4 blur_along_axis(vec3 clip_4) {
     vec4 total_1 = vec4(0.0);
     float weight_sum = 0.0;
     float i_2 = 0.0;
@@ -378,7 +378,7 @@ vec4 sample_or_nothing(vec2 uv_3) {
     return _e15;
 }
 
-vec4 morphology_along_axis(vec2 clip_5) {
+vec4 morphology_along_axis(vec3 clip_5) {
     vec4 best = vec4(0.0);
     float i_3 = 1.0;
     vec2 _e1 = to_gradient_space(clip_5);

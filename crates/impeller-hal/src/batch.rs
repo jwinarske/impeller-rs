@@ -121,7 +121,23 @@ impl ClipState {
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
 #[repr(C)]
 pub struct Vertex {
-    pub position: [f32; 2],
+    /// Homogeneous clip position: the point as the recorder produced it,
+    /// *before* the rasterizer divides.
+    ///
+    /// `w` is one for everything an affine transform placed, which is nearly
+    /// everything, and the third float is what lets a transform with
+    /// perspective say anything at all — there is no two-component form of a
+    /// point that has been divided by a quantity varying across the triangle.
+    ///
+    /// Carrying it undivided rather than dividing on the way here buys two
+    /// things beyond the mapping itself. The rasterizer clips against the plane
+    /// where `w` reaches zero, so geometry crossing the vanishing line is cut
+    /// there by the hardware instead of arriving as coordinates on both sides
+    /// of infinity. And every varying beside this one — texture coordinates
+    /// most of all — is then interpolated perspective-correctly, which is the
+    /// difference between a textured quad seen at an angle and the diagonal
+    /// seam that affine interpolation puts across it.
+    pub position: [f32; 3],
     /// Where in a sampled texture this vertex reads, if the material samples
     /// one. Zero where it does not, which costs nothing to interpolate.
     pub uv: [f32; 2],
@@ -144,6 +160,21 @@ pub struct Vertex {
 
 impl Vertex {
     pub const fn new(position: [f32; 2], uv: [f32; 2]) -> Self {
+        Self::projected([position[0], position[1], 1.0], uv)
+    }
+
+    /// A vertex that samples nothing.
+    pub const fn at(position: [f32; 2]) -> Self {
+        Self::new(position, [0.0, 0.0])
+    }
+
+    /// A vertex whose position is already homogeneous.
+    ///
+    /// The form a transform carrying perspective produces. [`Self::new`] is
+    /// this with a `w` of one, which is what an affine always gives, and is why
+    /// the ordinary constructors did not have to change when the third float
+    /// arrived.
+    pub const fn projected(position: [f32; 3], uv: [f32; 2]) -> Self {
         Self {
             position,
             uv,
@@ -151,9 +182,9 @@ impl Vertex {
         }
     }
 
-    /// A vertex that samples nothing.
-    pub const fn at(position: [f32; 2]) -> Self {
-        Self::new(position, [0.0, 0.0])
+    /// A homogeneous vertex that samples nothing.
+    pub const fn at_projected(position: [f32; 3]) -> Self {
+        Self::projected(position, [0.0, 0.0])
     }
 
     /// The same vertex, tinted.
@@ -665,5 +696,32 @@ mod tests {
         // Rebasing must start from zero again rather than continuing from the
         // cleared contents.
         assert_eq!(batch.indices, vec![0, 1, 2]);
+    }
+
+    /// Both backends describe this struct to their own API by asking it where
+    /// its fields are, so what they agree on is whatever this says. Pinning it
+    /// means a reordering shows up here, once, rather than as geometry that
+    /// reads its color out of its position on both backends identically.
+    #[test]
+    fn the_vertex_layout_is_what_both_backends_describe() {
+        use std::mem::{offset_of, size_of};
+        assert_eq!(size_of::<Vertex>(), 36);
+        assert_eq!(offset_of!(Vertex, position), 0);
+        assert_eq!(offset_of!(Vertex, uv), 12);
+        assert_eq!(offset_of!(Vertex, color), 20);
+    }
+
+    /// The property that let the third float arrive without touching a caller.
+    #[test]
+    fn an_ordinary_vertex_carries_a_w_of_one() {
+        assert_eq!(Vertex::at([3.0, 4.0]).position, [3.0, 4.0, 1.0]);
+        assert_eq!(
+            Vertex::new([3.0, 4.0], [0.5, 0.5]).position,
+            [3.0, 4.0, 1.0]
+        );
+        assert_eq!(
+            Vertex::at_projected([3.0, 4.0, 2.0]).position,
+            [3.0, 4.0, 2.0]
+        );
     }
 }

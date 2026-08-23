@@ -344,16 +344,22 @@ impl GlesContext {
             gl.buffer_data_u8_slice(glow::UNIFORM_BUFFER, &paints, glow::STREAM_DRAW);
 
             // Position then texture coordinates, interleaved in one buffer.
-            // The stride comes from the shared vertex type rather than a
-            // literal, so adding a member cannot leave the two backends
-            // disagreeing about where the next vertex starts.
+            // The stride and every offset come from the shared vertex type
+            // rather than from literals, so adding a member or widening one
+            // cannot leave the two backends disagreeing about where anything
+            // starts. A description wrong the same way in both is the failure
+            // the cross-backend comparison cannot see.
             let stride = std::mem::size_of::<impeller_hal::Vertex>() as i32;
+            let offset = |field| field as i32;
             gl.enable_vertex_attrib_array(0);
-            gl.vertex_attrib_pointer_f32(0, 2, glow::FLOAT, false, stride, 0);
+            let position = offset(std::mem::offset_of!(impeller_hal::Vertex, position));
+            gl.vertex_attrib_pointer_f32(0, 3, glow::FLOAT, false, stride, position);
             gl.enable_vertex_attrib_array(1);
-            gl.vertex_attrib_pointer_f32(1, 2, glow::FLOAT, false, stride, 8);
+            let uv = offset(std::mem::offset_of!(impeller_hal::Vertex, uv));
+            gl.vertex_attrib_pointer_f32(1, 2, glow::FLOAT, false, stride, uv);
             gl.enable_vertex_attrib_array(2);
-            gl.vertex_attrib_pointer_f32(2, 4, glow::FLOAT, false, stride, 16);
+            let color = offset(std::mem::offset_of!(impeller_hal::Vertex, color));
+            gl.vertex_attrib_pointer_f32(2, 4, glow::FLOAT, false, stride, color);
 
             // Blend and scissor state are both global, so each is set only
             // where a draw actually needs a different one. Tracking them here

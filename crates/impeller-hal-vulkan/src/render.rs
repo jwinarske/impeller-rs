@@ -1126,22 +1126,27 @@ fn build_pipeline(
         .binding(0)
         .stride(std::mem::size_of::<impeller_hal::Vertex>() as u32)
         .input_rate(vk::VertexInputRate::VERTEX)];
+    // Offsets from the type rather than from arithmetic over the field widths.
+    // Two backends describe this one struct to two APIs, and a description that
+    // is wrong the same way in both is the failure nothing here would catch --
+    // the pixels are compared against the other backend. Neither of them gets
+    // to restate the layout.
     let attributes = [
         vk::VertexInputAttributeDescription::default()
             .location(0)
             .binding(0)
-            .format(vk::Format::R32G32_SFLOAT)
-            .offset(0),
+            .format(vk::Format::R32G32B32_SFLOAT)
+            .offset(std::mem::offset_of!(impeller_hal::Vertex, position) as u32),
         vk::VertexInputAttributeDescription::default()
             .location(1)
             .binding(0)
             .format(vk::Format::R32G32_SFLOAT)
-            .offset(std::mem::size_of::<[f32; 2]>() as u32),
+            .offset(std::mem::offset_of!(impeller_hal::Vertex, uv) as u32),
         vk::VertexInputAttributeDescription::default()
             .location(2)
             .binding(0)
             .format(vk::Format::R32G32B32A32_SFLOAT)
-            .offset(2 * std::mem::size_of::<[f32; 2]>() as u32),
+            .offset(std::mem::offset_of!(impeller_hal::Vertex, color) as u32),
     ];
     let vertex_input = vk::PipelineVertexInputStateCreateInfo::default()
         .vertex_binding_descriptions(&bindings)
