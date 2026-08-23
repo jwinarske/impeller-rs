@@ -100,6 +100,10 @@ fn the_translated_glsl_is_what_it_was() {
         "effect_image.frag.glsl",
         impeller_shaders::EFFECT_IMAGE_FS_GLSL,
     );
+    check(
+        "effect_two_images.frag.glsl",
+        impeller_shaders::EFFECT_TWO_IMAGES_FS_GLSL,
+    );
 }
 
 #[test]
@@ -109,5 +113,9 @@ fn the_translated_spirv_is_what_it_was() {
     check(
         "effect_image.spv.txt",
         &digest(impeller_shaders::EFFECT_IMAGE_SPV),
+    );
+    check(
+        "effect_two_images.spv.txt",
+        &digest(impeller_shaders::EFFECT_TWO_IMAGES_SPV),
     );
 }
