@@ -20,7 +20,7 @@ pub mod ramp;
 pub mod vertices;
 
 pub use canvas::{Canvas, Layer, Morphology, Pass, PointMode, Recording, Rect, TextureSource};
-pub use color::Color;
+pub use color::{Color, ColorSpace};
 pub use execute::{execute, execute_deferred, execute_layers, render_offscreen, resolve_sources};
 pub use impeller_text::{Atlas, AtlasError, AtlasRect, Coverage, GlyphKey, PositionedGlyph};
 pub use paint::{GradientStop, ImageFilter, MaskBlurStyle, Paint, Shader, Style};

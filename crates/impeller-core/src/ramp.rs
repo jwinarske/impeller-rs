@@ -106,12 +106,22 @@ fn sample_at(stops: &[GradientStop], t: f32) -> crate::Color {
     result
 }
 
+/// Interpolate two stops, in one space rather than component by component.
+///
+/// The two colors need not have been stated against the same primaries, and
+/// mixing their components directly would then average numbers that do not
+/// describe the same axes -- an answer that is subtly wrong rather than
+/// obviously so, and one whose error grows with how far apart the two spaces
+/// are. `to_array` puts both against the primaries the pipeline works in, which
+/// is the same thing every other reader of a color does.
 fn mix(a: crate::Color, b: crate::Color, t: f32) -> crate::Color {
+    let [ar, ag, ab, aa] = a.to_array();
+    let [br, bg, bb, ba] = b.to_array();
     crate::Color::linear(
-        a.r + (b.r - a.r) * t,
-        a.g + (b.g - a.g) * t,
-        a.b + (b.b - a.b) * t,
-        a.a + (b.a - a.a) * t,
+        ar + (br - ar) * t,
+        ag + (bg - ag) * t,
+        ab + (bb - ab) * t,
+        aa + (ba - aa) * t,
     )
 }
 
