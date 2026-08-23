@@ -944,9 +944,19 @@ bandwidth to sample it.
 
 The transfer paths had four bytes per pixel written in as a literal, which stays
 invisible until a format has one. The size a caller must supply, the size read
-back, and the channel layout a transfer names are all properties of the format,
-and getting the last of those wrong reads three texels past the end of every
-row.
+back, the channel layout a transfer names, and the component *type* it carries
+are all properties of the format, and getting the third of those wrong reads
+three texels past the end of every row.
+
+The fourth was found the same way and one format later. `R8Unorm` made the
+channel layout a property; the type stayed a literal `UNSIGNED_BYTE`, which is
+the same mistake surviving in the half of the statement nothing had exercised
+yet. A half-float texture was handed bytes, and ten-bit color needs its four
+components packed into a single word rather than four separate ones. Reading
+back is not always the same answer as writing: the combination an implementation
+must accept for a floating-point attachment is four components of `FLOAT`, so
+that path asks for what is guaranteed and narrows afterwards, which is exact
+because every value being narrowed came out of a half-float attachment.
 
 Rasterizing an outline needs a font parser, and font parsing is out of scope —
 bring `swash` or `ttf-parser` and hand over the coverage. That boundary is worth

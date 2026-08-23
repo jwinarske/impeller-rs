@@ -561,7 +561,7 @@ impl GlesContext {
                 extent.width as i32,
                 extent.height as i32,
                 transfer_format(texture.format),
-                glow::UNSIGNED_BYTE,
+                transfer_type(texture.format),
                 glow::PixelUnpackData::Slice(pixels),
             );
             if texture.mip_levels > 1 {
@@ -588,8 +588,12 @@ impl GlesContext {
 
     pub fn read_texture(&mut self, texture: &mut GlesTexture) -> Result<Vec<u8>> {
         let extent = texture.extent;
+        // Two widths, because they differ for a half-float attachment: what the
+        // wire carries, and what this returns. They are the same for every
+        // other format, and the narrowing below is a no-op there.
+        let wire = (extent.area() * read_bytes_per_pixel(texture.format) as u64) as usize;
         let size = (extent.area() * texture.format.bytes_per_pixel() as u64) as usize;
-        let mut pixels = vec![0u8; size];
+        let mut pixels = vec![0u8; wire];
 
         let gl = self.raw_gl();
         // SAFETY: the framebuffer is complete and the destination is sized for
@@ -614,7 +618,7 @@ impl GlesContext {
                 extent.width as i32,
                 extent.height as i32,
                 transfer_format(texture.format),
-                glow::UNSIGNED_BYTE,
+                read_type(texture.format),
                 glow::PixelPackData::Slice(&mut pixels),
             );
             gl.bind_framebuffer(glow::FRAMEBUFFER, None);
@@ -631,6 +635,17 @@ impl GlesContext {
                     detail: format!("readback produced GL error {error:#x}"),
                 });
             }
+        }
+        if wire != size {
+            // Every value here came out of a half-float attachment, so writing
+            // it back as one loses nothing: the round trip through the wider
+            // type is exact.
+            pixels = pixels
+                .chunks_exact(4)
+                .map(|word| f32::from_le_bytes([word[0], word[1], word[2], word[3]]))
+                .flat_map(|value| half::f16::from_f32(value).to_le_bytes())
+                .collect();
+            debug_assert_eq!(pixels.len(), size);
         }
 
         // No row flip, despite GL numbering framebuffer rows from the bottom.
@@ -1220,6 +1235,45 @@ fn transfer_format(format: PixelFormat) -> u32 {
     match format {
         PixelFormat::R8Unorm => glow::RED,
         _ => glow::RGBA,
+    }
+}
+
+/// How the components of one texel are laid out on the wire, on the way in.
+///
+/// A companion to [`transfer_format`], which says which channels a transfer
+/// names, and needed for the same reason: both are properties of the format,
+/// and this one was a literal `UNSIGNED_BYTE` at every call. That is invisible
+/// while every format is four unsigned bytes and wrong for the two here that
+/// are not -- a half-float texture would have been handed bytes, and ten-bit
+/// color needs its four components packed into one word rather than four.
+fn transfer_type(format: PixelFormat) -> u32 {
+    match format {
+        PixelFormat::Rgba16Float => glow::HALF_FLOAT,
+        PixelFormat::Rgb10A2Unorm => glow::UNSIGNED_INT_2_10_10_10_REV,
+        _ => glow::UNSIGNED_BYTE,
+    }
+}
+
+/// The same, on the way out, which is not always the same answer.
+///
+/// Reading back is constrained by the attachment rather than by the texture,
+/// and for a floating-point color buffer the combination every implementation
+/// must accept is four components of `FLOAT`. Half is permitted and not
+/// promised, so this asks for what is guaranteed and narrows afterwards --
+/// which is exact, since every value being narrowed came out of a half-float
+/// attachment in the first place.
+fn read_type(format: PixelFormat) -> u32 {
+    match format {
+        PixelFormat::Rgba16Float => glow::FLOAT,
+        other => transfer_type(other),
+    }
+}
+
+/// Bytes one texel occupies on the wire when read with [`read_type`].
+fn read_bytes_per_pixel(format: PixelFormat) -> usize {
+    match format {
+        PixelFormat::Rgba16Float => 16,
+        other => other.bytes_per_pixel() as usize,
     }
 }
 

@@ -12,6 +12,7 @@ keywords = ["testing", "graphics", "harness", "golden"]
 categories = ["development-tools::testing", "graphics"]
 
 [dependencies]
+half.workspace = true
 glam = { workspace = true }
 impeller-core = { workspace = true }
 impeller-geometry = { workspace = true }

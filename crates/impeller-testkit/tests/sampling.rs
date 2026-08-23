@@ -975,3 +975,67 @@ fn a_texture_that_is_only_sampled_needs_no_attachment_and_still_reads_back() {
     }
     assert!(ran > 0, "no backend available");
 }
+
+#[test]
+fn a_half_float_texture_round_trips_on_both_backends() {
+    // The other half of a bug this tree already fixed once. The transfer paths
+    // named the channel layout from the format and then wrote the component
+    // *type* in as a literal `UNSIGNED_BYTE`, which is invisible while every
+    // format is four unsigned bytes and wrong for the two that are not.
+    //
+    // Half-float is also the first format here that can carry a component
+    // outside zero to one, so the values below include some -- a color outside
+    // the sRGB primaries is exactly a color with a negative component, and a
+    // path that clamps or truncates has nowhere to hide it.
+    let values: Vec<f32> = (0..16)
+        .flat_map(|i| {
+            let v = i as f32 / 8.0;
+            [v, -v * 0.25, 1.0 + v, 1.0]
+        })
+        .collect();
+    let want: Vec<u8> = values
+        .iter()
+        .flat_map(|v| half::f16::from_f32(*v).to_le_bytes())
+        .collect();
+    let mut ran = 0;
+
+    let check = |got: Vec<u8>, backend: &str| {
+        assert_eq!(got.len(), want.len(), "{backend} returned the wrong width");
+        for (i, (a, b)) in got.chunks_exact(2).zip(want.chunks_exact(2)).enumerate() {
+            let got = half::f16::from_le_bytes([a[0], a[1]]).to_f32();
+            let expected = half::f16::from_le_bytes([b[0], b[1]]).to_f32();
+            assert!(
+                (got - expected).abs() < 1e-3,
+                "{backend} changed component {i}: {got} against {expected}"
+            );
+        }
+    };
+
+    if let Ok(mut ctx) = Validated::new(DevicePreference::Auto) {
+        let mut texture = ctx
+            .create_texture(&TextureDescriptor::sampled(
+                SOURCE,
+                PixelFormat::Rgba16Float,
+            ))
+            .expect("vulkan half-float texture");
+        ctx.write_texture(&mut texture, &want).expect("upload");
+        let got = ctx.read_texture(&mut texture).expect("readback");
+        ctx.destroy_texture(texture);
+        check(got, "vulkan");
+        ran += 1;
+    }
+    if let Ok(mut ctx) = GlesValidated::new(DisplayTarget::Surfaceless) {
+        let mut texture = ctx
+            .create_texture(&TextureDescriptor::sampled(
+                SOURCE,
+                PixelFormat::Rgba16Float,
+            ))
+            .expect("gles half-float texture");
+        ctx.write_texture(&mut texture, &want).expect("upload");
+        let got = ctx.read_texture(&mut texture).expect("readback");
+        ctx.destroy_texture(texture);
+        check(got, "gles");
+        ran += 1;
+    }
+    assert!(ran > 0, "no backend available");
+}

@@ -12,6 +12,7 @@ keywords = ["gles", "opengl", "backend", "graphics", "hal"]
 categories = ["graphics", "rendering::graphics-api"]
 
 [dependencies]
+half.workspace = true
 glow = { workspace = true }
 impeller-hal = { workspace = true }
 impeller-shaders = { workspace = true }
