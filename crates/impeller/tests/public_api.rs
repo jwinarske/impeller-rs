@@ -11505,3 +11505,117 @@ fn a_gradient_carries_the_same_color_however_many_stops_state_it() {
         pixel(&tabulated, at, 64)
     );
 }
+
+/// Read a floating-point surface back as linear components.
+///
+/// The bytes arrive packed as half-floats, which is what the format holds;
+/// nothing in the testkit's comparison surface understands them, and nothing
+/// needs to -- this reads a few values out of one image rather than comparing
+/// two.
+fn wide_pixels(ctx: &mut Context, canvas: Canvas) -> Vec<[f32; 4]> {
+    let mut surface = ctx
+        .create_surface(SIZE, PixelFormat::Rgba16Float)
+        .expect("floating-point surface");
+    ctx.draw(&mut surface, &canvas.finish()).expect("draw");
+    let bytes = ctx.read(&mut surface).expect("read");
+    ctx.destroy_surface(surface);
+    bytes
+        .chunks_exact(8)
+        .map(|texel| {
+            let mut out = [0.0; 4];
+            for (channel, slot) in out.iter_mut().enumerate() {
+                let at = channel * 2;
+                *slot = half::f16::from_le_bytes([texel[at], texel[at + 1]]).to_f32();
+            }
+            out
+        })
+        .collect()
+}
+
+fn wide_pixel(pixels: &[[f32; 4]], x: u32, y: u32) -> [f32; 4] {
+    pixels[(y * SIZE.width + x) as usize]
+}
+
+/// The whole point of the work, end to end: a color the sRGB primaries cannot
+/// describe reaches a target that can hold it, with the components that say so
+/// still outside the unit range.
+#[test]
+fn a_color_outside_the_srgb_primaries_reaches_a_floating_point_target() {
+    let Some(mut ctx) = context() else { return };
+    if !ctx.capabilities().float_render_targets {
+        eprintln!("skipping: this device cannot render into a floating-point target");
+        return;
+    }
+
+    let mut canvas = Canvas::new(SIZE);
+    canvas.clear(Color::BLACK);
+    canvas
+        .draw_rect(
+            Rect::new(16.0, 16.0, 112.0, 112.0),
+            &Paint::fill(Color::display_p3(1.0, 0.0, 0.0, 1.0)).with_anti_alias(false),
+        )
+        .expect("rect");
+    let wide = wide_pixels(&mut ctx, canvas);
+    let inside = wide_pixel(&wide, 64, 64);
+
+    assert!((inside[0] - 1.224_940_2).abs() < 0.01, "red {}", inside[0]);
+    assert!(
+        (inside[1] + 0.042_056_95).abs() < 0.01,
+        "green {}",
+        inside[1]
+    );
+    assert!(
+        (inside[2] + 0.019_637_55).abs() < 0.01,
+        "blue {}",
+        inside[2]
+    );
+    // The negatives are the whole statement. A pipeline that clamped anywhere
+    // between the paint and the target would return zero here and pass every
+    // other test in this file.
+    assert!(inside[1] < -0.02, "green came back {}", inside[1]);
+
+    // And the same drawing into an eight-bit target still saturates, which is
+    // what says the clamps that were removed did not leak into the path every
+    // other test uses.
+    let mut canvas = Canvas::new(SIZE);
+    canvas.clear(Color::BLACK);
+    canvas
+        .draw_rect(
+            Rect::new(16.0, 16.0, 112.0, 112.0),
+            &Paint::fill(Color::display_p3(1.0, 0.0, 0.0, 1.0)).with_anti_alias(false),
+        )
+        .expect("rect");
+    let narrow = render(&mut ctx, canvas);
+    assert_eq!(pixel(&narrow, 64, 64), [255, 0, 0, 255]);
+}
+
+/// A layer is an intermediate of the frame it composites into, so a
+/// floating-point root has to give floating-point layers -- otherwise the value
+/// above dies at the first `saveLayer` and nothing says so.
+#[test]
+fn a_wide_color_survives_a_layer_when_the_root_can_hold_it() {
+    let Some(mut ctx) = context() else { return };
+    if !ctx.capabilities().float_render_targets {
+        eprintln!("skipping: this device cannot render into a floating-point target");
+        return;
+    }
+
+    let mut canvas = Canvas::new(SIZE);
+    canvas.clear(Color::BLACK);
+    canvas.save_layer(Layer::opacity(1.0));
+    canvas
+        .draw_rect(
+            Rect::new(16.0, 16.0, 112.0, 112.0),
+            &Paint::fill(Color::display_p3(1.0, 0.0, 0.0, 1.0)).with_anti_alias(false),
+        )
+        .expect("rect");
+    canvas.restore();
+
+    let wide = wide_pixels(&mut ctx, canvas);
+    let inside = wide_pixel(&wide, 64, 64);
+    assert!(
+        inside[1] < -0.02,
+        "the layer flattened the color to {inside:?}"
+    );
+    assert!((inside[0] - 1.224_940_2).abs() < 0.02, "red {}", inside[0]);
+}

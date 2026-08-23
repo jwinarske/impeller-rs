@@ -10,7 +10,9 @@
 
 use crate::canvas::{Pass, Recording, TextureSource};
 use crate::ramp::RAMP_WIDTH;
-use impeller_hal::{Error, Extent2D, Hal, HalContext, PixelFormat, Result, TextureDescriptor};
+use impeller_hal::{
+    Error, Extent2D, Hal, HalContext, HalTexture, PixelFormat, Result, TextureDescriptor,
+};
 
 /// The textures a recording needs that it did not arrive with.
 ///
@@ -167,6 +169,7 @@ pub fn execute_layers<H: Hal>(
     ctx: &mut H::Context,
     recording: &Recording,
     images: &[&H::Texture],
+    format: PixelFormat,
 ) -> Result<Transient<H>>
 where
     H::Context: HalContext<Hal = H>,
@@ -181,10 +184,8 @@ where
     // layer is filed when it is restored and cannot be composited before that.
     for pass in &recording.passes[..recording.passes.len() - 1] {
         let outcome = resolve_sources::<H>(pass, images, &transient).and_then(|table| {
-            let mut target = ctx.create_texture(&TextureDescriptor::offscreen(
-                pass.extent,
-                PixelFormat::Rgba8Unorm,
-            ))?;
+            let mut target =
+                ctx.create_texture(&TextureDescriptor::offscreen(pass.extent, format))?;
             let result =
                 ctx.submit_batch_textured(&mut target, &pass.batch, pass.descriptor, &table);
             Ok((target, result))
@@ -226,7 +227,7 @@ pub fn execute<H: Hal>(
 where
     H::Context: HalContext<Hal = H>,
 {
-    let transient = execute_layers::<H>(ctx, recording, images)?;
+    let transient = execute_layers::<H>(ctx, recording, images, surface.format().intermediate())?;
     let root = recording.root();
     let outcome = resolve_sources::<H>(root, images, &transient)
         .and_then(|table| ctx.submit_batch_textured(surface, &root.batch, root.descriptor, &table));
@@ -248,10 +249,29 @@ pub fn render_offscreen<H: Hal>(
 where
     H::Context: HalContext<Hal = H>,
 {
-    let mut target = ctx.create_texture(&TextureDescriptor::offscreen(
-        recording.extent,
-        PixelFormat::Rgba8Unorm,
-    ))?;
+    render_offscreen_into::<H>(ctx, recording, images, PixelFormat::Rgba8Unorm)
+}
+
+/// The same, into a target of the caller's choosing.
+///
+/// Separate rather than a parameter on the call above, because every caller in
+/// this workspace wants eight bits and threading the answer through all of them
+/// to serve the one that does not is the wrong way round. What this exists for
+/// is a target that can hold a color the sRGB primaries cannot describe, which
+/// needs a floating-point format and nothing else here does.
+///
+/// The bytes come back in whatever the format packs them as -- half-floats for
+/// `Rgba16Float` -- rather than converted to anything.
+pub fn render_offscreen_into<H: Hal>(
+    ctx: &mut H::Context,
+    recording: &Recording,
+    images: &[&H::Texture],
+    format: PixelFormat,
+) -> Result<Vec<u8>>
+where
+    H::Context: HalContext<Hal = H>,
+{
+    let mut target = ctx.create_texture(&TextureDescriptor::offscreen(recording.extent, format))?;
     let outcome = execute::<H>(ctx, &mut target, recording, images)
         .and_then(|()| ctx.read_texture(&mut target));
     ctx.destroy_texture(target);
@@ -279,7 +299,7 @@ pub fn execute_deferred<H: Hal>(
 where
     H::Context: HalContext<Hal = H>,
 {
-    let transient = execute_layers::<H>(ctx, recording, images)?;
+    let transient = execute_layers::<H>(ctx, recording, images, surface.format().intermediate())?;
     let root = recording.root();
     let outcome = resolve_sources::<H>(root, images, &transient).and_then(|table| {
         ctx.submit_batch_deferred_textured(surface, &root.batch, root.descriptor, &table)

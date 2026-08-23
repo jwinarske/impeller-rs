@@ -476,8 +476,13 @@ impl SwapchainTarget {
         recording: &impeller_core::Recording,
         images: &[&impeller_hal_vulkan::VulkanTexture],
     ) -> Result<()> {
+        // The swapchain image is the root this frame lands in, so its format is
+        // what a layer has to be able to hold.
         let transient = impeller_core::execute_layers::<impeller_hal_vulkan::VulkanHal>(
-            ctx, recording, images,
+            ctx,
+            recording,
+            images,
+            self.format.intermediate(),
         )?;
         let root = recording.root();
         let outcome = impeller_core::resolve_sources::<impeller_hal_vulkan::VulkanHal>(

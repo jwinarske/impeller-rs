@@ -35,6 +35,7 @@ present-wsi = ["vulkan", "dep:impeller-present-vk"]
 present-egl = ["gles", "dep:impeller-present-egl"]
 
 [dev-dependencies]
+half.workspace = true
 googletest = { workspace = true }
 # This crate, on itself, to turn on the second backend its own tests compare.
 # The default feature set is one backend, which is right for a consumer on a

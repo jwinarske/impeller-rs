@@ -444,6 +444,7 @@ name = "impeller-rs"
 version = "0.1.0"
 dependencies = [
  "googletest",
+ "half",
  "impeller-core",
  "impeller-hal",
  "impeller-hal-gles",

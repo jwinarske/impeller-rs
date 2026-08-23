@@ -68,6 +68,30 @@ impl PixelFormat {
         }
     }
 
+    /// The format an offscreen layer takes when the frame lands in this one.
+    ///
+    /// Following the root is what keeps the cost where the choice was made: a
+    /// caller who asks for a floating-point surface gets layers that can hold
+    /// what it holds, and a caller who does not pays nothing. A layer is an
+    /// intermediate of *this* frame, so it should carry at least what the frame
+    /// it composites into can carry.
+    ///
+    /// Stated as a match rather than as identity because two formats here would
+    /// make bad layers. A single-channel one has nowhere to put color at all.
+    /// And ten-bit color with two-bit alpha is worse for a layer than the
+    /// eight-bit target it would replace, because a layer's alpha is group
+    /// opacity -- a value that gets composited -- rather than a scanout channel
+    /// nothing reads back.
+    ///
+    /// Today this is the identity on every format anything actually renders
+    /// into, which is why introducing it moves no pixel.
+    pub const fn intermediate(self) -> Self {
+        match self {
+            Self::Rgba16Float => Self::Rgba16Float,
+            _ => Self::Rgba8Unorm,
+        }
+    }
+
     /// Whether writes to this format apply an sRGB transfer function.
     pub const fn is_srgb(self) -> bool {
         matches!(self, Self::Rgba8UnormSrgb | Self::Bgra8UnormSrgb)
