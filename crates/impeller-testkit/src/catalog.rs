@@ -4042,7 +4042,7 @@ fn image_filters() -> Vec<Scene> {
                 // not into the item's transform, which would move the source
                 // and then magnify the move as well.
                 Item::filled(card.clone(), ramp()).with_image_filter(ImageFilter::Matrix {
-                    transform: magnify(Vec2::new(24.0, 24.0), 2.0, Vec2::new(36.0, 64.0)),
+                    transform: magnify(Vec2::new(24.0, 24.0), 2.0, Vec2::new(36.0, 64.0)).into(),
                 }),
                 Item::filled(card.clone(), ramp())
                     .with_blend(BlendMode::SrcOver)
@@ -4066,7 +4066,7 @@ fn image_filters() -> Vec<Scene> {
             // A resample this large is where the layer's own resolution stops
             // being an implementation detail and becomes the picture.
             .with_image_filter(ImageFilter::Matrix {
-                transform: magnify(Vec2::splat(64.0), 12.0, Vec2::splat(64.0)),
+                transform: magnify(Vec2::splat(64.0), 12.0, Vec2::splat(64.0)).into(),
             })],
         ),
         Scene::tree(

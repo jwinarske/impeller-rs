@@ -7131,7 +7131,7 @@ fn a_matrix_image_filter_moves_what_was_drawn() {
             20.0,
             &Paint::fill(Color::linear(1.0, 1.0, 1.0, 1.0)).with_image_filter(
                 ImageFilter::Matrix {
-                    transform: Affine2::from_scale(Vec2::splat(2.0)),
+                    transform: Affine2::from_scale(Vec2::splat(2.0)).into(),
                 },
             ),
         )
@@ -7177,7 +7177,7 @@ fn an_image_filter_on_a_shape_with_a_fast_path_is_not_quietly_dropped() {
         canvas.clear(Color::BLACK);
         let paint =
             Paint::fill(Color::linear(1.0, 1.0, 1.0, 1.0)).with_image_filter(ImageFilter::Matrix {
-                transform: Affine2::from_translation(Vec2::new(48.0, 0.0)),
+                transform: Affine2::from_translation(Vec2::new(48.0, 0.0)).into(),
             });
         if which == "circle" {
             canvas
@@ -7681,7 +7681,7 @@ fn composing_a_move_covers_both_where_it_drew_and_where_it_landed() {
     let Some(mut ctx) = context() else { return };
 
     let move_right = ImageFilter::Matrix {
-        transform: Affine2::from_translation(Vec2::new(32.0, 0.0)),
+        transform: Affine2::from_translation(Vec2::new(32.0, 0.0)).into(),
     };
     let grow = ImageFilter::Dilate {
         radius_x: 8.0,
@@ -10954,4 +10954,57 @@ fn a_shape_across_the_vanishing_line_draws_its_near_half_and_no_more() {
             );
         }
     }
+}
+
+/// A layer's matrix filter moves the finished image, so perspective there is an
+/// image seen at an angle rather than content redrawn at one.
+///
+/// That distinction is the whole reason `dart:ui` has both this and `concat`,
+/// and it is the thing to check survived the widening: a caller wanting the
+/// sharp one already had `concat_4x4`.
+#[test]
+fn a_layer_can_be_placed_by_a_matrix_that_carries_perspective() {
+    let Some(mut ctx) = context() else { return };
+
+    let placed = |ctx: &mut Context, along_x: f32| {
+        let mut canvas = Canvas::new(SIZE);
+        canvas.clear(Color::BLACK);
+        canvas
+            .save_layer(
+                Layer::opacity(1.0)
+                    .with_matrix(Transform2D::from_column_major_4x4(&receding(along_x, 0.0))),
+            )
+            .draw_rect(
+                Rect::new(16.0, 16.0, 112.0, 112.0),
+                &Paint::fill(Color::WHITE).with_anti_alias(false),
+            )
+            .expect("rect");
+        canvas.restore();
+        render(ctx, canvas)
+    };
+
+    let perspective = placed(&mut ctx, 0.006);
+    let flat = placed(&mut ctx, 0.0);
+
+    // The flat placement is the identity, so the square comes back square.
+    assert_eq!(
+        white_run(&flat, 32),
+        white_run(&flat, 96),
+        "without a perspective row the two rows match"
+    );
+    // With one, the image narrows along the axis the divisor grows on, and the
+    // rows differ because the square's own corners have moved apart in y as
+    // well -- a projective placement is not a scale.
+    assert!(
+        perspective != flat,
+        "the perspective row moved no pixel of the finished layer"
+    );
+    let lit = (0..SIZE.height)
+        .map(|y| white_run(&perspective, y))
+        .sum::<usize>();
+    assert!(lit > 0, "the placed layer is visible");
+    assert!(
+        lit < (SIZE.width * SIZE.height) as usize,
+        "a placed layer put the whole frame down"
+    );
 }

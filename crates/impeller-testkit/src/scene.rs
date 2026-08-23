@@ -105,12 +105,12 @@ impl Transform {
         Transform2D::from(self.affine_parts()) * perspective
     }
 
-    /// The affine this is, or `None` if it asks for perspective.
+    /// The affine parts alone, or `None` if this asks for perspective.
     ///
-    /// For the one caller that cannot yet take a homography: an image filter's
-    /// matrix. A scene asking for perspective there gets no matrix rather than
-    /// a silently flattened one, which is the failure that would look like a
-    /// rendering bug instead of like a feature that is not built.
+    /// What a caller reaches for to check the composition order against a
+    /// vector or a point, where a homography would answer the question with an
+    /// extra divide in the way. Nothing in the executor needs it any more:
+    /// every place a scene's transform reaches takes a homography now.
     pub fn to_affine(self) -> Option<Affine2> {
         (self.perspective == [0.0, 0.0]).then(|| self.affine_parts())
     }

@@ -487,7 +487,7 @@ fn record_node(canvas: &mut Canvas, node: &Node, anti_alias: bool) -> Result<()>
                 // group, which is a different thing, and conflating the two
                 // would make every existing scene resample where it used to
                 // redraw.
-                matrix: layer.matrix.and_then(|m| m.to_affine()),
+                matrix: layer.matrix.map(|m| m.to_projective()),
                 backdrop_blur: layer.backdrop_blur,
                 color_filter: layer.color_filter,
                 morphology: layer.morphology.map(|m| {

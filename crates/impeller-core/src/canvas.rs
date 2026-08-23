@@ -418,7 +418,7 @@ pub struct Layer {
     ///
     /// `None` composites the layer where it was drawn, which is what every
     /// layer did before this existed.
-    pub matrix: Option<Affine2>,
+    pub matrix: Option<Transform2D>,
     /// Blur what is already on the target before the layer draws over it.
     ///
     /// This is the other blur, and the difference is which image is filtered.
@@ -480,8 +480,14 @@ impl Default for Layer {
 
 impl Layer {
     /// Transform the finished layer on the way back. See [`Self::matrix`].
-    pub fn with_matrix(mut self, matrix: Affine2) -> Self {
-        self.matrix = Some(matrix);
+    ///
+    /// Takes an affine or a projective transform, the same as `concat`. A layer
+    /// moved by one of these is a finished image being placed, so perspective
+    /// here gives the image seen at an angle rather than the content redrawn at
+    /// one -- which is the whole distinction this filter exists to make, and it
+    /// survives the widening unchanged.
+    pub fn with_matrix(mut self, matrix: impl Into<Transform2D>) -> Self {
+        self.matrix = Some(matrix.into());
         self
     }
 
@@ -3099,7 +3105,7 @@ impl Canvas {
         let _ = self.renderer.fill_into(
             &mut self.batch,
             &whole,
-            placement.map_or(Affine2::IDENTITY, |(matrix, _)| matrix),
+            placement.map_or(Transform2D::IDENTITY, |(matrix, _)| matrix),
             &paint,
         );
     }

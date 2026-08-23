@@ -2,10 +2,10 @@
 
 use crate::canvas::{Morphology, Rect};
 use crate::color::Color;
-use glam::{Affine2, Vec2};
+use glam::Vec2;
 use impeller_geometry::dash::Dash;
 use impeller_geometry::stroke::StrokeStyle;
-use impeller_geometry::transform::{transformed_bounds, unbounded};
+use impeller_geometry::transform::{transformed_bounds, unbounded, Transform2D};
 use impeller_hal::{BlendMode, Extent2D, TileMode};
 use impeller_hal::{ColorFilter, Sampling};
 
@@ -239,7 +239,7 @@ pub enum ImageFilter {
     /// transform stack would give the shape redrawn larger. That difference is
     /// the reason `dart:ui` has both, and a caller wanting the sharp one
     /// already has `concat`.
-    Matrix { transform: Affine2 },
+    Matrix { transform: Transform2D },
     /// Spread what was drawn, taking the largest sample within these radii in
     /// device pixels.
     ///
@@ -283,7 +283,9 @@ impl ImageFilter {
             Self::Blur { sigma } => !sigma.is_finite() || *sigma <= 0.0,
             // A matrix that changes nothing is one that costs a layer for
             // nothing, so it is worth recognising.
-            Self::Matrix { transform } => !transform.is_finite() || *transform == Affine2::IDENTITY,
+            Self::Matrix { transform } => {
+                !transform.is_finite() || *transform == Transform2D::IDENTITY
+            }
             // Rounded before the comparison, on the same reasoning that rounds
             // it before it is applied: a radius of a third of a pixel names no
             // sample the filter could take, so it is not a filter.
@@ -372,7 +374,7 @@ impl ImageFilter {
                 // statement about how far a filter reaches -- so it widens to
                 // everything rather than reporting a reach that is too short.
                 let (moved_min, moved_max) =
-                    transformed_bounds(transform, min, max).unwrap_or_else(unbounded);
+                    transformed_bounds(*transform, min, max).unwrap_or_else(unbounded);
                 (min.min(moved_min), max.max(moved_max))
             }
             Self::Compose { outer, inner } => {
