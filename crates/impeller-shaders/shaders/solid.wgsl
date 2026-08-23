@@ -727,24 +727,32 @@ fn morphology_along_axis(clip: vec3<f32>) -> vec4<f32> {
 /// filters are the ones affine in their other operand; deciding which those
 /// are happens on the processor, where it is a table rather than a branch per
 /// fragment.
-/// Linear light encoded into sRGB, the standard piecewise curve.
+/// Linear light encoded into sRGB, the standard piecewise curve, extended below
+/// zero by odd symmetry.
 ///
-/// `pow` of a negative base is undefined rather than merely wrong, and a
-/// straight color divided out of a nearly-transparent premultiplied one can
-/// land slightly below zero, so the base is floored. The comparison still uses
-/// the unfloored value, which keeps the two branches meeting exactly at the
-/// knee.
+/// The standard states the curve on zero to one and states the split between
+/// its two segments in terms of the value, which reads as a signed comparison
+/// and is not one: which segment applies is decided by how far from zero a
+/// value is, not by which side of zero it falls. Compared signed, every
+/// negative component took the near-black linear segment, which sends -0.042 to
+/// -0.543 where the curve's own odd extension sends it to -0.227.
+///
+/// Splitting on the magnitude also removes the floor this needed before. `pow`
+/// of a negative base is undefined, and the base here is now a magnitude, so
+/// there is nothing left to guard against.
 fn linear_to_srgb(c: vec3<f32>) -> vec3<f32> {
-    let low = c * 12.92;
-    let high = 1.055 * pow(max(c, vec3<f32>(0.0)), vec3<f32>(1.0 / 2.4)) - 0.055;
-    return select(high, low, c <= vec3<f32>(0.0031308));
+    let m = abs(c);
+    let low = m * 12.92;
+    let high = 1.055 * pow(m, vec3<f32>(1.0 / 2.4)) - 0.055;
+    return sign(c) * select(high, low, m <= vec3<f32>(0.0031308));
 }
 
 /// sRGB decoded back to linear light, the inverse of the curve above.
 fn srgb_to_linear(c: vec3<f32>) -> vec3<f32> {
-    let low = c / 12.92;
-    let high = pow((max(c, vec3<f32>(0.0)) + 0.055) / 1.055, vec3<f32>(2.4));
-    return select(high, low, c <= vec3<f32>(0.04045));
+    let m = abs(c);
+    let low = m / 12.92;
+    let high = pow((m + 0.055) / 1.055, vec3<f32>(2.4));
+    return sign(c) * select(high, low, m <= vec3<f32>(0.04045));
 }
 
 fn filtered(premultiplied: vec4<f32>) -> vec4<f32> {

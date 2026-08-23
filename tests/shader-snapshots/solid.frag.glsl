@@ -409,15 +409,17 @@ vec4 morphology_along_axis(vec3 clip_5) {
 }
 
 vec3 linear_to_srgb(vec3 c) {
-    vec3 low_3 = (c * 12.92);
-    vec3 high_3 = ((1.055 * pow(max(c, vec3(0.0)), vec3(0.41666666))) - vec3(0.055));
-    return mix(high_3, low_3, lessThanEqual(c, vec3(0.0031308)));
+    vec3 m = abs(c);
+    vec3 low_3 = (m * 12.92);
+    vec3 high_3 = ((1.055 * pow(m, vec3(0.41666666))) - vec3(0.055));
+    return (sign(c) * mix(high_3, low_3, lessThanEqual(m, vec3(0.0031308))));
 }
 
 vec3 srgb_to_linear(vec3 c_1) {
-    vec3 low_4 = (c_1 / vec3(12.92));
-    vec3 high_4 = pow(((max(c_1, vec3(0.0)) + vec3(0.055)) / vec3(1.055)), vec3(2.4));
-    return mix(high_4, low_4, lessThanEqual(c_1, vec3(0.04045)));
+    vec3 m_1 = abs(c_1);
+    vec3 low_4 = (m_1 / vec3(12.92));
+    vec3 high_4 = pow(((m_1 + vec3(0.055)) / vec3(1.055)), vec3(2.4));
+    return (sign(c_1) * mix(high_4, low_4, lessThanEqual(m_1, vec3(0.04045))));
 }
 
 vec4 filtered(vec4 premultiplied) {

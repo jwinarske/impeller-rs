@@ -92,25 +92,43 @@ impl Color {
     }
 }
 
-/// The sRGB transfer function, inverted.
+/// The sRGB transfer function, inverted, extended below zero by odd symmetry.
 ///
 /// Piecewise: a linear segment near zero and a power curve above it. Using the
 /// power curve alone would make near-black values wrong and, worse, its
 /// derivative at zero is infinite.
+///
+/// # Why the split is on the magnitude
+///
+/// The standard states the curve on `[0, 1]` and states the split between its
+/// two segments in terms of the value, which reads as a signed comparison and
+/// is not one: which segment applies is decided by how far from zero a value
+/// is, not by which side of zero it falls. Compared signed, every negative
+/// component took the near-black linear segment -- so `-0.5` decoded to
+/// `-0.0387` where the curve's own odd extension gives `-0.2140`.
+///
+/// Nothing could produce a negative component before a color could leave the
+/// sRGB primaries' triangle, so the mistake had nowhere to show. A color stated
+/// in a wider gamut is exactly a color that leaves it.
 fn srgb_to_linear(value: f32) -> f32 {
-    if value <= 0.040_45 {
-        value / 12.92
+    let magnitude = value.abs();
+    let decoded = if magnitude <= 0.040_45 {
+        magnitude / 12.92
     } else {
-        ((value + 0.055) / 1.055).powf(2.4)
-    }
+        ((magnitude + 0.055) / 1.055).powf(2.4)
+    };
+    decoded.copysign(value)
 }
 
+/// Linear light encoded into sRGB. See [`srgb_to_linear`] for the odd extension.
 fn linear_to_srgb(value: f32) -> f32 {
-    if value <= 0.003_130_8 {
-        value * 12.92
+    let magnitude = value.abs();
+    let encoded = if magnitude <= 0.003_130_8 {
+        magnitude * 12.92
     } else {
-        1.055 * value.powf(1.0 / 2.4) - 0.055
-    }
+        1.055 * magnitude.powf(1.0 / 2.4) - 0.055
+    };
+    encoded.copysign(value)
 }
 
 #[cfg(test)]
@@ -188,5 +206,67 @@ mod tests {
         assert!(!Color::BLACK.is_invisible());
         assert!(Color::BLACK.is_opaque());
         assert!(!Color::WHITE.with_alpha(0.5).is_opaque());
+    }
+
+    /// The curve is odd, so encoding a negative value and negating are the same
+    /// operation in either order.
+    ///
+    /// This is what the standard's piecewise definition extends to below zero,
+    /// and what the split on magnitude is for. Compared signed, the near-black
+    /// linear segment applied to the whole negative half-line and this fails at
+    /// every value past the knee.
+    #[test]
+    fn the_transfer_function_is_odd_about_zero() {
+        for value in [0.001, 0.0031308, 0.01, 0.04045, 0.1, 0.5, 1.0, 1.5] {
+            assert!(
+                close(linear_to_srgb(-value), -linear_to_srgb(value)),
+                "encoding {value}: {} against {}",
+                linear_to_srgb(-value),
+                -linear_to_srgb(value)
+            );
+            assert!(
+                close(srgb_to_linear(-value), -srgb_to_linear(value)),
+                "decoding {value}: {} against {}",
+                srgb_to_linear(-value),
+                -srgb_to_linear(value)
+            );
+        }
+    }
+
+    /// A color outside the sRGB primaries' triangle has components outside the
+    /// unit range, and has to survive the trip out and back like any other.
+    #[test]
+    fn converting_to_srgb_and_back_returns_the_original_outside_the_unit_range() {
+        for value in [
+            -1.5, -0.5, -0.226_742, -0.042_057, -0.001, 1.098, 1.225, 1.5,
+        ] {
+            let round_tripped = linear_to_srgb(srgb_to_linear(value));
+            assert!(
+                close(round_tripped, value),
+                "{value} became {round_tripped}"
+            );
+        }
+    }
+
+    /// The number this matters for, pinned.
+    ///
+    /// The green component of a Display P3 red, stated in linear sRGB
+    /// primaries. Encoding it is where the odd extension shows: the curve gives
+    /// -0.2267, and the signed comparison this used to make gave -0.5434 --
+    /// more than twice as far from zero, on a value a caller would reasonably
+    /// expect to round-trip.
+    #[test]
+    fn a_component_below_zero_encodes_onto_the_curve_rather_than_its_linear_segment() {
+        assert!(close(linear_to_srgb(-0.042_056_955), -0.226_742));
+        // Where the old reading put it, kept so the difference is legible.
+        assert!(!close(linear_to_srgb(-0.042_056_955), -0.543_376));
+    }
+
+    /// Zero stays zero, which the magnitude split has to be checked for
+    /// separately: it is the one input where the sign is not recoverable.
+    #[test]
+    fn zero_is_still_a_fixed_point() {
+        assert_eq!(linear_to_srgb(0.0), 0.0);
+        assert_eq!(srgb_to_linear(0.0), 0.0);
     }
 }
