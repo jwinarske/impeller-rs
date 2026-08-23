@@ -11008,3 +11008,91 @@ fn a_layer_can_be_placed_by_a_matrix_that_carries_perspective() {
         "a placed layer put the whole frame down"
     );
 }
+
+/// Texture coordinates are per-vertex and the rasterizer interpolates them, so
+/// whether they are right under perspective is not something this renderer
+/// computes -- it is something it becomes eligible for by handing over a real
+/// divisor instead of the constant one.
+///
+/// The claim is worth a test rather than a comment because the failure is the
+/// famous one and it is not subtle: interpolate a texture coordinate linearly
+/// in screen space across a quad seen at an angle and the texture slides,
+/// putting the seam between two triangles somewhere no part of the picture
+/// asked for. Here the image is four quadrants, so the boundary between two of
+/// them is a line whose position says which interpolation ran.
+#[test]
+fn a_textured_mesh_under_perspective_is_not_interpolated_flat() {
+    let Some(mut ctx) = context() else { return };
+    let mut image = ctx
+        .create_image(Extent2D::new(4, 4), PixelFormat::Rgba8Unorm)
+        .expect("image");
+    ctx.write_image(&mut image, &quadrant_image())
+        .expect("upload");
+
+    // The divisor grows with x, so the far edge of the quad is compressed.
+    const SLOPE: f32 = 0.006;
+    let mesh = Vertices::indexed(
+        VertexMode::Triangles,
+        vec![
+            Vec2::new(0.0, 0.0),
+            Vec2::new(128.0, 0.0),
+            Vec2::new(128.0, 128.0),
+            Vec2::new(0.0, 128.0),
+        ],
+        vec![
+            Vec2::new(0.0, 0.0),
+            Vec2::new(1.0, 0.0),
+            Vec2::new(1.0, 1.0),
+            Vec2::new(0.0, 1.0),
+        ],
+        vec![0, 1, 2, 0, 2, 3],
+    )
+    .expect("mesh");
+
+    let mut canvas = Canvas::new(SIZE);
+    canvas.clear(Color::BLACK);
+    canvas.concat_4x4(&receding(SLOPE, 0.0));
+    canvas
+        .draw_vertices(
+            &mesh,
+            // Nearest, so the boundary between quadrants is a line rather than
+            // a ramp and can be located to the pixel.
+            &Paint::image(0, Rect::from_size(128.0, 128.0)).with_sampling(Sampling::Nearest),
+        )
+        .expect("mesh");
+
+    let mut surface = ctx
+        .create_surface(SIZE, PixelFormat::Rgba8Unorm)
+        .expect("surface");
+    ctx.draw_with_images(&mut surface, &canvas.finish(), &[&image])
+        .expect("draw");
+    let pixels = ctx.read(&mut surface).expect("read");
+    ctx.destroy_surface(surface);
+    ctx.destroy_image(image);
+
+    // Near the top edge, where the quad's own diagonal is furthest away and
+    // both predictions are cleanest. Red is the left quadrant, green the right.
+    let row = 8;
+    let seam = (0..SIZE.width)
+        .find(|x| {
+            let p = pixel(&pixels, *x, row);
+            p[1] > p[0] && p[3] == 255
+        })
+        .expect("the quad covers this row and both quadrants appear in it");
+
+    // Where the texture's own midpoint lands, which is where the seam belongs:
+    // the divisor at user x of sixty-four, applied to sixty-four.
+    let correct = 64.0 / (1.0 + SLOPE * 64.0);
+    // Where it would land if the coordinate were carried across the triangle in
+    // screen space instead -- half way along the mapped top edge.
+    let flat = 64.0 / (1.0 + SLOPE * 128.0);
+
+    assert!(
+        (seam as f32 - correct).abs() <= 2.0,
+        "the seam is at {seam}, and the texture's midpoint maps to {correct}"
+    );
+    assert!(
+        (correct - flat).abs() > 6.0,
+        "this transform does not separate the two answers, so the test proves nothing"
+    );
+}
