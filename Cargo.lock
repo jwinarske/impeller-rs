@@ -327,6 +327,7 @@ name = "impeller-core"
 version = "0.1.0"
 dependencies = [
  "glam",
+ "half",
  "impeller-geometry",
  "impeller-hal",
  "impeller-renderer",

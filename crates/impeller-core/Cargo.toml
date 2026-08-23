@@ -12,6 +12,7 @@ keywords = ["canvas", "renderer", "graphics", "2d", "paint"]
 categories = ["graphics", "rendering"]
 
 [dependencies]
+half.workspace = true
 glam = { workspace = true }
 impeller-geometry = { workspace = true }
 impeller-hal = { workspace = true }

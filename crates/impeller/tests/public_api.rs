@@ -2210,10 +2210,11 @@ fn a_gradient_with_many_stops_agrees_with_one_that_fits() {
     let walked = render_with(&mut ctx, ends);
     let sampled = render_with(&mut ctx, many);
 
-    // Eight bits through a transfer function is not the same arithmetic as
-    // interpolating in linear float, so this is a tolerance rather than an
-    // equality -- but a small one, and any real disagreement about where a
-    // color sits would be far larger than a quantization step.
+    // Both paths now interpolate the same linear values -- the table holds what
+    // the walk produced rather than eight bits of an encoding of it -- so what
+    // is left is where a texel center falls against where the walk is sampled.
+    // A tolerance rather than an equality for that reason alone, which is why
+    // it is one level and not three.
     let mut worst = 0i32;
     for x in 0..128u32 {
         let a = pixel(&walked, x, 64);
@@ -2223,7 +2224,7 @@ fn a_gradient_with_many_stops_agrees_with_one_that_fits() {
         }
     }
     assert!(
-        worst <= 3,
+        worst <= 1,
         "the two paths disagree by {worst}, which is more than rounding"
     );
     // And the gradient is a gradient rather than two flat halves, which is what
@@ -2812,7 +2813,7 @@ fn a_tiled_gradient_tiles_the_same_whether_or_not_its_stops_fit() {
             }
         }
         assert!(
-            worst <= 4,
+            worst <= 2,
             "{tile:?}: the two paths disagree by {worst}, which is more than rounding"
         );
     }
@@ -11415,5 +11416,92 @@ fn a_glyph_run_answers_to_a_transform_with_perspective() {
     assert!(
         gaps.first() > gaps.last(),
         "the gaps do not narrow toward the far side: {gaps:?}"
+    );
+}
+
+/// The same gradient, stated with four stops and with five, must be the same
+/// picture -- and `ramp.rs` says so about itself.
+///
+/// That claim held only because nothing could observe the difference. A stop
+/// list of four or fewer travels in the material as raw floats and is walked by
+/// the shader; more than four is tabulated into a texture first, and that
+/// tabulation clamped each component to zero and one and rounded it to eight
+/// bits. Into an eight-bit target the write clamps too, so the two agreed on
+/// every output that could be reached.
+///
+/// A color filter reaches past that, because it runs on what the gradient
+/// produced. Halve a component of 1.2 and the walked path gives 0.6; halve what
+/// the ramp kept of it and the tabulated path gives 0.5. Both land inside the
+/// unit range, so nothing clips them, and adding a stop that changes nothing
+/// about the gradient changes the picture.
+#[test]
+fn a_gradient_carries_the_same_color_however_many_stops_state_it() {
+    let Some(mut ctx) = context() else { return };
+
+    // Red past what eight bits can hold, running to black. Stated as three
+    // stops and again as five, the extra two exactly on the line.
+    let bright = Color::linear(1.2, 0.0, 0.0, 1.0);
+    let ends = vec![
+        GradientStop::new(bright, 0.0),
+        GradientStop::new(Color::linear(0.6, 0.0, 0.0, 1.0), 0.5),
+        GradientStop::new(Color::linear(0.0, 0.0, 0.0, 1.0), 1.0),
+    ];
+    let mut many = ends.clone();
+    for (offset, value) in [(0.25f32, 0.9f32), (0.75, 0.3)] {
+        many.push(GradientStop::new(
+            Color::linear(value, 0.0, 0.0, 1.0),
+            offset,
+        ));
+    }
+    many.sort_by(|a, b| a.offset.partial_cmp(&b.offset).unwrap());
+    assert!(ends.len() <= MAX_STOPS, "the control must be walked");
+    assert!(many.len() > MAX_STOPS, "the subject must be tabulated");
+
+    // Halves every channel, which brings the whole gradient inside the unit
+    // range before it reaches the target. Without this the write clamps both
+    // paths to the same place and the difference cannot be seen.
+    let halve = ColorFilter::matrix([
+        0.5, 0.0, 0.0, 0.0, 0.0, //
+        0.0, 0.5, 0.0, 0.0, 0.0, //
+        0.0, 0.0, 0.5, 0.0, 0.0, //
+        0.0, 0.0, 0.0, 1.0, 0.0,
+    ]);
+
+    let render_with = |ctx: &mut Context, stops: Vec<GradientStop>| {
+        let mut canvas = Canvas::new(SIZE);
+        canvas.clear(Color::BLACK);
+        canvas
+            .draw_rect(
+                Rect::from_size(128.0, 128.0),
+                &Paint::linear_gradient(Vec2::ZERO, Vec2::new(128.0, 0.0), stops)
+                    .with_color_filter(halve)
+                    .with_anti_alias(false),
+            )
+            .expect("gradient");
+        render(ctx, canvas)
+    };
+
+    let walked = render_with(&mut ctx, ends);
+    let tabulated = render_with(&mut ctx, many);
+
+    let mut worst = 0i32;
+    let mut at = 0u32;
+    for x in 0..128u32 {
+        let a = pixel(&walked, x, 64);
+        let b = pixel(&tabulated, x, 64);
+        for channel in 0..4 {
+            let delta = (a[channel] as i32 - b[channel] as i32).abs();
+            if delta > worst {
+                worst = delta;
+                at = x;
+            }
+        }
+    }
+    assert!(
+        worst <= 2,
+        "adding a stop that changes nothing changed the picture by {worst} at x={at}: \
+         walked {:?} against tabulated {:?}",
+        pixel(&walked, at, 64),
+        pixel(&tabulated, at, 64)
     );
 }

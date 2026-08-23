@@ -187,10 +187,12 @@ fn tile_gradient(t: f32, tile: f32) -> vec2<f32> {
 /// stop count to report anyway, so the two never wanted separate words.
 fn gradient_color(t: f32, count: i32) -> vec4<f32> {
     if (count <= 0) {
-        // Straight color, not premultiplied, and decoded from the transfer
-        // function by the sampler because the texture is an sRGB format. That
-        // is the same shape `sample_stops` returns, so what follows does not
-        // need to know which path produced it.
+        // Straight color, not premultiplied, and already linear: the table
+        // holds what the walk produced rather than an encoding of it, so the
+        // sampler returns it unchanged. That is the same shape `sample_stops`
+        // returns, so what follows does not need to know which path produced
+        // it -- and now they agree about components the sRGB primaries cannot
+        // hold as well, which an eight-bit encoded table could not carry.
         return textureSampleLevel(image_texture, image_sampler, vec2<f32>(t, 0.5), 0.0);
     }
     return sample_stops(t, count);

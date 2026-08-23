@@ -601,12 +601,28 @@ past that the recorder evaluates the ramp into a small image and the shader
 reads the color at the parameter instead of computing it. That is the case above
 turned around rather than met: such a material wants a gradient's *mapping* and
 a binding, and no longer wants its stops at all, so the budget is not the
-constraint. The ramp is stored through an sRGB format so eight bits are spaced
-the way the eye reads them — linear eight-bit color bands in the darks — and
-holds straight rather than premultiplied color, because a transfer function does
-not commute with multiplying by alpha. Both paths therefore hand the same shape
-of value to the same premultiply at the end, which is what makes the choice
-between them invisible.
+constraint. The ramp is stored as linear half-floats and holds straight
+rather than premultiplied color. Both paths therefore hand the same shape of
+value to the same premultiply at the end, which is what makes the choice between
+them invisible.
+
+It was stored through an sRGB format, so that eight bits would be spaced the way
+the eye reads them — linear eight-bit color bands in the darks. That argument
+was right and is *answered* rather than overridden: half has no fixed quantum,
+its precision being relative at about eleven bits of mantissa at every
+magnitude, so there are no longer eight bits to spend well and the perceptual
+spacing was buying what the format now gives everywhere. The reason for straight
+storage changed with it — a transfer function not commuting with multiplying by
+alpha no longer applies to a linear table — and the reason that survives is that
+`gradient_color` returns the same shape from both arms, so a premultiplied table
+would fork the two paths at the point the design exists to converge them.
+
+What the old format also could not do was hold a component the sRGB primaries
+cannot describe, and the invariant above quietly depended on it not having to.
+Clamping into eight bits meant that a gradient of five stops and the same
+gradient stated in four disagreed by twenty-four levels once a color filter
+brought the difference back inside the range a target could show — the sort of
+defect that hides because both halves of it look like rounding.
 
 **Upload is the exact inverse of readback**, in the same tightly packed
 top-row-first layout, so a round trip through the pair is the identity on both

@@ -61,10 +61,18 @@ impl<H: Hal> Transient<H> {
 
 /// Upload every baked gradient the recording carries.
 ///
-/// The format is sRGB, which is the whole reason the ramp is stored the way it
-/// is: the device decodes it on sampling, so eight bits are spaced the way the
-/// eye reads them rather than uniformly across a linear range, where the dark
-/// end of a gradient would band.
+/// The format is linear half-float, and the argument the sRGB one rested on is
+/// answered rather than overridden. That argument was about how to spend eight
+/// bits: eight bits of *linear* color band visibly in the darks, so spacing
+/// them through the transfer function put them where the eye reads them. Half
+/// has no fixed quantum -- its precision is relative, about eleven bits of
+/// mantissa at every magnitude -- so there are no longer eight bits to spend
+/// well, and the perceptual spacing was buying what the format now gives
+/// everywhere.
+///
+/// What it also gives is range. A gradient stop outside the sRGB primaries has
+/// a component outside zero to one, and eight bits through a transfer function
+/// had nowhere to put one.
 ///
 /// Sampled and never drawn into, which is worth saying rather than leaving to
 /// a backend to assume: a ramp asked for a color attachment it had no use for,
@@ -80,7 +88,7 @@ where
         let outcome = ctx
             .create_texture(&TextureDescriptor::sampled(
                 extent,
-                PixelFormat::Rgba8UnormSrgb,
+                PixelFormat::Rgba16Float,
             ))
             .and_then(
                 |mut texture| match ctx.write_texture(&mut texture, &ramp.texels) {

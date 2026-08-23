@@ -45,7 +45,7 @@ pub const RAMP_WIDTH: usize = 256;
 /// what knows the stops and nothing outside it should have to bake them.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Ramp {
-    /// `RAMP_WIDTH` texels, RGBA, color encoded and alpha linear.
+    /// `RAMP_WIDTH` texels, RGBA, linear, four half-floats each.
     pub texels: Vec<u8>,
 }
 
@@ -58,8 +58,8 @@ impl Ramp {
     /// parameter before it reaches the ramp, so by here the question is only
     /// what a parameter inside the table means.
     pub fn bake(stops: &[GradientStop]) -> Self {
-        let mut texels = vec![0u8; RAMP_WIDTH * 4];
-        for (i, texel) in texels.chunks_exact_mut(4).enumerate() {
+        let mut texels = vec![0u8; RAMP_WIDTH * 8];
+        for (i, texel) in texels.chunks_exact_mut(8).enumerate() {
             // Sampled at texel centers, because that is where a linear filter
             // reads them: treating the first texel as t=0 would shift the whole
             // ramp by half a texel against the four-stop path, which is exactly
@@ -67,29 +67,29 @@ impl Ramp {
             // and one drawn beside it with fewer stops.
             let t = (i as f32 + 0.5) / RAMP_WIDTH as f32;
             let color = sample_at(stops, t);
-            // Color through the transfer function, alpha not: an sRGB format
-            // encodes three channels and leaves the fourth alone, so writing
-            // alpha encoded here would be decoded as though it never had been.
-            let encoded = color.to_srgb();
-            texel[0] = quantize(encoded[0]);
-            texel[1] = quantize(encoded[1]);
-            texel[2] = quantize(encoded[2]);
-            texel[3] = quantize(color.a);
+            // Linear, and stored as it is. Little-endian because the device
+            // reads native order and every target here is little-endian.
+            for (channel, out) in color.to_array().iter().zip(texel.chunks_exact_mut(2)) {
+                out.copy_from_slice(&half::f16::from_f32(*channel).to_le_bytes());
+            }
         }
         Self { texels }
     }
 }
 
-fn quantize(v: f32) -> u8 {
-    (v.clamp(0.0, 1.0) * 255.0).round() as u8
-}
-
 /// The color a gradient shows at `t`, from stops in order.
 ///
-/// Deliberately the same walk the shader performs over its four stops, so the
-/// two paths agree where they overlap. A gradient of four stops drawn through
-/// push constants and the same one drawn through a ramp must not differ; that
-/// they use the same rule is what makes it true rather than approximately true.
+/// Deliberately the same walk the shader performs over its four stops, so that
+/// a gradient stated within the material's four and the same gradient restated
+/// with more do not differ. Sharing the rule is half of what makes that true;
+/// the other half is that the table holds what the walk produced rather than a
+/// rounded, clamped version of it, which is why it is linear half-floats.
+///
+/// It used to be neither. The table was encoded and quantized to eight bits,
+/// so a component the sRGB primaries cannot hold was flattened on the way in --
+/// and adding a stop that changed nothing about a gradient changed the picture
+/// by twenty-four levels once a color filter brought the difference back inside
+/// the range a target could show.
 fn sample_at(stops: &[GradientStop], t: f32) -> crate::Color {
     let Some(first) = stops.first() else {
         return crate::Color::linear(0.0, 0.0, 0.0, 0.0);
@@ -139,24 +139,25 @@ mod tests {
             .collect()
     }
 
-    fn texel(ramp: &Ramp, i: usize) -> [u8; 4] {
-        let at = i * 4;
-        [
-            ramp.texels[at],
-            ramp.texels[at + 1],
-            ramp.texels[at + 2],
-            ramp.texels[at + 3],
-        ]
+    /// One texel, decoded back to the linear components it was baked from.
+    fn texel(ramp: &Ramp, i: usize) -> [f32; 4] {
+        let at = i * 8;
+        let mut out = [0.0; 4];
+        for (channel, slot) in out.iter_mut().enumerate() {
+            let byte = at + channel * 2;
+            *slot = half::f16::from_le_bytes([ramp.texels[byte], ramp.texels[byte + 1]]).to_f32();
+        }
+        out
     }
 
     #[test]
     fn a_ramp_is_the_full_width_and_fully_written() {
         let ramp = Ramp::bake(&stops(6));
-        assert_eq!(ramp.texels.len(), RAMP_WIDTH * 4);
+        assert_eq!(ramp.texels.len(), RAMP_WIDTH * 8);
         // Every alpha is opaque here, so a texel nothing wrote would show as a
         // hole rather than blend in with its neighbors.
         assert!(
-            ramp.texels.chunks_exact(4).all(|t| t[3] == 255),
+            (0..RAMP_WIDTH).all(|i| texel(&ramp, i)[3] == 1.0),
             "a texel was left unwritten"
         );
     }
@@ -169,8 +170,8 @@ mod tests {
         // Not exactly the stop colors: the first texel's center is half a texel
         // in, so it has already traveled that far along the ramp. Close, and
         // unmistakably at the right end of it.
-        assert!(first[2] > 240 && first[0] < 16, "first texel {first:?}");
-        assert!(last[0] > 240 && last[2] < 16, "last texel {last:?}");
+        assert!(first[2] > 0.94 && first[0] < 0.06, "first texel {first:?}");
+        assert!(last[0] > 0.94 && last[2] < 0.06, "last texel {last:?}");
     }
 
     #[test]
@@ -190,12 +191,15 @@ mod tests {
                 ((t * RAMP_WIDTH as f32) as usize).min(RAMP_WIDTH - 1),
             )
         };
-        assert!(at(0.25)[0] > 200, "the red stop is not at a quarter");
-        assert!(at(0.5)[1] > 200, "the green stop is not at the half");
-        assert!(at(0.75)[2] > 200, "the blue stop is not at three quarters");
+        assert!(at(0.25)[0] > 0.78, "the red stop is not at a quarter");
+        assert!(at(0.5)[1] > 0.78, "the green stop is not at the half");
+        assert!(at(0.75)[2] > 0.78, "the blue stop is not at three quarters");
         // And before the first stop it holds that stop rather than fading in
         // from nothing, which is what clamping means inside the table.
-        assert!(at(0.05)[0] > 200, "the ramp faded in before its first stop");
+        assert!(
+            at(0.05)[0] > 0.78,
+            "the ramp faded in before its first stop"
+        );
     }
 
     #[test]
@@ -208,7 +212,7 @@ mod tests {
             GradientStop::new(Color::linear(0.0, 0.0, 0.0, 1.0), 0.0),
             GradientStop::new(Color::linear(1.0, 1.0, 1.0, 1.0), 1.0),
         ]);
-        let mut previous = 0u8;
+        let mut previous = 0.0;
         for i in 0..RAMP_WIDTH {
             let value = texel(&ramp, i)[0];
             assert!(
@@ -217,30 +221,35 @@ mod tests {
             );
             previous = value;
         }
-        assert!(previous > 250, "the ramp never reached white");
+        assert!(previous > 0.98, "the ramp never reached white");
     }
 
     #[test]
-    fn color_is_encoded_and_alpha_is_not() {
-        // Half linear intensity encodes to about 188, which is the whole reason
-        // for storing the ramp this way; half alpha stays at about 128, because
-        // an sRGB format leaves the fourth channel alone and encoding it here
-        // would be decoded as though it never had been.
+    fn the_table_holds_what_the_walk_produced() {
+        // Linear in, linear out, and no eight-bit step in between: the table
+        // stores the color rather than a rounding of an encoding of it. Both
+        // channels come back at a half because neither was transformed.
         let ramp = Ramp::bake(&[
             GradientStop::new(Color::linear(0.5, 0.5, 0.5, 0.5), 0.0),
             GradientStop::new(Color::linear(0.5, 0.5, 0.5, 0.5), 1.0),
         ]);
         let t = texel(&ramp, RAMP_WIDTH / 2);
-        assert!(
-            t[0].abs_diff(188) <= 2,
-            "color should be encoded, got {}",
-            t[0]
-        );
-        assert!(
-            t[3].abs_diff(128) <= 2,
-            "alpha should stay linear, got {}",
-            t[3]
-        );
+        assert!((t[0] - 0.5).abs() < 1e-3, "color came back {}", t[0]);
+        assert!((t[3] - 0.5).abs() < 1e-3, "alpha came back {}", t[3]);
+    }
+
+    /// The property the table could not hold when it was eight bits through a
+    /// transfer function, and the reason a gradient of five stops disagreed
+    /// with the same gradient stated in four.
+    #[test]
+    fn a_stop_outside_the_srgb_primaries_survives_being_tabulated() {
+        let ramp = Ramp::bake(&[
+            GradientStop::new(Color::linear(1.2, -0.3, 0.0, 1.0), 0.0),
+            GradientStop::new(Color::linear(1.2, -0.3, 0.0, 1.0), 1.0),
+        ]);
+        let t = texel(&ramp, RAMP_WIDTH / 2);
+        assert!((t[0] - 1.2).abs() < 1e-2, "above one became {}", t[0]);
+        assert!((t[1] + 0.3).abs() < 1e-2, "below zero became {}", t[1]);
     }
 
     #[test]
@@ -249,7 +258,7 @@ mod tests {
         // draw -- but a bake that indexed into an empty slice would take the
         // process down on the way to finding that out.
         let ramp = Ramp::bake(&[]);
-        assert_eq!(ramp.texels.len(), RAMP_WIDTH * 4);
+        assert_eq!(ramp.texels.len(), RAMP_WIDTH * 8);
         assert!(ramp.texels.iter().all(|b| *b == 0));
     }
 }
