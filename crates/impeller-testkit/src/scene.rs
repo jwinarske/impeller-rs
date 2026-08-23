@@ -1042,6 +1042,9 @@ impl Node {
     /// tolerance comparison between two backends is silent about a feature both
     /// of them ignore.
     fn carries_a_visual_feature(&self) -> bool {
+        if self.asks_for_perspective() {
+            return true;
+        }
         let item_does =
             |item: &Item| !matches!(item.image_filter, ImageFilter::None) || item.mask_blur > 0.0;
         match self {
@@ -1066,7 +1069,84 @@ impl Node {
     }
 
     /// Take those features away, leaving the geometry and the color.
+    /// Every transform this node states, its children aside.
+    ///
+    /// Collected in one place so that a question asked about transforms is
+    /// asked of all of them: there are nine, and a variant left out of the
+    /// answer is a variant whose transform nothing checks.
+    fn transforms_mut(&mut self) -> Vec<&mut Transform> {
+        match self {
+            Self::Draw(item) => vec![&mut item.transform],
+            Self::Mesh(mesh) => vec![&mut mesh.transform],
+            // A sprite batch places each sprite with an affine of its own,
+            // which stays affine: `drawAtlas` takes an `RSTransform`, so even
+            // that is past parity.
+            Self::Atlas(_) => Vec::new(),
+            Self::Glyphs(run) => vec![&mut run.transform],
+            Self::Points(points) => vec![&mut points.transform],
+            Self::NinePatch(nine) => vec![&mut nine.transform],
+            Self::Paint(paint) => vec![&mut paint.transform],
+            Self::Picture(picture) => vec![&mut picture.transform],
+            Self::Shadow(shadow) => vec![&mut shadow.transform],
+            Self::Layer {
+                layer, transform, ..
+            } => match layer.matrix.as_mut() {
+                Some(matrix) => vec![transform, matrix],
+                None => vec![transform],
+            },
+        }
+    }
+
+    /// Whether anything here asks for perspective.
+    ///
+    /// Grouped with the visual features below rather than treated as part of
+    /// the geometry, because it falls into the same trap and for the same
+    /// reason: a scene whose perspective term is small enough to be invisible
+    /// agrees with itself on both backends and proves nothing, exactly as a
+    /// filter that was silently dropped would.
+    fn asks_for_perspective(&self) -> bool {
+        match self {
+            Self::Draw(item) => item.transform.perspective != [0.0, 0.0],
+            Self::Mesh(mesh) => mesh.transform.perspective != [0.0, 0.0],
+            Self::Atlas(_) => false,
+            Self::Glyphs(run) => run.transform.perspective != [0.0, 0.0],
+            Self::Points(points) => points.transform.perspective != [0.0, 0.0],
+            Self::NinePatch(nine) => nine.transform.perspective != [0.0, 0.0],
+            Self::Paint(paint) => paint.transform.perspective != [0.0, 0.0],
+            Self::Shadow(shadow) => shadow.transform.perspective != [0.0, 0.0],
+            Self::Picture(picture) => {
+                picture.transform.perspective != [0.0, 0.0]
+                    || picture.children.iter().any(Node::asks_for_perspective)
+            }
+            Self::Layer {
+                layer,
+                transform,
+                children,
+                ..
+            } => {
+                transform.perspective != [0.0, 0.0]
+                    || layer.matrix.is_some_and(|m| m.perspective != [0.0, 0.0])
+                    || children.iter().any(Node::asks_for_perspective)
+            }
+        }
+    }
+
+    fn flatten_perspective(&mut self) {
+        for transform in self.transforms_mut() {
+            transform.perspective = [0.0, 0.0];
+        }
+        match self {
+            Self::Picture(picture) => picture
+                .children
+                .iter_mut()
+                .for_each(Node::flatten_perspective),
+            Self::Layer { children, .. } => children.iter_mut().for_each(Node::flatten_perspective),
+            _ => {}
+        }
+    }
+
     fn plain(&mut self) {
+        self.flatten_perspective();
         match self {
             Self::Draw(item) => {
                 item.image_filter = ImageFilter::None;
