@@ -7,7 +7,7 @@ struct Paint {
     vec4 stops[4];
     vec4 offsets;
     vec4 geometry;
-    vec4 to_local;
+    vec4 to_local[3];
     vec4 params;
     vec4 recolor[4];
     vec4 filter_offset;
@@ -89,15 +89,11 @@ vec4 gradient_color(float t_2, int count_1) {
 }
 
 vec2 to_gradient_space(vec3 clip) {
-    vec4 _e7 = _group_1_binding_0_fs.geometry;
-    vec2 delta = ((clip.xy / vec2(clip.z)) - _e7.xy);
-    float _e13 = _group_1_binding_0_fs.to_local.x;
-    float _e17 = _group_1_binding_0_fs.to_local.y;
-    vec2 column0_ = vec2(_e13, _e17);
-    float _e22 = _group_1_binding_0_fs.to_local.z;
-    float _e26 = _group_1_binding_0_fs.to_local.w;
-    vec2 column1_ = vec2(_e22, _e26);
-    return ((column0_ * delta.x) + (column1_ * delta.y));
+    vec4 _e4 = _group_1_binding_0_fs.to_local[0];
+    vec4 _e11 = _group_1_binding_0_fs.to_local[1];
+    vec4 _e19 = _group_1_binding_0_fs.to_local[2];
+    vec3 mapped = (((_e4.xyz * clip.x) + (_e11.xyz * clip.y)) + (_e19.xyz * clip.z));
+    return (mapped.xy / vec2(max(mapped.z, 1e-6)));
 }
 
 vec2 snapped(vec2 coord) {
@@ -715,8 +711,8 @@ vec4 shade(VertexOutput in_1) {
                 float start_angle = _group_1_binding_0_fs.geometry.z;
                 float _e74 = _group_1_binding_0_fs.geometry.w;
                 float sweep = max((_e74 - start_angle), 1e-6);
-                float delta_1 = (angle - start_angle);
-                float ahead = (delta_1 - (6.2831855 * floor((delta_1 / 6.2831855))));
+                float delta = (angle - start_angle);
+                float ahead = (delta - (6.2831855 * floor((delta / 6.2831855))));
                 float _e88 = _group_1_binding_0_fs.params.z;
                 vec2 _e89 = tile_gradient((ahead / sweep), _e88);
                 vec4 _e91 = gradient_color(_e89.x, count_2);

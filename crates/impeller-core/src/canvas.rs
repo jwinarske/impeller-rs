@@ -13,7 +13,8 @@ use crate::Color;
 use glam::{Affine2, Mat2, Vec2};
 use impeller_geometry::stroke::{LineCap, StrokeStyle};
 use impeller_geometry::transform::{
-    invert_or_identity, preserves_axis_alignment, transformed_bounds, viewport_projection,
+    invert_to_local, preserves_axis_alignment, to_local_columns, transformed_bounds,
+    viewport_projection, Transform2D,
 };
 use impeller_geometry::{FillRule, Path, PathBuilder};
 use impeller_hal::{
@@ -985,9 +986,14 @@ impl Canvas {
         let offset = into.origin - source.origin;
         let (iw, ih) = (into.extent.width as f32, into.extent.height as f32);
         let (sw, sh) = (source.extent.width as f32, source.extent.height as f32);
+        // Stated in the direction the shader reads it -- clip space to the
+        // texture -- because the sizes are known and there is no placement to
+        // invert. The anchor rides inside it like every other paint's.
+        let anchor = Vec2::new(-1.0 - 2.0 * offset.x / iw, 1.0 + 2.0 * offset.y / ih);
+        let scale = Mat2::from_diagonal(Vec2::new(0.5 * iw / sw, -0.5 * ih / sh));
+        let clip_to_texture = Affine2::from_mat2(scale) * Affine2::from_translation(-anchor);
         let material = Material::Image {
-            origin: [-1.0 - 2.0 * offset.x / iw, 1.0 + 2.0 * offset.y / ih],
-            to_local: [0.5 * iw / sw, 0.0, 0.0, -0.5 * ih / sh],
+            to_local: to_local_columns(Transform2D::from(clip_to_texture)),
             slot,
             alpha: 1.0,
             tile: TileMode::Clamp,
@@ -1388,32 +1394,22 @@ impl Canvas {
                 // rectangle's own size. Composing the two here means the shader
                 // receives one matrix and does no inversion of its own.
                 //
-                // A degenerate transform has no inverse, and glam returns a
-                // matrix of NaN rather than failing. Those would propagate into
-                // texture coordinates and sample nothing in particular, so a
-                // collapsed transform maps everything to the image's origin
-                // instead -- which is what a zero-area destination looks like
-                // anyway.
-                let inverse = to_clip.matrix2.inverse();
-                let scale = Mat2::from_diagonal(Vec2::new(
-                    1.0 / (rect.right - rect.left),
-                    1.0 / (rect.bottom - rect.top),
-                ));
-                let mapping = scale * inverse;
-                let origin = to_clip.transform_point2(Vec2::new(rect.left, rect.top));
-                let usable = mapping.is_finite() && origin.is_finite();
+                // Built forwards and inverted once: the unit square of texture
+                // coordinates is scaled by the rectangle's size, placed at its
+                // corner, and carried to clip space by the transform in force.
+                // A degenerate transform has no inverse to take, and the
+                // identity stands in for it -- unobservable, because the
+                // geometry went through the same matrix and has no area.
+                let placement = Transform2D::from(
+                    to_clip
+                        * Affine2::from_translation(Vec2::new(rect.left, rect.top))
+                        * Affine2::from_scale(Vec2::new(
+                            rect.right - rect.left,
+                            rect.bottom - rect.top,
+                        )),
+                );
                 Material::Image {
-                    origin: if usable { origin.into() } else { [0.0, 0.0] },
-                    to_local: if usable {
-                        [
-                            mapping.x_axis.x,
-                            mapping.x_axis.y,
-                            mapping.y_axis.x,
-                            mapping.y_axis.y,
-                        ]
-                    } else {
-                        [0.0; 4]
-                    },
+                    to_local: invert_to_local(placement),
                     sampling: *sampling,
                     // The caller's index goes through this pass's own table,
                     // because a layer occupies a slot too and the two number
@@ -1434,18 +1430,19 @@ impl Canvas {
                 tile,
             } => {
                 let axis = *end - *start;
-                let start = to_clip.transform_point2(*start);
                 if !axis.is_finite() || !start.is_finite() {
                     return Material::Solid([0.0; 4]);
                 }
                 let ramp_slot = self.ramp_for(stops);
                 Material::LinearGradient {
-                    start: [start.x, start.y],
                     axis: [axis.x, axis.y],
-                    // Maps a clip-space offset back into the space the axis is
-                    // stated in, which is the caller's. Without it the target's
-                    // aspect ratio leaks into the gradient's direction.
-                    to_local: invert_or_identity(to_clip.matrix2),
+                    // Maps a clip-space position back into the space the axis is
+                    // stated in, which is the caller's, measured from the
+                    // gradient's start. Without it the target's aspect ratio
+                    // leaks into the gradient's direction.
+                    to_local: invert_to_local(Transform2D::from(
+                        to_clip * Affine2::from_translation(*start),
+                    )),
                     stops: stops_of(stops),
                     tile: *tile,
                     ramp: ramp_slot,
@@ -1457,11 +1454,13 @@ impl Canvas {
                 stops,
                 tile,
             } => {
-                let center_clip = to_clip.transform_point2(*center);
-                // Folding the radius into the mapping means the shader measures
-                // against unit distance and never sees a radius at all.
-                let scaled = to_clip.matrix2 * Mat2::from_diagonal(Vec2::splat(*radius));
-                if !center_clip.is_finite() || !scaled.is_finite() {
+                // Folding the center and the radius into the mapping means the
+                // shader measures against unit distance from the origin and
+                // never sees either.
+                let placement = to_clip
+                    * Affine2::from_translation(*center)
+                    * Affine2::from_scale(Vec2::splat(*radius));
+                if !placement.is_finite() {
                     return Material::Solid([0.0; 4]);
                 }
                 // A radius of nothing folds to a singular mapping, and the
@@ -1497,8 +1496,7 @@ impl Canvas {
                 }
                 let ramp_slot = self.ramp_for(stops);
                 Material::RadialGradient {
-                    center: [center_clip.x, center_clip.y],
-                    to_local: invert_or_identity(scaled),
+                    to_local: invert_to_local(Transform2D::from(placement)),
                     stops: stops_of(stops),
                     tile: *tile,
                     ramp: ramp_slot,
@@ -1512,7 +1510,6 @@ impl Canvas {
                 stops,
                 tile,
             } => {
-                let start_clip = to_clip.transform_point2(*start_center);
                 let axis = *end_center - *start_center;
                 // The shader is told where the second center is with one float
                 // instead of two, which is only possible if it already knows
@@ -1530,18 +1527,14 @@ impl Canvas {
                 } else {
                     axis.y.atan2(axis.x)
                 };
-                let oriented = to_clip.matrix2 * Mat2::from_angle(angle);
-                if !start_clip.is_finite()
-                    || !oriented.is_finite()
-                    || !start_radius.is_finite()
-                    || !end_radius.is_finite()
-                {
+                let oriented =
+                    to_clip * Affine2::from_translation(*start_center) * Affine2::from_angle(angle);
+                if !oriented.is_finite() || !start_radius.is_finite() || !end_radius.is_finite() {
                     return Material::Solid([0.0; 4]);
                 }
                 let ramp_slot = self.ramp_for(stops);
                 Material::ConicalGradient {
-                    center: [start_clip.x, start_clip.y],
-                    to_local: invert_or_identity(oriented),
+                    to_local: invert_to_local(Transform2D::from(oriented)),
                     // In the gradient's own space, which this rotation and the
                     // canvas transform's inverse together make into user space
                     // -- so both radii are the ones the caller stated, and
@@ -1563,14 +1556,13 @@ impl Canvas {
                 stops,
                 tile,
             } => {
-                let center_clip = to_clip.transform_point2(*center);
-                if !center_clip.is_finite() || !start_angle.is_finite() || !end_angle.is_finite() {
+                let placement = to_clip * Affine2::from_translation(*center);
+                if !placement.is_finite() || !start_angle.is_finite() || !end_angle.is_finite() {
                     return Material::Solid([0.0; 4]);
                 }
                 let ramp_slot = self.ramp_for(stops);
                 Material::SweepGradient {
-                    center: [center_clip.x, center_clip.y],
-                    to_local: invert_or_identity(to_clip.matrix2),
+                    to_local: invert_to_local(Transform2D::from(placement)),
                     start_angle: *start_angle,
                     end_angle: *end_angle,
                     stops: stops_of(stops),
@@ -2038,17 +2030,17 @@ impl Canvas {
             (rect.left + rect.right) / 2.0,
             (rect.top + rect.bottom) / 2.0,
         );
-        let center_clip = to_clip.transform_point2(center);
         Some(Material::RoundedRect {
             color: color.to_array(),
-            center: [center_clip.x, center_clip.y],
             half_size: [rect.width() / 2.0, rect.height() / 2.0],
-            // Maps a clip-space offset from the center back into the shape's
-            // own space, so the distance is measured where the radius means
-            // what the caller said. Measuring in clip space would round the
-            // corners by different amounts on each axis of a target that is
-            // not square.
-            to_local: invert_or_identity(to_clip.matrix2),
+            // Maps a clip-space position back into the shape's own space,
+            // measured from its center, so the distance is measured where the
+            // radius means what the caller said. Measuring in clip space would
+            // round the corners by different amounts on each axis of a target
+            // that is not square.
+            to_local: invert_to_local(Transform2D::from(
+                to_clip * Affine2::from_translation(center),
+            )),
             radius: radius.min(rect.width() / 2.0).min(rect.height() / 2.0),
             stroke,
         })
@@ -2250,12 +2242,12 @@ impl Canvas {
             (bounds.left + bounds.right) / 2.0,
             (bounds.top + bounds.bottom) / 2.0,
         );
-        let center_clip = to_clip.transform_point2(center);
         Some(Material::Ellipse {
             color: color.to_array(),
-            center: [center_clip.x, center_clip.y],
             half_size: [bounds.width() / 2.0, bounds.height() / 2.0],
-            to_local: invert_or_identity(to_clip.matrix2),
+            to_local: invert_to_local(Transform2D::from(
+                to_clip * Affine2::from_translation(center),
+            )),
             stroke,
         })
     }
@@ -2745,23 +2737,16 @@ impl Canvas {
         if to_clip.matrix2.determinant().abs() <= f32::EPSILON {
             return Ok(self);
         }
-        let scale = Mat2::from_diagonal(Vec2::new(
-            1.0 / extent.width as f32,
-            1.0 / extent.height as f32,
-        ));
-        let mapping = scale * to_clip.matrix2.inverse();
-        let origin = to_clip.transform_point2(Vec2::ZERO);
-        if !mapping.is_finite() || !origin.is_finite() {
+        // The recording's texture spans its own extent from the origin, so
+        // that rectangle carried through the transform is the placement, and
+        // the mapping the shader wants is its inverse.
+        let picture_to_clip =
+            to_clip * Affine2::from_scale(Vec2::new(extent.width as f32, extent.height as f32));
+        if !picture_to_clip.is_finite() {
             return Ok(self);
         }
         let material = Material::Image {
-            origin: [origin.x, origin.y],
-            to_local: [
-                mapping.x_axis.x,
-                mapping.x_axis.y,
-                mapping.y_axis.x,
-                mapping.y_axis.y,
-            ],
+            to_local: invert_to_local(Transform2D::from(picture_to_clip)),
             slot,
             alpha: 1.0,
             tile: TileMode::Clamp,
@@ -3003,16 +2988,18 @@ impl Canvas {
         // axes halved — which is what it was before bounds existed.
         let parent = frame.parent;
         let offset = layer.origin - parent.origin;
-        let origin = [
+        let anchor = Vec2::new(
             -1.0 + 2.0 * offset.x / parent.extent.width as f32,
             1.0 - 2.0 * offset.y / parent.extent.height as f32,
-        ];
-        let to_local = [
+        );
+        let scale = Mat2::from_diagonal(Vec2::new(
             0.5 * parent.extent.width as f32 / layer.extent.width as f32,
-            0.0,
-            0.0,
             -0.5 * parent.extent.height as f32 / layer.extent.height as f32,
-        ];
+        ));
+        // Stated in the direction the shader reads it: a fragment's clip
+        // position to the texel it samples, with the anchor inside the matrix
+        // rather than packed beside it.
+        let clip_to_texture = Affine2::from_mat2(scale) * Affine2::from_translation(-anchor);
         // A layer asking to be transformed on the way back needs both halves
         // moved, and moving only the geometry is the mistake worth naming: the
         // mapping below carries a fragment's clip position to a texel, so
@@ -3028,24 +3015,21 @@ impl Canvas {
             let in_clip = projection * *matrix * projection.inverse();
             in_clip.is_finite() && in_clip.matrix2.inverse().is_finite()
         });
-        let (origin, to_local) = match placement {
-            None => (origin, to_local),
+        let clip_to_texture = match placement {
+            None => clip_to_texture,
             Some(matrix) => {
                 // The matrix is stated in device pixels; the mapping is in
-                // clip space. So it is carried into clip space, the origin
-                // goes through it, and the axes take its inverse -- which
-                // together say that a fragment reads the texel that landed on
-                // it.
+                // clip space. So it is carried into clip space and composed
+                // ahead of the mapping in inverse -- which says that a
+                // fragment reads the texel that landed on it. The filter above
+                // has already established that inverse exists.
                 let projection = self.target.projection();
                 let in_clip = projection * matrix * projection.inverse();
-                let moved = in_clip.transform_point2(Vec2::from(origin));
-                let axes = Mat2::from_cols_array(&to_local) * in_clip.matrix2.inverse();
-                (moved.into(), axes.to_cols_array())
+                clip_to_texture * in_clip.inverse()
             }
         };
         let material = Material::Image {
-            origin,
-            to_local,
+            to_local: to_local_columns(Transform2D::from(clip_to_texture)),
             slot,
             alpha: frame.paint.alpha,
             tile: TileMode::Clamp,
@@ -3148,8 +3132,15 @@ impl Canvas {
         target: Target,
         morphology: Morphology,
     ) -> usize {
-        let origin = [-1.0, 1.0];
-        let to_local = [0.5, 0.0, 0.0, -0.5];
+        // A filter pass covers the whole target, so its mapping is the fixed
+        // one from clip space to the unit square and carries no transform of
+        // the caller's at all. That is what keeps `step` -- a constant offset
+        // between taps, in texels -- meaning the same thing at every fragment,
+        // which a mapping with perspective would not.
+        let to_local = to_local_columns(Transform2D::from(
+            Affine2::from_mat2(Mat2::from_diagonal(Vec2::new(0.5, -0.5)))
+                * Affine2::from_translation(Vec2::new(1.0, -1.0)),
+        ));
         let axes = [
             (
                 [1.0 / target.extent.width as f32, 0.0],
@@ -3168,7 +3159,6 @@ impl Canvas {
                 let taken = left.min(MORPHOLOGY_TAPS as f32);
                 left -= taken;
                 let material = Material::Morphology {
-                    origin,
                     to_local,
                     slot: 0,
                     step,
@@ -3197,8 +3187,15 @@ impl Canvas {
         // that turns a full-target quad's clip position into the texture
         // coordinates of the pass it samples -- the same pair a layer
         // composite uses at zero offset, since these targets are the same size.
-        let origin = [-1.0, 1.0];
-        let to_local = [0.5, 0.0, 0.0, -0.5];
+        // A filter pass covers the whole target, so its mapping is the fixed
+        // one from clip space to the unit square and carries no transform of
+        // the caller's at all. That is what keeps `step` -- a constant offset
+        // between taps, in texels -- meaning the same thing at every fragment,
+        // which a mapping with perspective would not.
+        let to_local = to_local_columns(Transform2D::from(
+            Affine2::from_mat2(Mat2::from_diagonal(Vec2::new(0.5, -0.5)))
+                * Affine2::from_translation(Vec2::new(1.0, -1.0)),
+        ));
         // A step of one texel along each axis, in the sampled texture's own
         // coordinates. The shader cannot derive this: it does not know the size
         // of what it is sampling.
@@ -3213,7 +3210,6 @@ impl Canvas {
                 sampled,
                 target,
                 Material::Blur {
-                    origin,
                     to_local,
                     slot: 0,
                     step,

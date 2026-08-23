@@ -16,6 +16,20 @@ use impeller_hal_gles::{DisplayTarget, GlesHal};
 use impeller_hal_vulkan::Validated;
 use impeller_hal_vulkan::{DevicePreference, VulkanHal};
 
+/// Clip space to a texture spanning the whole target, as the shader reads it.
+///
+/// `scale` is half the target's size over the texture's: one where a texture
+/// covers the target at its own size, a half where it covers twice that. The
+/// paint's origin is inside the matrix rather than packed beside it, so this is
+/// the whole mapping.
+fn across_the_target(scale: f32) -> [f32; 12] {
+    [
+        scale, 0.0, 0.0, 0.0, //
+        0.0, -scale, 0.0, 0.0, //
+        scale, scale, 1.0, 0.0,
+    ]
+}
+
 const SIZE: Extent2D = Extent2D {
     width: 32,
     height: 32,
@@ -59,8 +73,7 @@ fn source_pixels() -> Vec<u8> {
 /// `(-1, 1)`.
 fn full_target_mapping() -> Material {
     Material::Image {
-        origin: [-1.0, 1.0],
-        to_local: [0.5, 0.0, 0.0, -0.5],
+        to_local: across_the_target(0.5),
         slot: 0,
         alpha: 1.0,
         tile: TileMode::Clamp,
@@ -369,8 +382,7 @@ fn nearest_sampling_steps_between_texels_on_both_backends() {
     // translations reach differently. So this is a place the two can disagree
     // while each looks plausible on its own, which is what this file is for.
     let quadrant = |sampling| Material::Image {
-        origin: [-1.0, 1.0],
-        to_local: [1.0, 0.0, 0.0, -1.0],
+        to_local: across_the_target(1.0),
         slot: 0,
         alpha: 1.0,
         tile: TileMode::Clamp,
@@ -535,8 +547,7 @@ fn a_source_rectangle_draws_only_that_part_of_the_image() {
     // one per quadrant, which is what says the rectangle is being read rather
     // than ignored.
     let quadrant = |source: [f32; 4]| Material::Image {
-        origin: [-1.0, 1.0],
-        to_local: [1.0, 0.0, 0.0, -1.0],
+        to_local: across_the_target(1.0),
         slot: 0,
         alpha: 1.0,
         tile: TileMode::Clamp,
@@ -584,8 +595,7 @@ fn a_repeated_source_rectangle_tiles_the_piece_rather_than_the_sheet() {
     let pixels = render::<VulkanHal>(
         &mut ctx,
         Material::Image {
-            origin: [-1.0, 1.0],
-            to_local: [1.0, 0.0, 0.0, -1.0],
+            to_local: across_the_target(1.0),
             slot: 0,
             alpha: 1.0,
             tile: TileMode::Repeat,
@@ -612,8 +622,7 @@ fn the_tile_modes_differ_outside_the_image() {
     // Map the image to the top-left quarter of the target, so three quarters of
     // it lie outside and the modes have somewhere to disagree.
     let quarter = |tile| Material::Image {
-        origin: [-1.0, 1.0],
-        to_local: [1.0, 0.0, 0.0, -1.0],
+        to_local: across_the_target(1.0),
         slot: 0,
         alpha: 1.0,
         tile,
@@ -758,8 +767,7 @@ fn a_rendered_target_can_be_sampled_by_a_later_pass() {
             &FULL,
             &QUAD,
             Material::Image {
-                origin: [-1.0, 1.0],
-                to_local: [0.5, 0.0, 0.0, -0.5],
+                to_local: across_the_target(0.5),
                 slot: 0,
                 alpha: 1.0,
                 tile: TileMode::Clamp,

@@ -284,30 +284,63 @@ pub fn transform_points(points: &mut [Vec2], transform: &Affine2) {
     }
 }
 
-/// Invert a mapping's linear part, falling back to the identity.
+/// Invert a paint's placement into the form a shader's `to_local` takes.
 ///
-/// The result is in the column-major four-float form a shader's `to_local`
-/// takes, which is what every caller wants it for: a paint states its geometry
-/// in one space and the fragment stage arrives in another, so it carries the
-/// mapping between them.
+/// `local_to_clip` carries the paint's own space onto clip space — the canvas
+/// transform, then wherever the paint sits, then whatever normalization its
+/// kind wants, a radius or a rectangle's size. What comes back is the inverse,
+/// as three columns of a three-by-three each padded to four floats, which is how
+/// a `mat3x3` sits in a uniform block and what lets both backends copy the
+/// packed material in without writing padding around anything.
+///
+/// # Why the whole matrix rather than a linear part and an anchor
+///
+/// It used to be four floats and a separately packed clip-space anchor, and the
+/// shader subtracted the one before applying the other. That works only for an
+/// affine, where the image of a difference is the difference of the images. A
+/// map with perspective divides by a quantity that depends on the absolute
+/// position, so an anchor subtracted before the mapping is subtracted in the
+/// wrong space — correct only in the case that made it look correct. Inside the
+/// matrix is the one place the translation belongs, and it rides there for free.
+///
+/// # A placement that has collapsed
 ///
 /// A degenerate transform — a zero scale, or one axis collapsed — has no
 /// inverse. That is a caller mistake rather than a renderer one, and the shape
 /// it fills is collapsed to nothing anyway, so the paint it would have carried
-/// is not observable. Returning the identity keeps a non-finite matrix out of
-/// the shader, where it would spread NaN across every pixel of the draw.
-pub fn invert_or_identity(matrix: Mat2) -> [f32; 4] {
-    let determinant = matrix.determinant();
-    let inverse = if determinant.abs() > 1e-9 && determinant.is_finite() {
-        matrix.inverse()
+/// is not observable: the geometry went through the same matrix the mapping is
+/// the inverse of, which is the whole of why substituting anything here is safe.
+///
+/// The identity is what stands in, and it is chosen over anything else because
+/// its bottom row is `(0, 0, 1)`. A fragment that reached it despite the above
+/// would divide by one rather than by zero, and a NaN put into a fragment's
+/// color survives the blend and spreads across whatever it touches.
+pub fn invert_to_local(local_to_clip: Transform2D) -> [f32; 12] {
+    to_local_columns(local_to_clip.inverse().unwrap_or(Transform2D::IDENTITY))
+}
+
+/// The same packing, for a mapping already stated in the direction the shader
+/// reads it.
+///
+/// A layer composite and a picture's placement both build the clip-to-local
+/// mapping directly, because they know the texture's size rather than a
+/// placement to invert. Inverting a matrix only to invert it back would be
+/// arithmetic with nothing to show for it.
+pub fn to_local_columns(clip_to_local: Transform2D) -> [f32; 12] {
+    let c = clip_to_local.to_cols_array();
+    let padded = [
+        c[0], c[1], c[2], 0.0, //
+        c[3], c[4], c[5], 0.0, //
+        c[6], c[7], c[8], 0.0,
+    ];
+    if padded.iter().all(|v| v.is_finite()) {
+        padded
     } else {
-        Mat2::IDENTITY
-    };
-    let columns = inverse.to_cols_array();
-    if columns.iter().all(|v| v.is_finite()) {
-        columns
-    } else {
-        Mat2::IDENTITY.to_cols_array()
+        [
+            1.0, 0.0, 0.0, 0.0, //
+            0.0, 1.0, 0.0, 0.0, //
+            0.0, 0.0, 1.0, 0.0,
+        ]
     }
 }
 

@@ -10,7 +10,7 @@ struct Paint {
     stops: array<vec4<f32>, 4>,
     offsets: vec4<f32>,
     geometry: vec4<f32>,
-    to_local: vec4<f32>,
+    to_local: array<vec4<f32>, 3>,
     params: vec4<f32>,
     recolor: array<vec4<f32>, 4>,
     recolor_offset: vec4<f32>,

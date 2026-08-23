@@ -1253,7 +1253,7 @@ and what this project's own build does.
 
 **The interface is the paint's own uniform block.** A runtime effect declares
 the same std140 block every material uses and reads the floats a caller packed
-into it. That is fifty-six floats, which is what a material already costs, and
+into it. That is sixty-four floats, which is what a material already costs, and
 it buys a version with no new descriptor set, no new binding, and no change to
 how a draw's uniforms reach the shader.
 
@@ -1707,9 +1707,13 @@ every fragment walks, which is the cost specialization would remove.
   twice.
 - **Materials**: a paint resolved for a backend — color or gradient, already
   in clip space, and the color filter applied to what it produces — packed
-  into 224 bytes. It was 128 for a long time, which was exactly the
+  into 256 bytes. It was 128 for a long time, which was exactly the
   push-constant size every device guarantees; the color filter is what grew it,
-  and the move to a uniform buffer is what let it. The bound that remains is
+  and the move to a uniform buffer is what let it. Perspective grew it again,
+  by the eight floats between a two-by-two mapping and a three-by-three, and
+  that widening cost nothing in practice: a material is padded per draw to the
+  device's `minUniformBufferOffsetAlignment`, which is 256 on a great many
+  parts, so 224 was already occupying 256. The bound that remains is
   `maxUniformBufferRange`, whose guaranteed minimum is 16 KiB. The limit is a
   compile-time assertion rather than a test, and the size stated here is
   checked against it.

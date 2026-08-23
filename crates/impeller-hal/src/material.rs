@@ -22,7 +22,7 @@ use crate::error::Error;
 /// a material that needs it. Every float here is read by a shader that
 /// branches on the kind, and floats nobody reads are bandwidth in the one
 /// place a renderer spends it per draw.
-pub const MATERIAL_FLOATS: usize = 56;
+pub const MATERIAL_FLOATS: usize = 64;
 
 /// Enforced at compile time rather than by a test, so a material that outgrew
 /// what every device guarantees could not be built at all.
@@ -58,7 +58,17 @@ pub mod layout {
     pub const OFFSETS: usize = 16;
     /// Endpoints, or center plus angles.
     pub const GEOMETRY: usize = 20;
-    /// Clip-space to gradient-space matrix, in column order.
+    /// Clip space to the paint's own space: three columns of a three-by-three,
+    /// in column order, each padded to four floats.
+    ///
+    /// Twelve floats rather than nine because that is how a `mat3x3` sits in a
+    /// uniform block, and because every member here is a four-component vector
+    /// on purpose -- it is what lets both backends copy the packed material
+    /// straight in without writing padding around anything.
+    ///
+    /// The paint's origin is inside this matrix rather than beside it in
+    /// `GEOMETRY`, which is why the first two floats there are unclaimed for
+    /// every kind that carries a mapping. See `invert_to_local`.
     pub const TO_LOCAL: usize = 24;
     /// Stop count, material kind, and two floats whose meaning the kind
     /// decides -- a corner radius, a stroke width, a blur's deviation, a
@@ -66,13 +76,13 @@ pub mod layout {
     ///
     /// A zero stop count means the colors are in a ramp texture; see
     /// `stop_count_code`.
-    pub const PARAMS: usize = 28;
+    pub const PARAMS: usize = 36;
     /// A color filter's matrix, by column.
-    pub const FILTER: usize = 32;
+    pub const FILTER: usize = 40;
     /// The constant a color filter adds.
-    pub const FILTER_OFFSET: usize = 48;
+    pub const FILTER_OFFSET: usize = 56;
     /// Which color filter, if any, and in which form its matrix is stated.
-    pub const FILTER_PARAMS: usize = 52;
+    pub const FILTER_PARAMS: usize = 60;
 }
 
 /// The number the shader reads for a tile mode.
@@ -500,7 +510,7 @@ impl Stop {
 /// distortion changes, so they map back before measuring. A linear gradient
 /// projects onto an axis, which distortion does not affect, and so does not
 /// need this.
-pub type ToLocal = [f32; 4];
+pub type ToLocal = [f32; 12];
 
 /// How a shape is filled.
 #[derive(Debug, Clone, PartialEq)]
@@ -520,7 +530,6 @@ pub enum Material {
     /// shape: on a target twice as wide as it is tall, a diagonal gradient runs
     /// in the wrong direction.
     LinearGradient {
-        start: [f32; 2],
         /// End minus start, in the gradient's own space.
         axis: [f32; 2],
         to_local: ToLocal,
@@ -548,7 +557,6 @@ pub enum Material {
     /// carries the radius: it maps the clip-space offset so that the gradient's
     /// edge lands at unit distance.
     RadialGradient {
-        center: [f32; 2],
         to_local: ToLocal,
         stops: Vec<Stop>,
         /// Texture slot holding this gradient's colors, when they did not fit.
@@ -566,7 +574,6 @@ pub enum Material {
     /// A gradient around a center, **in clip space**, running from `start_angle`
     /// to `end_angle` in radians.
     SweepGradient {
-        center: [f32; 2],
         to_local: ToLocal,
         start_angle: f32,
         end_angle: f32,
@@ -602,7 +609,6 @@ pub enum Material {
     /// no special handling: concentric circles are `separation == 0`, and a
     /// cone rather than a tube is `radius_delta != 0`.
     ConicalGradient {
-        center: [f32; 2],
         to_local: ToLocal,
         /// Radius of the first circle.
         start_radius: f32,
@@ -681,7 +687,6 @@ pub enum Material {
     /// produces without touching the device, so it carries a slot into the
     /// table supplied at submission instead of a backend handle.
     Image {
-        origin: [f32; 2],
         to_local: ToLocal,
         /// Index into the texture table given at submission.
         slot: u32,
@@ -739,8 +744,6 @@ pub enum Material {
     /// different amounts on each axis.
     RoundedRect {
         color: [f32; 4],
-        /// Where the fragment stage locates the shape, in clip space.
-        center: [f32; 2],
         /// Half the width and height, in the shape's own space.
         half_size: [f32; 2],
         to_local: ToLocal,
@@ -766,8 +769,6 @@ pub enum Material {
     /// the two axes already state.
     Ellipse {
         color: [f32; 4],
-        /// Where the fragment stage locates the shape, in clip space.
-        center: [f32; 2],
         /// The two semi-axes, in the shape's own space.
         half_size: [f32; 2],
         to_local: ToLocal,
@@ -783,7 +784,6 @@ pub enum Material {
     /// Two passes are the price, which is why this names an axis rather than
     /// describing the whole blur.
     Blur {
-        origin: [f32; 2],
         to_local: ToLocal,
         slot: u32,
         /// One tap's step, in the sampled texture's own coordinates.
@@ -815,7 +815,6 @@ pub enum Material {
     /// little smoothness, and do not work here: the result is a maximum, so a
     /// missed sample is a scallop in the edge.
     Morphology {
-        origin: [f32; 2],
         to_local: ToLocal,
         slot: u32,
         /// One tap's step, in the sampled texture's own coordinates. As
@@ -1004,18 +1003,15 @@ impl Material {
         // the gradient path below decides it has too few to interpolate.
         if let Self::Ellipse {
             color,
-            center,
             half_size,
             to_local,
             stroke,
         } = self
         {
             out[layout::STOPS..layout::STOPS + 4].copy_from_slice(color);
-            out[layout::GEOMETRY] = center[0];
-            out[layout::GEOMETRY + 1] = center[1];
             out[layout::GEOMETRY + 2] = half_size[0];
             out[layout::GEOMETRY + 3] = half_size[1];
-            out[layout::TO_LOCAL..layout::TO_LOCAL + 4].copy_from_slice(to_local);
+            out[layout::TO_LOCAL..layout::TO_LOCAL + 12].copy_from_slice(to_local);
             out[layout::PARAMS] = 1.0;
             out[layout::PARAMS + 1] = kind::ELLIPSE;
             out[layout::PARAMS + 3] = *stroke;
@@ -1024,7 +1020,6 @@ impl Material {
 
         if let Self::RoundedRect {
             color,
-            center,
             half_size,
             to_local,
             radius,
@@ -1032,11 +1027,9 @@ impl Material {
         } = self
         {
             out[layout::STOPS..layout::STOPS + 4].copy_from_slice(color);
-            out[layout::GEOMETRY] = center[0];
-            out[layout::GEOMETRY + 1] = center[1];
             out[layout::GEOMETRY + 2] = half_size[0];
             out[layout::GEOMETRY + 3] = half_size[1];
-            out[layout::TO_LOCAL..layout::TO_LOCAL + 4].copy_from_slice(to_local);
+            out[layout::TO_LOCAL..layout::TO_LOCAL + 12].copy_from_slice(to_local);
             out[layout::PARAMS] = 1.0;
             out[layout::PARAMS + 1] = kind::ROUNDED_RECT;
             out[layout::PARAMS + 2] = *radius;
@@ -1045,18 +1038,15 @@ impl Material {
         }
 
         if let Self::Blur {
-            origin,
             to_local,
             step,
             sigma,
             ..
         } = self
         {
-            out[layout::GEOMETRY] = origin[0];
-            out[layout::GEOMETRY + 1] = origin[1];
             out[layout::GEOMETRY + 2] = step[0];
             out[layout::GEOMETRY + 3] = step[1];
-            out[layout::TO_LOCAL..layout::TO_LOCAL + 4].copy_from_slice(to_local);
+            out[layout::TO_LOCAL..layout::TO_LOCAL + 12].copy_from_slice(to_local);
             out[layout::PARAMS] = 1.0;
             out[layout::PARAMS + 1] = kind::BLUR;
             out[layout::PARAMS + 2] = *sigma;
@@ -1064,7 +1054,6 @@ impl Material {
         }
 
         if let Self::Morphology {
-            origin,
             to_local,
             step,
             radius,
@@ -1072,11 +1061,9 @@ impl Material {
             ..
         } = self
         {
-            out[layout::GEOMETRY] = origin[0];
-            out[layout::GEOMETRY + 1] = origin[1];
             out[layout::GEOMETRY + 2] = step[0];
             out[layout::GEOMETRY + 3] = step[1];
-            out[layout::TO_LOCAL..layout::TO_LOCAL + 4].copy_from_slice(to_local);
+            out[layout::TO_LOCAL..layout::TO_LOCAL + 12].copy_from_slice(to_local);
             out[layout::PARAMS] = 1.0;
             out[layout::PARAMS + 1] = kind::MORPHOLOGY;
             out[layout::PARAMS + 2] = radius.clamp(0.0, MORPHOLOGY_TAPS as f32);
@@ -1111,7 +1098,6 @@ impl Material {
         }
 
         if let Self::Image {
-            origin,
             to_local,
             alpha,
             tile,
@@ -1125,11 +1111,9 @@ impl Material {
             // that would otherwise travel as zeros on every image draw.
             out[layout::STOPS..layout::STOPS + 4].copy_from_slice(source);
             out[layout::STOPS + 4..layout::STOPS + 8].copy_from_slice(tint);
-            out[layout::GEOMETRY] = origin[0];
-            out[layout::GEOMETRY + 1] = origin[1];
             out[layout::GEOMETRY + 2] = *alpha;
             out[layout::GEOMETRY + 3] = tile_code(*tile);
-            out[layout::TO_LOCAL..layout::TO_LOCAL + 4].copy_from_slice(to_local);
+            out[layout::TO_LOCAL..layout::TO_LOCAL + 12].copy_from_slice(to_local);
             out[layout::PARAMS] = 1.0;
             out[layout::PARAMS + 1] = kind::IMAGE;
             out[layout::PARAMS + 2] = sampling_code(*sampling);
@@ -1166,7 +1150,6 @@ impl Material {
             }
             Self::LinearGradient {
                 ramp,
-                start,
                 axis,
                 to_local,
                 tile,
@@ -1174,30 +1157,24 @@ impl Material {
             } => {
                 out[layout::PARAMS] = stop_count_code(count, ramp);
                 out[layout::PARAMS + 2] = tile_code(*tile);
-                out[layout::GEOMETRY] = start[0];
-                out[layout::GEOMETRY + 1] = start[1];
                 out[layout::GEOMETRY + 2] = axis[0];
                 out[layout::GEOMETRY + 3] = axis[1];
-                out[layout::TO_LOCAL..layout::TO_LOCAL + 4].copy_from_slice(to_local);
+                out[layout::TO_LOCAL..layout::TO_LOCAL + 12].copy_from_slice(to_local);
                 out[layout::PARAMS + 1] = kind::LINEAR;
             }
             Self::RadialGradient {
                 ramp,
-                center,
                 to_local,
                 tile,
                 ..
             } => {
                 out[layout::PARAMS] = stop_count_code(count, ramp);
                 out[layout::PARAMS + 2] = tile_code(*tile);
-                out[layout::GEOMETRY] = center[0];
-                out[layout::GEOMETRY + 1] = center[1];
-                out[layout::TO_LOCAL..layout::TO_LOCAL + 4].copy_from_slice(to_local);
+                out[layout::TO_LOCAL..layout::TO_LOCAL + 12].copy_from_slice(to_local);
                 out[layout::PARAMS + 1] = kind::RADIAL;
             }
             Self::SweepGradient {
                 ramp,
-                center,
                 to_local,
                 start_angle,
                 end_angle,
@@ -1206,16 +1183,13 @@ impl Material {
             } => {
                 out[layout::PARAMS] = stop_count_code(count, ramp);
                 out[layout::PARAMS + 2] = tile_code(*tile);
-                out[layout::GEOMETRY] = center[0];
-                out[layout::GEOMETRY + 1] = center[1];
                 out[layout::GEOMETRY + 2] = *start_angle;
                 out[layout::GEOMETRY + 3] = *end_angle;
-                out[layout::TO_LOCAL..layout::TO_LOCAL + 4].copy_from_slice(to_local);
+                out[layout::TO_LOCAL..layout::TO_LOCAL + 12].copy_from_slice(to_local);
                 out[layout::PARAMS + 1] = kind::SWEEP;
             }
             Self::ConicalGradient {
                 ramp,
-                center,
                 to_local,
                 start_radius,
                 radius_delta,
@@ -1225,11 +1199,9 @@ impl Material {
             } => {
                 out[layout::PARAMS] = stop_count_code(count, ramp);
                 out[layout::PARAMS + 2] = tile_code(*tile);
-                out[layout::GEOMETRY] = center[0];
-                out[layout::GEOMETRY + 1] = center[1];
                 out[layout::GEOMETRY + 2] = *start_radius;
                 out[layout::GEOMETRY + 3] = *radius_delta;
-                out[layout::TO_LOCAL..layout::TO_LOCAL + 4].copy_from_slice(to_local);
+                out[layout::TO_LOCAL..layout::TO_LOCAL + 12].copy_from_slice(to_local);
                 out[layout::PARAMS + 1] = kind::CONICAL;
                 out[layout::PARAMS + 3] = *separation;
             }
@@ -1271,6 +1243,19 @@ pub enum MaterialVariant {
 mod tests {
     use super::*;
 
+    /// A mapping with the given two-by-two linear part and no translation.
+    ///
+    /// Most of these tests care that the mapping survives packing, not what it
+    /// is, and said so in four floats before the paint's origin moved inside
+    /// it. This keeps them saying that.
+    fn linear_to_local(m: [f32; 4]) -> ToLocal {
+        [
+            m[0], m[1], 0.0, 0.0, //
+            m[2], m[3], 0.0, 0.0, //
+            0.0, 0.0, 1.0, 0.0,
+        ]
+    }
+
     fn two_stops() -> Vec<Stop> {
         vec![
             Stop::new([1.0, 0.0, 0.0, 1.0], 0.0),
@@ -1287,11 +1272,10 @@ mod tests {
     }
 
     #[test]
-    fn a_linear_gradient_packs_its_stops_start_axis_and_count() {
+    fn a_linear_gradient_packs_its_stops_axis_and_count() {
         let packed = Material::LinearGradient {
-            start: [-1.0, 0.0],
             axis: [2.0, 0.0],
-            to_local: [1.0, 0.0, 0.0, 1.0],
+            to_local: linear_to_local([1.0, 0.0, 0.0, 1.0]),
             stops: two_stops(),
             tile: TileMode::Clamp,
             ramp: None,
@@ -1304,36 +1288,35 @@ mod tests {
         assert_eq!(packed[layout::OFFSETS + 1], 1.0);
         assert_eq!(
             &packed[layout::GEOMETRY..layout::GEOMETRY + 4],
-            &[-1.0, 0.0, 2.0, 0.0],
-            "the start, then the axis rather than the end point"
+            &[0.0, 0.0, 2.0, 0.0],
+            "the axis rather than the end point, and nothing in the half the \
+             start used to occupy before it moved inside the mapping"
         );
         assert_eq!(
-            &packed[layout::TO_LOCAL..layout::TO_LOCAL + 4],
-            &[1.0, 0.0, 0.0, 1.0]
+            &packed[layout::TO_LOCAL..layout::TO_LOCAL + 12],
+            &linear_to_local([1.0, 0.0, 0.0, 1.0])
         );
         assert_eq!(packed[layout::PARAMS + 1], kind::LINEAR);
     }
 
     #[test]
-    fn a_radial_gradient_packs_its_center_and_mapping() {
+    fn a_radial_gradient_packs_its_mapping() {
         let packed = Material::RadialGradient {
-            center: [0.25, -0.5],
-            to_local: [2.0, 0.0, 0.0, 4.0],
+            to_local: linear_to_local([2.0, 0.0, 0.0, 4.0]),
             stops: two_stops(),
             tile: TileMode::Clamp,
             ramp: None,
         }
         .to_uniform();
 
-        assert_eq!(
-            &packed[layout::GEOMETRY..layout::GEOMETRY + 2],
-            &[0.25, -0.5]
-        );
+        // A radial gradient states nothing in the geometry slot at all now: its
+        // center rode there, and rides inside the mapping instead.
+        assert_eq!(&packed[layout::GEOMETRY..layout::GEOMETRY + 2], &[0.0, 0.0]);
         // The mapping is what makes a circle circular on a non-square target,
         // so it has to survive packing intact.
         assert_eq!(
-            &packed[layout::TO_LOCAL..layout::TO_LOCAL + 4],
-            &[2.0, 0.0, 0.0, 4.0]
+            &packed[layout::TO_LOCAL..layout::TO_LOCAL + 12],
+            &linear_to_local([2.0, 0.0, 0.0, 4.0])
         );
         assert_eq!(packed[layout::PARAMS + 1], kind::RADIAL);
     }
@@ -1341,8 +1324,7 @@ mod tests {
     #[test]
     fn a_sweep_gradient_packs_its_angles_alongside_its_center() {
         let packed = Material::SweepGradient {
-            center: [0.0, 0.0],
-            to_local: [1.0, 0.0, 0.0, 1.0],
+            to_local: linear_to_local([1.0, 0.0, 0.0, 1.0]),
             start_angle: 0.5,
             end_angle: 2.5,
             stops: two_stops(),
@@ -1367,23 +1349,20 @@ mod tests {
         let one = vec![Stop::new([1.0, 1.0, 1.0, 1.0], 0.0)];
         let materials = [
             Material::LinearGradient {
-                start: [0.0, 0.0],
                 axis: [1.0 - 0.0, 0.0 - 0.0],
-                to_local: [1.0, 0.0, 0.0, 1.0],
+                to_local: linear_to_local([1.0, 0.0, 0.0, 1.0]),
                 stops: one.clone(),
                 tile: TileMode::Clamp,
                 ramp: None,
             },
             Material::RadialGradient {
-                center: [0.0, 0.0],
-                to_local: [1.0, 0.0, 0.0, 1.0],
+                to_local: linear_to_local([1.0, 0.0, 0.0, 1.0]),
                 stops: one.clone(),
                 tile: TileMode::Clamp,
                 ramp: None,
             },
             Material::SweepGradient {
-                center: [0.0, 0.0],
-                to_local: [1.0, 0.0, 0.0, 1.0],
+                to_local: linear_to_local([1.0, 0.0, 0.0, 1.0]),
                 start_angle: 0.0,
                 end_angle: 1.0,
                 stops: one,
@@ -1404,9 +1383,8 @@ mod tests {
             .map(|i| Stop::new([i as f32 / 8.0, 0.0, 0.0, 1.0], i as f32 / 7.0))
             .collect();
         let packed = Material::LinearGradient {
-            start: [0.0, 0.0],
             axis: [1.0 - 0.0, 0.0 - 0.0],
-            to_local: [1.0, 0.0, 0.0, 1.0],
+            to_local: linear_to_local([1.0, 0.0, 0.0, 1.0]),
             stops,
             tile: TileMode::Clamp,
             ramp: None,
@@ -1426,8 +1404,7 @@ mod tests {
             Stop::new([0.0, 0.0, 1.0, 0.0], 1.0),
         ];
         assert!(Material::RadialGradient {
-            center: [0.0, 0.0],
-            to_local: [1.0, 0.0, 0.0, 1.0],
+            to_local: linear_to_local([1.0, 0.0, 0.0, 1.0]),
             stops: clear,
             tile: TileMode::Clamp,
             ramp: None,
@@ -1440,8 +1417,7 @@ mod tests {
         ];
         assert!(
             !Material::SweepGradient {
-                center: [0.0, 0.0],
-                to_local: [1.0, 0.0, 0.0, 1.0],
+                to_local: linear_to_local([1.0, 0.0, 0.0, 1.0]),
                 start_angle: 0.0,
                 end_angle: 1.0,
                 stops: partly,
@@ -1460,16 +1436,14 @@ mod tests {
         assert_eq!(Material::solid([0.0; 4]).variant(), MaterialVariant::Solid);
         for material in [
             Material::LinearGradient {
-                start: [0.0; 2],
                 axis: [1.0, 0.0],
-                to_local: [1.0, 0.0, 0.0, 1.0],
+                to_local: linear_to_local([1.0, 0.0, 0.0, 1.0]),
                 stops: two_stops(),
                 tile: TileMode::Clamp,
                 ramp: None,
             },
             Material::RadialGradient {
-                center: [0.0; 2],
-                to_local: [1.0, 0.0, 0.0, 1.0],
+                to_local: linear_to_local([1.0, 0.0, 0.0, 1.0]),
                 stops: two_stops(),
                 tile: TileMode::Clamp,
                 ramp: None,

@@ -7,7 +7,7 @@ struct Paint {
     vec4 stops[4];
     vec4 offsets;
     vec4 geometry;
-    vec4 to_local;
+    vec4 to_local[3];
     vec4 params;
     vec4 recolor[4];
     vec4 filter_offset;

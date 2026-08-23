@@ -29,18 +29,32 @@ struct Paint {
     stops: array<vec4<f32>, 4>,
     // Position of each stop along the gradient, in order.
     offsets: vec4<f32>,
-    // Linear: start.xy then end.xy. Radial and sweep: center.xy, then two
-    // spare components a sweep uses for its angles.
+    // What the kind decides, in zw. Linear: the axis. Sweep: two angles.
+    // Conical: two radii. A rounded rectangle or an ellipse: half its size, in
+    // its own space. A blur or a morphology: the step between taps.
+    //
+    // The xy half is unclaimed for every kind that carries a mapping, because
+    // the paint's origin used to live there and now rides inside `to_local`. A
+    // mesh, which has no mapping, still reads x and y for its alpha and its
+    // tile mode.
     geometry: vec4<f32>,
-    // Maps a clip-space offset from the center into the gradient's own space,
-    // as a two by two matrix in column order.
+    // Clip space to the paint's own space, as three columns of a three by three
+    // in column order, each padded to four.
     //
     // Clip space is anisotropic whenever the target is not square, and a
-    // transform may rotate or skew as well, so a circle in user space is an
-    // ellipse here. Measuring distance or angle directly in clip space would
-    // therefore distort every radial and sweep gradient by the aspect ratio.
-    // Mapping back first is what makes them correct under any transform.
-    to_local: vec4<f32>,
+    // transform may rotate, skew, or carry perspective, so a circle in user
+    // space is some other conic here. Measuring distance or angle directly in
+    // clip space would therefore distort every radial and sweep gradient by the
+    // aspect ratio. Mapping back first is what makes them correct under any
+    // transform.
+    //
+    // Three by three rather than two by two because the paint's origin is
+    // inside it. Subtracting an origin before a mapping is only the same as
+    // mapping and then subtracting when the mapping is affine, and this one may
+    // not be. An array of vectors rather than a matrix type because every
+    // member of this block is a four-component vector on purpose: it is what
+    // lets both backends copy the packed material in without writing padding.
+    to_local: array<vec4<f32>, 3>,
     // x: number of stops in use. y: 0 solid, 1 linear, 2 radial, 3 sweep.
     params: vec4<f32>,
     // A color filter's matrix, by column: recolor[j] scales the input's jth
@@ -182,18 +196,35 @@ fn gradient_color(t: f32, count: i32) -> vec4<f32> {
     return sample_stops(t, count);
 }
 
-/// Map a clip-space position into the gradient's own space.
+/// Map a clip-space position into the paint's own space.
 ///
-/// The argument arrives homogeneous, as the vertex stage wrote it, so the
-/// divide that recovers a normalized position happens here. Today every `w` is
-/// one -- no transform upstream can produce anything else yet -- so this is
-/// exactly the position it always was, and the guard against a vanishing
-/// divisor arrives with the transform that can make one.
+/// `to_local` is the whole inverse of what placed this draw's geometry, with the
+/// paint's origin folded in, so what comes back is already measured from that
+/// origin and the paint has nothing left to subtract. Folding is not tidiness:
+/// under a mapping with perspective the image of an offset is not the offset of
+/// the images, so an origin subtracted in clip space beforehand would be
+/// subtracted in the wrong space -- correct only for the affine case that made
+/// it look correct.
+///
+/// The argument is homogeneous rather than divided, and that is what keeps this
+/// to a single reciprocal. Perspective-correct interpolation hands the fragment
+/// stage the clip position scaled by some factor it chose; that factor lands in
+/// the numerator and the denominator alike and divides straight back out. So
+/// nothing has to undo it, and an affine draw -- whose bottom row is (0, 0, 1)
+/// -- comes back exact whatever the hardware picked.
 fn to_gradient_space(clip: vec3<f32>) -> vec2<f32> {
-    let delta = clip.xy / clip.z - paint.geometry.xy;
-    let column0 = vec2<f32>(paint.to_local.x, paint.to_local.y);
-    let column1 = vec2<f32>(paint.to_local.z, paint.to_local.w);
-    return column0 * delta.x + column1 * delta.y;
+    let mapped = paint.to_local[0].xyz * clip.x
+        + paint.to_local[1].xyz * clip.y
+        + paint.to_local[2].xyz * clip.z;
+    // Beyond the vanishing line the divisor passes through zero, and a fragment
+    // there has no position in the paint's space to report. Whole primitives
+    // that fell behind it are already gone, the vertex stage having written a
+    // depth of zero -- so what reaches here is the sliver a clipped edge
+    // leaves. Clamping sends it far from the origin, which every material
+    // downstream already has an answer for: coverage saturates to nothing, a
+    // tile mode decides, an image decals or clamps. Dividing by zero would
+    // answer with a NaN, and a NaN survives the blend and spreads.
+    return mapped.xy / max(mapped.z, 1e-6);
 }
 
 /// Sample the bound texture at a clip-space position, premultiplied.

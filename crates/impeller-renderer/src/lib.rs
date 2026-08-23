@@ -10,7 +10,7 @@ use impeller_geometry::dash::{dash_path, Dash};
 use impeller_geometry::stroke::StrokeStyle;
 use impeller_geometry::tessellate::{Tessellator, VertexBuffers};
 use impeller_geometry::transform::{
-    invert_or_identity, max_scale, transform_points, viewport_projection,
+    invert_to_local, max_scale, transform_points, viewport_projection, Transform2D,
 };
 use impeller_geometry::{flatten::DEFAULT_TOLERANCE, Path};
 use impeller_hal::{
@@ -68,16 +68,20 @@ impl Paint {
     ) -> Self {
         let to_clip = viewport_projection(target.width, target.height) * transform;
         let axis = end - start;
-        let start = to_clip.transform_point2(start);
         Self {
             material: Material::LinearGradient {
-                start: [start.x, start.y],
                 axis: [axis.x, axis.y],
                 // The axis stays in the space it was given in, and the shader is
                 // told how to get back there. Differencing the two endpoints in
                 // clip space instead would let the target's aspect ratio into
                 // the gradient's direction.
-                to_local: invert_or_identity(to_clip.matrix2),
+                //
+                // The start is inside that mapping rather than beside it, so
+                // what the shader measures along the axis is already an offset
+                // from it.
+                to_local: invert_to_local(Transform2D::from(
+                    to_clip * Affine2::from_translation(start),
+                )),
                 stops,
                 tile: Default::default(),
                 ramp: None,

@@ -11,6 +11,20 @@ use impeller_hal::{
 };
 use impeller_hal_vulkan::{ContextConfig, DevicePreference, VulkanContext};
 
+/// Clip space to a texture spanning the whole target, as the shader reads it.
+///
+/// `scale` is half the target's size over the texture's: one where a texture
+/// covers the target at its own size, a half where it covers twice that. The
+/// paint's origin is inside the matrix rather than packed beside it, so this is
+/// the whole mapping.
+fn across_the_target(scale: f32) -> [f32; 12] {
+    [
+        scale, 0.0, 0.0, 0.0, //
+        0.0, -scale, 0.0, 0.0, //
+        scale, scale, 1.0, 0.0,
+    ]
+}
+
 const SIZE: Extent2D = Extent2D {
     width: 16,
     height: 16,
@@ -46,8 +60,7 @@ fn assert_clean(ctx: &VulkanContext, what: &str) {
 
 fn image_material() -> Material {
     Material::Image {
-        origin: [-1.0, 1.0],
-        to_local: [0.5, 0.0, 0.0, -0.5],
+        to_local: across_the_target(0.5),
         slot: 0,
         alpha: 1.0,
         tile: TileMode::Clamp,
