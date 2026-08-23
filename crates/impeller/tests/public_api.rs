@@ -11096,3 +11096,96 @@ fn a_textured_mesh_under_perspective_is_not_interpolated_flat() {
         "this transform does not separate the two answers, so the test proves nothing"
     );
 }
+
+/// A mask blur over a gradient, assembled by a caller out of what is already
+/// here.
+///
+/// `with_mask_blur` refuses anything but a solid color, and the paint's own
+/// documentation says why: it draws the paint through a blurred layer, which is
+/// the same picture as blurring the mask and filling through it only where the
+/// fill does not vary. That is a limit of the mechanism, and this is the
+/// evidence for the claim beside it that the other order is reachable without
+/// new machinery -- the same nesting of layers and blends the four styles
+/// already use, with the fill drawn across everything the blur reaches and
+/// blurred white coverage composited onto it with `DstIn`.
+///
+/// Kept as a test rather than folded into the paint because the part that is
+/// missing is a decision, not this arrangement: what a shape's coverage means
+/// when it is not simply its own, for a mesh carrying a color per vertex or for
+/// a glyph run.
+#[test]
+fn a_caller_can_assemble_the_mask_blur_a_gradient_is_refused() {
+    let Some(mut ctx) = context() else { return };
+    let whole = Rect::new(0.0, 0.0, 128.0, 128.0);
+
+    let masked = |ctx: &mut Context, sigma: f32| {
+        let mut canvas = Canvas::new(SIZE);
+        canvas.clear(Color::BLACK);
+        canvas.save_layer_bounds(Layer::opacity(1.0), whole);
+        canvas
+            .draw_rect(
+                whole,
+                &Paint::fill(Color::WHITE).with_shader(Shader::LinearGradient {
+                    start: Vec2::new(0.0, 0.0),
+                    end: Vec2::new(128.0, 0.0),
+                    stops: vec![
+                        GradientStop::new(Color::linear(1.0, 0.0, 0.0, 1.0), 0.0),
+                        GradientStop::new(Color::linear(0.0, 0.0, 1.0, 1.0), 1.0),
+                    ],
+                    tile: TileMode::Clamp,
+                }),
+            )
+            .expect("fill");
+        // The coverage, blurred, taken out of the fill's alpha rather than drawn
+        // over it. `DstIn` on the composite is what makes the layer a mask.
+        canvas.save_layer_bounds(
+            Layer::opacity(1.0)
+                .with_blur(sigma)
+                .with_blend(BlendMode::DstIn),
+            whole,
+        );
+        canvas
+            .draw_circle(Vec2::new(64.0, 64.0), 36.0, &Paint::fill(Color::WHITE))
+            .expect("coverage");
+        canvas.restore();
+        canvas.restore();
+        render(ctx, canvas)
+    };
+
+    let pixels = masked(&mut ctx, 6.0);
+    let sharp = masked(&mut ctx, 0.0);
+
+    // Everything here composites over an opaque background, so the softness is
+    // in the color rather than in the alpha: the ramp is the run of pixels that
+    // are neither the background nor the fill at full strength.
+    let ramp = |image: &[u8]| {
+        (0..SIZE.width)
+            .filter(|x| {
+                let p = pixel(image, *x, 64);
+                let brightest = p[0].max(p[1]).max(p[2]);
+                brightest > 8 && brightest < 100
+            })
+            .count()
+    };
+
+    // The fill still varies across the mask, which is the whole point: a solid
+    // would have come out one color and told us nothing.
+    let left = pixel(&pixels, 40, 64);
+    let right = pixel(&pixels, 88, 64);
+    assert!(
+        left[0] > right[0] + 40 && right[2] > left[2] + 40,
+        "the gradient did not survive the mask: {left:?} against {right:?}"
+    );
+    // And the edge is soft rather than the circle's own. Checked against the
+    // same arrangement with no blur, so what it establishes is that the blur
+    // reached the coverage rather than that a circle has edges.
+    assert!(
+        ramp(&pixels) > ramp(&sharp) + 8,
+        "the masked edge is {} pixels wide against {} unblurred, so the blur did \
+         not reach the coverage",
+        ramp(&pixels),
+        ramp(&sharp)
+    );
+    // Far outside, nothing was drawn at all.
+    assert_eq!(pixel(&pixels, 4, 64), [0, 0, 0, 255], "beyond the blur");
+}
