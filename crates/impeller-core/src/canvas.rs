@@ -262,9 +262,13 @@ impl Target {
     }
 
     /// Device position to clip position for this target.
-    fn projection(&self) -> Affine2 {
-        viewport_projection(self.extent.width, self.extent.height)
-            * Affine2::from_translation(-self.origin)
+    ///
+    /// Affine, and stays so: a viewport is a scale, a flip and an offset. It is
+    /// lifted here because everything it composes with may not be.
+    fn projection(&self) -> Transform2D {
+        (viewport_projection(self.extent.width, self.extent.height)
+            * Affine2::from_translation(-self.origin))
+        .into()
     }
 
     /// The whole target, in the device space the projection expects.
@@ -286,7 +290,7 @@ impl Target {
 /// could balance one while leaving the other adrift.
 #[derive(Debug)]
 struct SavedState {
-    transform: Affine2,
+    transform: Transform2D,
     clip: Option<Scissor>,
     clip_bounds: Rect,
     depth: u32,
@@ -562,7 +566,7 @@ impl Layer {
 pub struct Canvas {
     renderer: Renderer,
     batch: Batch,
-    transform: Affine2,
+    transform: Transform2D,
     /// The region drawing is confined to, or `None` for the whole target.
     ///
     /// Kept in device pixels rather than user space because that is what it
@@ -616,7 +620,7 @@ impl Canvas {
         Self {
             renderer,
             batch: Batch::new(),
-            transform: Affine2::IDENTITY,
+            transform: Transform2D::IDENTITY,
             clip: None,
             // The whole target to start with, which is what an unclipped
             // canvas may reach.
@@ -651,7 +655,7 @@ impl Canvas {
     }
 
     /// Current transform, mapping user coordinates to device pixels.
-    pub fn transform(&self) -> Affine2 {
+    pub fn transform(&self) -> Transform2D {
         self.transform
     }
 
@@ -684,10 +688,9 @@ impl Canvas {
     /// A transform that cannot be inverted has collapsed the plane, and
     /// nothing drawn through it reaches anything; the empty rectangle says so.
     pub fn local_clip_bounds(&self) -> Rect {
-        let inverse = self.transform.inverse();
-        if !inverse.is_finite() {
+        let Some(inverse) = self.transform.inverse() else {
             return Rect::new(0.0, 0.0, 0.0, 0.0);
-        }
+        };
         // Two different ways this can have no answer, and they take opposite
         // ones. A transform that has collapsed leaves nothing reachable, which
         // the check above answers with an empty rectangle. A transform whose
@@ -827,10 +830,14 @@ impl Canvas {
             Vec2::new(rect.right, rect.bottom),
             Vec2::new(rect.left, rect.bottom),
         ]
-        .map(|corner| self.transform.transform_point2(corner));
+        .map(|corner| self.transform.project_point2(corner));
+        // A corner that is not a number describes no rectangle, so there is
+        // nothing to take out and the clip is left as it was. Under a transform
+        // carrying perspective this is also what catches a corner past the
+        // vanishing line, where the divide reports an infinity rather than a
+        // wrong finite answer -- and where the four corners would no longer
+        // describe the region even if they were finite.
         if !corners.iter().all(|corner| corner.is_finite()) {
-            // A corner that is not a number describes no rectangle, so there is
-            // nothing to take out and the clip is left as it was.
             return Ok(self);
         }
         builder.move_to(corners[0]);
@@ -1267,25 +1274,45 @@ impl Canvas {
     }
 
     pub fn translate(&mut self, x: f32, y: f32) -> &mut Self {
-        self.transform *= Affine2::from_translation(Vec2::new(x, y));
-        self
+        self.concat(Affine2::from_translation(Vec2::new(x, y)))
     }
 
     pub fn scale(&mut self, x: f32, y: f32) -> &mut Self {
-        self.transform *= Affine2::from_scale(Vec2::new(x, y));
-        self
+        self.concat(Affine2::from_scale(Vec2::new(x, y)))
     }
 
     /// Rotate by an angle in radians.
     pub fn rotate(&mut self, radians: f32) -> &mut Self {
-        self.transform *= Affine2::from_angle(radians);
-        self
+        self.concat(Affine2::from_angle(radians))
     }
 
     /// Apply an arbitrary transform on top of the current one.
-    pub fn concat(&mut self, transform: Affine2) -> &mut Self {
-        self.transform *= transform;
+    ///
+    /// Takes anything that is a transform of the plane, which is an `Affine2`
+    /// for almost every caller and a [`Transform2D`] for one that wants
+    /// perspective. Widened rather than replaced: nobody should have to build a
+    /// three-by-three to move something ten pixels to the right.
+    pub fn concat(&mut self, transform: impl Into<Transform2D>) -> &mut Self {
+        self.transform = self.transform * transform.into();
         self
+    }
+
+    /// Apply a `dart:ui` four-by-four, which is column-major and sixteen long.
+    ///
+    /// The entry point for perspective, and the one `dart:ui` states: its
+    /// `Canvas.transform` takes a matrix of this shape. Named apart from
+    /// [`Self::transform`], which reports the current one and cannot share a
+    /// name with a method that changes it.
+    ///
+    /// The reduction to a three-by-three is exact rather than a narrowing.
+    /// Everything drawn here lies on the plane where `z` is zero, and a
+    /// four-by-four applied to such a point never reads its `z` column; the `z`
+    /// row yields a depth with nothing to do here. What is left -- rows and
+    /// columns zero, one and three -- is the whole of what the matrix means on
+    /// the plane. A caller whose matrix depends on `z` is getting the part of
+    /// it that acts on what they are drawing, which is all of it.
+    pub fn concat_4x4(&mut self, matrix: &[f32; 16]) -> &mut Self {
+        self.concat(Transform2D::from_column_major_4x4(matrix))
     }
 
     pub fn draw_path(&mut self, path: &Path, paint: &Paint) -> Result<&mut Self> {
@@ -1419,14 +1446,12 @@ impl Canvas {
                 // A degenerate transform has no inverse to take, and the
                 // identity stands in for it -- unobservable, because the
                 // geometry went through the same matrix and has no area.
-                let placement = Transform2D::from(
-                    to_clip
-                        * Affine2::from_translation(Vec2::new(rect.left, rect.top))
-                        * Affine2::from_scale(Vec2::new(
-                            rect.right - rect.left,
-                            rect.bottom - rect.top,
-                        )),
-                );
+                let placement = to_clip
+                    * Affine2::from_translation(Vec2::new(rect.left, rect.top))
+                    * Affine2::from_scale(Vec2::new(
+                        rect.right - rect.left,
+                        rect.bottom - rect.top,
+                    ));
                 Material::Image {
                     to_local: invert_to_local(placement),
                     sampling: *sampling,
@@ -1459,9 +1484,7 @@ impl Canvas {
                     // stated in, which is the caller's, measured from the
                     // gradient's start. Without it the target's aspect ratio
                     // leaks into the gradient's direction.
-                    to_local: invert_to_local(Transform2D::from(
-                        to_clip * Affine2::from_translation(*start),
-                    )),
+                    to_local: invert_to_local(to_clip * Affine2::from_translation(*start)),
                     stops: stops_of(stops),
                     tile: *tile,
                     ramp: ramp_slot,
@@ -1515,7 +1538,7 @@ impl Canvas {
                 }
                 let ramp_slot = self.ramp_for(stops);
                 Material::RadialGradient {
-                    to_local: invert_to_local(Transform2D::from(placement)),
+                    to_local: invert_to_local(placement),
                     stops: stops_of(stops),
                     tile: *tile,
                     ramp: ramp_slot,
@@ -1553,7 +1576,7 @@ impl Canvas {
                 }
                 let ramp_slot = self.ramp_for(stops);
                 Material::ConicalGradient {
-                    to_local: invert_to_local(Transform2D::from(oriented)),
+                    to_local: invert_to_local(oriented),
                     // In the gradient's own space, which this rotation and the
                     // canvas transform's inverse together make into user space
                     // -- so both radii are the ones the caller stated, and
@@ -1581,7 +1604,7 @@ impl Canvas {
                 }
                 let ramp_slot = self.ramp_for(stops);
                 Material::SweepGradient {
-                    to_local: invert_to_local(Transform2D::from(placement)),
+                    to_local: invert_to_local(placement),
                     start_angle: *start_angle,
                     end_angle: *end_angle,
                     stops: stops_of(stops),
@@ -2059,9 +2082,7 @@ impl Canvas {
             // radius means what the caller said. Measuring in clip space would
             // round the corners by different amounts on each axis of a target
             // that is not square.
-            to_local: invert_to_local(Transform2D::from(
-                to_clip * Affine2::from_translation(center),
-            )),
+            to_local: invert_to_local(to_clip * Affine2::from_translation(center)),
             radius: radius.min(rect.width() / 2.0).min(rect.height() / 2.0),
             stroke,
         })
@@ -2266,9 +2287,7 @@ impl Canvas {
         Some(Material::Ellipse {
             color: color.to_array(),
             half_size: [bounds.width() / 2.0, bounds.height() / 2.0],
-            to_local: invert_to_local(Transform2D::from(
-                to_clip * Affine2::from_translation(center),
-            )),
+            to_local: invert_to_local(to_clip * Affine2::from_translation(center)),
             stroke,
         })
     }
@@ -2362,8 +2381,11 @@ impl Canvas {
             ];
             let base = vertices.len() as u32;
             for ([px, py], uv) in corners {
-                let clip = to_clip.transform_point2(Vec2::new(px, py));
-                vertices.push(Vertex::new([clip.x, clip.y], uv));
+                // Homogeneous, so the atlas coordinate beside it is
+                // interpolated perspective-correctly rather than swimming
+                // across the quad.
+                let clip = to_clip.project_homogeneous(Vec2::new(px, py));
+                vertices.push(Vertex::projected([clip.x, clip.y, clip.z], uv));
             }
             indices.extend_from_slice(&[base, base + 1, base + 2, base, base + 2, base + 3]);
         }
@@ -2449,9 +2471,9 @@ impl Canvas {
             .iter()
             .enumerate()
             .map(|(i, position)| {
-                let clip = to_clip.transform_point2(*position);
+                let clip = to_clip.project_homogeneous(*position);
                 let uv = coords.get(i).copied().unwrap_or(Vec2::ZERO);
-                let vertex = Vertex::new([clip.x, clip.y], [uv.x, uv.y]);
+                let vertex = Vertex::projected([clip.x, clip.y, clip.z], [uv.x, uv.y]);
                 match colors.get(i) {
                     // Premultiplied here rather than in the shader, because
                     // what the rasterizer interpolates between two vertices is
@@ -2755,7 +2777,7 @@ impl Canvas {
         // plane has no inverse, and the geometry collapses with it, so both
         // halves go together and nothing is drawn.
         let to_clip = self.target.projection() * self.transform;
-        if to_clip.matrix2.determinant().abs() <= f32::EPSILON {
+        if to_clip.determinant().abs() <= f32::EPSILON {
             return Ok(self);
         }
         // The recording's texture spans its own extent from the origin, so
@@ -2767,7 +2789,7 @@ impl Canvas {
             return Ok(self);
         }
         let material = Material::Image {
-            to_local: invert_to_local(Transform2D::from(picture_to_clip)),
+            to_local: invert_to_local(picture_to_clip),
             slot,
             alpha: 1.0,
             tile: TileMode::Clamp,
@@ -3031,26 +3053,26 @@ impl Canvas {
         // the rectangle collapses to a line. Both halves are dropped together:
         // dropping only the mapping leaves a layer drawn through a singular
         // matrix, which is nothing at all, and the fallback would be invisible.
-        let placement = frame.paint.matrix.filter(|matrix| {
-            let projection = self.target.projection();
-            let in_clip = projection * *matrix * projection.inverse();
-            in_clip.is_finite() && in_clip.matrix2.inverse().is_finite()
+        //
+        // The matrix is stated in device pixels and the mapping is in clip
+        // space, so it is conjugated into clip space and composed ahead of the
+        // mapping in inverse. Both are resolved here, once, rather than tested
+        // in one place and taken in another -- the geometry below moves by the
+        // first and the mapping by the second, and a pair either exists or
+        // neither half does.
+        let projection = self.target.projection();
+        let placement = frame.paint.matrix.and_then(|matrix| {
+            let in_clip = projection * matrix * projection.inverse()?;
+            in_clip.is_finite().then_some(())?;
+            Some((matrix, in_clip.inverse()?))
         });
+        let clip_to_texture = Transform2D::from(clip_to_texture);
         let clip_to_texture = match placement {
             None => clip_to_texture,
-            Some(matrix) => {
-                // The matrix is stated in device pixels; the mapping is in
-                // clip space. So it is carried into clip space and composed
-                // ahead of the mapping in inverse -- which says that a
-                // fragment reads the texel that landed on it. The filter above
-                // has already established that inverse exists.
-                let projection = self.target.projection();
-                let in_clip = projection * matrix * projection.inverse();
-                clip_to_texture * in_clip.inverse()
-            }
+            Some((_, undo)) => clip_to_texture * undo,
         };
         let material = Material::Image {
-            to_local: to_local_columns(Transform2D::from(clip_to_texture)),
+            to_local: to_local_columns(clip_to_texture),
             slot,
             alpha: frame.paint.alpha,
             tile: TileMode::Clamp,
@@ -3077,7 +3099,7 @@ impl Canvas {
         let _ = self.renderer.fill_into(
             &mut self.batch,
             &whole,
-            placement.unwrap_or(Affine2::IDENTITY),
+            placement.map_or(Affine2::IDENTITY, |(matrix, _)| matrix),
             &paint,
         );
     }
@@ -3548,7 +3570,7 @@ mod tests {
         canvas.restore();
         assert_eq!(
             canvas.transform(),
-            Affine2::from_translation(Vec2::new(5.0, 0.0))
+            Transform2D::from(Affine2::from_translation(Vec2::new(5.0, 0.0)))
         );
         canvas.restore();
         assert_eq!(canvas.transform(), identity);
@@ -3571,7 +3593,7 @@ mod tests {
         canvas.translate(10.0, 0.0).scale(2.0, 2.0);
         // Scale then translate, or translate then scale, place a point very
         // differently; the later call applies in the frame the earlier set up.
-        let mapped = canvas.transform().transform_point2(Vec2::new(1.0, 0.0));
+        let mapped = canvas.transform().project_point2(Vec2::new(1.0, 0.0));
         assert!((mapped - Vec2::new(12.0, 0.0)).length() < 1e-5);
     }
 

@@ -11,8 +11,8 @@ use impeller::{
     Affine2, Atlas, BackendPreference, BlendMode, Canvas, Color, ColorFilter, Context, Coverage,
     Dash, Error, Extent2D, GlyphKey, GradientStop, ImageFilter, Layer, LineCap, MaskBlurStyle,
     Morphology, Paint, Path, PathBuilder, PixelFormat, PointMode, PositionedGlyph, Rect, Result,
-    Sampling, Shader, SourceRect, Sprite, StrokeStyle, Style, TileMode, Vec2, VertexMode, Vertices,
-    MAX_STOPS, MORPHOLOGY_TAPS, RUNTIME_FLOATS,
+    Sampling, Shader, SourceRect, Sprite, StrokeStyle, Style, TileMode, Transform2D, Vec2,
+    VertexMode, Vertices, MAX_STOPS, MORPHOLOGY_TAPS, RUNTIME_FLOATS,
 };
 
 const SIZE: Extent2D = Extent2D {
@@ -10794,4 +10794,164 @@ fn an_atlas_batch_honors_the_paint_s_blend() {
         plus[0] > 230,
         "Plus should add the two halves to full brightness, got {plus:?}"
     );
+}
+
+/// Column-major, the shape `dart:ui` states a transform in.
+///
+/// The only entry that is not an affine's is the one making the divisor grow
+/// along an axis, which is what makes the plane recede.
+fn receding(along_x: f32, along_y: f32) -> [f32; 16] {
+    [
+        1.0, 0.0, 0.0, along_x, //
+        0.0, 1.0, 0.0, along_y, //
+        0.0, 0.0, 1.0, 0.0, //
+        0.0, 0.0, 0.0, 1.0,
+    ]
+}
+
+fn white_run(pixels: &[u8], row: u32) -> usize {
+    (0..SIZE.width)
+        .filter(|x| pixel(pixels, *x, row)[0] > 128)
+        .count()
+}
+
+fn rect_under(ctx: &mut Context, matrix: &[f32; 16]) -> Vec<u8> {
+    let mut canvas = Canvas::new(SIZE);
+    canvas.clear(Color::BLACK);
+    canvas.concat_4x4(matrix);
+    canvas
+        .draw_rect(
+            Rect::new(16.0, 16.0, 112.0, 112.0),
+            &Paint::fill(Color::WHITE).with_anti_alias(false),
+        )
+        .expect("rect");
+    render(ctx, canvas)
+}
+
+/// The row of `docs/parity.md` this closes: a four-by-four admits perspective
+/// and a two-by-three does not.
+#[test]
+fn a_perspective_transform_makes_a_rectangle_a_trapezoid() {
+    let Some(mut ctx) = context() else { return };
+    let perspective = rect_under(&mut ctx, &receding(0.0, 0.004));
+    let near = white_run(&perspective, 20);
+    let far = white_run(&perspective, 70);
+    assert!(
+        near > far + 8,
+        "a receding plane must narrow: {near} wide near, {far} far"
+    );
+
+    // And it has to differ from the affine it reduces to when the perspective
+    // row is dropped -- a scene whose perspective is too slight to see would
+    // pass every comparison here while proving nothing.
+    let affine = rect_under(&mut ctx, &receding(0.0, 0.0));
+    assert_eq!(
+        white_run(&affine, 20),
+        white_run(&affine, 70),
+        "without perspective the two rows are the same width"
+    );
+    assert!(
+        perspective != affine,
+        "the perspective row changed no pixel"
+    );
+}
+
+/// A gradient has to converge with the shape it fills, which is the whole
+/// reason a paint carries a mapping rather than a direction.
+#[test]
+fn a_gradient_under_perspective_is_locked_to_the_shape() {
+    let Some(mut ctx) = context() else { return };
+    let matrix = receding(0.004, 0.0);
+
+    let mut canvas = Canvas::new(SIZE);
+    canvas.clear(Color::BLACK);
+    canvas.concat_4x4(&matrix);
+    canvas
+        .draw_rect(
+            Rect::new(0.0, 0.0, 128.0, 128.0),
+            &Paint::fill(Color::WHITE)
+                .with_shader(Shader::LinearGradient {
+                    start: Vec2::new(0.0, 0.0),
+                    end: Vec2::new(128.0, 0.0),
+                    stops: vec![
+                        GradientStop::new(Color::BLACK, 0.0),
+                        GradientStop::new(Color::WHITE, 1.0),
+                    ],
+                    tile: TileMode::Clamp,
+                })
+                .with_anti_alias(false),
+        )
+        .expect("rect");
+    let pixels = render(&mut ctx, canvas);
+
+    // Where a device pixel came from decides what color belongs there, and the
+    // inverse of the same transform is what says so. Checked against the
+    // projective answer rather than against a straight ramp, which is what this
+    // would be if the mapping had stayed affine.
+    let inverse = Transform2D::from_column_major_4x4(&matrix)
+        .inverse()
+        .expect("invertible");
+    let mut worst_projective = 0.0f32;
+    let mut worst_affine = 0.0f32;
+    for x in [10u32, 20, 30, 40, 50, 60] {
+        let measured = pixel(&pixels, x, 64)[0] as f32;
+        let user = inverse.project_point2(Vec2::new(x as f32 + 0.5, 64.5));
+        let projective = (user.x / 128.0).clamp(0.0, 1.0) * 255.0;
+        let affine = ((x as f32 + 0.5) / 128.0) * 255.0;
+        worst_projective = worst_projective.max((measured - projective).abs());
+        worst_affine = worst_affine.max((measured - affine).abs());
+    }
+    assert!(
+        worst_projective < 12.0,
+        "the gradient did not follow the transform: off by {worst_projective}"
+    );
+    assert!(
+        worst_affine > 24.0,
+        "the transform made no difference to the gradient, so this proves nothing"
+    );
+}
+
+/// The failure mode the degeneracy invariant used to rule out by arithmetic and
+/// now rules out by the near plane.
+///
+/// A near-singular affine collapses geometry toward nothing, so a substituted
+/// mapping is never consulted. A transform near the vanishing line does the
+/// opposite: it blows geometry up toward infinity, and the thing to be sure of
+/// is that what comes back is a clipped shape rather than the whole frame.
+#[test]
+fn a_shape_across_the_vanishing_line_draws_its_near_half_and_no_more() {
+    let Some(mut ctx) = context() else { return };
+    // The divisor reaches zero at y = 100, and the rectangle runs past it.
+    let mut canvas = Canvas::new(SIZE);
+    canvas.clear(Color::BLACK);
+    canvas.concat_4x4(&receding(0.0, -0.01));
+    canvas
+        .draw_rect(
+            Rect::new(16.0, 0.0, 112.0, 400.0),
+            &Paint::fill(Color::WHITE).with_anti_alias(false),
+        )
+        .expect("rect");
+    let pixels = render(&mut ctx, canvas);
+
+    let lit = (0..SIZE.height)
+        .map(|y| white_run(&pixels, y))
+        .sum::<usize>();
+    let total = (SIZE.width * SIZE.height) as usize;
+    assert!(lit > 0, "the half in front of the vanishing line is drawn");
+    assert!(
+        lit < total,
+        "a shape crossing the vanishing line put the whole frame down"
+    );
+    // Every pixel is one of the two colors that were asked for. A NaN reaching
+    // a fragment survives the blend and spreads, and would show up here as
+    // something that is neither.
+    for y in (0..SIZE.height).step_by(8) {
+        for x in (0..SIZE.width).step_by(8) {
+            let p = pixel(&pixels, x, y);
+            assert!(
+                p == [0, 0, 0, 255] || p == [255, 255, 255, 255],
+                "pixel at {x},{y} is {p:?}, which is neither the fill nor the background"
+            );
+        }
+    }
 }

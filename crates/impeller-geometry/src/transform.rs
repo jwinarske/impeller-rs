@@ -76,6 +76,28 @@ impl std::ops::Mul for Transform2D {
     }
 }
 
+/// So that composing with an affine reads the way composing two of these does.
+///
+/// Most of what a transform is composed with here is affine — a projection, a
+/// translation to a paint's origin, a rotation folded into a gradient's space —
+/// and lifting each of those at the call site would bury the composition it is
+/// there to express.
+impl std::ops::Mul<Affine2> for Transform2D {
+    type Output = Self;
+
+    fn mul(self, rhs: Affine2) -> Self {
+        self * Self::from_affine(rhs)
+    }
+}
+
+impl std::ops::Mul<Transform2D> for Affine2 {
+    type Output = Transform2D;
+
+    fn mul(self, rhs: Transform2D) -> Transform2D {
+        Transform2D::from_affine(self) * rhs
+    }
+}
+
 impl Transform2D {
     pub const IDENTITY: Self = Self(Mat3::IDENTITY);
 
@@ -194,6 +216,17 @@ impl Transform2D {
         }
         let inverse = self.0.inverse();
         inverse.is_finite().then_some(Self(inverse))
+    }
+
+    /// Whether every entry is a number, which a caller checks before handing
+    /// this to a shader that would otherwise spread a NaN across a draw.
+    pub fn is_finite(self) -> bool {
+        self.0.is_finite()
+    }
+
+    /// The determinant, which is zero exactly when the plane has collapsed.
+    pub fn determinant(self) -> f32 {
+        self.0.determinant()
     }
 
     /// [`transformed_bounds`], for a transform already in this form.

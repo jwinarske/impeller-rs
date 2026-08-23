@@ -38,7 +38,7 @@ pub use impeller_core::{
     Coverage, Dash, Extent2D, FillRule, Gamma, GlyphKey, GradientStop, ImageFilter, Layer, LineCap,
     LineJoin, MaskBlurStyle, Morphology, Paint, Path, PathBuilder, PixelFormat, PointMode,
     PositionedGlyph, Recording, Rect, Sampling, Shader, SourceRect, Sprite, StrokeStyle, Style,
-    TileMode, Vec2, VertexMode, Vertices, MAX_STOPS,
+    TileMode, Transform2D, Vec2, VertexMode, Vertices, MAX_STOPS,
 };
 pub use impeller_hal::{
     mip_levels_for, BlendFactor, Capabilities, Error, Hal, Result, RuntimeProgram,
