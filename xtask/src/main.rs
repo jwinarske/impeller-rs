@@ -31,6 +31,7 @@
 //! previous VT and session state on exit including on panic. An engineer's
 //! desktop must survive a failed test run.
 
+mod bench;
 mod drivers;
 mod drm;
 mod gallery;
@@ -44,6 +45,9 @@ cargo xtask <command>
 Commands:
   report            What this machine's devices report they can do.
                     --json  emit the same report for a machine to read.
+  bench             Time the analytic and tessellated paths against each other
+                    on every device here. Prints numbers; passes whatever they
+                    say -- regression gating belongs on a quiet runner.
   drm               Whether this machine can run the direct-scanout lane.
   verify            Run the suite and report what did not run. Extra arguments
                     are passed to cargo test.
@@ -88,6 +92,9 @@ fn main() {
             } else {
                 print!("{}", report::text(&devices));
             }
+        }
+        Some("bench") => {
+            print!("{}", bench::text(&bench::gather()));
         }
         Some("drm") => {
             let survey = drm::survey(

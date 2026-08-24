@@ -1639,6 +1639,25 @@ every fragment walks, which is the cost specialization would remove.
   it should be measured on a board before the field is assumed to be the faster
   path everywhere.
 
+  `cargo xtask bench` is that measurement, and it is repeatable now rather than
+  a number somebody once took. On the machine this was written on it reproduces
+  the shape of the figures above: at equal sample count the field is
+  twenty-six to fifty percent slower than the triangles depending on the
+  device, against the thirty percent recorded here, and it still beats the
+  multisampled alternative on all three. The absolute times differ, as they
+  should — that is a different part.
+
+  One thing the figures above do not say, and the harness had to be changed to
+  report: **the two paths do not cost the same number of draws.** Every
+  tessellated shape here carries one solid material, so a batch merges all
+  hundred and sixty into a single draw, while an analytic shape carries its own
+  geometry inside its material and can merge with nothing. So this is one draw
+  of many triangles against a hundred and sixty draws of two, and the tessellated
+  side is flattered by a merge that real content — where the shapes differ in
+  color — would not get. The comparison is still the right one to make, because
+  it is what the renderer actually does with each; it is not a comparison of
+  shading cost, and reading it as one would be reading it wrong.
+
   An ellipse takes one too, by a different route. There is no closed form for
   the distance to an ellipse — but coverage never needed a distance. What it
   needs is how far away the curve is in pixels, and that is the implicit
@@ -2388,7 +2407,7 @@ be looked at, since the incorrect ones look exactly the same from there.
 | L3 | Conformance: same corpus, cross-backend and cross-presentation diffs | Every merge (software) | runs, cross-backend and cross-device; cross-presentation only for the offscreen target |
 | L4 | Presentation: resize storms, flip pacing, fence ordering, hotplug | VKMS and headless WSI in CI | partial — headless WSI runs on both backends, fence ordering is checked under the validation layer, and five tests drive a real display controller through VKMS wherever a card is present. Not in CI, which loads no such module; no writeback, no CRC, no resize storms, no hotplug |
 | L5 | Stress and soak: atlas thrash, layer-depth bombs, leak detection | Nightly and weekly, hardware | none |
-| L6 | Performance: micro and full-frame benches with regression gating | Nightly, quiet runners | none — there is no benchmark in the tree |
+| L6 | Performance: micro and full-frame benches with regression gating | Nightly, quiet runners | partial — `cargo xtask bench` times the two rounded-rectangle paths against each other on every device present, which is the one measurement this document rests a design on. No full-frame benches and no gating: it prints numbers and passes whatever they say |
 | L7 | Fuzz: path data, scene descriptions, dma-buf negotiation | Continuous background | none |
 
 ### VKMS would give the DRM path merge-blocking coverage
