@@ -310,6 +310,92 @@ fn a_blur_past_the_tap_budget_shrinks_what_it_blurs() {
     );
 }
 
+/// A blur far wider than what it is blurring still draws, and draws nothing odd.
+///
+/// The reduction halves a target until the kernel's radius fits the tap budget,
+/// and a large enough deviation asks for more halvings than a small target has
+/// pixels to give. The extent is floored at one texel so a pass never asks a
+/// device for a texture of no width; what the loop's own guard adds is stopping
+/// before it spends passes halving a single texel into itself.
+///
+/// What is checked is the part that would be visible if either went wrong:
+/// every pass has pixels, the count stays bounded, the draw succeeds, and
+/// nothing comes back with color in a fully transparent pixel — which is what a
+/// target that was never written, or written as NaN, looks like after it has
+/// been composited. Exercised through the paths that reach a small target for
+/// different reasons.
+#[test]
+fn a_blur_far_wider_than_its_subject_still_draws() {
+    let Some(mut ctx) = context() else { return };
+    let extent = Extent2D::new(128, 128);
+    let square = Rect::new(40.0, 40.0, 88.0, 88.0);
+
+    for case in 0..4 {
+        let (_name, mut canvas) = ("case", Canvas::new(extent));
+        let name = match case {
+            0 => "a layer bounded to eight pixels",
+            1 => "a layer bounded to one pixel",
+            2 => "a mask blur wider than the frame",
+            _ => "a shadow at an absurd elevation",
+        };
+        let _ = name;
+        canvas.clear(Color::BLACK);
+        match case {
+            0 | 1 => {
+                let (bounds, sigma) = if case == 0 {
+                    (Rect::new(60.0, 60.0, 68.0, 68.0), 400.0)
+                } else {
+                    (Rect::new(63.0, 63.0, 64.0, 64.0), 200.0)
+                };
+                canvas.save_layer_bounds(Layer::opacity(1.0).with_blur(sigma), bounds);
+                canvas
+                    .draw_rect(square, &Paint::fill(Color::WHITE).with_anti_alias(false))
+                    .expect("square");
+                canvas.restore();
+            }
+            2 => {
+                canvas
+                    .draw_rect(square, &Paint::fill(Color::WHITE).with_mask_blur(60.0))
+                    .expect("mask blur");
+            }
+            _ => {
+                canvas
+                    .draw_shadow(&square.to_rounded_path(4.0), Color::BLACK, 300.0, false)
+                    .expect("shadow");
+            }
+        }
+        let recording = canvas.finish();
+
+        for (index, pass) in recording.passes.iter().enumerate() {
+            assert!(
+                pass.extent.width >= 1 && pass.extent.height >= 1,
+                "{name}: pass {index} has no pixels: {:?}",
+                pass.extent
+            );
+        }
+        assert!(
+            recording.passes.len() <= 12,
+            "{name}: {} passes, which is more than a reduction should need",
+            recording.passes.len()
+        );
+
+        let mut surface = ctx
+            .create_surface(extent, PixelFormat::Rgba8Unorm)
+            .expect("surface");
+        ctx.draw(&mut surface, &recording)
+            .unwrap_or_else(|e| panic!("{name}: {e}"));
+        let pixels = ctx.read(&mut surface).expect("read");
+        ctx.destroy_surface(surface);
+
+        assert!(
+            !pixels
+                .chunks_exact(4)
+                .any(|texel| texel[3] == 0 && texel[0] > 0),
+            "{name}: a pixel came back with color and no alpha"
+        );
+    }
+}
+
 /// A deviation is clamped where upstream clamps it.
 ///
 /// `kMaxSigma` is five hundred. Past it a blur of anything smaller than a wall

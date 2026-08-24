@@ -3369,8 +3369,11 @@ impl Canvas {
     /// makes the sampler a box filter above.
     fn blur_downsample(sigma: f32, extent: Extent2D) -> u32 {
         let mut scale = 1u32;
-        // Never past the point where an axis would round to nothing: a target
-        // of zero has no pixels to blur and no texels to sample back.
+        // Stopped once an axis would round to nothing. The extent is floored at
+        // one texel where it is built, so this is not what keeps a target from
+        // having no pixels -- it is what keeps the reduction from spending
+        // passes halving a single texel into itself, which a deviation of a few
+        // hundred against a small layer will otherwise ask for.
         while blur_radius(sigma / scale as f32) > BLUR_MAX_TAPS
             && extent.width / (scale * 2) >= 1
             && extent.height / (scale * 2) >= 1
