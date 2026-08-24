@@ -39,6 +39,24 @@ static CARD: std::sync::Mutex<()> = std::sync::Mutex::new(());
 fn output() -> Option<(KmsOutput, std::sync::MutexGuard<'static, ()>)> {
     let guard = CARD.lock().unwrap_or_else(|e| e.into_inner());
     let mut refused = Vec::new();
+
+    // A named card, for a machine with more than one. Both Raspberry Pi 4 and
+    // Pi 5 carry a render device and one or two display controllers as separate
+    // card nodes, and the loop below takes whichever the directory lists first
+    // -- which on a Pi 5 is the DSI controller and not the HDMI one. That is
+    // fine for "can this drive a display" and useless for "can *this* display
+    // controller take what the renderer exported", which is the question a
+    // board is worth running on to answer.
+    if let Ok(path) = std::env::var("IMPELLER_DRM_CARD") {
+        return match KmsOutput::open(&path) {
+            Ok(output) => Some((output, guard)),
+            Err(e) => {
+                eprintln!("skipping: {path} was named but cannot be driven ({e})");
+                None
+            }
+        };
+    }
+
     for entry in std::fs::read_dir("/dev/dri").ok()?.flatten() {
         let name = entry.file_name().into_string().ok()?;
         if !name.starts_with("card") {
