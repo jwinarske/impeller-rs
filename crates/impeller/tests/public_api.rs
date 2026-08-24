@@ -176,6 +176,76 @@ fn translucent_paint_blends_with_what_is_underneath() {
     }
 }
 
+/// A mask blur's deviation is in device pixels, not in the space it is drawn in.
+///
+/// Load-bearing for parity, and not obviously either way, so it is pinned.
+/// Upstream's shadow divides its blur radius by the canvas transform's vertical
+/// scale, which looks like something to copy until both sides are measured:
+/// upstream's blur sigma is in *local* space — `gaussian_blur_filter_contents`
+/// multiplies it by the entity transform's scale — so that division exists to
+/// cancel the multiplication and leave a shadow's softness fixed in device
+/// pixels. This renderer's sigma is already in device space and arrives at the
+/// same place without it. Copying the division would shrink a shadow as the
+/// canvas grew, which is parity backwards.
+///
+/// Checked in both directions at once: the shape has to grow with the scale, or
+/// the transform is not reaching the draw at all and the blur staying put would
+/// mean nothing.
+#[test]
+fn a_mask_blurs_deviation_is_in_device_pixels() {
+    let Some(mut ctx) = context() else { return };
+    let extent = Extent2D::new(256, 256);
+
+    let measure = |ctx: &mut Context, scale: f32| -> (usize, usize) {
+        let mut canvas = Canvas::new(extent);
+        canvas.clear(Color::BLACK);
+        canvas.save();
+        canvas.scale(scale, scale);
+        // Fixed geometry in the scaled space, placed so it stays centered.
+        let center = 128.0 / scale;
+        canvas
+            .draw_rect(
+                Rect::new(center - 20.0, center - 20.0, center + 20.0, center + 20.0),
+                &Paint::fill(Color::WHITE)
+                    .with_mask_blur(6.0)
+                    .with_anti_alias(false),
+            )
+            .expect("blurred square");
+        canvas.restore();
+        let mut surface = ctx
+            .create_surface(extent, PixelFormat::Rgba8Unorm)
+            .expect("surface");
+        ctx.draw(&mut surface, &canvas.finish()).expect("draw");
+        let pixels = ctx.read(&mut surface).expect("read");
+        ctx.destroy_surface(surface);
+
+        // Along the middle row, left of center: how much is solid, and how much
+        // is lit at all. The difference is the blur's tail.
+        let value = |x: usize| pixels[(128 * extent.width as usize + x) * 4];
+        let solid = (0..128).filter(|x| value(*x) > 240).count();
+        let lit = (0..128).filter(|x| value(*x) > 6).count();
+        (solid, lit - solid)
+    };
+
+    let (solid_at_one, tail_at_one) = measure(&mut ctx, 1.0);
+    let (solid_at_two, tail_at_two) = measure(&mut ctx, 2.0);
+
+    // The transform reaches the geometry, or nothing below is meaningful.
+    assert!(
+        solid_at_two > solid_at_one + 8,
+        "doubling the scale did not grow the shape: {solid_at_one} then {solid_at_two}"
+    );
+
+    // And does not reach the deviation.
+    assert!(
+        (tail_at_one as i32 - tail_at_two as i32).abs() <= 1,
+        "the blur's tail moved with the transform: {tail_at_one} then {tail_at_two} \
+         device pixels. A deviation that scales with the canvas is upstream's \
+         arrangement, not this one, and the two differ by whether a shadow \
+         divides by the scale"
+    );
+}
+
 /// A blur moves light around without creating or destroying any.
 ///
 /// The property that says the kernel is normalized. A Gaussian blur is a

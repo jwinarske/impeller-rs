@@ -154,33 +154,39 @@ difference. The pipeline carries the gamut and can be read back through it, but
 a caller cannot get a wide-gamut image onto a display through this renderer, and
 should not read the parity tables as saying otherwise.
 
-## 7. A shadow is one blurred shape, and carries no device pixel ratio
+## 7. A shadow's elevation is in device pixels, and its occluder is punched out
 
-**What differs.** Four things, none of them the blur's width — that part was
-wrong until recently and now matches. `DlDispatcherBase::drawShadow` takes a
-`dpr` and computes `occluder_z = dpr * elevation`; there is no such parameter
-here and the elevation is used as given. It divides the deviation by
-`GetCurrentTransform().GetScale().y`, so the softness is fixed in device space
-under a scaled canvas, which this does not do. And it takes a `transparent_occluder` flag its
-drawing code never reads, where this one branches on it and punches the caster's
-outline out of the shadow beneath it.
+**What differs.** Two things, and neither is the blur's width or its color —
+both of those were wrong and now match. `DlDispatcherBase::drawShadow` takes a
+`dpr` and computes `occluder_z = dpr * elevation`, so its elevation is in
+logical pixels; there is no such parameter here and an elevation is in device
+pixels. And it takes a `transparent_occluder` flag its drawing code never reads,
+where this one branches on it and punches the caster's outline out of the shadow
+beneath it.
 
-The tonal color remap used to be on this list and is not any more: upstream's
-port of `SkShadowUtils::ComputeTonalColors` is ported here too, and runs on
-sRGB-encoded components because upstream's runs on the encoded values its
-pipeline holds.
+**Why.** The first is an API difference rather than an omission. `dpr` is
+supplied by the engine upstream and does not appear on `dart:ui`'s
+`Canvas.drawShadow` at all, and this renderer has no notion of logical pixels to
+convert from — so an elevation here means what it says. The second is a
+deliberate addition: the part of a shadow its caster covers is spent, and
+removing it matters for a caster that is not opaque.
 
-**Why.** The first is an API difference: `dpr` is supplied by the engine
-upstream rather than by the caller, and this renderer has no notion of logical
-pixels to convert from. The last is a deliberate addition — the part of a shadow
-its caster covers is spent, and removing it matters for a caster that is not
-opaque. The middle two are unbuilt rather than declined.
+**Impact.** A caller working in logical pixels has to scale the elevation
+themselves, by the same factor they scale everything else. The punched-out
+occluder is invisible wherever an opaque caster is drawn over its own shadow,
+which is the usual arrangement.
 
-**Impact.** The device pixel ratio and the transform scale are both identity in
-the common case and neither shows until a caller scales the canvas or works in
-logical pixels, at which point the shadow is the wrong softness — by exactly the
-scale factor. The punched-out occluder is invisible wherever an opaque caster is
-drawn over its own shadow, which is the usual arrangement.
+Two things that were on this list and should not have been, both removed by
+checking rather than by deciding. The tonal color remap is ported now. And
+`drawShadow` divides its radius by `GetCurrentTransform().GetScale().y`, which
+read as a divergence until both sides were measured: upstream's blur sigma is in
+*local* space — `gaussian_blur_filter_contents.cc` multiplies it by
+`ExtractScale(entity.GetTransform().Basis())` — so that division exists to
+cancel the multiplication and leave the shadow's softness fixed in device
+pixels. This renderer's mask blur sigma is already in device space, measured at
+a seventeen-pixel tail under both a unit scale and a doubled one, so it arrives
+at the same behavior by a shorter route. Copying the division would not add
+parity; it would break it, by shrinking a shadow as the canvas grows.
 
 Worth recording how the blur width was wrong, since the shape of the mistake is
 more useful than the number. Elevation gives a kernel *radius*, and the blur
