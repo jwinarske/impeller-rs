@@ -844,9 +844,12 @@ impl Paint {
     /// triangles to work with, so its pass becomes multisampled.
     ///
     /// That second case carries a requirement worth knowing before meeting it:
-    /// a multisampled pass must clear, so the frame it draws into needs a
-    /// background. See [`crate::Canvas::clear`], which is where a caller who
-    /// has been refused for this reason should look.
+    /// a multisampled pass must clear, so the pass it lands in needs something
+    /// to clear to. Drawn straight onto the frame, that means the canvas needs
+    /// a background -- see [`crate::Canvas::clear`], which is where a caller
+    /// refused for this reason should look. Drawn inside a layer it means
+    /// nothing to the caller, the layer's target clearing to transparent on
+    /// its own.
     pub fn with_anti_alias(mut self, anti_alias: bool) -> Self {
         self.anti_alias = anti_alias;
         self

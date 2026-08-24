@@ -322,6 +322,13 @@ struct LayerFrame {
     paint: Layer,
     /// The target the parent was drawing into, restored when the layer closes.
     parent: Target,
+    /// Whether the parent's own batch had asked for antialiasing yet.
+    ///
+    /// Displaced with the batch and for the same reason: the sample count
+    /// describes a pass, and a layer's draws belong to the layer's pass. A
+    /// parent that has drawn nothing needing multisampling does not start
+    /// needing it because something inside a layer did.
+    anti_alias: bool,
 }
 
 /// Spreading or shrinking a finished layer, one axis at a time.
@@ -672,15 +679,20 @@ impl Canvas {
 
     /// Fill the whole target before drawing anything else.
     ///
-    /// Required, not merely usual, if anything in the frame is antialiased.
-    /// An antialiased shape that is not analytic renders through a multisample
+    /// Required, not merely usual, if the frame itself draws an antialiased
+    /// shape that is not analytic. Such a shape renders through a multisample
     /// buffer, and there is no way to seed that buffer with what the target
     /// already held -- so a multisampled pass has to clear, and a canvas with
     /// no background gives its root pass nothing to clear to. Drawing one is
     /// refused rather than quietly discarding whatever was on the surface.
     ///
-    /// So a frame is antialiased *or* it preserves what was under it, and the
-    /// choice is made here. [`Paint::with_anti_alias`] is the other end of it.
+    /// The frame itself, and not the picture: a sample count describes one
+    /// pass. The same shape drawn inside a layer needs the layer's pass
+    /// multisampled and leaves the frame alone, since what the frame does with
+    /// a finished layer is draw one image quad. So a shadow, which is a layer
+    /// underneath, needs no background at all.
+    ///
+    /// [`Paint::with_anti_alias`] is the other end of the choice.
     pub fn clear(&mut self, color: Color) -> &mut Self {
         self.background = Some(color);
         self
@@ -1021,6 +1033,11 @@ impl Canvas {
             sources,
             extent: target.extent,
         });
+        // The batch that continues is empty, so it inherits nothing: what
+        // follows the cut is a full-target `Src` blit, which no sample count
+        // changes, plus whatever is drawn next. A draw that wants
+        // multisampling will say so again.
+        self.anti_alias = false;
         let index = self.finished.len() - 1;
         self.draw_whole_pass(index, target, target, BlendMode::Src);
         index
@@ -1100,6 +1117,7 @@ impl Canvas {
                 sources: std::mem::take(&mut self.sources),
                 paint: layer,
                 parent: self.target,
+                anti_alias: std::mem::take(&mut self.anti_alias),
             }),
         });
         self.clip = None;
@@ -3102,6 +3120,10 @@ impl Canvas {
             sources,
             extent: layer.extent,
         });
+        // After the pass above, which is the one the layer's own draws went
+        // into, and before the composite below, which is an image quad that
+        // multisampling cannot change.
+        self.anti_alias = frame.anti_alias;
         let mut index = self.finished.len() - 1;
         if frame.paint.blur > 0.0 {
             index = self.blur_passes(index, layer, frame.paint.blur);

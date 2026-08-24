@@ -1189,13 +1189,33 @@ A caller meets that restriction as the first thing they write rather than as an
 edge case, which is worth saying where the technique is described. Antialiasing
 is on by default, a fresh canvas has no background, and a stroked line has only
 triangles to antialias with, so the shortest program that draws an antialiased
-shape is refused. The refusal names both remedies -- a clear color, or a single
-sample -- rather than naming only the copy it could not perform, and
-`Canvas::clear` and `Paint::with_anti_alias` each document the other as the two
-ends of one choice. The asymmetry that makes this confusing is real and
-deliberate: a rectangle, rounded rectangle, oval or circle antialiases inside
-its own fragment shader and is never multisampled, so the same program built
-from those draws works, and only the tessellated shapes are refused.
+line onto the frame is refused. The refusal names both remedies -- a clear
+color, or a single sample -- rather than naming only the copy it could not
+perform, and `Canvas::clear` and `Paint::with_anti_alias` each document the
+other as the two ends of one choice. The asymmetry that makes this confusing is
+real and deliberate: a rectangle, rounded rectangle, oval or circle antialiases
+inside its own fragment shader and is never multisampled, so the same program
+built from those draws works, and only the tessellated shapes are refused.
+
+**A sample count describes a pass, so the question is asked per pass.** It used
+to be asked once for the whole canvas: any antialiased tessellated draw
+anywhere set a flag, and every pass filed afterwards read it. The root is filed
+last, so anything antialiased anywhere made the frame multisampled — including
+a frame whose only draw is the image quad that composites a finished layer,
+where multisampling cannot alter a pixel and was measured not to. That cost a
+four-times transient and a resolve for nothing, and it made the paragraph above
+fire on frames that had no business meeting it: `draw_shadow` builds its own
+antialiased paint and accepts none from the caller, so a shadow could not be
+drawn onto a canvas without a background, and the refusal named a knob that
+call does not have.
+
+The flag now travels with the batch it describes. A layer displaces its
+parent's along with the parent's batch and starts from nothing, so a layer of
+analytic shapes is not multisampled because the frame outside it was; the
+parent gets its own back when the layer closes, before the composite. A cut
+pass likewise starts the continuation from nothing, the redraw that follows a
+cut being a full-target blit. The two directions fail independently and are
+tested separately.
 
 **Draws within a batch keep submission order.** Sorting by pipeline would cut
 bindings further, but 2D drawing is painter's-algorithm ordered and reordering

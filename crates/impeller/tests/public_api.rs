@@ -176,6 +176,173 @@ fn translucent_paint_blends_with_what_is_underneath() {
     }
 }
 
+/// A layer's antialiasing does not multisample the frame that composites it.
+///
+/// The sample count describes a pass. An antialiased line drawn inside a layer
+/// needs the layer's pass multisampled, and what the frame does with the
+/// finished layer is draw one image quad, which no sample count changes. Those
+/// were one answer for the whole canvas, so anything antialiased anywhere made
+/// every later pass multisampled -- including the root, which paid for a
+/// four-times transient and a resolve that could not alter a pixel.
+///
+/// Checked in both directions, because the cheap half of this is easy to get
+/// by accident: the layer must still be multisampled, and the edge inside it
+/// must still come out soft, or this would be a speed-up that quietly stopped
+/// antialiasing.
+#[test]
+fn a_layers_antialiasing_does_not_multisample_the_frame() {
+    let Some(mut ctx) = context() else { return };
+    if !ctx.capabilities().sample_counts.supports(4) {
+        eprintln!("skipping: 4x not supported");
+        return;
+    }
+
+    let mut canvas = Canvas::new(SIZE);
+    canvas.clear(Color::BLACK);
+    canvas.save_layer(Layer::opacity(1.0));
+    canvas
+        .draw_line(
+            Vec2::new(8.0, 8.0),
+            Vec2::new(120.0, 96.0),
+            &Paint::stroke(Color::WHITE, 6.0),
+        )
+        .expect("line");
+    canvas.restore();
+    let recording = canvas.finish();
+
+    let root = recording.passes.len() - 1;
+    assert_eq!(
+        recording.passes[root].descriptor.samples, 1,
+        "the root only composites a quad and should not be multisampled"
+    );
+    assert!(
+        recording.passes[..root]
+            .iter()
+            .any(|p| p.descriptor.samples == 4),
+        "the layer holding the line still has to be multisampled"
+    );
+
+    // And the antialiasing is real, not merely requested. A staircase edge
+    // gives only fully-on and fully-off pixels.
+    let mut surface = ctx
+        .create_surface(SIZE, PixelFormat::Rgba8Unorm)
+        .expect("surface");
+    ctx.draw(&mut surface, &recording).expect("draw");
+    let pixels = ctx.read(&mut surface).expect("read");
+    ctx.destroy_surface(surface);
+    let partial = pixels
+        .chunks_exact(4)
+        .filter(|p| p[0] > 0 && p[0] < 255)
+        .count();
+    assert!(
+        partial > 32,
+        "the line inside the layer is not antialiased: {partial} partial pixels"
+    );
+}
+
+/// Nor does a layer inherit the frame's, which is the same rule read the other
+/// way.
+///
+/// The frame draws an antialiased line, so its own pass needs multisampling.
+/// The layer opened afterwards holds a plain rectangle, which is analytic and
+/// antialiases itself, so the layer's pass needs none -- and it is a separate
+/// target, allocated at the layer's size, so inheriting would have cost a
+/// four-times transient for it as well.
+///
+/// Worth a test of its own because the two halves fail independently: putting
+/// the count back when a layer closes fixes the root without stopping a layer
+/// from picking the count up on the way in.
+#[test]
+fn a_layer_does_not_inherit_the_frames_antialiasing() {
+    let Some(mut ctx) = context() else { return };
+    if !ctx.capabilities().sample_counts.supports(4) {
+        eprintln!("skipping: 4x not supported");
+        return;
+    }
+    let mut canvas = Canvas::new(SIZE);
+    canvas.clear(Color::BLACK);
+    canvas
+        .draw_line(
+            Vec2::new(8.0, 8.0),
+            Vec2::new(120.0, 96.0),
+            &Paint::stroke(Color::WHITE, 6.0),
+        )
+        .expect("line");
+    canvas.save_layer(Layer::opacity(0.5));
+    canvas
+        .draw_rect(
+            Rect::new(16.0, 16.0, 64.0, 64.0),
+            &Paint::fill(Color::WHITE),
+        )
+        .expect("rect");
+    canvas.restore();
+    let recording = canvas.finish();
+
+    let root = recording.passes.len() - 1;
+    assert_eq!(
+        recording.passes[root].descriptor.samples, 4,
+        "the frame's own line still needs multisampling"
+    );
+    for pass in &recording.passes[..root] {
+        assert_eq!(
+            pass.descriptor.samples, 1,
+            "a layer of analytic shapes should not be multisampled"
+        );
+    }
+
+    let mut surface = ctx
+        .create_surface(SIZE, PixelFormat::Rgba8Unorm)
+        .expect("surface");
+    ctx.draw(&mut surface, &recording).expect("draw");
+    ctx.destroy_surface(surface);
+}
+
+/// A shadow draws onto a canvas that was never given a background.
+///
+/// It could not, and the reason was the rule above rather than anything about
+/// shadows. `draw_shadow` takes no paint from the caller and builds its own,
+/// which is antialiased by default; that latched the whole canvas, so the root
+/// pass went multisampled and a multisampled pass must clear. The refusal a
+/// caller met named a resolve they had never asked for, on a call that takes
+/// no antialiasing argument they could have turned off.
+#[test]
+fn a_shadow_needs_no_background() {
+    let Some(mut ctx) = context() else { return };
+    if !ctx.capabilities().sample_counts.supports(4) {
+        eprintln!("skipping: 4x not supported");
+        return;
+    }
+    let mut canvas = Canvas::new(SIZE);
+    canvas
+        .draw_shadow(
+            &Rect::new(24.0, 24.0, 104.0, 104.0).to_rounded_path(8.0),
+            Color::BLACK,
+            6.0,
+            false,
+        )
+        .expect("shadow");
+    let recording = canvas.finish();
+    assert_eq!(
+        recording.passes[recording.passes.len() - 1]
+            .descriptor
+            .samples,
+        1,
+        "the root composites the blurred layer and nothing else"
+    );
+
+    let mut surface = ctx
+        .create_surface(SIZE, PixelFormat::Rgba8Unorm)
+        .expect("surface");
+    ctx.draw(&mut surface, &recording)
+        .expect("a shadow onto an uncleared canvas");
+    let pixels = ctx.read(&mut surface).expect("read");
+    ctx.destroy_surface(surface);
+    assert!(
+        pixels.chunks_exact(4).any(|p| p[3] > 0),
+        "the shadow drew nothing"
+    );
+}
+
 /// Antialiasing a tessellated shape needs a background to clear to; an
 /// analytic one does not.
 ///
