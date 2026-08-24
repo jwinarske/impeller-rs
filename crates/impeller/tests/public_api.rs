@@ -394,26 +394,29 @@ fn dithering_tracks_a_gradient_better_than_rounding_does() {
     }
 }
 
-/// A gradient tabulated into a ramp is not dithered, because upstream does not
-/// dither one.
+/// Both gradient paths are dithered, because the stop count is not what
+/// upstream switches on.
 ///
-/// This renderer has two gradient paths and so does upstream, and the line
-/// falls in the same place. Four stops or fewer ride in the paint block and the
-/// shader walks them; more than that are baked into a ramp texture and the
-/// shader reads a color out of it. Upstream calls its dither from the variants
-/// that walk stops -- the four SSBO fills and the two-stop fast path -- and not
-/// from the ones that sample a ramp.
+/// Upstream has three gradient paths and picks between them by device rather
+/// than by content: a fast path for two stops, a storage-buffer path for
+/// anything else, and a uniform table or a baked ramp texture only where
+/// storage buffers are unavailable or past two hundred and fifty-six stops.
+/// The first two dither and the last two do not, so on any device with storage
+/// buffers -- which is every one its Vulkan and Metal backends run on -- every
+/// gradient is dithered whatever its stop count.
 ///
-/// Checked at tip of tree rather than from a checkout: `IPOrderedDither8x8`
-/// occurs in six files there, its own definition and those five.
+/// This renderer has two paths and switches on content: four stops or fewer
+/// ride in the paint block, more are tabulated into a ramp texture. Matching
+/// upstream's ramp to this one *looks* right and is backwards. Upstream reaches
+/// its ramp past two hundred and fifty-six stops and this one reaches its ramp
+/// past four, so leaving the ramp undithered would put nearly every gradient
+/// here on the side upstream nearly never uses.
 ///
-/// This is a parity decision and not a technical one, which is exactly why it
-/// needs a test. Nothing about a ramp makes it band less -- the table is linear
-/// half-floats and quantizes nothing, so both paths hand the target the same
-/// kind of smooth run -- so there is no argument from this renderer's own
-/// behavior that would rediscover the boundary if it were quietly crossed.
+/// Checked at tip of tree: `kMaxUniformGradientStops` is 256, and
+/// `LinearGradientContents::Render` tries the fast path, then storage buffers,
+/// then the uniform table, then the texture.
 #[test]
-fn a_ramp_gradient_is_not_dithered() {
+fn both_gradient_paths_are_dithered() {
     let Some(mut ctx) = context() else { return };
     let extent = Extent2D::new(128, 32);
 
@@ -474,8 +477,9 @@ fn a_ramp_gradient_is_not_dithered() {
         "a gradient whose stops fit in the paint block was not dithered"
     );
     assert!(
-        !varies(&render(&mut ctx, MAX_STOPS + 1)),
-        "a gradient tabulated into a ramp was dithered, which upstream does not do"
+        varies(&render(&mut ctx, MAX_STOPS + 1)),
+        "a gradient tabulated into a ramp was not dithered, which leaves it \
+         where upstream's storage-buffer path would have dithered it"
     );
 }
 
@@ -3020,19 +3024,14 @@ fn a_gradient_with_many_stops_agrees_with_one_that_fits() {
     let walked = render_with(&mut ctx, ends);
     let sampled = render_with(&mut ctx, many);
 
-    // Both paths interpolate the same linear values -- the table holds what the
-    // walk produced rather than eight bits of an encoding of it -- so the
-    // interpolation itself costs at most where a texel center falls against
-    // where the walk is sampled, which is under a level.
+    // Both paths now interpolate the same linear values -- the table holds what
+    // the walk produced rather than eight bits of an encoding of it -- so what
+    // is left is where a texel center falls against where the walk is sampled.
+    // A tolerance rather than an equality for that reason alone, which is why
+    // it is one level and not three.
     //
-    // The rest is the dither, and it is the price of tracking upstream rather
-    // than anything either path does wrong. Upstream calls its dither from the
-    // variants that walk stops and not from the one that samples a baked ramp,
-    // so this renderer does the same -- and these two draws are exactly one of
-    // each. The dither reaches just under two levels either way, so that is
-    // what separates them. It is a real weakening of the invariant this
-    // shared walk exists to provide, and it is written down in
-    // `docs/architecture.md` rather than only here.
+    // Both are dithered, so the dither cancels here rather than separating
+    // them: it is the same pattern at the same fragment either way.
     let mut worst = 0i32;
     for x in 0..128u32 {
         let a = pixel(&walked, x, 64);
@@ -3042,8 +3041,8 @@ fn a_gradient_with_many_stops_agrees_with_one_that_fits() {
         }
     }
     assert!(
-        worst <= 2,
-        "the two paths disagree by {worst}, which is further than the dither reaches"
+        worst <= 1,
+        "the two paths disagree by {worst}, which is more than rounding"
     );
     // And the gradient is a gradient rather than two flat halves, which is what
     // a ramp that failed to upload would look like against a black clear.

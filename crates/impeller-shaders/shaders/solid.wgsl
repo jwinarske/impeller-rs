@@ -1059,12 +1059,18 @@ fn ordered_dither(frag: vec2<f32>) -> f32 {
 /// shadows thirty times too hard and the highlights not at all, which is
 /// backwards: the shadows are where eight bits band.
 ///
-/// Gradients whose stops are in this block, which is upstream's scope read
-/// across to this renderer's two paths. A gradient is the one thing here that
-/// asks a target for a long run of nearly equal values, so it is where the
-/// banding is; but upstream dithers only where it walks stops it was handed,
-/// and not where it reads a color out of a baked ramp texture. A zero stop
-/// count is this renderer's ramp, so that is the line.
+/// Every gradient, whichever of this renderer's two paths drew it, which is
+/// what upstream does on a device with shader storage buffers -- and that is
+/// every device its Vulkan and Metal backends run on. Upstream has a stop
+/// table in uniforms and a baked ramp texture as well, and neither of those
+/// dithers, but both are fallbacks it reaches only without storage buffers or
+/// past two hundred and fifty-six stops. Reading its ramp path as this
+/// renderer's ramp path gets the mapping backwards: this one tabulates past
+/// four stops, so matching that would leave almost every gradient here on the
+/// side upstream almost never uses.
+///
+/// A gradient is the one thing here that asks a target for a long run of
+/// nearly equal values, which is why it is the only thing dithered.
 ///
 /// Applied last, to the premultiplied result, because premultiplied is what
 /// the target stores and rounds. Alpha is left alone -- perturbing coverage
@@ -1073,10 +1079,7 @@ fn dithered(color: vec4<f32>, frag: vec2<f32>) -> vec4<f32> {
     let amplitude = paint.filter_params.z;
     let kind = paint.params.y;
     let gradient = (kind > 0.5 && kind < 3.5) || (kind > 8.5 && kind < 9.5);
-    // Zero stops means the colors came from a ramp texture rather than from
-    // this block, which is the path upstream leaves alone.
-    let from_stops = paint.params.x >= 0.5;
-    if (amplitude <= 0.0 || !gradient || !from_stops) {
+    if (amplitude <= 0.0 || !gradient) {
         return color;
     }
     let offset = ordered_dither(frag) * amplitude;

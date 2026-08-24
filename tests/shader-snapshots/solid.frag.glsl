@@ -689,18 +689,16 @@ vec4 dithered(vec4 color_1, vec2 frag_1) {
     float amplitude = _group_1_binding_0_fs.filter_params.z;
     float kind_1 = _group_1_binding_0_fs.params.y;
     bool gradient_2 = (((kind_1 > 0.5) && (kind_1 < 3.5)) || ((kind_1 > 8.5) && (kind_1 < 9.5)));
-    float _e24 = _group_1_binding_0_fs.params.x;
-    bool from_stops = (_e24 >= 0.5);
-    if ((((amplitude <= 0.0) || !(gradient_2)) || !(from_stops))) {
+    if (((amplitude <= 0.0) || !(gradient_2))) {
         return color_1;
     }
-    float _e33 = ordered_dither(frag_1);
-    float offset_2 = (_e33 * amplitude);
-    float _e38 = _group_1_binding_0_fs.filter_params.w;
-    if ((_e38 > 0.5)) {
-        vec3 _e42 = linear_to_srgb(color_1.xyz);
-        vec3 _e45 = srgb_to_linear((_e42 + vec3(offset_2)));
-        return vec4(_e45, color_1.w);
+    float _e25 = ordered_dither(frag_1);
+    float offset_2 = (_e25 * amplitude);
+    float _e30 = _group_1_binding_0_fs.filter_params.w;
+    if ((_e30 > 0.5)) {
+        vec3 _e34 = linear_to_srgb(color_1.xyz);
+        vec3 _e37 = srgb_to_linear((_e34 + vec3(offset_2)));
+        return vec4(_e37, color_1.w);
     }
     return vec4((color_1.xyz + vec3(offset_2)), color_1.w);
 }

@@ -575,3 +575,54 @@ fn the_playground_reaches_everything_through_the_facade() {
         );
     }
 }
+
+/// Every divergence recorded says what it costs.
+///
+/// `docs/non-parity.md` exists so that a difference from upstream is a decision
+/// somebody made and can find. A section that says what differs and why, and
+/// stops there, leaves the reader to work out whether it matters -- which is
+/// the part they came for and the part hardest to reconstruct later. So each
+/// numbered entry has to state an impact, including the ones whose impact is
+/// nothing.
+#[test]
+fn every_non_parity_entry_states_its_impact() {
+    let text = doc("non-parity.md");
+    let mut sections: Vec<(String, String)> = Vec::new();
+    let mut heading = String::new();
+    let mut body = String::new();
+    for line in text.lines() {
+        if let Some(rest) = line.strip_prefix("## ") {
+            if !heading.is_empty() {
+                sections.push((heading.clone(), std::mem::take(&mut body)));
+            }
+            heading = rest.to_string();
+        } else {
+            body.push_str(line);
+            body.push('\n');
+        }
+    }
+    if !heading.is_empty() {
+        sections.push((heading, body));
+    }
+
+    let numbered: Vec<_> = sections
+        .iter()
+        .filter(|(heading, _)| heading.chars().next().is_some_and(|c| c.is_ascii_digit()))
+        .collect();
+    assert!(
+        numbered.len() >= 6,
+        "docs/non-parity.md has {} numbered entries, which is too few to be the \
+         list it claims to be -- did the headings change shape?",
+        numbered.len()
+    );
+    let silent: Vec<&str> = numbered
+        .iter()
+        .filter(|(_, body)| !body.contains("Impact"))
+        .map(|(heading, _)| heading.as_str())
+        .collect();
+    assert!(
+        silent.is_empty(),
+        "docs/non-parity.md records a difference without saying what it costs:\n  {}",
+        silent.join("\n  ")
+    );
+}
