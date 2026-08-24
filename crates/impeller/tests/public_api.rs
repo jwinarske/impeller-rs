@@ -176,6 +176,95 @@ fn translucent_paint_blends_with_what_is_underneath() {
     }
 }
 
+/// A blur moves light around without creating or destroying any.
+///
+/// The property that says the kernel is normalized. A Gaussian blur is a
+/// weighted average, so the total over the frame has to come out the same as
+/// before it was blurred -- a shape that gets brighter or dimmer for being
+/// softened is a kernel whose weights do not sum to one.
+///
+/// `blur_along_axis` normalizes by what it actually summed rather than by the
+/// analytic integral, which is the whole reason this holds at every sigma
+/// rather than only at small ones: the taps span three deviations and spread
+/// further apart once the count reaches its budget, so the sum is always a
+/// truncated and unevenly sampled version of the curve. Dividing by what the
+/// curve *should* integrate to would darken exactly the large blurs where the
+/// truncation bites.
+///
+/// Measured on a float target so the reading is not itself quantized, and the
+/// frame is large enough that nothing reaches its edge -- checked, because
+/// light leaving the frame would look identical to light being destroyed.
+#[test]
+fn a_blur_preserves_the_total_light_in_the_frame() {
+    let Some(mut ctx) = context() else { return };
+    if !ctx.capabilities().float_render_targets {
+        eprintln!("skipping: no float render targets");
+        return;
+    }
+    let extent = Extent2D::new(256, 256);
+
+    let total = |ctx: &mut Context, sigma: f32| -> (f64, u32) {
+        let mut canvas = Canvas::new(extent);
+        canvas.clear(Color::BLACK);
+        if sigma > 0.0 {
+            canvas.save_layer(Layer::opacity(1.0).with_blur(sigma));
+        }
+        canvas
+            .draw_rect(
+                Rect::new(96.0, 96.0, 160.0, 160.0),
+                &Paint::fill(Color::WHITE).with_anti_alias(false),
+            )
+            .expect("rect");
+        if sigma > 0.0 {
+            canvas.restore();
+        }
+        let mut surface = ctx
+            .create_surface(extent, PixelFormat::Rgba16Float)
+            .expect("surface");
+        ctx.draw(&mut surface, &canvas.finish()).expect("draw");
+        let pixels = ctx.read(&mut surface).expect("read");
+        ctx.destroy_surface(surface);
+
+        let (mut sum, mut lit_edge) = (0.0f64, 0u32);
+        for y in 0..extent.height as usize {
+            for x in 0..extent.width as usize {
+                let at = (y * extent.width as usize + x) * 8;
+                let value = half::f16::from_le_bytes([pixels[at], pixels[at + 1]]).to_f32() as f64;
+                sum += value;
+                let border = x == 0
+                    || y == 0
+                    || x + 1 == extent.width as usize
+                    || y + 1 == extent.height as usize;
+                if border && value > 1e-4 {
+                    lit_edge += 1;
+                }
+            }
+        }
+        (sum, lit_edge)
+    };
+
+    let (unblurred, _) = total(&mut ctx, 0.0);
+    assert!(unblurred > 0.0, "the unblurred square drew nothing");
+
+    // Past the tap budget as well as under it, since that is where normalizing
+    // by the analytic integral would start to show.
+    for sigma in [2.0f32, 8.0, 24.0] {
+        let (blurred, lit_edge) = total(&mut ctx, sigma);
+        assert_eq!(
+            lit_edge, 0,
+            "at sigma {sigma} the blur reached the frame edge, so light leaving \
+             cannot be told from light lost and this measurement says nothing"
+        );
+        let ratio = blurred / unblurred;
+        assert!(
+            (ratio - 1.0).abs() < 0.01,
+            "at sigma {sigma} the blur changed the total light by {:.2}%: \
+             {blurred:.1} against {unblurred:.1}",
+            (ratio - 1.0) * 100.0
+        );
+    }
+}
+
 /// Dithering breaks a band, in whichever space the target quantizes in.
 ///
 /// A gradient asks a target for a long run of nearly equal values, and where
