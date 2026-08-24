@@ -1059,9 +1059,12 @@ fn ordered_dither(frag: vec2<f32>) -> f32 {
 /// shadows thirty times too hard and the highlights not at all, which is
 /// backwards: the shadows are where eight bits band.
 ///
-/// Gradients only, which is upstream's scope, and this is where the whole of
-/// the banding worth chasing is: a gradient is the one thing here that asks a
-/// target for a long run of nearly equal values.
+/// Gradients whose stops are in this block, which is upstream's scope read
+/// across to this renderer's two paths. A gradient is the one thing here that
+/// asks a target for a long run of nearly equal values, so it is where the
+/// banding is; but upstream dithers only where it walks stops it was handed,
+/// and not where it reads a color out of a baked ramp texture. A zero stop
+/// count is this renderer's ramp, so that is the line.
 ///
 /// Applied last, to the premultiplied result, because premultiplied is what
 /// the target stores and rounds. Alpha is left alone -- perturbing coverage
@@ -1070,7 +1073,10 @@ fn dithered(color: vec4<f32>, frag: vec2<f32>) -> vec4<f32> {
     let amplitude = paint.filter_params.z;
     let kind = paint.params.y;
     let gradient = (kind > 0.5 && kind < 3.5) || (kind > 8.5 && kind < 9.5);
-    if (amplitude <= 0.0 || !gradient) {
+    // Zero stops means the colors came from a ramp texture rather than from
+    // this block, which is the path upstream leaves alone.
+    let from_stops = paint.params.x >= 0.5;
+    if (amplitude <= 0.0 || !gradient || !from_stops) {
         return color;
     }
     let offset = ordered_dither(frag) * amplitude;

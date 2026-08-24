@@ -169,15 +169,19 @@ than what value it steps to, needs no knowledge of the target, but the jitter is
 half a pixel wide while the band is widest exactly when the gradient changes
 slowest. It is weakest where banding is worst.
 
-Upstream is narrower than this and inconsistent about it, which is worth
-recording since parity is the criterion. Its `IPOrderedDither8x8` is called from
-five shaders -- the four SSBO gradient variants and the two-stop fast path. The
-uniform variants include the header and never call it, and the texture-ramp
-variants do not include it at all, so whether a gradient is dithered there
-depends on the stop count and on whether the device supports SSBOs. The matrix
-and the rate here are upstream's, transcribed; the scope is every gradient
-including the ramp path, because a ramp is what this renderer uses past four
-stops and it is not obvious that upstream's omission is a decision.
+The scope is upstream's, not a local judgment about where banding is worst.
+Checked at tip of tree rather than from a checkout: `IPOrderedDither8x8` occurs
+in six files there, its own definition plus the four SSBO gradient fills and the
+two-stop fast path. The variants that sample a baked ramp do not call it. So a
+gradient of four stops or fewer is dithered here and one tabulated into a ramp
+is not, which costs the exact agreement between this renderer's two gradient
+paths -- they now differ by what a dither reaches. That is a real price and
+`docs/architecture.md` records it beside the claim it weakens.
+
+One thing upstream does that is not followed: it compiles the dither out on
+OpenGL ES, and the guard says why -- `mod` does not exist in GLES 2.0. This
+backend's floor is GLES 3.0, so the limitation is not present, and copying the
+workaround would make the two backends draw different pixels for no reason.
 
 An effect's own textures used to head this list, on the grounds that a caller's
 program got the material's uniform block and nothing else. That stopped being

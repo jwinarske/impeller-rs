@@ -603,8 +603,18 @@ turned around rather than met: such a material wants a gradient's *mapping* and
 a binding, and no longer wants its stops at all, so the budget is not the
 constraint. The ramp is stored as linear half-floats and holds straight
 rather than premultiplied color. Both paths therefore hand the same shape of
-value to the same premultiply at the end, which is what makes the choice between
-them invisible.
+value to the same premultiply at the end.
+
+That once made the choice between them invisible and now very nearly does. A
+gradient whose stops fit in the block is dithered on the way to the target and
+one tabulated into a ramp is not, so the two differ by what a dither
+reaches — just under two levels of an eight-bit target. The split is upstream
+Impeller's: it calls its dither from the variants that walk stops they were
+handed and not from the one that samples a baked ramp, and parity with upstream
+is the criterion this is decided against rather than local tidiness. It is a
+real weakening of an invariant this design was built to provide, recorded here
+because a reader who finds the two paths disagreeing should find the reason
+beside the claim rather than have to rediscover it.
 
 It was stored through an sRGB format, so that eight bits would be spaced the way
 the eye reads them — linear eight-bit color bands in the darks. That argument
@@ -624,14 +634,26 @@ gradient stated in four disagreed by twenty-four levels once a color filter
 brought the difference back inside the range a target could show — the sort of
 defect that hides because both halves of it look like rounding.
 
-**A gradient is dithered, and the target decides how.** A gradient asks for a
-long run of nearly equal values, which is the one thing here that reliably
+**A gradient whose stops it walks is dithered, and the target decides how.** A
+gradient asks for a long run of nearly equal values, which is the one thing here that reliably
 bands: where two neighbors round to the same representable value the picture
 gains an edge the gradient does not have. Each pixel is offset by a fraction of
 a quantization step first, by an eight-by-eight ordered pattern, so the rounding
 falls on both sides of where that edge was. The matrix and the rate are upstream
 Impeller's, transcribed rather than reinvented, so a gradient that bands the
-same way comes apart the same way.
+same way comes apart the same way, and so is the scope: upstream calls its
+dither from the variants that walk stops they were handed and not from the one
+that samples a baked ramp, so a gradient of more than four stops is tabulated
+here and left alone. Checked against tip of tree, where `IPOrderedDither8x8`
+occurs in six files -- its definition, the four SSBO fills, and the two-stop
+fast path.
+
+Upstream also compiles its dither out on OpenGL ES, and that one is not
+followed. The guard names its reason: the `mod` operator does not exist in GLES
+2.0. This backend's floor is GLES 3.0 and 2.0 is permanently out of scope, so
+the limitation is not present -- and following it anyway would make the two
+backends draw different pixels, which is a stronger invariant here than
+matching a workaround for a version this project does not target.
 
 The amplitude cannot be compiled in, and this is where the interesting part is.
 A step is not one quantity: into a linear eight-bit surface it is a flat 1/255

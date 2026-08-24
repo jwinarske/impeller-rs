@@ -90,9 +90,17 @@ impl Ramp {
 ///
 /// Deliberately the same walk the shader performs over its four stops, so that
 /// a gradient stated within the material's four and the same gradient restated
-/// with more do not differ. Sharing the rule is half of what makes that true;
-/// the other half is that the table holds what the walk produced rather than a
-/// rounded, clamped version of it, which is why it is linear half-floats.
+/// with more agree about what color belongs where. Sharing the rule is half of
+/// what makes that true; the other half is that the table holds what the walk
+/// produced rather than a rounded, clamped version of it, which is why it is
+/// linear half-floats.
+///
+/// They no longer agree *exactly*, and the reason is not here. A gradient whose
+/// stops fit in the paint block is dithered on the way to the target and one
+/// read out of this table is not, because that is where upstream Impeller puts
+/// the line and parity with it is the criterion. So the two differ by what a
+/// dither reaches, just under two levels of an eight-bit target, and the color
+/// this produces is not what changed.
 ///
 /// It used to be neither. The table was encoded and quantized to eight bits,
 /// so a component the sRGB primaries cannot hold was flattened on the way in --
