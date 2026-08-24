@@ -113,7 +113,7 @@ impl KmsOutput {
             .or_else(|| resources.crtcs().first().copied())
             .ok_or(Error::Unsupported("no CRTC to drive this connector"))?;
 
-        let plane = primary_plane_for(&device, crtc)?;
+        let plane = primary_plane_for(&device, &resources, crtc)?;
         let formats = plane_formats(&device, plane)?;
         let properties = Properties::read(&device, connector, crtc, plane)?;
 
@@ -143,19 +143,27 @@ impl KmsOutput {
     }
 }
 
-/// A primary plane to drive this CRTC with.
+/// A primary plane that can drive this CRTC.
 ///
-/// A plane already bound to a different CRTC is skipped; beyond that the first
-/// primary one is taken. The kernel's own `possible_crtcs` mask would be the
-/// precise answer and drm-rs wraps it in a newtype with no accessor, so this
-/// uses what is reachable instead.
+/// Three conditions, and the third used to be missing. The plane must not
+/// already be bound to a different CRTC, it must be a primary rather than an
+/// overlay or a cursor, and the kernel must say it can drive *this* CRTC.
 ///
-/// On a device with one CRTC — which is what this is tested against — the two
-/// agree. On a device with several the choice may be wrong, and the atomic
-/// commit says so rather than misbehaving: a plane committed to a CRTC it
-/// cannot drive fails the whole request.
+/// That last one is `possible_crtcs`, and it is not decoration. A Raspberry Pi
+/// 5's `vc4` carries four CRTCs and forty-eight planes, and its planes report a
+/// mask of `1110` — every CRTC except the first, which is the one a single
+/// connected output is otherwise given. Committing a plane to a CRTC it cannot
+/// drive fails the whole atomic request with `EINVAL`, which is what it did:
+/// every frame, on the HDMI output, with nothing in the kernel log to say why.
+///
+/// The comment that stood here said the mask "would be the precise answer" and
+/// that drm-rs "wraps it in a newtype with no accessor". Half right. The raw
+/// bits are indeed private, and `ResourceHandles::filter_crtcs` applies the
+/// mask and hands back the handles — which is the question being asked, rather
+/// than the bits it is answered from.
 fn primary_plane_for(
     device: &DrmDevice,
+    resources: &control::ResourceHandles,
     crtc: control::crtc::Handle,
 ) -> Result<control::plane::Handle> {
     for handle in device
@@ -168,12 +176,18 @@ fn primary_plane_for(
         if info.crtc().is_some_and(|bound| bound != crtc) {
             continue;
         }
+        if !resources
+            .filter_crtcs(info.possible_crtcs())
+            .contains(&crtc)
+        {
+            continue;
+        }
         if is_primary(device, handle) {
             return Ok(handle);
         }
     }
     Err(Error::Unsupported(
-        "no primary plane is available for the chosen CRTC",
+        "no primary plane can drive the chosen CRTC",
     ))
 }
 

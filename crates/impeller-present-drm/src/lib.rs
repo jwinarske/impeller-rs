@@ -22,12 +22,19 @@
 //! | board | controller | outcome |
 //! |---|---|---|
 //! | Pi 4 | `vc4` | the import is refused |
-//! | Pi 5 | `vc4`, HDMI | it imports, the commit is refused |
+//! | Pi 5 | `vc4`, HDMI | **every test passes**, since `possible_crtcs` is honoured |
 //! | Pi 5 | `rp1-dsi`, DSI | **every test passes** |
 //!
-//! So direct scanout does work on a board, end to end, at 800x1280 over DSI on
-//! a Pi 5. That is the first time anything here has been shown to reach a panel
-//! rather than a virtual display controller.
+//! So direct scanout does work on a board, end to end: over DSI at 800x1280 and
+//! over HDMI at 1280x1440, both on a Pi 5. That is the first time anything here
+//! has been shown to reach a panel rather than a virtual display controller.
+//!
+//! The HDMI half of that took a fix rather than a discovery. It refused every
+//! commit until `primary_plane_for` began honouring the kernel's
+//! `possible_crtcs` mask, which the comment there had said would be the precise
+//! answer and had not been consulted -- see that function for what the mask
+//! says on a Pi 5 and why the first CRTC is the wrong one to pair with the
+//! first plane.
 //!
 //! On both boards the renderer and the display are separate DRM devices --
 //! `v3d` renders, something else scans out -- and `v3d` has no display role at
@@ -52,19 +59,28 @@
 //! controller with no IOMMU can address only contiguous memory, and a render
 //! device with an MMU has no reason to allocate that way.
 //!
-//! ## The Pi 5's `vc4`: it takes the memory and refuses the commit
+//! ## The Pi 5's `vc4`: it was the plane, not the memory
 //!
-//! A different failure, and one this has not diagnosed. The import succeeds and
-//! `atomic_commit` returns `EINVAL` on every frame. The mode is not obviously
-//! the cause -- 1280x1440 is the first mode that connector advertises -- and no
-//! more than that is known. Saying so is better than picking the likeliest of
-//! several explanations and writing it down as though it had been checked.
+//! This refused every `atomic_commit` with `EINVAL` and was recorded here as
+//! undiagnosed. It was a plane committed to a CRTC that cannot drive it: four
+//! CRTCs, forty-eight planes, and a `possible_crtcs` mask of `1110` that
+//! excludes exactly the CRTC a single connected output is otherwise given.
+//! Honouring the mask fixed it.
+//!
+//! Worth noticing how it hid. The kernel logs nothing for this, the error names
+//! the commit rather than the plane, and every one of the three other
+//! controllers tried has a single CRTC, where taking the first plane and the
+//! first CRTC is always right.
 //!
 //! ## What this suggests, and what it does not
 //!
-//! It is not a Pi 4 limitation, and not an ARM one. Two of the three
-//! controllers refuse for two different reasons and the third is fine, so the
-//! shape of the problem is per-controller.
+//! It is not a Pi 4 limitation, and not an ARM one. One of the three
+//! controllers refuses and two are fine, and the one that refuses does so over
+//! memory rather than over anything this can arrange differently.
+//!
+//! The Pi 4 has not been re-tested since the plane fix -- it left the network
+//! first -- and the fix is not expected to change it: that failure is at the
+//! import, which happens after a plane is chosen and does not depend on which.
 //!
 //! Where the buffer comes from is the part worth reconsidering, and it is a
 //! design question rather than a defect to patch. A board whose display
