@@ -121,10 +121,12 @@ The pipeline carries a wide gamut now. Colors state which primaries they are
 against, a color outside the sRGB primaries' triangle keeps the components
 below zero that say so, and it reaches a floating-point target through layers,
 gradients and filters intact. **What is not built is presenting one.** The
-swapchain still negotiates `SRGB_NONLINEAR` and the scanout path is untouched,
-because the devices available here are a software rasterizer and a virtual
-display controller: a Display P3 surface cannot be exercised, and this project
-does not ship what it cannot check. So the two cells above no longer name wide
+swapchain still negotiates `SRGB_NONLINEAR` -- which is the presentation engine
+being told the image holds encoded values, and it does -- and neither it nor the
+scanout path asks for a wide-gamut color space, because the devices available
+here are a software rasterizer and a virtual display controller: a Display P3
+surface cannot be exercised, and this project does not ship what it cannot
+check. So the two cells above no longer name wide
 gamut, and nobody has counted against the source how many of those scenes
 needed it rather than one of the other things listed.
 
@@ -142,26 +144,28 @@ nothing is named rather than that nothing is left, which is the honest state of
 it: the obstacle that was written down is gone, and what holds up the rest has
 not been examined.
 
-Dithering was not the small feature its one-word entry suggested, and what it
-turned on is worth keeping now that it is built. Breaking up a band means
-perturbing a color by a fraction of one quantization step before it is
-quantized, and a step is not a fixed quantity here: the target decides it. Into
-a linear eight-bit surface a step is a flat 1/255 of light. Into an sRGB one the
-hardware encodes on write, and the slope of that transfer runs from 12.92 at
-black to roughly 0.44 at white -- so the same offset that is a step on one
-surface is many on the other in shadow, and a fraction of one in highlight. No
-single amplitude in light serves both, and this was measured rather than
-argued: dithering a dark gradient into an sRGB target in *light* rather than in
-encoded value tracks the ideal about six times worse than not dithering at all.
+Dithering was not the small feature its one-word entry suggested, and the reason
+is worth keeping even though the difficulty has since evaporated. Breaking up a
+band means perturbing a color by a fraction of one quantization step before it
+is quantized, and a step was not a fixed quantity while the pipeline carried
+light: into a linear eight-bit surface it was a flat 1/255 of light, and into an
+sRGB one the hardware encoded on write with a slope running from 12.92 at black
+to roughly 0.44 at white -- so one offset was many steps in shadow and a
+fraction of one in highlight. Measured rather than argued: dithering a dark
+gradient into an sRGB target in *light* tracked the ideal about six times worse
+than not dithering at all.
 
-That looked like an exception to the color policy and was not. The policy has
-the conversion belong to the target format rather than to a shader, and what
-was missed is that nothing requires the *shader* to be what knows the format.
-The amplitude and the space are two numbers in the paint block, written by the
-backend at submission -- which is the layer that holds the target and already
-decides the intermediate's format. The shader is handed two floats and still
-knows nothing about formats. What blocked this was a decision that dissolved on
-being looked at, which is the same lesson as the blocked column above.
+The pipeline carries encoded components now, and a target stores them without
+transforming them, so a step is a flat 1/255 wherever it stands and the rate is
+upstream's single `1.0 / 64.0`. The amplitude and the space it was applied in
+are both gone from the paint block.
+
+The lesson that outlives all of it is the one about the blocker. This was filed
+as waiting on a decision about the color policy -- the conversion belonging to
+the target format rather than to a shader -- and what was missed is that nothing
+required the *shader* to be what knew the format. A backend fills two floats at
+submission and the shader is handed numbers. The decision dissolved on being
+looked at, which is the same lesson as the blocked column above.
 
 Dithering the gradient's parameter rather than its color was the obvious way
 around it and would not have worked: jittering where a band edge falls, rather
