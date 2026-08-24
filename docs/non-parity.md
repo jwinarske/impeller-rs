@@ -161,11 +161,14 @@ wrong until recently and now matches. `DlDispatcherBase::drawShadow` takes a
 `dpr` and computes `occluder_z = dpr * elevation`; there is no such parameter
 here and the elevation is used as given. It divides the deviation by
 `GetCurrentTransform().GetScale().y`, so the softness is fixed in device space
-under a scaled canvas, which this does not do. It remaps the shadow's color
-through a port of `SkShadowUtils::ComputeTonalColors` after taking the alpha to
-a quarter, which this does not. And it takes a `transparent_occluder` flag its
+under a scaled canvas, which this does not do. And it takes a `transparent_occluder` flag its
 drawing code never reads, where this one branches on it and punches the caster's
 outline out of the shadow beneath it.
+
+The tonal color remap used to be on this list and is not any more: upstream's
+port of `SkShadowUtils::ComputeTonalColors` is ported here too, and runs on
+sRGB-encoded components because upstream's runs on the encoded values its
+pipeline holds.
 
 **Why.** The first is an API difference: `dpr` is supplied by the engine
 upstream rather than by the caller, and this renderer has no notion of logical
@@ -176,11 +179,8 @@ opaque. The middle two are unbuilt rather than declined.
 **Impact.** The device pixel ratio and the transform scale are both identity in
 the common case and neither shows until a caller scales the canvas or works in
 logical pixels, at which point the shadow is the wrong softness — by exactly the
-scale factor. The tonal remap is identity for a *black* shadow, which is what
-almost everything asks for: at zero luminance the color scale falls out and the
-alpha is left at the quarter both apply. It differs for a colored one, in both
-hue and alpha. The punched-out occluder is invisible wherever an opaque caster
-is drawn over its own shadow, which is the usual arrangement.
+scale factor. The punched-out occluder is invisible wherever an opaque caster is
+drawn over its own shadow, which is the usual arrangement.
 
 Worth recording how the blur width was wrong, since the shape of the mistake is
 more useful than the number. Elevation gives a kernel *radius*, and the blur

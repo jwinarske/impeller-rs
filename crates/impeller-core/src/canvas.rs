@@ -2271,12 +2271,7 @@ impl Canvas {
         // deviation only after converting. Skipping the conversion is the
         // larger half of what made a shadow here twice as soft as upstream's.
         let sigma = sigma_for_radius(LIGHT_RADIUS * elevation);
-        let shade = Color::linear(
-            color.to_array()[0],
-            color.to_array()[1],
-            color.to_array()[2],
-            color.to_array()[3] * SHADOW_ALPHA,
-        );
+        let shade = tonal_shadow_color(color);
         let paint = Paint::fill(shade).with_mask_blur(sigma);
 
         if transparent_occluder {
@@ -3607,11 +3602,62 @@ fn sigma_for_radius(radius: f32) -> f32 {
     }
 }
 
-/// What fraction of the stated color's alpha a shadow is drawn at.
+/// What fraction of the stated color's alpha a shadow starts from.
 ///
 /// A quarter, matching Impeller. A shadow is a suggestion of occlusion rather
-/// than an absence of light, and at full alpha it reads as a hole.
+/// than an absence of light, and at full alpha it reads as a hole. This is what
+/// the tonal remap below begins with rather than the alpha a shadow ends up
+/// drawn at -- for anything but a gray it raises the alpha again.
 const SHADOW_ALPHA: f32 = 0.25;
+
+/// A shadow's color, tonally adjusted the way upstream adjusts it.
+///
+/// Ported from `DlDispatcherBase::drawShadow`, which says it ports
+/// `SkShadowUtils::ComputeTonalColors`. The rule is that a colored shadow does
+/// not read as a gray one tinted: a saturated shadow needs more alpha and less
+/// saturation than the number a caller gave it, or it looks like a colored
+/// object lying on the surface rather than an absence of light.
+///
+/// The arithmetic runs on **sRGB-encoded** components rather than on light,
+/// because upstream's do: its pipeline holds encoded values throughout, so the
+/// luminance this keys on is a luminance of encoded numbers. Computing it on
+/// linear light would be the same formula answering a different question, and
+/// would part company with upstream by more than the remap is worth.
+///
+/// It is the identity for a black shadow, which is nearly every shadow: at zero
+/// luminance the color term falls out and the alpha is left at the quarter
+/// above. What it changes is a colored one, and by a lot -- a fully saturated
+/// red at full alpha comes out at better than twice the alpha and about
+/// five eighths of the red.
+fn tonal_shadow_color(color: Color) -> Color {
+    let [r, g, b, a] = color.to_srgb();
+    let alpha = a * SHADOW_ALPHA;
+
+    let luminance = (r.min(g).min(b) + r.max(g).max(b)) * 0.5;
+
+    let alpha_adjust = (2.6 + (-2.666_67 + 1.066_67 * alpha) * alpha) * alpha;
+    let color_alpha = (3.544_762 + (-4.891_428 + 2.346_6 * luminance) * luminance) * luminance;
+    let color_alpha = (alpha_adjust * color_alpha).clamp(0.0, 1.0);
+
+    let greyscale_alpha = (alpha * (1.0 - 0.4 * luminance)).clamp(0.0, 1.0);
+
+    let color_scale = color_alpha * (1.0 - greyscale_alpha);
+    let tonal_alpha = color_scale + greyscale_alpha;
+    // Guarded because a fully transparent shadow leaves both terms at zero, and
+    // the ratio below is the only place that could divide by it.
+    let unpremul_scale = if tonal_alpha != 0.0 {
+        color_scale / tonal_alpha
+    } else {
+        0.0
+    };
+
+    Color::srgb(
+        unpremul_scale * r,
+        unpremul_scale * g,
+        unpremul_scale * b,
+        tonal_alpha,
+    )
+}
 
 /// How far past its content a blur of this deviation reaches.
 ///
@@ -3829,6 +3875,77 @@ mod tests {
             1,
             "an analytic shape should not multisample the pass"
         );
+    }
+
+    /// A black shadow is untouched by the tonal remap; a colored one is not.
+    ///
+    /// Both halves matter. The remap exists for colored shadows, and if it
+    /// moved a black one it would change nearly every shadow anybody draws --
+    /// so the identity is the safety property and the change is the feature.
+    ///
+    /// The figures are upstream's formula evaluated by hand rather than
+    /// recorded from this implementation, which is the only way a test of a
+    /// port can fail when the port is wrong.
+    #[test]
+    fn a_colored_shadow_is_tonally_adjusted_and_a_black_one_is_not() {
+        // Black: at zero luminance the color term vanishes and the alpha is
+        // left at the quarter it started from.
+        let black = super::tonal_shadow_color(Color::srgb(0.0, 0.0, 0.0, 1.0));
+        let [r, g, b, a] = black.to_srgb();
+        assert_eq!([r, g, b], [0.0, 0.0, 0.0], "a black shadow gained color");
+        assert!(
+            (a - 0.25).abs() < 1e-6,
+            "a black shadow should keep the quarter alpha, got {a}"
+        );
+
+        // Saturated red at full alpha. Luminance is a half, so:
+        //   alpha_adjust    = (2.6 + (-2.66667 + 1.06667*0.25)*0.25)*0.25 = 0.5
+        //   color_alpha     = (3.544762 + (-4.891428 + 2.3466*0.5)*0.5)*0.5
+        //                   = 0.842849, times alpha_adjust  = 0.421424
+        //   greyscale_alpha = 0.25 * (1 - 0.4*0.5)           = 0.2
+        //   color_scale     = 0.421424 * 0.8                 = 0.337140
+        //   tonal_alpha     = 0.537140
+        //   unpremul_scale  = 0.337140 / 0.537140            = 0.627650
+        let red = super::tonal_shadow_color(Color::srgb(1.0, 0.0, 0.0, 1.0));
+        let [r, g, b, a] = red.to_srgb();
+        assert!(
+            (a - 0.537_140).abs() < 1e-4,
+            "the tonal alpha for a red shadow is {a}, not 0.53714"
+        );
+        assert!(
+            (r - 0.627_650).abs() < 1e-4,
+            "the tonal red for a red shadow is {r}, not 0.62765"
+        );
+        assert_eq!([g, b], [0.0, 0.0], "a red shadow gained other channels");
+
+        // And it is emphatically not what taking a quarter of the alpha gives,
+        // which is what this used to do.
+        assert!(
+            a > 0.5,
+            "the remap left the alpha near the naive quarter: {a}"
+        );
+
+        // A mid-tone, which is the case that says *which space* this runs in.
+        // Neither of the colors above can: zero and one are fixed points of the
+        // transfer function, so a saturated primary is the same number encoded
+        // or linear and the two readings agree by accident. Here they do not --
+        // the same formula on linear light gives (0.137, 0.032, 0.004) at an
+        // alpha of 0.410, against upstream's (0.345, 0.173, 0.058) at 0.506.
+        let midtone = super::tonal_shadow_color(Color::srgb(0.6, 0.3, 0.1, 1.0));
+        let [r, g, b, a] = midtone.to_srgb();
+        for (got, want, name) in [
+            (a, 0.506_265, "alpha"),
+            (r, 0.345_193, "red"),
+            (g, 0.172_596, "green"),
+            (b, 0.057_532, "blue"),
+        ] {
+            assert!(
+                (got - want).abs() < 1e-4,
+                "the tonal {name} for a mid-tone shadow is {got}, not {want} -- \
+                 which is what running the remap on light rather than on encoded \
+                 values would give"
+            );
+        }
     }
 
     #[test]
