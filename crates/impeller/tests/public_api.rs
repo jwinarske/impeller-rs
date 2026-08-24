@@ -185,7 +185,7 @@ fn translucent_paint_blends_with_what_is_underneath() {
 ///
 /// `blur_along_axis` normalizes by what it actually summed rather than by the
 /// analytic integral, which is the whole reason this holds at every sigma
-/// rather than only at small ones: the taps span three deviations and spread
+/// rather than only at small ones: the taps span the kernel's radius and spread
 /// further apart once the count reaches its budget, so the sum is always a
 /// truncated and unevenly sampled version of the curve. Dividing by what the
 /// curve *should* integrate to would darken exactly the large blurs where the
@@ -3078,7 +3078,7 @@ fn a_mask_blur_softens_a_shape_and_matches_a_blurred_layer() {
     layered.clear(Color::BLACK);
     // The same bounds the mask blur computes: the shape, widened by the blur's
     // reach. A tighter bound would cut the tail off square.
-    let reach = sigma * 3.0;
+    let reach = ((sigma - 0.5) * 1.7320508).max(0.0).ceil();
     layered.save_layer_bounds(
         Layer::opacity(1.0).with_blur(sigma),
         Rect::new(
@@ -3123,7 +3123,10 @@ fn a_mask_blur_softens_a_shape_and_matches_a_blurred_layer() {
         .draw_rect(shape, &Paint::fill(color).with_anti_alias(false))
         .expect("sharp");
     let sharp = render(&mut ctx, sharp);
-    let (beyond, control) = (pixel(&masked, 100, 64), pixel(&sharp, 100, 64));
+    // Six pixels past the shape rather than twelve, which is one deviation out
+    // rather than two: the kernel reaches `(sigma - 0.5) * sqrt(3)`, so two
+    // deviations is past its end and reads exactly zero.
+    let (beyond, control) = (pixel(&masked, 94, 64), pixel(&sharp, 94, 64));
     expect_that!(
         control[0],
         eq(0),
@@ -5443,7 +5446,7 @@ fn a_blur_of_zero_records_no_extra_passes() {
 fn a_blur_keeps_softening_past_the_tap_budget() {
     let Some(mut ctx) = context() else { return };
     // A shader loop is bounded, so past some sigma the taps stop covering
-    // three deviations. Truncated there, the blur stops getting softer however
+    // its radius. Truncated there, the blur stops getting softer however
     // large sigma grows and the shape creeps toward a box -- which reads as a
     // blur that has a maximum, and is the wrong answer at exactly the sizes a
     // frosted panel or a large shadow asks for.
@@ -5474,7 +5477,7 @@ fn a_blur_keeps_softening_past_the_tap_budget() {
     };
     let at = |pixels: &[u8], x: u32, y: u32| pixels[((y * 256 + x) * 4) as usize] as i32;
 
-    // Well past where three deviations stop fitting in the budget, which is a
+    // Well past where the radius stops fitting in the tap budget, which is a
     // little under eleven at thirty-two taps each way.
     let sigmas = [16.0f32, 32.0, 60.0];
     let rendered: Vec<Vec<u8>> = sigmas.iter().map(|s| render(&mut ctx, *s)).collect();
@@ -5526,8 +5529,11 @@ fn blurred_layers_nest() {
     let at = |pixels: &[u8], x: u32, y: u32| pixels[((y * SIZE.width + x) * 4) as usize] as i32;
     // Blurred twice, so it reaches further than either alone would.
     let once = blurred_square(&mut ctx, 4.0, None);
+    // Five pixels above the square rather than twelve. One blur of four reaches
+    // `(4 - 0.5) * sqrt(3)`, a little over six, so at twelve both were zero and
+    // the comparison was between two absences.
     assert!(
-        at(&nested, 64, 28) > at(&once, 64, 28),
+        at(&nested, 64, 35) > at(&once, 64, 35),
         "two blurs should reach further than one"
     );
     // And the inner layer's alpha survived the composite rather than being
@@ -7122,7 +7128,11 @@ fn mask_blur_probe(ctx: &mut Context, style: MaskBlurStyle) -> ([u8; 4], [u8; 4]
     (
         pixel(&pixels, 64, 64),
         pixel(&pixels, 64, 30),
-        pixel(&pixels, 64, 18),
+        // Six pixels past the edge, not twelve. A deviation of six reaches
+        // `(6 - 0.5) * sqrt(3)`, which is nine and a half, so twelve was
+        // outside the kernel altogether once its width stopped being three
+        // deviations and became upstream's.
+        pixel(&pixels, 64, 24),
     )
 }
 
@@ -9158,14 +9168,17 @@ fn a_blur_falls_off_like_a_gaussian_rather_than_like_a_box() {
     canvas.restore();
     let pixels = render(&mut ctx, canvas);
 
-    let near = pixel(&pixels, 64 + 5, 64)[0] as f32;
-    let far = pixel(&pixels, 64 + 10, 64)[0] as f32;
+    // Three and six pixels out. The kernel reaches `(SIGMA - 0.5) * sqrt(3)`,
+    // which is under eight, so the ten-pixel sample this used to take was past
+    // its end -- and a ratio against zero says nothing about a falloff.
+    let near = pixel(&pixels, 64 + 3, 64)[0] as f32;
+    let far = pixel(&pixels, 64 + 6, 64)[0] as f32;
     assert!(
         far > 1.0,
         "the sample at ten pixels is {far}, too dark to take a ratio from"
     );
     let ratio = near / far;
-    let gaussian = (((10.0f32).powi(2) - (5.0f32).powi(2)) / (2.0 * SIGMA * SIGMA)).exp();
+    let gaussian = (((6.0f32).powi(2) - (3.0f32).powi(2)) / (2.0 * SIGMA * SIGMA)).exp();
     assert!(
         (ratio - gaussian).abs() < 1.2,
         "the falloff from five pixels to ten is a ratio of {ratio:.2}, where a \

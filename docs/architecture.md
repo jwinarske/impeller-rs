@@ -1821,8 +1821,15 @@ every fragment walks, which is the cost specialization would remove.
   blur passes free of alpha and blend means neither has to know about
   compositing.
 
-  A shader loop is bounded, so past a sigma of about eleven the taps no longer
-  cover three deviations. They spread rather than truncate: the same count,
+  The kernel reaches `(sigma - 0.5) * sqrt(3)` each way rather than the three
+  deviations it once did, which is upstream's `CalculateBlurRadius` and covers
+  about 91.67 percent of the curve against 99.73. That is a cruder kernel on
+  purpose: matching the width upstream produces for a given deviation is the
+  point, and covering the curve better made every blur here about seventeen
+  percent wider than the same request gives it.
+
+  A shader loop is bounded, so past a sigma of about nineteen the taps no longer
+  cover that radius. They spread rather than truncate: the same count,
   further apart, still spanning the curve, with the sampler's bilinear filter
   averaging what falls between them. That trades quality for coverage, which is
   the right way round — a slightly under-sampled wide blur looks like a wide
@@ -1831,7 +1838,7 @@ every fragment walks, which is the cost specialization would remove.
   panel or a large shadow asks for.
 
   A blur reaches past what it is given, so a layer that is both bounded and
-  blurred outsets its target by three deviations, matching where the shader
+  blurred outsets its target by that same radius, matching where the shader
   stops taking taps. The caller states where the content is, which is the
   question they can answer; how far the blur carries it is arithmetic that
   belongs here. Sized to the content alone, the halo is cut off square at the

@@ -193,38 +193,26 @@ and do give one and a third, and which size the shadow's bounds rather than draw
 it. Reading the wrong pair and skipping the conversion together made every
 shadow here about twice as soft as the same elevation gives upstream.
 
-## 8. The blur kernel reaches three deviations; upstream's reaches 1.732
+## 8. A large blur spreads its taps; upstream downsamples
 
-**What differs.** `blur_along_axis` takes taps out to three deviations each way
-and normalizes by what it summed. Upstream's `GenerateBlurInfo` takes them out
-to `CalculateBlurRadius(sigma)`, which is `Radius(Sigma(sigma))` — that is
-`(sigma - 0.5) * sqrt(3)`, so about 1.732 deviations — with the analytic
-Gaussian coefficient at each, and then normalizes by the tally exactly as this
-does. Both are normalized truncated Gaussians. They are truncated at different
-widths.
+**What differs.** Both cap the kernel at a fixed number of samples — a shader
+loop has to be bounded. Past that cap this renderer keeps the same tap count and
+spreads the taps further apart, letting the sampler's bilinear filter average
+what falls between them. Upstream instead downsamples the source into a smaller
+texture first and runs the blur over that, which is what
+`CalculateDownsamplePassArgs` and `texture_downsample.frag` are for, and it
+clamps sigma at `kMaxSigma = 500`.
 
-**Why.** Three deviations was chosen here on its own merits: it covers better
-than four nines of the curve, so the truncation is not visible. Upstream's
-narrower reach was not evaluated against it, and this entry exists because the
-difference was found by reading upstream rather than by anything going wrong.
+**Why.** Not decided against, just not built. Downsampling is the better answer
+for very large blurs and costs an extra pass and a scratch target to get.
 
-**Impact.** The largest unaddressed difference in this file, and it touches
-every blur — mask blurs, layer blurs, backdrop blurs, and the shadow that rides
-on one. Truncating at 1.732 deviations keeps 91.67 percent of the curve against
-99.73, and renormalizing what is left leaves an effective deviation of 0.8146
-against 0.9866. So **upstream's blur is about seventeen percent narrower than
-this one for the same nominal sigma**, before the further narrowing its
-`sigma - 0.5` gives at small radii. A blur asked for by deviation therefore
-comes out visibly softer here.
-
-Closing it would also make this renderer faster rather than slower, which is
-worth saying because it is the unusual direction: 3.46 deviations of taps
-against 6 is 58 percent as many samples per pixel per pass, and `blur_reach`
-sizes every blurred layer's target by the same constant, so the targets would
-shrink with it. What it costs is blur quality — a deliberately cruder kernel —
-and a large number of pictures, since blurs appear in ninety-six places in the
-scene catalog and two hundred in the public-API tests. That is why it is
-recorded here rather than quietly changed.
+**Impact.** The kernel's *width* is upstream's, so a blur of a given deviation
+covers the same distance either way and the difference is in how well that
+distance is sampled. Under about a sigma of nineteen there is none at all: the
+taps still land one per texel and nothing is spread. Past it this renderer's
+blur is progressively more coarsely sampled than upstream's, which shows as
+faint banding in a very wide blur rather than as a wrong width. There is also no
+`kMaxSigma` here, so a request upstream would clamp is honored.
 
 ## 9. Operations that are absent
 

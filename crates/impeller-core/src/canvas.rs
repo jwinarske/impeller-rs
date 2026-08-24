@@ -3615,8 +3615,11 @@ const SHADOW_ALPHA: f32 = 0.25;
 
 /// How far past its content a blur of this deviation reaches.
 ///
-/// Three deviations, matching where the shader stops taking taps, so a target
-/// sized by this covers everything the blur will actually read.
+/// `(sigma - 0.5) * sqrt(3)`, which is upstream's `CalculateBlurRadius` and is
+/// also where the shader stops taking taps -- so a target sized by this covers
+/// everything the blur will actually read, and no more. It was three
+/// deviations, which covered more of the curve than upstream does and made
+/// every blur here wider than the same request gives it.
 ///
 /// Shared rather than written twice. A bounded layer sizes its target with it,
 /// and a mask blur style that combines the blurred coverage with the shape's
@@ -3624,7 +3627,7 @@ const SHADOW_ALPHA: f32 = 0.25;
 /// at first, and the halo was cut off square at the shape's own bounds.
 pub(crate) fn blur_reach(sigma: f32) -> f32 {
     if sigma > 0.0 {
-        (sigma * 3.0).ceil()
+        ((sigma - 0.5) * KERNEL_RADIUS_PER_SIGMA).max(0.0).ceil()
     } else {
         0.0
     }

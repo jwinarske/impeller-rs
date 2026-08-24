@@ -810,9 +810,10 @@ pub enum Material {
         step: [f32; 2],
         /// Standard deviation, in taps.
         ///
-        /// The tap count follows from it -- three deviations each way covers
-        /// better than four nines of the curve -- so a caller sets how soft the
-        /// result is and nothing else.
+        /// The tap count follows from it -- the kernel reaches
+        /// `(sigma - 0.5) * sqrt(3)` each way, which is upstream's radius for a
+        /// given deviation -- so a caller sets how soft the result is and
+        /// nothing else.
         sigma: f32,
     },
     /// One axis of a morphological filter of a finished layer.

@@ -644,9 +644,23 @@ fn blur_along_axis(clip: vec3<f32>) -> vec4<f32> {
     let uv = to_gradient_space(clip);
     let step = paint.geometry.zw;
     let sigma = max(paint.params.z, 1e-4);
-    // Three deviations each way covers better than four nines of the curve;
-    // past that a tap contributes less than an eight-bit target can represent.
-    let reach = sigma * 3.0;
+    // How far the taps go, and it is upstream's rule rather than a choice made
+    // here. `CalculateBlurRadius` is `Radius(Sigma(sigma))`, which is
+    // `(sigma - 0.5) * sqrt(3)` -- about 1.732 deviations, where three would
+    // cover better than four nines of the curve and this covers about 91.67
+    // percent of it.
+    //
+    // That truncation is not invisible and is not meant to be: renormalizing
+    // what is left of the curve leaves an effective deviation of 0.8146 rather
+    // than 0.9866, so a blur asked for by deviation is narrower than a true
+    // Gaussian of that deviation. Matching the number upstream produces for a
+    // given sigma is the point; producing the best Gaussian for that sigma is
+    // not, and doing the latter made every blur here about seventeen percent
+    // wider than the same request gives upstream.
+    //
+    // Below half a deviation upstream's radius goes to zero rather than
+    // negative, which leaves the single center tap and no blur.
+    let reach = max((sigma - 0.5) * 1.7320508, 0.0);
     // A shader loop must be bounded, and sixty-five taps is already a lot of
     // bandwidth per pixel per pass.
     let max_taps = 32.0;
@@ -655,9 +669,14 @@ fn blur_along_axis(clip: vec3<f32>) -> vec4<f32> {
     // blur soft: cut off at the budget, the taps stop covering the curve and
     // the result stops getting softer however large sigma grows -- the shape
     // creeps toward a box the wider it is asked to be. Spread, the taps still
-    // span three deviations and the sampler's bilinear filter averages the
+    // span the whole radius and the sampler's bilinear filter averages the
     // texels each one falls between, which is what makes the gaps cost quality
     // rather than correctness.
+    //
+    // Upstream reaches the same budget differently, by downsampling the source
+    // for a large blur rather than by spreading taps across it. That is a
+    // separate divergence and is recorded as one; what is matched here is the
+    // width of the kernel, which is what decides how wide the blur looks.
     let spread = max(reach / max_taps, 1.0);
     let taps = min(ceil(reach / spread), max_taps);
 

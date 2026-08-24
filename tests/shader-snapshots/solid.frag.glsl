@@ -339,31 +339,31 @@ vec4 blur_along_axis(vec3 clip_4) {
     vec2 step_ = _e4.zw;
     float _e9 = _group_1_binding_0_fs.params.z;
     float sigma = max(_e9, 0.0001);
-    float reach = (sigma * 3.0);
+    float reach = max(((sigma - 0.5) * 1.7320508), 0.0);
     float spread = max((reach / 32.0), 1.0);
     float taps = min(ceil((reach / spread)), 32.0);
     float denominator = (-0.5 / (sigma * sigma));
     i_2 = -(taps);
     while(true) {
-        float _e31 = i_2;
-        if ((_e31 > taps)) {
+        float _e35 = i_2;
+        if ((_e35 > taps)) {
             break;
         }
-        float _e33 = i_2;
-        float offset_1 = (_e33 * spread);
+        float _e37 = i_2;
+        float offset_1 = (_e37 * spread);
         float weight_1 = exp(((offset_1 * offset_1) * denominator));
         vec2 coord_4 = clamp((_e1 + (step_ * offset_1)), vec2(0.0), vec2(1.0));
-        vec4 _e45 = total_1;
-        vec4 _e49 = textureLod(_group_0_binding_0_fs, vec2(coord_4), 0.0);
-        total_1 = (_e45 + (_e49 * weight_1));
-        float _e52 = weight_sum;
-        weight_sum = (_e52 + weight_1);
-        float _e54 = i_2;
-        i_2 = (_e54 + 1.0);
+        vec4 _e49 = total_1;
+        vec4 _e53 = textureLod(_group_0_binding_0_fs, vec2(coord_4), 0.0);
+        total_1 = (_e49 + (_e53 * weight_1));
+        float _e56 = weight_sum;
+        weight_sum = (_e56 + weight_1);
+        float _e58 = i_2;
+        i_2 = (_e58 + 1.0);
     }
-    vec4 _e57 = total_1;
-    float _e58 = weight_sum;
-    return (_e57 / vec4(max(_e58, 1e-6)));
+    vec4 _e61 = total_1;
+    float _e62 = weight_sum;
+    return (_e61 / vec4(max(_e62, 1e-6)));
 }
 
 vec4 sample_or_nothing(vec2 uv_3) {
