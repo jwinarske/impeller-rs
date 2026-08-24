@@ -55,9 +55,17 @@
 //! advertised. It is the buffer that is declined, and that was shown rather
 //! than inferred: a dumb buffer allocated on the same card exports and imports
 //! straight back through the same call. `vc4` imports dma-bufs; it declines
-//! *this* one, which leaves the memory as the only difference. A display
-//! controller with no IOMMU can address only contiguous memory, and a render
-//! device with an MMU has no reason to allocate that way.
+//! *this* one, which leaves the memory as the only difference.
+//!
+//! The reason is the board rather than the driver. A Pi 4 has no IOMMU, so its
+//! display controller can address only physically contiguous memory, and a
+//! render device with an MMU has no reason to allocate that way. There is
+//! nothing to arrange differently on this side of the handoff.
+//!
+//! Worth separating from a claim it is easily confused with: Vulkan itself
+//! works on a Pi 4. The corpus comparison renders every scene through `v3d` and
+//! agrees with the GLES backend on all of them, and the color anchor holds
+//! there too. What a Pi 4 cannot do is *scan out* what Vulkan allocated.
 //!
 //! ## The Pi 5's `vc4`: it was the plane, not the memory
 //!
@@ -74,21 +82,23 @@
 //!
 //! ## What this suggests, and what it does not
 //!
-//! It is not a Pi 4 limitation, and not an ARM one. One of the three
-//! controllers refuses and two are fine, and the one that refuses does so over
-//! memory rather than over anything this can arrange differently.
+//! One of the three controllers refuses and two are fine, and the one that
+//! refuses does so because the board it is on has no IOMMU -- which is a fact
+//! about the hardware and not a shape this code can be bent into. It is not an
+//! ARM limitation, and not a Raspberry Pi one: the Pi 5 does both outputs.
 //!
 //! The Pi 4 has not been re-tested since the plane fix -- it left the network
 //! first -- and the fix is not expected to change it: that failure is at the
 //! import, which happens after a plane is chosen and does not depend on which.
 //!
 //! Where the buffer comes from is the part worth reconsidering, and it is a
-//! design question rather than a defect to patch. A board whose display
-//! controller cannot take the renderer's memory wants the buffer allocated on
-//! the *display* side and imported into the renderer, which is the opposite
-//! direction to this and a different shape for [`target::DrmScanoutTarget`]
-//! rather than a fix to its import call. That would cover the Pi 4. It would
-//! not, on the evidence here, cover the Pi 5's HDMI.
+//! design question rather than a defect to patch. A board with no IOMMU wants
+//! the buffer allocated on the *display* side, where it will be contiguous, and
+//! imported into the renderer -- the opposite direction to this, and a
+//! different shape for [`target::DrmScanoutTarget`] rather than a fix to its
+//! import call. Whether that is worth building depends on whether boards
+//! without an IOMMU are a target, which is a question for whoever is shipping
+//! rather than for this file.
 //!
 //! The tests take `IMPELLER_DRM_CARD` for this reason: a board with more than
 //! one display controller otherwise gets whichever `/dev/dri` lists first,
