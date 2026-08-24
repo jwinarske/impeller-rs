@@ -547,16 +547,21 @@ mod format_tests {
         // The format code is unchanged by this. It describes how bytes sit in
         // memory and says nothing about what they mean, which is why the two
         // can differ -- real hardware accepts the exported buffer either way.
-        for fourcc in [Fourcc::ARGB8888, Fourcc::XRGB8888] {
-            assert_eq!(
-                pixel_format_for(fourcc).expect("supported"),
-                PixelFormat::Bgra8Unorm
-            );
-        }
-        for fourcc in [Fourcc::ABGR8888, Fourcc::XBGR8888] {
-            assert_eq!(
-                pixel_format_for(fourcc).expect("supported"),
-                PixelFormat::Rgba8Unorm
+        for (fourcc, want) in [
+            (Fourcc::ARGB8888, PixelFormat::Bgra8Unorm),
+            (Fourcc::XRGB8888, PixelFormat::Bgra8Unorm),
+            (Fourcc::ABGR8888, PixelFormat::Rgba8Unorm),
+            (Fourcc::XBGR8888, PixelFormat::Rgba8Unorm),
+        ] {
+            let got = pixel_format_for(fourcc).expect("supported");
+            assert_eq!(got, want);
+            // Stated against the rule as well as against the name, so that a
+            // format swapped for another encoding one fails here rather than
+            // only where the picture is looked at -- which for scanout is a
+            // display nothing in this suite can see.
+            assert!(
+                got.is_drawable(),
+                "{fourcc:?} maps to {got:?}, which encodes on write"
             );
         }
     }

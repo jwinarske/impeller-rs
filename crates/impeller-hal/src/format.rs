@@ -133,6 +133,24 @@ impl PixelFormat {
         }
     }
 
+    /// Whether the renderer can draw into this format.
+    ///
+    /// It cannot draw into one that encodes on write. The pipeline carries
+    /// sRGB-encoded components from the API boundary onward, so a target
+    /// applying the transfer function would apply it a second time and the
+    /// picture would come back over a third too bright at mid gray.
+    ///
+    /// Stated once and consulted from three places, because it has been got
+    /// wrong at two of them and neither showed up in a test that renders
+    /// pixels. The swapchain preferred an sRGB surface format and DRM scanout
+    /// rendered through an sRGB image view, both for the same reason -- they
+    /// were written while the pipeline carried light, where encoding on write
+    /// was exactly what was wanted. A rule that lives in one place can be
+    /// re-read; three copies of an argument get updated one at a time.
+    pub const fn is_drawable(self) -> bool {
+        !self.is_srgb()
+    }
+
     /// Whether writes to this format apply an sRGB transfer function.
     pub const fn is_srgb(self) -> bool {
         matches!(self, Self::Rgba8UnormSrgb | Self::Bgra8UnormSrgb)

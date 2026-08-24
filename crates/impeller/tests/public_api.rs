@@ -1066,7 +1066,7 @@ fn an_intermediate_is_never_given_an_srgb_format() {
     ] {
         let intermediate = root.intermediate();
         assert!(
-            !intermediate.is_srgb(),
+            intermediate.is_drawable(),
             "a root of {root:?} gave an intermediate of {intermediate:?}, \
              which would encode what the pipeline already encoded"
         );

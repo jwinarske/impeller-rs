@@ -54,7 +54,36 @@ fn a_swapchain_can_be_reached_through_the_facade_alone() {
     let target =
         impeller::wsi::SwapchainTarget::new(vk, surface, SIZE, impeller::wsi::PresentMode::Fifo);
     match target {
-        Ok(target) => {
+        Ok(mut target) => {
+            // The image the renderer will actually draw into, asked of a real
+            // driver's real format list rather than of a fabricated one.
+            //
+            // `choose_format` has a unit test, and it passed for as long as it
+            // preferred an sRGB surface -- it was asserting the preference, not
+            // whether the preference was right. This asks the question the unit
+            // test cannot: of everything this device offered, is the one that
+            // was taken a format the pipeline can write correctly?
+            //
+            // It would have failed for the whole of the time the swapchain
+            // preferred sRGB, which was every commit until the pipeline stopped
+            // carrying light and nothing in eight hundred tests noticed.
+            // Acquired, not merely asked for: the first attempt here read the
+            // image without acquiring a frame, got "no frame is acquired", and
+            // reported a skip -- so the test passed having checked nothing,
+            // which is the failure it exists to catch, in itself.
+            let acquired = target.acquire(vk).map(|image| image.format());
+            match acquired {
+                Ok(format) => {
+                    assert!(
+                        format.is_drawable(),
+                        "the swapchain acquired a {format:?}, which encodes on \
+                         write -- so everything drawn through it would be \
+                         encoded twice and come back over a third too bright"
+                    );
+                }
+                Err(e) => panic!("a swapchain that built should acquire: {e}"),
+            }
+
             // Explicitly, not by dropping it: tearing a swapchain down needs
             // the context that built it, which `Drop` does not have. Letting it
             // fall out of scope leaves the swapchain and its images behind, and
