@@ -267,15 +267,41 @@ fn parse(text: &str, broke: bool) -> Outcome {
             binaries += 1;
         }
         if let Some(rest) = line.trim().strip_prefix("test result: ") {
-            summaries += 1;
             // "ok. 12 passed; 0 failed; ..."
+            //
+            // Read before it counts as a summary, which is the difference
+            // between catching a mangled line and joining in. The same
+            // interleaving that removes a summary line can cut one in the
+            // middle of its numbers instead, and a line that arrives as
+            // "test result: ok. 1" then someone else's output has the shape of
+            // a summary and none of the content. Counted as a summary and
+            // parsed with a default, it contributes nothing and hides itself:
+            // the total comes out short by a whole binary's tally and `lost`
+            // stays at zero, which is precisely the false clean run the count
+            // above exists to prevent.
+            //
+            // This was found the way it would be: a gate that had been
+            // reporting 816 reported 813 twice, said nothing was skipped and
+            // nothing was lost, and would not reproduce. Two binaries in this
+            // tree have three tests.
             let mut fields = rest.split_whitespace();
             let _verdict = fields.next();
-            if let (Some(n), Some("passed;")) = (fields.next(), fields.next()) {
-                passed += n.parse::<usize>().unwrap_or(0);
-            }
-            if let (Some(n), Some("failed;")) = (fields.next(), fields.next()) {
-                failed += n.parse::<usize>().unwrap_or(0);
+            let read_pair = |fields: &mut std::str::SplitWhitespace<'_>, label: &str| match (
+                fields.next(),
+                fields.next(),
+            ) {
+                (Some(n), Some(seen)) if seen == label => n.parse::<usize>().ok(),
+                _ => None,
+            };
+            // A line that does not read leaves `summaries` alone on purpose,
+            // so `binaries` exceeds it and the run reports itself partial.
+            if let (Some(p), Some(f)) = (
+                read_pair(&mut fields, "passed;"),
+                read_pair(&mut fields, "failed;"),
+            ) {
+                summaries += 1;
+                passed += p;
+                failed += f;
             }
         }
         if line.contains("skipping") {
@@ -363,9 +389,10 @@ pub fn text(outcome: &Outcome) -> String {
     ));
     if outcome.lost > 0 {
         out.push_str(&format!(
-            "    {} test binar{} said nothing at all, so this count is short by \
-             however many tests they held -- and would be short by their \
-             failures too.\n",
+            "    {} test binar{} said nothing this could read -- no summary, or \
+             one cut in half by another binary writing at the same time. This \
+             count is short by however many tests they held, and would be short \
+             by their failures too.\n",
             outcome.lost,
             if outcome.lost == 1 { "y" } else { "ies" }
         ));
@@ -538,7 +565,47 @@ test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out;
             outcome.broke,
             "an unreadable run must not be reported as a clean one"
         );
-        assert!(text_of(&outcome).contains("said nothing at all"));
+        assert!(text_of(&outcome).contains("said nothing this could read"));
+    }
+
+    #[test]
+    fn a_summary_cut_in_half_is_lost_rather_than_counted_as_zero() {
+        // The same interleaving that removes a summary line can cut one in the
+        // middle instead. This one has the shape of a summary and no numbers,
+        // which read with a default contributes nothing while still counting
+        // as a summary -- so the total comes out short by that binary's tally
+        // and nothing says so.
+        //
+        // That is not hypothetical. A gate reporting 816 reported 813 twice,
+        // with nothing skipped and nothing lost, and would not reproduce; two
+        // binaries in this tree have three tests.
+        let text = "\
+     Running tests/one.rs (target/debug/deps/one)
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out;
+     Running tests/two.rs (target/debug/deps/two)
+test result: ok. 3 passtest result: ok. 9 passed; 0 failed; 0 ignored;
+";
+        let outcome = parse(text, false);
+        // Four from the binary that spoke clearly. The mangled line gives
+        // nothing, and says so.
+        assert_eq!(outcome.passed, 4);
+        assert_eq!(outcome.lost, 1);
+        assert!(outcome.broke);
+        assert!(text_of(&outcome).contains("said nothing this could read"));
+    }
+
+    #[test]
+    fn a_summary_whose_count_is_not_a_number_is_lost_too() {
+        let text = "\
+     Running tests/one.rs (target/debug/deps/one)
+test result: ok. ?? passed; 0 failed; 0 ignored; 0 measured; 0 filtered out;
+";
+        let outcome = parse(text, false);
+        assert_eq!(outcome.passed, 0);
+        assert_eq!(
+            outcome.lost, 1,
+            "a count that is not a number must not read as zero passes"
+        );
     }
 
     #[test]
