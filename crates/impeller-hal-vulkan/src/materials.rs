@@ -85,7 +85,11 @@ impl Materials {
 /// release rules: the buffer is host-visible memory the submission reads, and
 /// travels with the geometry buffers, while the set's pool cannot be destroyed
 /// until the command buffer reading it retires.
-pub fn build(ctx: &mut VulkanContext, batch: &Batch) -> Result<(StagedBuffer, Materials)> {
+pub fn build(
+    ctx: &mut VulkanContext,
+    batch: &Batch,
+    target_format: impeller_hal::PixelFormat,
+) -> Result<(StagedBuffer, Materials)> {
     let stride = stride_for(ctx);
     let draws = batch.draw_count().max(1);
 
@@ -94,7 +98,7 @@ pub fn build(ctx: &mut VulkanContext, batch: &Batch) -> Result<(StagedBuffer, Ma
     // nothing reads a gap that was never initialized.
     let mut bytes = vec![0u8; (draws as u64 * stride) as usize];
     for (index, draw) in batch.draws().iter().enumerate() {
-        let packed = draw.to_uniform();
+        let packed = draw.to_uniform(target_format);
         let at = index * stride as usize;
         let words = cast_bytes(&packed);
         bytes[at..at + words.len()].copy_from_slice(words);

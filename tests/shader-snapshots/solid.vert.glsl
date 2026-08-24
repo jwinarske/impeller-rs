@@ -299,6 +299,13 @@ vec4 blend_tint(int mode_2, vec4 src, vec4 dst) {
     return vec4(rgb, (sa + (da * (1.0 - sa))));
 }
 
+float ordered_dither(vec2 frag) {
+    uint x_1 = (uint(frag.x) % 8u);
+    uint y = (uint(frag.y) ^ x_1);
+    uint m_2 = (((((((y & 1u) << 5u) | ((x_1 & 1u) << 4u)) | ((y & 2u) << 2u)) | ((x_1 & 2u) << 1u)) | ((y & 4u) >> 1u)) | ((x_1 & 4u) >> 2u));
+    return ((float(m_2) * 0.015625) - 0.4921875);
+}
+
 void main() {
     vec3 position = _p2vs_location0;
     vec2 uv = _p2vs_location1;

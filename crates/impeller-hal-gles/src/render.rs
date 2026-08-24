@@ -365,9 +365,10 @@ impl GlesContext {
             // Written into the padded layout directly, so the gaps the
             // implementation's alignment requires are zeros rather than
             // whatever the last batch left there.
+            let target_format = target.format();
             let mut paints = vec![0u8; batch.draw_count().max(1) * program.paint_stride];
             for (index, draw) in batch.draws().iter().enumerate() {
-                let packed = draw.to_uniform();
+                let packed = draw.to_uniform(target_format);
                 let at = index * program.paint_stride;
                 paints[at..at + MATERIAL_BYTES].copy_from_slice(cast_bytes(&packed));
             }

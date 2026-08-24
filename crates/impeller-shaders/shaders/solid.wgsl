@@ -1025,6 +1025,64 @@ fn blend_tint(mode: i32, src: vec4<f32>, dst: vec4<f32>) -> vec4<f32> {
     return vec4<f32>(rgb, sa + da * (1.0 - sa));
 }
 
+/// An eight-by-eight ordered dither, in (-63/128, +63/128).
+///
+/// The matrix upstream Impeller uses, which took it from Skia, transcribed
+/// rather than reinvented so that a gradient banded the same way comes apart
+/// the same way. The bound stops just short of a half in either direction on
+/// purpose: at exactly a half an already-representable value -- black, white --
+/// would round to its neighbor instead of staying put.
+fn ordered_dither(frag: vec2<f32>) -> f32 {
+    let x = u32(frag.x) % 8u;
+    let y = u32(frag.y) ^ x;
+    let m = ((y & 1u) << 5u) | ((x & 1u) << 4u) | ((y & 2u) << 2u) | ((x & 2u) << 1u) |
+            ((y & 4u) >> 1u) | ((x & 4u) >> 2u);
+    return f32(m) * (2.0 / 128.0) - (63.0 / 128.0);
+}
+
+/// Perturb a color by a fraction of the target's quantization step.
+///
+/// Banding is what a smooth ramp becomes when neighboring pixels round to the
+/// same representable value: the picture gains an edge the gradient does not
+/// have. Offsetting each pixel by a fraction of a step first, by a rule that
+/// varies across an eight-by-eight tile, makes the rounding land on both sides
+/// along what would have been the edge, and the eye reads the mixture rather
+/// than the boundary.
+///
+/// The amplitude and the space come from the target and are handed in through
+/// the paint block, because a step is not one quantity. Into a linear surface
+/// it is a fixed amount of light. Into an sRGB one the hardware encodes on
+/// write, so the step is a step of encoded value, and the light it stands for
+/// runs from about a thirtieth of that near black to twice it near white -- so
+/// the offset is applied on the encoded side there, which is the side the
+/// rounding happens on. Doing it in light with one amplitude would dither the
+/// shadows thirty times too hard and the highlights not at all, which is
+/// backwards: the shadows are where eight bits band.
+///
+/// Gradients only, which is upstream's scope, and this is where the whole of
+/// the banding worth chasing is: a gradient is the one thing here that asks a
+/// target for a long run of nearly equal values.
+///
+/// Applied last, to the premultiplied result, because premultiplied is what
+/// the target stores and rounds. Alpha is left alone -- perturbing coverage
+/// would move an edge rather than break a band.
+fn dithered(color: vec4<f32>, frag: vec2<f32>) -> vec4<f32> {
+    let amplitude = paint.filter_params.z;
+    let kind = paint.params.y;
+    let gradient = (kind > 0.5 && kind < 3.5) || (kind > 8.5 && kind < 9.5);
+    if (amplitude <= 0.0 || !gradient) {
+        return color;
+    }
+    let offset = ordered_dither(frag) * amplitude;
+    if (paint.filter_params.w > 0.5) {
+        return vec4<f32>(
+            srgb_to_linear(linear_to_srgb(color.rgb) + vec3<f32>(offset)),
+            color.a,
+        );
+    }
+    return vec4<f32>(color.rgb + vec3<f32>(offset), color.a);
+}
+
 @fragment
 fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     // The vertex color multiplies the material, and the filter applies to what
@@ -1036,7 +1094,10 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     // the alpha applied once to the color and twice to itself.
     // The caller's color is the source and the paint's result the backdrop,
     // which is the order `dart:ui` states for both of the calls that carry one.
-    return filtered(blend_tint(i32(paint.filter_params.y + 0.5), in.tint, shade(in)));
+    return dithered(
+        filtered(blend_tint(i32(paint.filter_params.y + 0.5), in.tint, shade(in))),
+        in.position.xy,
+    );
 }
 
 /// The color this paint produces, premultiplied, before any filter.

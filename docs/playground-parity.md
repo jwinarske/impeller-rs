@@ -106,10 +106,10 @@ the scene model cannot describe.
 Three different kinds of obstacle, worth separating because only one of them is
 about the renderer.
 
-**Capabilities this renderer lacks.** Dithering, and it is the only one now.
-It is not a row of `docs/parity.md` and should not be looked for as one: it is
-not a `dart:ui` method but a quality behavior inside gradient rendering, which
-is where the banding it exists to break up appears.
+**Capabilities this renderer lacks.** None, now that gradients are dithered.
+It never was a row of `docs/parity.md` and should not be looked for as one: it
+is not a `dart:ui` method but a quality behavior inside gradient rendering,
+which is where the banding it exists to break up appears.
 
 That sentence was written while two cells above it still said "wide gamut",
 which made this document contradict itself for the length of one commit. Worth
@@ -142,28 +142,42 @@ nothing is named rather than that nothing is left, which is the honest state of
 it: the obstacle that was written down is gone, and what holds up the rest has
 not been examined.
 
-Dithering is also not the small feature its one-word entry suggests, and the
-reason is worth recording so the size of it is not rediscovered. Breaking up a
-band means perturbing a color by about half of one quantization step before it
-is quantized, and half a step is not a fixed quantity here: the target decides
-it. Into a linear eight-bit surface a step is a flat 1/255 of light. Into an
-sRGB one the hardware encodes on write, and the slope of that transfer runs
-from 12.92 at black to roughly 0.44 at white -- so the same offset that is half
-a step on one surface is six steps on the other in shadow, and a fifth of one in
-highlight. No single amplitude serves both.
+Dithering was not the small feature its one-word entry suggested, and what it
+turned on is worth keeping now that it is built. Breaking up a band means
+perturbing a color by a fraction of one quantization step before it is
+quantized, and a step is not a fixed quantity here: the target decides it. Into
+a linear eight-bit surface a step is a flat 1/255 of light. Into an sRGB one the
+hardware encodes on write, and the slope of that transfer runs from 12.92 at
+black to roughly 0.44 at white -- so the same offset that is a step on one
+surface is many on the other in shadow, and a fraction of one in highlight. No
+single amplitude in light serves both, and this was measured rather than
+argued: dithering a dark gradient into an sRGB target in *light* rather than in
+encoded value tracks the ideal about six times worse than not dithering at all.
 
-Which means dithering wants to know the format it is drawing into, and the
-pipeline deliberately does not: the color policy has the conversion belong to
-the target format rather than to a shader, so nothing before the write knows
-whether one will happen. That is a good rule and this is a real exception to
-it, so the feature is waiting on a decision about the rule rather than on the
-work, which is why it is filed here and not as an unwritten scene.
+That looked like an exception to the color policy and was not. The policy has
+the conversion belong to the target format rather than to a shader, and what
+was missed is that nothing requires the *shader* to be what knows the format.
+The amplitude and the space are two numbers in the paint block, written by the
+backend at submission -- which is the layer that holds the target and already
+decides the intermediate's format. The shader is handed two floats and still
+knows nothing about formats. What blocked this was a decision that dissolved on
+being looked at, which is the same lesson as the blocked column above.
 
 Dithering the gradient's parameter rather than its color was the obvious way
-around it and does not work: jittering where a band edge falls, rather than
-what value it steps to, needs no knowledge of the target, but the jitter is
+around it and would not have worked: jittering where a band edge falls, rather
+than what value it steps to, needs no knowledge of the target, but the jitter is
 half a pixel wide while the band is widest exactly when the gradient changes
 slowest. It is weakest where banding is worst.
+
+Upstream is narrower than this and inconsistent about it, which is worth
+recording since parity is the criterion. Its `IPOrderedDither8x8` is called from
+five shaders -- the four SSBO gradient variants and the two-stop fast path. The
+uniform variants include the header and never call it, and the texture-ramp
+variants do not include it at all, so whether a gradient is dithered there
+depends on the stop count and on whether the device supports SSBOs. The matrix
+and the rate here are upstream's, transcribed; the scope is every gradient
+including the ramp path, because a ramp is what this renderer uses past four
+stops and it is not obvious that upstream's omission is a decision.
 
 An effect's own textures used to head this list, on the grounds that a caller's
 program got the material's uniform block and nothing else. That stopped being

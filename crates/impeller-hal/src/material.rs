@@ -82,7 +82,22 @@ pub mod layout {
     /// The constant a color filter adds.
     pub const FILTER_OFFSET: usize = 56;
     /// Which color filter, if any, and in which form its matrix is stated.
+    ///
+    /// The second float holds the tint blend, and the last two hold the dither;
+    /// see [`DITHER`]. Four unrelated things share a slot because the slot is a
+    /// four-component vector whether or not anything fills it, and a fifth
+    /// vector would cost every draw sixteen bytes to carry three unused floats.
     pub const FILTER_PARAMS: usize = 60;
+    /// The dither amplitude, and whether the target encodes on write.
+    ///
+    /// Amplitude first, in the target's storage units, with zero meaning no
+    /// dithering; then a flag saying whether a step of that size is a step of
+    /// encoded value rather than of light. Both are written by the backend at
+    /// submission rather than by the recorder, because the target's format is
+    /// what decides them and a recording is made without one -- which is also
+    /// what keeps the color policy intact. The shader is handed two numbers and
+    /// still knows nothing about formats.
+    pub const DITHER: usize = 62;
 }
 
 /// The number the shader reads for a tile mode.

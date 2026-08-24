@@ -19,6 +19,11 @@ What stands between here and a first release with an API:
 
 - Two operations are absent: `drawRSuperellipse` and `clipRSuperellipse`.
 
+`BatchDraw::to_uniform` takes the format it is about to be drawn into. Only the
+backend knows that, and it is what decides a gradient's dither; the same
+recording drawn into an eight-bit surface and a float one wants different
+answers, so it could not have been a property of the recording.
+
 `transform` was listed here too, taking a 2D affine where `dart:ui` takes a 4×4
 and so admits perspective, and was described as a deliberate design limit
 rather than an omission. That was an assertion with no argument behind it,

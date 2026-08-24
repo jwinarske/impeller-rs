@@ -244,10 +244,23 @@ impl BatchDraw {
     /// takes one block per draw, and separately here because they are separate
     /// things: a filter applies to any material, and a material knows nothing
     /// about being filtered.
-    pub fn to_uniform(&self) -> [f32; crate::MATERIAL_FLOATS] {
+    /// `target` is the format this draw is about to be written into, which
+    /// only the backend knows: a recording is built without one, and the same
+    /// recording is drawn into an eight-bit surface and a float one. It decides
+    /// the dither, and nothing else here.
+    pub fn to_uniform(&self, target: crate::PixelFormat) -> [f32; crate::MATERIAL_FLOATS] {
         let mut out = self.material.to_uniform();
         self.filter.pack_into(&mut out);
         out[crate::material::layout::FILTER_PARAMS + 1] = self.tint_blend.code();
+        let dither = crate::material::layout::DITHER;
+        // Four times the step, which puts the largest perturbation just under
+        // two of them. That is upstream Impeller's rate -- it spends 1/64 on an
+        // eight-bit target and 4/255 is the same number to within a rounding --
+        // arrived at there for a pipeline whose values are already encoded, and
+        // reachable here only because the amplitude is chosen per target rather
+        // than compiled in.
+        out[dither] = 4.0 * target.quantization_step();
+        out[dither + 1] = if target.is_srgb() { 1.0 } else { 0.0 };
         out
     }
 }

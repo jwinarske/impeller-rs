@@ -624,6 +624,45 @@ gradient stated in four disagreed by twenty-four levels once a color filter
 brought the difference back inside the range a target could show — the sort of
 defect that hides because both halves of it look like rounding.
 
+**A gradient is dithered, and the target decides how.** A gradient asks for a
+long run of nearly equal values, which is the one thing here that reliably
+bands: where two neighbors round to the same representable value the picture
+gains an edge the gradient does not have. Each pixel is offset by a fraction of
+a quantization step first, by an eight-by-eight ordered pattern, so the rounding
+falls on both sides of where that edge was. The matrix and the rate are upstream
+Impeller's, transcribed rather than reinvented, so a gradient that bands the
+same way comes apart the same way.
+
+The amplitude cannot be compiled in, and this is where the interesting part is.
+A step is not one quantity: into a linear eight-bit surface it is a flat 1/255
+of light, and into an sRGB one the hardware encodes on write, so the step is a
+step of *encoded* value and the light it stands for varies across the range by
+about thirty times. Dithering a dark gradient into an sRGB target in light
+rather than in encoded value was measured at roughly six times *worse* than
+leaving it alone. So the offset is applied on whichever side the rounding
+happens on, and both formats come out tracking the unquantized gradient about
+nine times more closely than rounding alone, each in the range where it is the
+one with a problem — the linear surface in the darks, the sRGB one in the
+highlights.
+
+This looks like an exception to the rule that a conversion belongs to the target
+format rather than to a shader, and it is not one. Nothing requires the shader
+to be what knows the format. The amplitude and the space are two floats in the
+paint block, filled in by the backend at submission — the layer that holds the
+target, and the same one that already decides an intermediate's format. A
+recording is built without a target and the same recording is drawn into an
+eight-bit surface and a float one, so this could not have been decided any
+earlier. A float target gets an amplitude of zero: half has no fixed quantum to
+bridge, its precision being relative, so there is no step to straddle.
+
+The pattern is keyed to the fragment's position in the target rather than in the
+frame, which upstream does too and which has one visible consequence: a layer
+whose origin is not a multiple of eight meets the tile at a different phase than
+the same content drawn straight onto the frame, and a few pixels round the other
+way. Anchoring to the frame would remove it and would cost the pass its position
+in the frame, which nothing carries. It is bounded and tested rather than left
+to be rediscovered.
+
 **Upload is the exact inverse of readback**, in the same tightly packed
 top-row-first layout, so a round trip through the pair is the identity on both
 backends. That is what makes it checkable without a decoder. Decoding images

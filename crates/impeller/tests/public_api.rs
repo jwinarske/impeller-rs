@@ -176,6 +176,324 @@ fn translucent_paint_blends_with_what_is_underneath() {
     }
 }
 
+/// Dithering breaks a band, in whichever space the target quantizes in.
+///
+/// A gradient asks a target for a long run of nearly equal values, and where
+/// two neighbors round to the same one the picture gains an edge the gradient
+/// does not have. Perturbing each pixel by a fraction of a step first, by a
+/// rule that varies across an eight-by-eight tile, makes the rounding fall on
+/// both sides of where that edge was.
+///
+/// Measured rather than eyeballed, and the measurement is the point: over a
+/// tile the size of the dither's own period, the mean of what was stored should
+/// track the unquantized gradient more closely than rounding alone does. A
+/// float target renders the same scene to get that unquantized reference, so
+/// nothing here has to model what the shader did.
+///
+/// Both formats are checked against both a dark gradient and a bright one
+/// because neither bands everywhere. Eight linear bits are sparse in the darks
+/// and dense in the highlights; eight sRGB bits are the other way round, which
+/// is the entire reason the transfer function exists. So each format is asked
+/// about the range where it is the one with a problem.
+#[test]
+fn dithering_tracks_a_gradient_better_than_rounding_does() {
+    let Some(mut ctx) = context() else { return };
+    if !ctx.capabilities().float_render_targets {
+        eprintln!("skipping: no float render targets");
+        return;
+    }
+    let extent = Extent2D::new(256, 64);
+
+    let render = |ctx: &mut Context, format: PixelFormat, lo: f32, hi: f32| -> Vec<u8> {
+        let mut canvas = Canvas::new(extent);
+        canvas.clear(Color::BLACK);
+        canvas
+            .draw_rect(
+                Rect::new(0.0, 0.0, 256.0, 64.0),
+                &Paint::default()
+                    .with_shader(Shader::LinearGradient {
+                        start: Vec2::ZERO,
+                        end: Vec2::new(256.0, 0.0),
+                        stops: vec![
+                            GradientStop {
+                                offset: 0.0,
+                                color: Color::srgb(lo, lo, lo, 1.0),
+                            },
+                            GradientStop {
+                                offset: 1.0,
+                                color: Color::srgb(hi, hi, hi, 1.0),
+                            },
+                        ],
+                        tile: TileMode::Clamp,
+                    })
+                    .with_anti_alias(false),
+            )
+            .expect("gradient");
+        let mut surface = ctx.create_surface(extent, format).expect("surface");
+        ctx.draw(&mut surface, &canvas.finish()).expect("draw");
+        let pixels = ctx.read(&mut surface).expect("read");
+        ctx.destroy_surface(surface);
+        pixels
+    };
+
+    // The sRGB encode, to put the reference in the space that target rounds in.
+    fn encode(c: f64) -> f64 {
+        if c.abs() <= 0.003_130_8 {
+            c * 12.92
+        } else {
+            1.055 * c.abs().powf(1.0 / 2.4) - 0.055
+        }
+    }
+
+    for (band, lo, hi) in [("dark", 0.10f32, 0.22f32), ("bright", 0.60, 0.66)] {
+        let reference = render(&mut ctx, PixelFormat::Rgba16Float, lo, hi);
+        let ideal: Vec<f32> = reference
+            .chunks_exact(2)
+            .map(|pair| half::f16::from_le_bytes([pair[0], pair[1]]).to_f32())
+            .collect();
+
+        for (format, encoded, bands_here) in [
+            (PixelFormat::Rgba8Unorm, false, band == "dark"),
+            (PixelFormat::Rgba8UnormSrgb, true, band == "bright"),
+        ] {
+            let stored = render(&mut ctx, format, lo, hi);
+            let (mut dithered_error, mut rounded_error, mut blocks) = (0.0f64, 0.0f64, 0usize);
+            for top in (0..extent.height as usize - 7).step_by(8) {
+                for left in (0..extent.width as usize - 7).step_by(8) {
+                    let (mut want, mut got, mut rounded) = (0.0f64, 0.0f64, 0.0f64);
+                    for y in top..top + 8 {
+                        for x in left..left + 8 {
+                            let at = (y * extent.width as usize + x) * 4;
+                            let linear = ideal[at] as f64;
+                            let value = if encoded { encode(linear) } else { linear };
+                            want += value;
+                            got += stored[at] as f64 / 255.0;
+                            // The same pixel with no dither: the target's own
+                            // rounding, and nothing else.
+                            rounded += (value * 255.0).round() / 255.0;
+                        }
+                    }
+                    dithered_error += (got - want).abs() / 64.0;
+                    rounded_error += (rounded - want).abs() / 64.0;
+                    blocks += 1;
+                }
+            }
+            let (dithered_error, rounded_error) = (
+                dithered_error / blocks as f64,
+                rounded_error / blocks as f64,
+            );
+
+            // Never worse than not dithering, on any of the four. This is the
+            // assertion that holds the encoded/linear choice honest: dithering
+            // a dark sRGB target in light rather than in encoded value lands
+            // here at roughly six times the error of leaving it alone, which is
+            // what a step being a different quantity in the two spaces means in
+            // practice.
+            assert!(
+                dithered_error <= rounded_error,
+                "{band} into {format:?}: dithering tracks worse than rounding, \
+                 {dithered_error:.6} against {rounded_error:.6}"
+            );
+            if bands_here {
+                assert!(
+                    rounded_error / dithered_error > 3.0,
+                    "{band} into {format:?}: dithering barely helped where this \
+                     format bands, {dithered_error:.6} against {rounded_error:.6}"
+                );
+            }
+        }
+    }
+}
+
+/// The dither tile is keyed to the target, so a layer meets it at its own
+/// phase.
+///
+/// A known limitation rather than a defect, and written down because the
+/// alternative is rediscovering it from a test that fails by one level for no
+/// visible reason. The pattern repeats every eight pixels and is indexed by the
+/// fragment's position in whatever it is being drawn into. A layer is a
+/// separate target, so a layer whose origin is not a multiple of eight lands on
+/// a different phase than the same content drawn straight onto the frame, and a
+/// few pixels round the other way.
+///
+/// Upstream Impeller keys its dither the same way and has the same property.
+/// Anchoring the tile to the frame instead would remove it -- the aligned case
+/// below is the evidence that nothing else is in the way -- and would cost the
+/// pass its position in the frame, which nothing carries today.
+///
+/// Bounded here rather than merely observed: the difference has to stay within
+/// the dither's own reach, and the aligned origin has to be exact. A mapping
+/// fault would not respect either.
+#[test]
+fn a_layers_dither_is_offset_by_its_origin() {
+    let Some(mut ctx) = context() else { return };
+    let extent = Extent2D::new(128, 128);
+
+    let render = |ctx: &mut Context, layer_at: Option<f32>| -> Vec<u8> {
+        let mut canvas = Canvas::new(extent);
+        canvas.clear(Color::BLACK);
+        if let Some(at) = layer_at {
+            canvas.save_layer_bounds(
+                Layer::opacity(1.0),
+                // Wide enough that the rect below sits inside it whichever
+                // origin is being tried, so the layer clips nothing and the
+                // only thing left to differ is the dither's phase.
+                Rect::new(at, at, at + 72.0, at + 72.0),
+            );
+        }
+        canvas
+            .draw_rect(
+                Rect::new(40.0, 40.0, 90.0, 90.0),
+                &Paint::default()
+                    .with_shader(Shader::LinearGradient {
+                        start: Vec2::new(40.0, 0.0),
+                        end: Vec2::new(90.0, 0.0),
+                        stops: vec![
+                            GradientStop {
+                                offset: 0.0,
+                                color: Color::srgb(0.30, 0.30, 0.30, 1.0),
+                            },
+                            GradientStop {
+                                offset: 1.0,
+                                color: Color::srgb(0.38, 0.38, 0.38, 1.0),
+                            },
+                        ],
+                        tile: TileMode::Clamp,
+                    })
+                    .with_anti_alias(false),
+            )
+            .expect("gradient");
+        if layer_at.is_some() {
+            canvas.restore();
+        }
+        let mut surface = ctx
+            .create_surface(extent, PixelFormat::Rgba8Unorm)
+            .expect("surface");
+        ctx.draw(&mut surface, &canvas.finish()).expect("draw");
+        let pixels = ctx.read(&mut surface).expect("read");
+        ctx.destroy_surface(surface);
+        pixels
+    };
+
+    let direct = render(&mut ctx, None);
+    let worst = |other: &[u8]| -> i32 {
+        direct
+            .iter()
+            .zip(other)
+            .map(|(a, b)| (*a as i32 - *b as i32).abs())
+            .max()
+            .unwrap_or(0)
+    };
+
+    // Aligned to the tile, so the phases coincide and nothing moves.
+    assert_eq!(
+        worst(&render(&mut ctx, Some(32.0))),
+        0,
+        "a layer aligned to the dither should composite back exactly"
+    );
+
+    // Off the tile, so they do not -- but only ever by what the dither can
+    // reach, which is under two levels of an eight-bit target either way.
+    for at in [30.0f32, 33.0, 35.0] {
+        let moved = worst(&render(&mut ctx, Some(at)));
+        assert!(
+            moved > 0,
+            "a layer at {at} met the dither at the same phase, which the \
+             aligned case above is supposed to be the only way to do"
+        );
+        assert!(
+            moved <= 4,
+            "a layer at {at} moved the picture by {moved} levels, further than \
+             the dither reaches"
+        );
+    }
+}
+
+/// What does not get dithered: a float target, and anything but a gradient.
+///
+/// Half has no fixed quantum to bridge -- its precision is relative, so a step
+/// near black is minute and an amplitude sized for one near white would swamp
+/// it -- so the amplitude is zero there and the picture is left alone. And a
+/// solid fill asks for one value rather than a run of them, so there is no band
+/// to break and perturbing it would only add noise to a flat area, which is
+/// upstream's scope as well.
+#[test]
+fn dithering_leaves_flat_color_and_float_targets_alone() {
+    let Some(mut ctx) = context() else { return };
+    let extent = Extent2D::new(32, 32);
+
+    let mut canvas = Canvas::new(extent);
+    canvas.clear(Color::BLACK);
+    canvas
+        .draw_rect(
+            Rect::new(0.0, 0.0, 32.0, 32.0),
+            &Paint::fill(Color::srgb(0.35, 0.35, 0.35, 1.0)).with_anti_alias(false),
+        )
+        .expect("rect");
+    let mut surface = ctx
+        .create_surface(extent, PixelFormat::Rgba8Unorm)
+        .expect("surface");
+    ctx.draw(&mut surface, &canvas.finish()).expect("draw");
+    let pixels = ctx.read(&mut surface).expect("read");
+    ctx.destroy_surface(surface);
+    let distinct: std::collections::BTreeSet<u8> =
+        pixels.chunks_exact(4).map(|texel| texel[0]).collect();
+    assert_eq!(
+        distinct.len(),
+        1,
+        "a solid fill came back with more than one value: {distinct:?}"
+    );
+
+    if !ctx.capabilities().float_render_targets {
+        eprintln!("skipping the float half: no float render targets");
+        return;
+    }
+    let mut canvas = Canvas::new(extent);
+    canvas.clear(Color::BLACK);
+    canvas
+        .draw_rect(
+            Rect::new(0.0, 0.0, 32.0, 32.0),
+            &Paint::default()
+                .with_shader(Shader::LinearGradient {
+                    start: Vec2::ZERO,
+                    end: Vec2::new(32.0, 0.0),
+                    stops: vec![
+                        GradientStop {
+                            offset: 0.0,
+                            color: Color::srgb(0.20, 0.20, 0.20, 1.0),
+                        },
+                        GradientStop {
+                            offset: 1.0,
+                            color: Color::srgb(0.22, 0.22, 0.22, 1.0),
+                        },
+                    ],
+                    tile: TileMode::Clamp,
+                })
+                .with_anti_alias(false),
+        )
+        .expect("gradient");
+    let mut surface = ctx
+        .create_surface(extent, PixelFormat::Rgba16Float)
+        .expect("surface");
+    ctx.draw(&mut surface, &canvas.finish()).expect("draw");
+    let pixels = ctx.read(&mut surface).expect("read");
+    ctx.destroy_surface(surface);
+
+    // Down a column the gradient is constant, so any variation is the dither.
+    let value_at = |x: usize, y: usize| -> f32 {
+        let at = (y * extent.width as usize + x) * 8;
+        half::f16::from_le_bytes([pixels[at], pixels[at + 1]]).to_f32()
+    };
+    let first = value_at(16, 0);
+    for y in 1..extent.height as usize {
+        assert_eq!(
+            value_at(16, y),
+            first,
+            "a float target was dithered at row {y}"
+        );
+    }
+}
+
 /// A layer's antialiasing does not multisample the frame that composites it.
 ///
 /// The sample count describes a pass. An antialiased line drawn inside a layer
@@ -10044,7 +10362,19 @@ fn every_material_draws_the_same_inside_a_layer_as_outside_one() {
         let mut canvas = Canvas::new(SIZE);
         canvas.clear(Color::linear(0.0, 0.0, 0.0, 1.0));
         if layered {
-            canvas.save_layer_bounds(Layer::opacity(1.0), Rect::new(30.0, 30.0, 100.0, 100.0));
+            canvas.save_layer_bounds(
+                Layer::opacity(1.0),
+                // The origin is a multiple of eight on purpose. A gradient is
+                // dithered, and the dither is an eight-by-eight tile keyed to
+                // the target rather than to the frame, so a layer offset by
+                // anything else meets it at a different phase and a handful of
+                // pixels round the other way -- measured at one level from
+                // (30, 30) and two from (33, 33). That is a real property and
+                // it has a test of its own; it is not what this one is asking
+                // about, and leaving it in the way would only make the bound
+                // here loose enough to stop catching what it is for.
+                Rect::new(32.0, 32.0, 100.0, 100.0),
+            );
         }
         let paint = Paint::fill(red).with_anti_alias(false);
         let img = Paint::image(0, Rect::from_size(4.0, 4.0)).with_anti_alias(false);
@@ -10136,14 +10466,13 @@ fn every_material_draws_the_same_inside_a_layer_as_outside_one() {
         ctx.destroy_surface(surface);
         px
     };
-    // A linear gradient is the one material whose parameter is a projection
-    // onto an axis, and the axis is stated in clip space -- which a layer of a
-    // different size normalizes differently. The picture is the same and a
-    // handful of pixels round to the other side of an eight-bit step. Every
-    // other material either measures a distance, which is invariant under that
-    // normalization, or samples a texture at coordinates the vertices already
-    // carried.
-    const ROUNDS: [&str; 1] = ["linear gradient"];
+    // Nothing rounds. A linear gradient used to be allowed a level here, on
+    // the grounds that its parameter is a projection onto an axis stated in
+    // clip space, which a layer of a different size normalizes differently.
+    // With the layer's origin aligned to the dither the difference is gone, so
+    // whatever that allowance was covering it was not that -- and an allowance
+    // kept after its reason has expired is one that hides the next regression.
+    const ROUNDS: [&str; 0] = [];
     for name in [
         "solid rect",
         "path",

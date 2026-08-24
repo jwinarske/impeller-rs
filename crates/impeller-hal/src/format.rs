@@ -99,6 +99,31 @@ impl PixelFormat {
         }
     }
 
+    /// How far apart two representable values are in this format's storage,
+    /// or zero where the question does not apply.
+    ///
+    /// The distance a dither has to bridge. It is stated in storage units
+    /// rather than in light, which for [`Self::Rgba8UnormSrgb`] and its sibling
+    /// is not the same thing: the hardware encodes on write, so a step there is
+    /// a step of the *encoded* value and the light it stands for varies across
+    /// the range by a factor of about thirty. Anything acting on this number
+    /// therefore has to know which space it is in, which is what
+    /// [`Self::is_srgb`] answers.
+    ///
+    /// Zero for [`Self::Rgba16Float`], where there is no fixed quantum to
+    /// bridge -- half's precision is relative, so a step near black is minute
+    /// and a dither sized for one near white would swamp it. Zero for
+    /// [`Self::R8Unorm`] as well, which holds coverage rather than color.
+    pub const fn quantization_step(self) -> f32 {
+        match self {
+            Self::Rgba8Unorm | Self::Rgba8UnormSrgb | Self::Bgra8Unorm | Self::Bgra8UnormSrgb => {
+                1.0 / 255.0
+            }
+            Self::Rgb10A2Unorm => 1.0 / 1023.0,
+            Self::Rgba16Float | Self::R8Unorm => 0.0,
+        }
+    }
+
     /// Whether writes to this format apply an sRGB transfer function.
     pub const fn is_srgb(self) -> bool {
         matches!(self, Self::Rgba8UnormSrgb | Self::Bgra8UnormSrgb)

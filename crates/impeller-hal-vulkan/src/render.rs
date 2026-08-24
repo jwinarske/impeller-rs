@@ -216,7 +216,7 @@ impl VulkanContext {
             cast_bytes(batch.indices()),
             vk::BufferUsageFlags::INDEX_BUFFER,
         )?;
-        let (material_buffer, materials) = crate::materials::build(self, batch)?;
+        let (material_buffer, materials) = crate::materials::build(self, batch, target.format())?;
 
         let result = self.record_batch(
             &device,
@@ -665,7 +665,7 @@ impl VulkanContext {
         // flight for as long as the caller likes -- so the bindings travel with
         // the fence, alongside the framebuffer and view they sit next to here.
         let bindings = crate::sampling::build(self, batch, textures)?;
-        let (material_buffer, materials) = crate::materials::build(self, batch)?;
+        let (material_buffer, materials) = crate::materials::build(self, batch, target.format())?;
         let layout = self.pipeline_cache().layout().expect("ensured above");
         let extent = target.extent();
 
