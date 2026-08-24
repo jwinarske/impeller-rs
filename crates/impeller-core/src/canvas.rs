@@ -59,6 +59,22 @@ impl Rect {
         self.width() <= 0.0 || self.height() <= 0.0
     }
 
+    /// The same rectangle, grown by `reach` on every side.
+    ///
+    /// What a blur needs from the bounds of what it blurs: the result spreads
+    /// outward, so a target sized to the content alone cuts the halo off square
+    /// at the edge -- the failure looking exactly like a shadow with a straight
+    /// side. Written once because it was written out twice, four lines at a
+    /// time, and a third place needs it with one side extended further.
+    pub fn outset(self, reach: f32) -> Self {
+        Self::new(
+            self.left - reach,
+            self.top - reach,
+            self.right + reach,
+            self.bottom + reach,
+        )
+    }
+
     fn to_path(self) -> Path {
         let mut b = PathBuilder::new();
         b.move_to(Vec2::new(self.left, self.top))
@@ -1908,13 +1924,7 @@ impl Canvas {
     /// nothing is blurred at all.
     fn draw_masked_through_coverage(&mut self, path: &Path, paint: &Paint) -> Result<&mut Self> {
         let bounds = self.mask_bounds(Masked::Path(path), paint);
-        let reach = blur_reach(paint.mask_blur);
-        let held = Rect::new(
-            bounds.left - reach,
-            bounds.top - reach,
-            bounds.right + reach,
-            bounds.bottom + reach,
-        );
+        let held = bounds.outset(blur_reach(paint.mask_blur));
         // White, because what is wanted from the shape here is its coverage
         // rather than its color: the fill supplies the color and this supplies
         // where it lands.
@@ -2016,13 +2026,7 @@ impl Canvas {
 
         // The outer layer holds the blur as well as the shape, and it is not
         // itself blurred, so nothing widens it on its behalf.
-        let reach = blur_reach(paint.mask_blur);
-        let held = Rect::new(
-            bounds.left - reach,
-            bounds.top - reach,
-            bounds.right + reach,
-            bounds.bottom + reach,
-        );
+        let held = bounds.outset(blur_reach(paint.mask_blur));
         let blurred = Layer::opacity(1.0).with_blur(paint.mask_blur);
 
         self.save_layer_bounds(Layer::opacity(1.0).with_blend(paint.blend), held);
@@ -2268,13 +2272,10 @@ impl Canvas {
         // is punched out of it afterwards, inside a layer that confines the
         // punch to this shadow rather than to everything already drawn.
         let bounds = self.filter_bounds(path, &paint);
-        let reach = blur_reach(sigma);
-        let held = Rect::new(
-            bounds.left - reach,
-            bounds.top - reach,
-            bounds.right + reach,
-            bounds.bottom + elevation + reach,
-        );
+        // Grown for the blur on every side, and further at the bottom because
+        // the shadow is cast downward by its elevation before it is blurred.
+        let mut held = bounds.outset(blur_reach(sigma));
+        held.bottom += elevation;
         self.save_layer_bounds(Layer::opacity(1.0), held);
 
         self.save();
@@ -3612,6 +3613,23 @@ mod tests {
         // Rejecting early keeps empty geometry out of the batch rather than
         // tessellating it and discovering it was empty.
         assert!(canvas.finish().is_empty());
+    }
+
+    #[test]
+    fn outsetting_grows_every_side_and_negating_it_shrinks_back() {
+        let rect = Rect::new(10.0, 20.0, 40.0, 60.0);
+        let grown = rect.outset(5.0);
+        assert_eq!(
+            (grown.left, grown.top, grown.right, grown.bottom),
+            (5.0, 15.0, 45.0, 65.0)
+        );
+        // Symmetric, which is what lets a caller undo one: a blur's reach is
+        // the same in both directions and a target sized by it has to be too.
+        let back = grown.outset(-5.0);
+        assert_eq!(
+            (back.left, back.top, back.right, back.bottom),
+            (rect.left, rect.top, rect.right, rect.bottom)
+        );
     }
 
     #[test]
