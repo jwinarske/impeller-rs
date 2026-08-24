@@ -532,6 +532,29 @@ pub fn render_scene<H: Hal>(ctx: &mut H::Context, scene: &Scene) -> Result<Image
 where
     H::Context: HalContext<Hal = H>,
 {
+    render_scene_into::<H>(ctx, scene, PixelFormat::Rgba8Unorm)
+}
+
+/// The same, into a target of the given format.
+///
+/// Every comparison in this crate renders into linear eight-bit color, which
+/// leaves the path where the attachment encodes on write almost unexercised --
+/// and the two backends reach that path by different means, one through an
+/// image view and the other through a framebuffer whose attachment carries the
+/// format. Two implementations of the same conversion is exactly what a
+/// comparison between them is for.
+///
+/// The format has to stay four bytes per pixel: [`Image`] is a comparison
+/// surface rather than a general one, and nothing here compares two wide
+/// images.
+pub fn render_scene_into<H: Hal>(
+    ctx: &mut H::Context,
+    scene: &Scene,
+    format: PixelFormat,
+) -> Result<Image>
+where
+    H::Context: HalContext<Hal = H>,
+{
     let recording = record_scene(scene)?;
     // Uploaded per scene that asks for it rather than held by the caller,
     // which keeps every consumer of this function -- the window, the
@@ -558,7 +581,8 @@ where
         }
     }
     let fixtures = Fixtures::<H>::prepare(ctx, scene)?;
-    let result = impeller_core::render_offscreen::<H>(ctx, &recording, &fixtures.bound());
+    let result =
+        impeller_core::render_offscreen_into::<H>(ctx, &recording, &fixtures.bound(), format);
     // Released whether the draw worked or not: a scene that fails to render
     // must not leak a texture into every later scene's device.
     fixtures.destroy(ctx);
