@@ -2245,21 +2245,24 @@ impl Canvas {
     /// Impeller uses and what makes a raised object's shadow fall downward on
     /// screen. Three things follow from the elevation and nothing else: the
     /// shadow is offset downward by it, blurred in proportion to it, and drawn
-    /// at a quarter of the stated color's alpha.
+    /// at a quarter of the stated color's alpha before that alpha is adjusted
+    /// for the color's own luminance.
     ///
     /// `elevation` is in the same units the canvas draws in. Impeller scales
     /// it by a device pixel ratio first, which is a framework concept rather
     /// than a rendering one; a caller who has one should apply it here.
     ///
-    /// An opaque occluder hides the part of its own shadow that lies beneath
-    /// it, so nothing is drawn there. `transparent_occluder` says the object
-    /// will not hide it, and the shadow is drawn whole.
+    /// `transparent_occluder` is accepted and unused, which is what upstream
+    /// does with it -- `DlDispatcherBase::drawShadow` takes the flag and its
+    /// drawing code never reads it. It stays on the signature because
+    /// `dart:ui` has it, and a caller porting a call should not have to find
+    /// out that one argument went missing.
     pub fn draw_shadow(
         &mut self,
         path: &Path,
         color: Color,
         elevation: f32,
-        transparent_occluder: bool,
+        _transparent_occluder: bool,
     ) -> Result<&mut Self> {
         if !elevation.is_finite() || elevation <= 0.0 || color.is_invisible() {
             // Nothing at ground level: an object resting on the surface casts
@@ -2274,46 +2277,22 @@ impl Canvas {
         let shade = tonal_shadow_color(color);
         let paint = Paint::fill(shade).with_mask_blur(sigma);
 
-        if transparent_occluder {
-            // Nothing will cover it, so the whole shadow is part of the
-            // picture and no layer is needed to hold anything back.
-            self.save();
-            self.translate(0.0, elevation);
-            let failure = self.draw_path(path, &paint).err();
-            self.restore();
-            return match failure {
-                Some(e) => Err(e),
-                None => Ok(self),
-            };
-        }
-
-        // The part of the shadow the object will cover is spent, so it is
-        // taken out. What covers it is the object where it actually sits, not
-        // the shadow's own outline -- those are the same shape at different
-        // places, and removing the wrong one leaves a crescent of shadow
-        // showing above the object and takes a crescent out below it.
+        // The whole shadow, whatever the occluder is, which is what upstream
+        // draws: `DlDispatcherBase::drawShadow` takes `transparent_occluder`
+        // and its drawing code never reads it.
         //
-        // So this cannot be the outer mask blur style, which removes the shape
-        // it blurred. The shadow is blurred whole and the object's own outline
-        // is punched out of it afterwards, inside a layer that confines the
-        // punch to this shadow rather than to everything already drawn.
-        let bounds = self.filter_bounds(path, &paint);
-        // Grown for the blur on every side, and further at the bottom because
-        // the shadow is cast downward by its elevation before it is blurred.
-        let mut held = bounds.outset(blur_reach(sigma));
-        held.bottom += elevation;
-        self.save_layer_bounds(Layer::opacity(1.0), held);
-
+        // This used to punch the caster's outline out of the shadow for an
+        // opaque one, on the grounds that the part a caster covers is spent.
+        // The grounds were sound and the result was not worth them. An opaque
+        // caster drawn over its own shadow is the arrangement the flag
+        // describes, and there the two are the same picture -- measured at
+        // zero of sixty-five thousand bytes differing -- while the punch cost a
+        // layer, so every shadow was five passes where four will do. A
+        // deviation that produces identical pixels more slowly has nothing to
+        // recommend it.
         self.save();
         self.translate(0.0, elevation);
-        let mut failure = self.draw_path(path, &paint).err();
-        self.restore();
-
-        if failure.is_none() {
-            let cutter =
-                Paint::fill(Color::linear(1.0, 1.0, 1.0, 1.0)).with_blend(BlendMode::DstOut);
-            failure = self.draw_path(path, &cutter).err();
-        }
+        let failure = self.draw_path(path, &paint).err();
         self.restore();
         match failure {
             Some(e) => Err(e),

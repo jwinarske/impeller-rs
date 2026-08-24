@@ -154,30 +154,28 @@ difference. The pipeline carries the gamut and can be read back through it, but
 a caller cannot get a wide-gamut image onto a display through this renderer, and
 should not read the parity tables as saying otherwise.
 
-## 7. A shadow's elevation is in device pixels, and its occluder is punched out
+## 7. A shadow's elevation is in device pixels
 
-**What differs.** Two things, and neither is the blur's width or its color —
-both of those were wrong and now match. `DlDispatcherBase::drawShadow` takes a
-`dpr` and computes `occluder_z = dpr * elevation`, so its elevation is in
-logical pixels; there is no such parameter here and an elevation is in device
-pixels. And it takes a `transparent_occluder` flag its drawing code never reads,
-where this one branches on it and punches the caster's outline out of the shadow
-beneath it.
+**What differs.** One thing, and it is not the blur's width, its color, or what
+it does with an occluder — those were all on this list and none is now.
+`DlDispatcherBase::drawShadow` takes a `dpr` and computes
+`occluder_z = dpr * elevation`, so its elevation is in logical pixels. There is
+no such parameter here and an elevation is in device pixels.
 
-**Why.** The first is an API difference rather than an omission. `dpr` is
-supplied by the engine upstream and does not appear on `dart:ui`'s
-`Canvas.drawShadow` at all, and this renderer has no notion of logical pixels to
-convert from — so an elevation here means what it says. The second is a
-deliberate addition: the part of a shadow its caster covers is spent, and
-removing it matters for a caster that is not opaque.
+**Why.** An API difference rather than an omission. `dpr` is supplied by the
+engine upstream and does not appear on `dart:ui`'s `Canvas.drawShadow` at all,
+and this renderer has no notion of logical pixels to convert from — so an
+elevation here means what it says.
 
 **Impact.** A caller working in logical pixels has to scale the elevation
-themselves, by the same factor they scale everything else. The punched-out
-occluder is invisible wherever an opaque caster is drawn over its own shadow,
-which is the usual arrangement.
+themselves, by the same factor they scale everything else.
 
-Two things that were on this list and should not have been, both removed by
-checking rather than by deciding. The tonal color remap is ported now. And
+Three things that were on this list and are not now, each removed by checking
+rather than by deciding. The tonal color remap is ported. The occluder punch-out
+is gone: upstream takes `transparent_occluder` and never reads it, and in the
+arrangement the flag describes — an opaque caster drawn over its own shadow —
+the punched and unpunched pictures were byte-identical while the punch cost a
+layer, so every shadow was five passes where four will do. And
 `drawShadow` divides its radius by `GetCurrentTransform().GetScale().y`, which
 read as a divergence until both sides were measured: upstream's blur sigma is in
 *local* space — `gaussian_blur_filter_contents.cc` multiplies it by

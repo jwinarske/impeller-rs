@@ -7412,46 +7412,59 @@ fn an_object_resting_on_the_surface_casts_no_shadow() {
     );
 }
 
+/// `transparent_occluder` is accepted and changes nothing, as upstream's does.
+///
+/// This renderer used to punch the caster's outline out of the shadow for an
+/// opaque occluder, on the sound grounds that the part a caster covers is
+/// spent. Upstream takes the same flag and its drawing code never reads it, and
+/// the grounds turned out not to be worth the deviation: in the arrangement the
+/// flag describes -- an opaque caster drawn over its own shadow -- the punched
+/// and unpunched pictures were byte-identical across all sixty-five thousand
+/// bytes, while the punch cost a layer and made every shadow five passes
+/// instead of four.
+///
+/// So what is pinned here is that the flag does nothing, that the picture is
+/// still right without it, and that the pass it used to cost is gone. The last
+/// is the one that would quietly come back.
 #[test]
-fn an_opaque_occluder_is_not_given_a_shadow_it_would_hide() {
-    // The part of a shadow its caster will cover is spent, and this is the
-    // flag saying whether it will. What covers it is the object where it
-    // actually sits rather than the shadow's own outline -- the same shape in
-    // two places -- so removing the wrong one leaves a crescent showing above
-    // the object and takes one out below it.
+fn the_occluder_flag_is_accepted_and_changes_nothing() {
     let Some(mut ctx) = context() else { return };
 
-    let opaque = shadow_probe(&mut ctx, 10.0, false, false);
-    let transparent = shadow_probe(&mut ctx, 10.0, true, false);
-
-    // Well inside the card, and well inside the offset shadow too, so the
-    // shadow is at full strength there rather than on its own soft edge.
-    let under_opaque = pixel(&opaque, 64, 70)[0] as i32;
-    let under_transparent = pixel(&transparent, 64, 70)[0] as i32;
-    // The ground itself, taken from a corner nothing reaches. Compared against
-    // rather than a threshold, because "nothing was drawn" and "something
-    // brighter than the threshold was drawn" are different claims and only the
-    // first one is this test's -- punching the shadow out with the wrong blend
-    // paints white there and passes any upper bound.
-    let ground = pixel(&opaque, 4, 4)[0] as i32;
-    assert!(
-        (under_opaque - ground).abs() <= 2,
-        "an opaque occluder should leave the ground as it was: {under_opaque} against {ground}"
-    );
-    assert!(
-        under_transparent < 190,
-        "a transparent one should: {under_transparent}"
+    // The flag makes no difference to the recording or to the picture.
+    let opaque = shadow_probe(&mut ctx, 10.0, false, true);
+    let transparent = shadow_probe(&mut ctx, 10.0, true, true);
+    assert_eq!(
+        opaque, transparent,
+        "the occluder flag changed the picture, and upstream's does not"
     );
 
-    // And below the card, past where it sits, both must show the shadow --
-    // the punch takes out the object's own area and nothing more.
-    for (name, pixels) in [("opaque", &opaque), ("transparent", &transparent)] {
-        let below = pixel(pixels, 64, 86)[0] as i32;
-        assert!(
-            below < 200,
-            "{name}: the shadow past the object should survive: {below}"
-        );
-    }
+    // A shadow is four passes: the mask blur's layer, its two blur passes, and
+    // the frame. It was five while the punch-out held one more layer open.
+    let mut canvas = Canvas::new(SIZE);
+    canvas.clear(Color::BLACK);
+    canvas
+        .draw_shadow(
+            &Rect::new(40.0, 40.0, 88.0, 80.0).to_rounded_path(4.0),
+            Color::BLACK,
+            10.0,
+            false,
+        )
+        .expect("shadow");
+    assert_eq!(
+        canvas.finish().passes.len(),
+        4,
+        "a shadow should cost four passes"
+    );
+
+    // And the picture is still a shadow: dark below the card where it falls,
+    // and the card itself still covering the ground above.
+    let below = pixel(&opaque, 64, 86)[0] as i32;
+    assert!(below < 200, "the shadow below the card is missing: {below}");
+    let on_card = pixel(&opaque, 64, 70)[0] as i32;
+    assert!(
+        on_card > 240,
+        "the card should cover its own shadow: {on_card}"
+    );
 }
 
 #[test]
@@ -9254,94 +9267,6 @@ fn a_blur_falls_off_like_a_gaussian_rather_than_like_a_box() {
         "the falloff from five pixels to ten is a ratio of {ratio:.2}, where a \
          Gaussian of sigma {SIGMA} gives {gaussian:.2}. Uniform weights over \
          the same reach give one -- a flat profile rather than a curve."
-    );
-}
-
-#[test]
-fn a_transparent_occluder_keeps_the_shadow_under_the_caster_and_nothing_else() {
-    // `transparentOccluder` says the caster will not hide what is beneath it,
-    // so the shadow there has to survive. With an opaque one the shadow under
-    // the caster is removed, because a solid object covers it and drawing it
-    // would darken what the object is about to paint over -- visible the moment
-    // the caster is translucent, or absent.
-    //
-    // The property worth pinning is that the flag changes *only* that region.
-    // A shadow that came out differently around the edges as well would mean
-    // the flag had changed how the shadow was built rather than what was cut
-    // out of it, and the two are easy to confuse: removing the caster's area
-    // and drawing the shadow at a different offset both leave less shadow under
-    // the caster.
-    let Some(mut ctx) = context() else { return };
-
-    const RADIUS: f32 = 30.0;
-    let mut circle = PathBuilder::new();
-    circle
-        .arc(
-            Vec2::new(64.0, 64.0),
-            Vec2::splat(RADIUS),
-            0.0,
-            std::f32::consts::TAU,
-        )
-        .close();
-    let caster = circle.build();
-
-    // Drawn without the caster on top, or the region in question is covered by
-    // the very shape whose effect is being measured.
-    let draw = |ctx: &mut Context, transparent: bool| {
-        let mut canvas = Canvas::new(SIZE);
-        canvas.clear(Color::linear(0.9, 0.9, 0.92, 1.0));
-        canvas
-            .draw_shadow(
-                &caster,
-                Color::linear(0.0, 0.0, 0.0, 1.0),
-                10.0,
-                transparent,
-            )
-            .expect("shadow");
-        render(ctx, canvas)
-    };
-    let opaque = draw(&mut ctx, false);
-    let transparent = draw(&mut ctx, true);
-
-    let mut changed = 0;
-    let mut furthest: f32 = 0.0;
-    for y in 0..SIZE.height {
-        for x in 0..SIZE.width {
-            if pixel(&opaque, x, y) == pixel(&transparent, x, y) {
-                continue;
-            }
-            changed += 1;
-            let dx = x as f32 - 64.0;
-            let dy = y as f32 - 64.0;
-            furthest = furthest.max((dx * dx + dy * dy).sqrt());
-        }
-    }
-    assert!(
-        changed > 500,
-        "the flag should change the region under the caster, and {changed} \
-         pixels is too few to be that region"
-    );
-    // Measured as a distance rather than counted inside a disc, because the
-    // boundary is where the answer actually is. What is cut out is the caster's
-    // own coverage, and that coverage is antialiased -- a pixel straddling the
-    // edge is partly cut and legitimately differs. Written as "nothing outside
-    // the radius" this failed on sixty-nine such pixels and looked like a
-    // renderer fault; the question worth asking is whether anything differs
-    // further out than the edge itself can reach.
-    assert!(
-        furthest <= RADIUS + 1.5,
-        "the furthest changed pixel is {furthest:.1} from the center, where the \
-         caster's edge is at {RADIUS}. The flag altered how the shadow was \
-         built rather than only what was cut out of it"
-    );
-
-    // And in the direction that makes it a shadow rather than a hole: the
-    // middle is darker when the occluder will not hide it.
-    let (dark, light) = (pixel(&transparent, 64, 64)[0], pixel(&opaque, 64, 64)[0]);
-    assert!(
-        dark < light,
-        "a transparent occluder should leave the middle shadowed, but it reads \
-         {dark} against {light} for an opaque one"
     );
 }
 
