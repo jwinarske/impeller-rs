@@ -2386,15 +2386,26 @@ be looked at, since the incorrect ones look exactly the same from there.
      would answer "does this match Skia", which is not the same question as
      "does this match Impeller". -->
 | L3 | Conformance: same corpus, cross-backend and cross-presentation diffs | Every merge (software) | runs, cross-backend and cross-device; cross-presentation only for the offscreen target |
-| L4 | Presentation: resize storms, flip pacing, fence ordering, hotplug | VKMS and headless WSI in CI | partial — headless WSI runs on both backends, fence ordering is checked under the validation layer; no VKMS, no resize storms, no hotplug |
+| L4 | Presentation: resize storms, flip pacing, fence ordering, hotplug | VKMS and headless WSI in CI | partial — headless WSI runs on both backends, fence ordering is checked under the validation layer, and five tests drive a real display controller through VKMS wherever a card is present. Not in CI, which loads no such module; no writeback, no CRC, no resize storms, no hotplug |
 | L5 | Stress and soak: atlas thrash, layer-depth bombs, leak detection | Nightly and weekly, hardware | none |
 | L6 | Performance: micro and full-frame benches with regression gating | Nightly, quiet runners | none — there is no benchmark in the tree |
 | L7 | Fuzz: path data, scene descriptions, dma-buf negotiation | Continuous background | none |
 
 ### VKMS would give the DRM path merge-blocking coverage
 
-**Not set up.** Nothing in this section runs; it records why the lane is worth
-building. `cargo xtask drm` reports whether a given machine could host it.
+**Half of it runs, and not where it would block a merge.** Five tests in
+`impeller-present-drm` drive a real display controller through VKMS on any
+machine with the module loaded: format negotiation, dma-buf import, an atomic
+commit, the render-done fence latching before scanout, several frames flipping
+in turn, and a framebuffer the output never imported being refused. They skip
+where there is no card, which is what CI is -- its runners load no such module,
+so nothing below is merge-blocking today. `cargo xtask drm` reports whether a
+given machine could host it.
+
+What is described below and does not run is the half that needs more than an
+atomic commit: writeback capture, CRTC CRC cross-checks, hotplug injection, and
+the failure injection cases. Those are why the lane is worth finishing rather
+than why it is worth building.
 
 VKMS provides CI with a real KMS device — atomic modesetting, vblank
 simulation, writeback connectors, and CRTC CRC — with no display hardware.
