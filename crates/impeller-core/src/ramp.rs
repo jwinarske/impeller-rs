@@ -8,25 +8,31 @@
 //! honestly. This is the third answer: evaluate the ramp once on the way in and
 //! hand the shader an image of it, so the count stops mattering.
 //!
-//! # Why sRGB, and why straight alpha
+//! # Why linear half-floats, and why straight alpha
 //!
-//! The ramp is stored encoded and sampled through an sRGB format, so the device
-//! decodes it back to linear on the way out. Eight bits of *linear* color band
-//! visibly in the darks — the eye's resolution is not uniform across the range,
-//! which is the entire reason the transfer function exists — while eight bits
-//! spaced by that function is what every image file in the world uses and is
-//! enough for a color ramp.
+//! The table is stored the way the walk produced it: linear, unclamped, four
+//! half-floats a texel.
 //!
-//! The color is stored straight rather than premultiplied. A transfer function
-//! is nonlinear, so encoding a premultiplied value and decoding it does not
-//! give back the premultiplied value; the multiplication has to happen after
-//! the decode. That matches what the shader already does with stops read from
-//! push constants, which is to premultiply at the very end, so the ramp path
-//! and the four-stop path converge before anything acts on the color.
+//! It was stored through an sRGB format, and for a good reason — eight bits of
+//! *linear* color band visibly in the darks, the eye's resolution not being
+//! uniform across the range, so spacing those eight bits by the transfer
+//! function spent them where they could be seen. That argument is *answered*
+//! rather than overridden. Half has no fixed quantum; its precision is
+//! relative, about eleven bits of mantissa at every magnitude, so there are no
+//! longer eight bits to spend well and the perceptual spacing was buying what
+//! the format now gives everywhere.
 //!
-//! Alpha is not subject to the transfer function in an sRGB format — it stays
-//! linear — which is what makes storing it beside encoded color correct rather
-//! than merely convenient.
+//! What the old format could not do at all was hold a component outside the
+//! sRGB primaries, and the invariant below quietly depended on never being
+//! asked to.
+//!
+//! The color is stored straight rather than premultiplied, and the reason for
+//! that changed with the format. It used to be that a transfer function does
+//! not commute with multiplying by alpha, so the multiply had to happen after
+//! the decode. A linear table has no decode. The reason that survives is the
+//! convergence: the shader premultiplies stops read from push constants at the
+//! very end, so a premultiplied table would fork the two paths at exactly the
+//! point this design exists to join them.
 
 use crate::paint::GradientStop;
 
@@ -34,9 +40,12 @@ use crate::paint::GradientStop;
 ///
 /// A gradient is a one-dimensional function sampled with a linear filter, so
 /// the question is how finely it has to be tabulated before interpolation
-/// between neighbors is indistinguishable from evaluating it. At this width a
-/// texel spans well under one percent of the ramp, which is finer than eight
-/// bits can express a difference across, so the sampling is not the limit.
+/// between neighbors is indistinguishable from evaluating it. Between two stops
+/// the function is a lerp and the filter is a lerp, so the table is exact
+/// there however wide it is; what the width actually bounds is how precisely a
+/// stop lands that falls between two texel centers. At this width that is under
+/// half a percent of the ramp's length, which is finer than the four-stop path
+/// it has to agree with can be told apart from.
 pub const RAMP_WIDTH: usize = 256;
 
 /// A gradient's colors, tabulated and encoded for upload.
