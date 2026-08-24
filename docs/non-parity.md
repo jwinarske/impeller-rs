@@ -213,26 +213,29 @@ and do give one and a third, and which size the shadow's bounds rather than draw
 it. Reading the wrong pair and skipping the conversion together made every
 shadow here about twice as soft as the same elevation gives upstream.
 
-## 8. A large blur spreads its taps; upstream downsamples
+## 8. A large blur is reduced by halving; upstream reduces in one step
 
-**What differs.** Both cap the kernel at a fixed number of samples — a shader
-loop has to be bounded. Past that cap this renderer keeps the same tap count and
-spreads the taps further apart, letting the sampler's bilinear filter average
-what falls between them. Upstream instead downsamples the source into a smaller
-texture first and runs the blur over that, which is what
-`CalculateDownsamplePassArgs` and `texture_downsample.frag` are for, and it
-clamps sigma at `kMaxSigma = 500`.
+**What differs.** Both shrink the image rather than spreading the taps once the
+kernel outgrows its budget, and both clamp the deviation at five hundred. The
+reduction is reached differently: upstream computes a downsample scalar and
+resamples once through `texture_downsample.frag`, where this halves repeatedly
+until the radius fits.
 
-**Why.** Not decided against, just not built. Downsampling is the better answer
-for very large blurs and costs an extra pass and a scratch target to get.
+**Why.** A linear sample taken at the center of a two-by-two block averages
+exactly those four texels, so halving *is* a box filter and a chain of halvings
+needs no kernel of its own. Reducing by eight in one step with a single
+bilinear tap would read four texels of every sixty-four and call the rest
+absent, which is how a downsample turns a smooth image into a crawling one —
+so a single-step reduction needs the dedicated shader upstream wrote for it,
+and the chain does not.
 
-**Impact.** The kernel's *width* is upstream's, so a blur of a given deviation
-covers the same distance either way and the difference is in how well that
-distance is sampled. Under about a sigma of nineteen there is none at all: the
-taps still land one per texel and nothing is spread. Past it this renderer's
-blur is progressively more coarsely sampled than upstream's, which shows as
-faint banding in a very wide blur rather than as a wrong width. There is also no
-`kMaxSigma` here, so a request upstream would clamp is honored.
+**Impact.** Passes, and only past the threshold. Under a deviation of about
+nineteen there is no reduction on either side and nothing differs. Above it this
+spends one pass per halving where upstream spends one in total, so a very wide
+blur costs two or three passes more — each on an image already a quarter or a
+sixteenth of the size, which is why it was worth having the reduction at all.
+The pictures agree: the reduction preserves light, checked at a deviation of
+twenty-four by the energy test, which takes this path.
 
 ## 9. Operations that are absent
 

@@ -1828,14 +1828,24 @@ every fragment walks, which is the cost specialization would remove.
   point, and covering the curve better made every blur here about seventeen
   percent wider than the same request gives it.
 
-  A shader loop is bounded, so past a sigma of about nineteen the taps no longer
-  cover that radius. They spread rather than truncate: the same count,
-  further apart, still spanning the curve, with the sampler's bilinear filter
-  averaging what falls between them. That trades quality for coverage, which is
-  the right way round — a slightly under-sampled wide blur looks like a wide
-  blur, while a truncated one stops softening however large sigma grows and
-  creeps toward a box, which is the wrong answer at exactly the sizes a frosted
-  panel or a large shadow asks for.
+  A shader loop is bounded, so past a sigma of about nineteen the radius no
+  longer fits in the taps. The image is halved until it does, each halving a
+  pass of its own, and the deviation shrinks with it — a linear sample at the
+  center of a two-by-two block averages exactly those four texels, so the
+  sampler is the box filter and the chain needs no kernel. The composite that
+  puts the layer back maps clip space to a normalized coordinate, so it does not
+  care what resolution answers. Upstream does the same thing in one resample
+  through a shader written for it; the chain is the same reduction reached by a
+  route that needs no new shader.
+
+  This is what keeps a wide blur soft rather than merely wide. The taps stay one
+  per texel, so what a large deviation costs is detail in the image rather than
+  gaps in the kernel. It spread the taps instead until recently: the same count,
+  further apart, still spanning the curve. That kept the width right and sampled
+  it more and more coarsely, which shows as steps in a smooth ramp at exactly
+  the sizes a frosted panel or a large shadow asks for. Truncating instead would
+  have been worse again: a blur that stops softening however large sigma grows
+  creeps toward a box.
 
   A blur reaches past what it is given, so a layer that is both bounded and
   blurred outsets its target by that same radius, matching where the shader

@@ -246,6 +246,120 @@ fn a_mask_blurs_deviation_is_in_device_pixels() {
     );
 }
 
+/// A blur too wide for its tap budget shrinks the image instead of spreading.
+///
+/// The taps are one per texel while the kernel's radius fits in the budget.
+/// Past that this used to hold the count and spread them apart, which keeps the
+/// blur the right width but samples it more and more coarsely — the gaps show
+/// as steps in a smooth ramp. Upstream blurs a smaller copy instead, so the
+/// taps stay one per texel and it is the image that loses detail rather than
+/// the kernel; for a blur this wide that detail was leaving anyway.
+///
+/// Counted in passes because that is what the reduction is: each halving is a
+/// pass of its own. A full-frame blurred layer is four — the layer, two blur
+/// axes, and the frame — and each halving adds one.
+///
+/// That the reduction loses no light is checked next door, by the energy test,
+/// which runs at a deviation of twenty-four and so takes this path.
+#[test]
+fn a_blur_past_the_tap_budget_shrinks_what_it_blurs() {
+    let extent = Extent2D::new(256, 256);
+    let passes_for = |sigma: f32| -> usize {
+        let mut canvas = Canvas::new(extent);
+        canvas.clear(Color::BLACK);
+        canvas.save_layer(Layer::opacity(1.0).with_blur(sigma));
+        canvas
+            .draw_rect(
+                Rect::new(96.0, 96.0, 160.0, 160.0),
+                &Paint::fill(Color::WHITE).with_anti_alias(false),
+            )
+            .expect("square");
+        canvas.restore();
+        canvas.finish().passes.len()
+    };
+
+    // Under the budget nothing is added. The radius is `(sigma - 0.5) * sqrt(3)`
+    // against a budget of thirty-two, so it fits up to a deviation of about
+    // nineteen.
+    assert_eq!(passes_for(8.0), 4, "a narrow blur should not be reduced");
+    assert_eq!(
+        passes_for(18.0),
+        4,
+        "a blur inside the budget should not be reduced"
+    );
+
+    // Past it, one halving, then another each time the radius doubles again.
+    assert_eq!(
+        passes_for(20.0),
+        5,
+        "a blur past the budget should be halved once"
+    );
+    assert_eq!(
+        passes_for(40.0),
+        6,
+        "twice the deviation should halve once more"
+    );
+    assert_eq!(passes_for(80.0), 7, "and again");
+
+    // The reduction is bounded by the deviation, which is bounded too, so a
+    // request no image could satisfy does not spawn passes without end.
+    assert!(
+        passes_for(100_000.0) <= 12,
+        "an enormous deviation should not keep adding passes: {}",
+        passes_for(100_000.0)
+    );
+}
+
+/// A deviation is clamped where upstream clamps it.
+///
+/// `kMaxSigma` is five hundred. Past it a blur of anything smaller than a wall
+/// is a flat wash and the reduction has long since taken the image down to a
+/// handful of texels, so upstream stops there and so does this.
+///
+/// Clamped after the finiteness check rather than before it, which is the part
+/// worth a test: `f32::min` returns the other operand when one is NaN, so
+/// clamping first turns a NaN deviation into the widest blur there is instead
+/// of into no blur at all.
+#[test]
+fn a_deviation_is_clamped_and_a_nan_is_not_clamped_into_one() {
+    let extent = Extent2D::new(64, 64);
+    let passes_for = |sigma: f32| -> usize {
+        let mut canvas = Canvas::new(extent);
+        canvas.clear(Color::BLACK);
+        canvas.save_layer(Layer::opacity(1.0).with_blur(sigma));
+        canvas
+            .draw_rect(
+                Rect::new(16.0, 16.0, 48.0, 48.0),
+                &Paint::fill(Color::WHITE).with_anti_alias(false),
+            )
+            .expect("square");
+        canvas.restore();
+        canvas.finish().passes.len()
+    };
+
+    // Beyond the clamp, the same frame as at the clamp: the request stopped
+    // growing, so the reduction stopped too.
+    assert_eq!(
+        passes_for(500.0),
+        passes_for(50_000.0),
+        "a deviation past the clamp should draw the same as one at it"
+    );
+
+    // And a NaN is no blur, not the largest one. Stated against a layer that
+    // asked for none rather than against a count: a layer costs a pass and the
+    // frame costs one whether anything is blurred or not, so the number that
+    // means "no blur" is that one and not zero.
+    assert_eq!(
+        passes_for(f32::NAN),
+        passes_for(0.0),
+        "a NaN deviation should draw the same as no blur at all"
+    );
+    assert!(
+        passes_for(8.0) > passes_for(0.0),
+        "this comparison says nothing unless a blur costs passes"
+    );
+}
+
 /// A blur moves light around without creating or destroying any.
 ///
 /// The property that says the kernel is normalized. A Gaussian blur is a

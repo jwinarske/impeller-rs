@@ -582,8 +582,13 @@ impl Layer {
     }
 
     pub fn with_blur(mut self, sigma: f32) -> Self {
+        // Clamped to upstream's `kMaxSigma`, and clamped *after* the check
+        // rather than before it: `f32::min` returns the other operand when one
+        // is NaN, so clamping first turns a NaN into five hundred and asks for
+        // the widest blur there is. The same trap is named at `Rect::outset`,
+        // which is where this was learned the first time.
         self.blur = if sigma.is_finite() && sigma > 0.0 {
-            sigma
+            sigma.min(MAX_SIGMA)
         } else {
             0.0
         };
@@ -3318,6 +3323,63 @@ impl Canvas {
     /// bound says and not what the frame is. The composite that follows is
     /// unchanged, and still applies the layer's alpha and blend -- keeping the
     /// blur passes pure means neither has to know about compositing.
+    /// Halve a pass into a target of half its size, by sampling it.
+    ///
+    /// A linear sample taken at the center of a two-by-two block averages
+    /// exactly those four texels, so halving with the sampler *is* a box
+    /// filter and needs no kernel of its own. That is the whole reason the
+    /// reduction below is a chain of halvings rather than one jump to the
+    /// final size: a single bilinear tap spanning an eight-by-eight block
+    /// reads four of its sixty-four texels and calls the rest absent, which is
+    /// how a downsample turns a smooth image into a crawling one.
+    fn halve_pass(&mut self, source: usize, into: Target) -> usize {
+        // Clip space to the unit square, the same fixed mapping a blur pass
+        // uses: a filter covers its whole target and samples the whole of what
+        // it was given, whatever the two sizes are.
+        let to_local = to_local_columns(Transform2D::from(
+            Affine2::from_mat2(Mat2::from_diagonal(Vec2::new(0.5, -0.5)))
+                * Affine2::from_translation(Vec2::new(1.0, -1.0)),
+        ));
+        self.filter_pass(
+            source,
+            into,
+            Material::Image {
+                to_local,
+                slot: 0,
+                alpha: 1.0,
+                tile: TileMode::Clamp,
+                sampling: Sampling::Linear,
+                source: [0.0, 0.0, 1.0, 1.0],
+                tint: [1.0, 1.0, 1.0, 1.0],
+            },
+        )
+    }
+
+    /// How far to shrink a target before blurring it, as a power of two.
+    ///
+    /// The taps are one per texel while the radius fits in the budget and
+    /// spread apart once it does not, which keeps a wide blur wide but samples
+    /// it more and more coarsely -- past a deviation of about nineteen the gaps
+    /// between taps open and a smooth ramp starts to show them. Upstream
+    /// answers this by blurring a smaller copy, so the taps stay one per texel
+    /// and it is the *image* that loses detail rather than the kernel. For a
+    /// blur this wide that detail was leaving anyway.
+    ///
+    /// A power of two so that every step is an exact halving, which is what
+    /// makes the sampler a box filter above.
+    fn blur_downsample(sigma: f32, extent: Extent2D) -> u32 {
+        let mut scale = 1u32;
+        // Never past the point where an axis would round to nothing: a target
+        // of zero has no pixels to blur and no texels to sample back.
+        while blur_radius(sigma / scale as f32) > BLUR_MAX_TAPS
+            && extent.width / (scale * 2) >= 1
+            && extent.height / (scale * 2) >= 1
+        {
+            scale *= 2;
+        }
+        scale
+    }
+
     fn blur_passes(&mut self, source: usize, target: Target, sigma: f32) -> usize {
         // Clip space spans two units and runs upward, so this is the mapping
         // that turns a full-target quad's clip position into the texture
@@ -3332,19 +3394,49 @@ impl Canvas {
             Affine2::from_mat2(Mat2::from_diagonal(Vec2::new(0.5, -0.5)))
                 * Affine2::from_translation(Vec2::new(1.0, -1.0)),
         ));
+        // Past the tap budget the image is shrunk rather than the taps spread,
+        // which is upstream's answer and keeps the taps one per texel. Halved
+        // repeatedly, so each step is an exact box filter; the deviation shrinks
+        // with the image, and the composite that puts the layer back scales it
+        // up again -- it maps clip space to a normalized coordinate, so it does
+        // not care what resolution answers.
+        let scale = Self::blur_downsample(sigma, target.extent);
+        let blurred = Target {
+            origin: target.origin,
+            extent: Extent2D::new(
+                (target.extent.width / scale).max(1),
+                (target.extent.height / scale).max(1),
+            ),
+        };
+        let sigma = sigma / scale as f32;
+
+        let mut source = source;
+        let mut step_scale = 1u32;
+        while step_scale < scale {
+            step_scale *= 2;
+            let into = Target {
+                origin: target.origin,
+                extent: Extent2D::new(
+                    (target.extent.width / step_scale).max(1),
+                    (target.extent.height / step_scale).max(1),
+                ),
+            };
+            source = self.halve_pass(source, into);
+        }
+
         // A step of one texel along each axis, in the sampled texture's own
         // coordinates. The shader cannot derive this: it does not know the size
         // of what it is sampling.
         let steps = [
-            [1.0 / target.extent.width as f32, 0.0],
-            [0.0, 1.0 / target.extent.height as f32],
+            [1.0 / blurred.extent.width as f32, 0.0],
+            [0.0, 1.0 / blurred.extent.height as f32],
         ];
 
         let mut sampled = source;
         for step in steps {
             sampled = self.filter_pass(
                 sampled,
-                target,
+                blurred,
                 Material::Blur {
                     to_local,
                     slot: 0,
@@ -3650,9 +3742,34 @@ fn tonal_shadow_color(color: Color) -> Color {
 /// and a mask blur style that combines the blurred coverage with the shape's
 /// own has to size the layer holding both by the same rule -- which it did not
 /// at first, and the halo was cut off square at the shape's own bounds.
+/// The widest deviation a blur is asked for, matching upstream's `kMaxSigma`.
+///
+/// Not a limitation so much as the end of the useful range: at five hundred a
+/// blur of anything smaller than a wall is a flat wash, and the reduction that
+/// keeps the taps affordable has long since taken the image down to a handful
+/// of texels.
+pub(crate) const MAX_SIGMA: f32 = 500.0;
+
+/// The most taps a blur takes each way from center.
+///
+/// Must match `max_taps` in the blur shader, which is where the budget is
+/// actually spent; this is the copy that decides when to shrink the image
+/// instead of spreading the taps across it.
+pub(crate) const BLUR_MAX_TAPS: f32 = 32.0;
+
+/// The kernel radius a deviation gives, in texels of whatever it is blurring.
+///
+/// Upstream's `CalculateBlurRadius`, which is `Radius(Sigma(sigma))`. Shared
+/// so that the rule deciding how far a blur reaches, the rule sizing a target
+/// to hold it, and the rule deciding whether it needs shrinking first cannot
+/// drift apart -- they are the same question asked by three callers.
+pub(crate) fn blur_radius(sigma: f32) -> f32 {
+    ((sigma - 0.5) * KERNEL_RADIUS_PER_SIGMA).max(0.0)
+}
+
 pub(crate) fn blur_reach(sigma: f32) -> f32 {
     if sigma > 0.0 {
-        ((sigma - 0.5) * KERNEL_RADIUS_PER_SIGMA).max(0.0).ceil()
+        blur_radius(sigma).ceil()
     } else {
         0.0
     }
