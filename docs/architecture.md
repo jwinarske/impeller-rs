@@ -1720,12 +1720,32 @@ every fragment walks, which is the cost specialization would remove.
   times fewer vertices is a real reduction and is not what pays here; being
   able to leave the pass at one sample is.
 
-  That balance is hardware-dependent in the direction this project cares about.
-  On a tiler, multisampling resolves in tile memory and costs far less than it
-  does here, while vertex and binning work costs more — so the margin should be
-  expected to narrow and could invert. Nothing on this machine says which, and
-  it should be measured on a board before the field is assumed to be the faster
-  path everywhere.
+  That balance is hardware-dependent in the direction this project cares about,
+  and it has now been measured on a board rather than reasoned about. On a tiler
+  multisampling resolves in tile memory and should cost far less, while vertex
+  and binning work should cost more, so the margin was expected to narrow and
+  possibly invert. Both halves hold, on a Raspberry Pi 5's V3D:
+
+  | device | field ÷ tessellated at one sample | cost of four samples |
+  |---|---|---|
+  | desktop discrete, immediate | 1.36× | 1.78× |
+  | Pi 5 V3D, Vulkan | 0.98× | 1.17× |
+  | Pi 5 V3D, GLES | 1.00× | 1.17× |
+
+  Multisampling costs seventeen percent on the tiler against seventy-eight on
+  the desktop part, which is the tile-memory resolve doing exactly what it is
+  supposed to. And the margin did not merely narrow: the two paths land on top
+  of each other. The field is two percent faster through Vulkan and level
+  through GLES, and the run-to-run spreads overlap in both — 12.69–13.10 against
+  12.94–13.11 milliseconds — so the honest reading is that they are the same
+  speed there, where on the desktop part the field is a third slower.
+
+  Which leaves the field's case resting on different ground depending on the
+  hardware. On an immediate renderer it is bought by not multisampling and paid
+  for in per-shape cost. On this tiler it costs nothing against the triangles
+  and still avoids the multisample pass, so it is simply ahead. Neither is a
+  reason to drop the other path: the tessellated one draws everything the field
+  cannot, and one of the two devices measured says the field is not free.
 
   `cargo xtask bench` is that measurement, and it is repeatable now rather than
   a number somebody once took. On the machine this was written on it reproduces
