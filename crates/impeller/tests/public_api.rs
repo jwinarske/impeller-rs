@@ -1557,6 +1557,85 @@ fn an_antialiased_circle_uses_the_same_distance_field() {
     );
 }
 
+/// And it still matches once the transform stops being affine.
+///
+/// This is where the two routes stop resembling each other. The tessellated one
+/// flattens in user space and hands the rasterizer vertices that already carry
+/// the divide; the analytic one draws a quad and asks, per fragment, where in
+/// the shape's own space that pixel fell -- which under perspective means
+/// inverting a homography rather than an affine, and measuring a corner radius
+/// in the space where the corner is round. Agreement between them is the check
+/// on that inverse.
+///
+/// A hard-edged rectangle cannot make this check, which is why the existing
+/// perspective tests do not: with no radius there is no distance to measure in
+/// local space, so a trapezoid comes out right even if the mapping inside it is
+/// wrong. The radius is the part under test, so it is varied against zero.
+#[test]
+fn the_two_shapes_still_agree_under_perspective() {
+    let Some(mut ctx) = context() else { return };
+    let extent = Extent2D::new(160, 120);
+    let region = Rect::new(40.0, 30.0, 120.0, 90.0);
+    let mut coverage = |analytic: bool, matrix: &[f32; 16], radius: f32| -> u64 {
+        let mut canvas = Canvas::new(extent).with_samples(4);
+        canvas.clear(Color::BLACK);
+        canvas.concat_4x4(matrix);
+        if analytic {
+            canvas
+                .draw_rrect(region, radius, &Paint::fill(Color::WHITE))
+                .expect("rrect");
+        } else {
+            canvas
+                .draw_path(&region.to_rounded_path(radius), &Paint::fill(Color::WHITE))
+                .expect("path");
+        }
+        let mut surface = ctx
+            .create_surface(extent, PixelFormat::Rgba8Unorm)
+            .expect("surface");
+        ctx.draw(&mut surface, &canvas.finish()).expect("draw");
+        let pixels = ctx.read(&mut surface).expect("read");
+        ctx.destroy_surface(surface);
+        pixels
+            .chunks_exact(4)
+            .map(|texel| texel[0] as u64)
+            .sum::<u64>()
+    };
+
+    // Receding along each axis, along both, and toward the viewer -- the last
+    // because a divisor shrinking rather than growing magnifies, and an inverse
+    // that only happened to work on one side of unity would pass without it.
+    for (along_x, along_y) in [
+        (0.0, 0.002),
+        (0.0, 0.004),
+        (0.003, 0.0),
+        (0.002, 0.002),
+        (0.0, -0.003),
+    ] {
+        let matrix = receding(along_x, along_y);
+        for radius in [20.0, 0.0] {
+            let analytic = coverage(true, &matrix, radius) as f64;
+            let tessellated = coverage(false, &matrix, radius) as f64;
+            let error = (analytic - tessellated).abs() / tessellated;
+            assert!(
+                error < 0.01,
+                "under ({along_x}, {along_y}) with radius {radius} the two paths \
+                 cover different areas: {analytic} against {tessellated}, \
+                 {:.2}% apart",
+                error * 100.0
+            );
+        }
+    }
+
+    // The perspective has to be doing something, or the agreement above is an
+    // agreement about an affine.
+    let flat = coverage(true, &receding(0.0, 0.0), 20.0);
+    let deep = coverage(true, &receding(0.0, 0.004), 20.0);
+    assert!(
+        (flat as f64 - deep as f64).abs() / flat as f64 > 0.2,
+        "the perspective barely changed the shape: {flat} against {deep}"
+    );
+}
+
 #[test]
 fn the_analytic_shape_matches_the_tessellated_one() {
     let Some(mut ctx) = context() else { return };
