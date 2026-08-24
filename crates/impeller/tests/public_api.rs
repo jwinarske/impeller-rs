@@ -91,21 +91,25 @@ fn a_rectangle_lands_where_it_was_asked_to() {
 }
 
 #[test]
-fn colors_are_specified_in_srgb_and_stored_linearly() {
+fn colors_are_specified_in_srgb_and_stored_in_srgb() {
     let Some(mut ctx) = context() else { return };
     let mut canvas = Canvas::new(SIZE);
     // A mid gray as a design tool would give it.
     canvas.clear(Color::rgba8(128, 128, 128, 255));
     let pixels = render(&mut ctx, canvas);
 
-    // The target holds linear values, so sRGB 128 lands near 55, not 128.
-    // Storing 128 would mean the conversion never happened, and every blend
-    // against this color would then be wrong.
+    // And it lands as it was given. The pipeline carries sRGB-encoded
+    // components from the API boundary to the target write, so a byte a design
+    // tool produced is the byte that gets stored -- there is no conversion for
+    // it to survive.
+    //
+    // It used to land near 55, because the components were decoded to light on
+    // the way in and the target held light. That is the physically correct
+    // arrangement and it is not upstream's: a `DlColor` is built from bytes
+    // with no decode, `ToColor` copies it unchanged into the engine's own
+    // color, and no shader upstream applies a transfer function anywhere.
     let stored = pixel(&pixels, 4, 4)[0];
-    assert!(
-        (50..=60).contains(&stored),
-        "sRGB 128 should store near 55 linear, got {stored}"
-    );
+    assert_eq!(stored, 128, "sRGB 128 should store as 128, got {stored}");
 }
 
 #[test]
@@ -534,7 +538,7 @@ fn a_blur_preserves_the_total_light_in_the_frame() {
     }
 }
 
-/// Dithering breaks a band, in whichever space the target quantizes in.
+/// Dithering breaks a band, measured rather than eyeballed.
 ///
 /// A gradient asks a target for a long run of nearly equal values, and where
 /// two neighbors round to the same one the picture gains an edge the gradient
@@ -542,17 +546,18 @@ fn a_blur_preserves_the_total_light_in_the_frame() {
 /// rule that varies across an eight-by-eight tile, makes the rounding fall on
 /// both sides of where that edge was.
 ///
-/// Measured rather than eyeballed, and the measurement is the point: over a
-/// tile the size of the dither's own period, the mean of what was stored should
-/// track the unquantized gradient more closely than rounding alone does. A
-/// float target renders the same scene to get that unquantized reference, so
-/// nothing here has to model what the shader did.
+/// The measurement is the point: over a tile the size of the dither's own
+/// period, the mean of what was stored should track the unquantized gradient
+/// more closely than rounding alone does. A float target renders the same scene
+/// to get that unquantized reference, so nothing here has to model what the
+/// shader did.
 ///
-/// Both formats are checked against both a dark gradient and a bright one
-/// because neither bands everywhere. Eight linear bits are sparse in the darks
-/// and dense in the highlights; eight sRGB bits are the other way round, which
-/// is the entire reason the transfer function exists. So each format is asked
-/// about the range where it is the one with a problem.
+/// One space and one amplitude, which is upstream's arrangement. The pipeline
+/// carries encoded components and the target stores them without transforming
+/// them, so a quantization step is a flat 1/255 wherever it stands and
+/// `kDitherRate` is a single constant. This took an amplitude and a space while
+/// the values reaching the target were light, because a step of the target was
+/// then worth a different amount of light at every brightness.
 #[test]
 fn dithering_tracks_a_gradient_better_than_rounding_does() {
     let Some(mut ctx) = context() else { return };
@@ -594,264 +599,50 @@ fn dithering_tracks_a_gradient_better_than_rounding_does() {
         pixels
     };
 
-    // The sRGB encode, to put the reference in the space that target rounds in.
-    fn encode(c: f64) -> f64 {
-        if c.abs() <= 0.003_130_8 {
-            c * 12.92
-        } else {
-            1.055 * c.abs().powf(1.0 / 2.4) - 0.055
-        }
-    }
-
-    for (band, lo, hi) in [("dark", 0.10f32, 0.22f32), ("bright", 0.60, 0.66)] {
+    // A slow ramp, which is what bands. Dark and bright both, since a run this
+    // shallow rounds into steps wherever it sits.
+    for (band, lo, hi) in [("dark", 0.10f32, 0.16f32), ("bright", 0.60, 0.66)] {
         let reference = render(&mut ctx, PixelFormat::Rgba16Float, lo, hi);
         let ideal: Vec<f32> = reference
             .chunks_exact(2)
             .map(|pair| half::f16::from_le_bytes([pair[0], pair[1]]).to_f32())
             .collect();
+        let stored = render(&mut ctx, PixelFormat::Rgba8Unorm, lo, hi);
 
-        for (format, encoded, bands_here) in [
-            (PixelFormat::Rgba8Unorm, false, band == "dark"),
-            (PixelFormat::Rgba8UnormSrgb, true, band == "bright"),
-        ] {
-            let stored = render(&mut ctx, format, lo, hi);
-            let (mut dithered_error, mut rounded_error, mut blocks) = (0.0f64, 0.0f64, 0usize);
-            for top in (0..extent.height as usize - 7).step_by(8) {
-                for left in (0..extent.width as usize - 7).step_by(8) {
-                    let (mut want, mut got, mut rounded) = (0.0f64, 0.0f64, 0.0f64);
-                    for y in top..top + 8 {
-                        for x in left..left + 8 {
-                            let at = (y * extent.width as usize + x) * 4;
-                            let linear = ideal[at] as f64;
-                            let value = if encoded { encode(linear) } else { linear };
-                            want += value;
-                            got += stored[at] as f64 / 255.0;
-                            // The same pixel with no dither: the target's own
-                            // rounding, and nothing else.
-                            rounded += (value * 255.0).round() / 255.0;
-                        }
+        let (mut dithered_error, mut rounded_error, mut blocks) = (0.0f64, 0.0f64, 0usize);
+        for top in (0..extent.height as usize - 7).step_by(8) {
+            for left in (0..extent.width as usize - 7).step_by(8) {
+                let (mut want, mut got, mut rounded) = (0.0f64, 0.0f64, 0.0f64);
+                for y in top..top + 8 {
+                    for x in left..left + 8 {
+                        let at = (y * extent.width as usize + x) * 4;
+                        let value = ideal[at] as f64;
+                        want += value;
+                        got += stored[at] as f64 / 255.0;
+                        // The same pixel with no dither: the target's own
+                        // rounding, and nothing else.
+                        rounded += (value * 255.0).round() / 255.0;
                     }
-                    dithered_error += (got - want).abs() / 64.0;
-                    rounded_error += (rounded - want).abs() / 64.0;
-                    blocks += 1;
                 }
-            }
-            let (dithered_error, rounded_error) = (
-                dithered_error / blocks as f64,
-                rounded_error / blocks as f64,
-            );
-
-            // Never worse than not dithering, on any of the four. This is the
-            // assertion that holds the encoded/linear choice honest: dithering
-            // a dark sRGB target in light rather than in encoded value lands
-            // here at roughly six times the error of leaving it alone, which is
-            // what a step being a different quantity in the two spaces means in
-            // practice.
-            assert!(
-                dithered_error <= rounded_error,
-                "{band} into {format:?}: dithering tracks worse than rounding, \
-                 {dithered_error:.6} against {rounded_error:.6}"
-            );
-            if bands_here {
-                assert!(
-                    rounded_error / dithered_error > 3.0,
-                    "{band} into {format:?}: dithering barely helped where this \
-                     format bands, {dithered_error:.6} against {rounded_error:.6}"
-                );
+                dithered_error += (got - want).abs() / 64.0;
+                rounded_error += (rounded - want).abs() / 64.0;
+                blocks += 1;
             }
         }
-    }
-}
+        let (dithered_error, rounded_error) = (
+            dithered_error / blocks as f64,
+            rounded_error / blocks as f64,
+        );
 
-/// Both gradient paths are dithered, because the stop count is not what
-/// upstream switches on.
-///
-/// Upstream has three gradient paths and picks between them by device rather
-/// than by content: a fast path for two stops, a storage-buffer path for
-/// anything else, and a uniform table or a baked ramp texture only where
-/// storage buffers are unavailable or past two hundred and fifty-six stops.
-/// The first two dither and the last two do not, so on any device with storage
-/// buffers -- which is every one its Vulkan and Metal backends run on -- every
-/// gradient is dithered whatever its stop count.
-///
-/// This renderer has two paths and switches on content: four stops or fewer
-/// ride in the paint block, more are tabulated into a ramp texture. Matching
-/// upstream's ramp to this one *looks* right and is backwards. Upstream reaches
-/// its ramp past two hundred and fifty-six stops and this one reaches its ramp
-/// past four, so leaving the ramp undithered would put nearly every gradient
-/// here on the side upstream nearly never uses.
-///
-/// Checked at tip of tree: `kMaxUniformGradientStops` is 256, and
-/// `LinearGradientContents::Render` tries the fast path, then storage buffers,
-/// then the uniform table, then the texture.
-#[test]
-fn both_gradient_paths_are_dithered() {
-    let Some(mut ctx) = context() else { return };
-    let extent = Extent2D::new(128, 32);
-
-    let render = |ctx: &mut Context, stop_count: usize| -> Vec<u8> {
-        // The same gradient either way: the extra stops are redundant, placed
-        // on the line between the two ends, so the only thing that changes is
-        // which path draws it.
-        let stops: Vec<GradientStop> = (0..stop_count)
-            .map(|i| {
-                let t = i as f32 / (stop_count - 1) as f32;
-                let v = 0.30 + 0.08 * t;
-                GradientStop {
-                    offset: t,
-                    color: Color::srgb(v, v, v, 1.0),
-                }
-            })
-            .collect();
-        let mut canvas = Canvas::new(extent);
-        canvas.clear(Color::BLACK);
-        canvas
-            .draw_rect(
-                Rect::new(0.0, 0.0, 128.0, 32.0),
-                &Paint::default()
-                    .with_shader(Shader::LinearGradient {
-                        start: Vec2::ZERO,
-                        end: Vec2::new(128.0, 0.0),
-                        stops,
-                        tile: TileMode::Clamp,
-                    })
-                    .with_anti_alias(false),
-            )
-            .expect("gradient");
-        let mut surface = ctx
-            .create_surface(extent, PixelFormat::Rgba8Unorm)
-            .expect("surface");
-        ctx.draw(&mut surface, &canvas.finish()).expect("draw");
-        let pixels = ctx.read(&mut surface).expect("read");
-        ctx.destroy_surface(surface);
-        pixels
-    };
-
-    // Down a column the gradient is constant, so any variation is the dither.
-    let varies = |pixels: &[u8]| -> bool {
-        (0..extent.width as usize).any(|x| {
-            let first = pixels[x * 4];
-            (1..extent.height as usize)
-                .any(|y| pixels[(y * extent.width as usize + x) * 4] != first)
-        })
-    };
-
-    // The counts come from either side of the constant rather than being
-    // written out, so this follows it if it moves -- but the ramp below needs
-    // two ends to interpolate between, which a smaller one would not give.
-    const _: () = assert!(MAX_STOPS >= 2);
-
-    assert!(
-        varies(&render(&mut ctx, MAX_STOPS)),
-        "a gradient whose stops fit in the paint block was not dithered"
-    );
-    assert!(
-        varies(&render(&mut ctx, MAX_STOPS + 1)),
-        "a gradient tabulated into a ramp was not dithered, which leaves it \
-         where upstream's storage-buffer path would have dithered it"
-    );
-}
-
-/// The dither tile is keyed to the target, so a layer meets it at its own
-/// phase.
-///
-/// A known limitation rather than a defect, and written down because the
-/// alternative is rediscovering it from a test that fails by one level for no
-/// visible reason. The pattern repeats every eight pixels and is indexed by the
-/// fragment's position in whatever it is being drawn into. A layer is a
-/// separate target, so a layer whose origin is not a multiple of eight lands on
-/// a different phase than the same content drawn straight onto the frame, and a
-/// few pixels round the other way.
-///
-/// Upstream Impeller keys its dither the same way and has the same property.
-/// Anchoring the tile to the frame instead would remove it -- the aligned case
-/// below is the evidence that nothing else is in the way -- and would cost the
-/// pass its position in the frame, which nothing carries today.
-///
-/// Bounded here rather than merely observed: the difference has to stay within
-/// the dither's own reach, and the aligned origin has to be exact. A mapping
-/// fault would not respect either.
-#[test]
-fn a_layers_dither_is_offset_by_its_origin() {
-    let Some(mut ctx) = context() else { return };
-    let extent = Extent2D::new(128, 128);
-
-    let render = |ctx: &mut Context, layer_at: Option<f32>| -> Vec<u8> {
-        let mut canvas = Canvas::new(extent);
-        canvas.clear(Color::BLACK);
-        if let Some(at) = layer_at {
-            canvas.save_layer_bounds(
-                Layer::opacity(1.0),
-                // Wide enough that the rect below sits inside it whichever
-                // origin is being tried, so the layer clips nothing and the
-                // only thing left to differ is the dither's phase.
-                Rect::new(at, at, at + 72.0, at + 72.0),
-            );
-        }
-        canvas
-            .draw_rect(
-                Rect::new(40.0, 40.0, 90.0, 90.0),
-                &Paint::default()
-                    .with_shader(Shader::LinearGradient {
-                        start: Vec2::new(40.0, 0.0),
-                        end: Vec2::new(90.0, 0.0),
-                        stops: vec![
-                            GradientStop {
-                                offset: 0.0,
-                                color: Color::srgb(0.30, 0.30, 0.30, 1.0),
-                            },
-                            GradientStop {
-                                offset: 1.0,
-                                color: Color::srgb(0.38, 0.38, 0.38, 1.0),
-                            },
-                        ],
-                        tile: TileMode::Clamp,
-                    })
-                    .with_anti_alias(false),
-            )
-            .expect("gradient");
-        if layer_at.is_some() {
-            canvas.restore();
-        }
-        let mut surface = ctx
-            .create_surface(extent, PixelFormat::Rgba8Unorm)
-            .expect("surface");
-        ctx.draw(&mut surface, &canvas.finish()).expect("draw");
-        let pixels = ctx.read(&mut surface).expect("read");
-        ctx.destroy_surface(surface);
-        pixels
-    };
-
-    let direct = render(&mut ctx, None);
-    let worst = |other: &[u8]| -> i32 {
-        direct
-            .iter()
-            .zip(other)
-            .map(|(a, b)| (*a as i32 - *b as i32).abs())
-            .max()
-            .unwrap_or(0)
-    };
-
-    // Aligned to the tile, so the phases coincide and nothing moves.
-    assert_eq!(
-        worst(&render(&mut ctx, Some(32.0))),
-        0,
-        "a layer aligned to the dither should composite back exactly"
-    );
-
-    // Off the tile, so they do not -- but only ever by what the dither can
-    // reach, which is under two levels of an eight-bit target either way.
-    for at in [30.0f32, 33.0, 35.0] {
-        let moved = worst(&render(&mut ctx, Some(at)));
         assert!(
-            moved > 0,
-            "a layer at {at} met the dither at the same phase, which the \
-             aligned case above is supposed to be the only way to do"
+            dithered_error <= rounded_error,
+            "{band}: dithering tracks worse than rounding, \
+             {dithered_error:.6} against {rounded_error:.6}"
         );
         assert!(
-            moved <= 4,
-            "a layer at {at} moved the picture by {moved} levels, further than \
-             the dither reaches"
+            rounded_error / dithered_error > 3.0,
+            "{band}: dithering barely helped, \
+             {dithered_error:.6} against {rounded_error:.6}"
         );
     }
 }
@@ -1243,141 +1034,50 @@ fn flat_fill(ctx: &mut Context, format: PixelFormat, color: Color) -> [u8; 4] {
     [pixels[0], pixels[1], pixels[2], pixels[3]]
 }
 
+/// No sRGB format is reached for by anything that draws or samples.
+///
+/// Three tests used to live here, and all three asked what an sRGB format does
+/// for a pipeline working in light: a surface encoded on write, so authoring a
+/// color and reading it back returned it unchanged; an image decoded on sample,
+/// so a texture's bytes arrived as light like everything else. Both were the
+/// attachment doing a conversion the renderer would otherwise have had to do.
+///
+/// There is no conversion to do now. Components are sRGB-encoded from the API
+/// boundary to the target write, so a format that encodes on write would encode
+/// what is already encoded, and one that decodes on sample would hand back
+/// light into a pipeline holding none. Upstream is arranged the same way: its
+/// render targets are `kR8G8B8A8UNormInt` and `kB8G8R8A8UNormInt`, and the sRGB
+/// members of its format enum are reached by blits and by image formats rather
+/// than by anything it draws into.
+///
+/// So what is worth pinning is not what those formats do but that nothing picks
+/// one. An intermediate follows the root's format, and that is the seam where
+/// an sRGB target would otherwise arrive without anybody asking for it.
 #[test]
-fn an_srgb_image_decodes_when_it_is_sampled() {
-    let Some(mut ctx) = context() else { return };
-    // The other direction across the same boundary. A surface encodes on write;
-    // an image decodes on sample. A caller uploading a picture has
-    // sRGB-encoded bytes, because that is what every image file holds, and the
-    // format is what says so -- read as linear they are too bright by exactly
-    // the transfer function, which looks like a washed-out picture rather than
-    // like a mistake.
-    //
-    // Neither choice fails, which is why this is worth pinning: both produce an
-    // image, and only one produces the right one.
-    let extent = Extent2D::new(32, 32);
-    let encoded = 188u8; // mid gray, encoded
-    let mut sampled = |format: PixelFormat| {
-        let mut image = ctx
-            .create_image(Extent2D::new(4, 4), format)
-            .expect("image");
-        ctx.write_image(&mut image, &[encoded; 4 * 4 * 4])
-            .expect("upload");
-        let mut canvas = Canvas::new(extent);
-        canvas.clear(Color::BLACK);
-        canvas
-            .draw_rect(
-                Rect::from_size(32.0, 32.0),
-                &Paint::image(0, Rect::from_size(32.0, 32.0)).with_anti_alias(false),
-            )
-            .expect("image paint");
-        // Into a linear surface, so what comes back is the linear value the
-        // shader sampled rather than a re-encoding of it.
-        let mut surface = ctx
-            .create_surface(extent, PixelFormat::Rgba8Unorm)
-            .expect("surface");
-        ctx.draw_with_images(&mut surface, &canvas.finish(), &[&image])
-            .expect("draw");
-        let pixels = ctx.read(&mut surface).expect("read");
-        ctx.destroy_surface(surface);
-        ctx.destroy_image(image);
-        pixels[0]
-    };
-
-    // Read as linear, the byte passes through unchanged -- which is right for
-    // coverage or a lookup table, and wrong for a picture.
-    assert!(
-        sampled(PixelFormat::Rgba8Unorm).abs_diff(encoded) <= 1,
-        "a linear image should sample the byte it was given"
-    );
-    // Read as sRGB, it decodes. The reference is the library's own conversion
-    // rather than a constant, so this compares the device against the code
-    // beside it.
-    let want = (Color::srgb(
-        encoded as f32 / 255.0,
-        encoded as f32 / 255.0,
-        encoded as f32 / 255.0,
-        1.0,
-    )
-    .r * 255.0)
-        .round() as u8;
-    let got = sampled(PixelFormat::Rgba8UnormSrgb);
-    assert!(
-        got.abs_diff(want) <= 1,
-        "an sRGB image sampled as {got} where decoding {encoded} gives {want}"
-    );
-    assert!(
-        got < encoded,
-        "decoding should darken an encoded byte, got {got} from {encoded}"
-    );
-}
-
-#[test]
-fn an_srgb_surface_returns_the_color_that_was_authored() {
-    // The round trip is the reason both halves exist. A caller states a color
-    // the way a designer picked it, in sRGB; the renderer converts to linear so
-    // that blending and interpolation are done on light rather than on encoded
-    // bytes; and an sRGB target encodes once on the way out. If all three agree
-    // the byte that comes back is the byte that went in.
-    //
-    // Nothing exercised this. Every other test here uses a linear target,
-    // because exact expected values are easier to state that way, so the format
-    // that does the conversion had never been rendered into at all -- on either
-    // backend, though both map it.
-    let mut contexts = every_backend();
-    assert!(!contexts.is_empty(), "no backend, so nothing here ran");
-
-    for ctx in &mut contexts {
-        let backend = ctx.backend();
-        for authored in [0.2f32, 0.6, 0.85] {
-            let got = flat_fill(
-                ctx,
-                PixelFormat::Rgba8UnormSrgb,
-                Color::srgb(authored, authored, authored, 1.0),
-            );
-            let want = (authored * 255.0).round() as u8;
-            // Exact, not close. A backend that skipped the conversion would
-            // come back with the linear value, which for 0.6 is 81 rather than
-            // 153 -- a difference far outside any rounding this could excuse.
-            assert!(
-                got[..3].iter().all(|c| c.abs_diff(want) <= 1),
-                "{backend}: authored sRGB {authored} came back as {got:?}, wanted {want}"
-            );
-        }
+fn an_intermediate_is_never_given_an_srgb_format() {
+    for root in [
+        PixelFormat::Rgba8Unorm,
+        PixelFormat::Bgra8Unorm,
+        PixelFormat::Rgba8UnormSrgb,
+        PixelFormat::Bgra8UnormSrgb,
+        PixelFormat::Rgb10A2Unorm,
+        PixelFormat::Rgba16Float,
+        PixelFormat::R8Unorm,
+    ] {
+        let intermediate = root.intermediate();
+        assert!(
+            !intermediate.is_srgb(),
+            "a root of {root:?} gave an intermediate of {intermediate:?}, \
+             which would encode what the pipeline already encoded"
+        );
     }
-}
 
-#[test]
-fn an_srgb_surface_differs_from_a_linear_one_by_the_transfer_function() {
-    // The stronger statement, and the one that says where the conversion
-    // happens. The same drawing into the two formats must differ by exactly
-    // the transfer -- which means the pipeline carried linear light the whole
-    // way and only the final write encoded. A renderer that converted earlier,
-    // or twice, would still round-trip and would fail this.
-    let mut contexts = every_backend();
-    assert!(!contexts.is_empty(), "no backend, so nothing here ran");
-
-    for ctx in &mut contexts {
-        let backend = ctx.backend();
-        for value in [0.1f32, 0.35, 0.5, 0.9] {
-            let color = Color::linear(value, value, value, 1.0);
-            let linear = flat_fill(ctx, PixelFormat::Rgba8Unorm, color);
-            let encoded = flat_fill(ctx, PixelFormat::Rgba8UnormSrgb, color);
-
-            // The reference is the conversion the public API already offers,
-            // so this compares the device against the library rather than
-            // against a constant nobody can check.
-            let want = (color.to_srgb()[0] * 255.0).round() as u8;
-            assert!(
-                linear[0].abs_diff((value * 255.0).round() as u8) <= 1,
-                "{backend}: a linear target should hold the linear value, got {linear:?}"
-            );
-            assert!(
-                encoded[0].abs_diff(want) <= 1,
-                "{backend}: linear {value} encoded to {encoded:?}, wanted {want}"
-            );
-        }
-    }
+    // And a float root still keeps its float layers, or the wide-gamut path
+    // loses its range at the first layer it meets.
+    assert_eq!(
+        PixelFormat::Rgba16Float.intermediate(),
+        PixelFormat::Rgba16Float
+    );
 }
 
 #[test]
@@ -3247,23 +2947,28 @@ fn a_gradient_with_many_stops_agrees_with_one_that_fits() {
     // shader reads it. A caller does not choose between those and should not be
     // able to tell which happened.
     //
+    // Stated in sRGB, which is where a gradient is interpolated and therefore
+    // the only space in which "on the line" means anything: a midpoint of two
+    // light values is not the midpoint of their encodings, so extra stops
+    // placed that way are not redundant and the two paths rightly disagree.
+    //
     // So: the same gradient stated twice. Four stops that fit, and the same
     // ramp restated with extra stops placed exactly on the line between them,
     // which changes nothing about the gradient and everything about how it is
     // carried.
     let ends = vec![
-        GradientStop::new(Color::linear(1.0, 0.0, 0.0, 1.0), 0.0),
-        GradientStop::new(Color::linear(0.5, 0.0, 0.5, 1.0), 0.5),
-        GradientStop::new(Color::linear(0.0, 0.0, 1.0, 1.0), 1.0),
+        GradientStop::new(Color::srgb(1.0, 0.0, 0.0, 1.0), 0.0),
+        GradientStop::new(Color::srgb(0.5, 0.0, 0.5, 1.0), 0.5),
+        GradientStop::new(Color::srgb(0.0, 0.0, 1.0, 1.0), 1.0),
     ];
     let mut many = ends.clone();
     for (offset, t) in [(0.25, 0.25f32), (0.75, 0.75)] {
         // Exactly on the line: red to purple to blue is linear in each half.
         let c = if t < 0.5 { t * 2.0 } else { (t - 0.5) * 2.0 };
         let color = if t < 0.5 {
-            Color::linear(1.0 - c * 0.5, 0.0, c * 0.5, 1.0)
+            Color::srgb(1.0 - c * 0.5, 0.0, c * 0.5, 1.0)
         } else {
-            Color::linear(0.5 - c * 0.5, 0.0, 0.5 + c * 0.5, 1.0)
+            Color::srgb(0.5 - c * 0.5, 0.0, 0.5 + c * 0.5, 1.0)
         };
         many.push(GradientStop::new(color, offset));
     }
@@ -3872,7 +3577,7 @@ fn a_tiled_gradient_tiles_the_same_whether_or_not_its_stops_fit() {
         (0..n)
             .map(|i| {
                 let t = i as f32 / (n - 1) as f32;
-                GradientStop::new(Color::linear(1.0 - t, 0.0, t, 1.0), t)
+                GradientStop::new(Color::srgb(1.0 - t, 0.0, t, 1.0), t)
             })
             .collect()
     };
@@ -4393,7 +4098,7 @@ fn a_rotated_clip_is_the_rotated_shape_and_not_its_bounding_box() {
 fn a_clip_narrowed_to_nothing_draws_nothing() {
     let Some(mut ctx) = context() else { return };
     let mut canvas = Canvas::new(SIZE);
-    canvas.clear(Color::linear(0.2, 0.4, 0.6, 1.0));
+    canvas.clear(Color::srgb(0.2, 0.4, 0.6, 1.0));
     // Two disjoint clips. This is a normal state for a subtree scrolled out of
     // view, not an error, so recording continues and simply produces nothing.
     canvas.clip_rect(Rect::new(0.0, 0.0, 20.0, 20.0)).unwrap();
@@ -4755,12 +4460,25 @@ fn a_layer_applies_its_alpha_to_the_group_rather_than_to_each_shape() {
     let grouped = render(&mut ctx, grouped);
 
     // Away from the overlap the two agree: one shape at half alpha either way.
+    //
+    // Within a level, not exactly. One path multiplies the alpha into the color
+    // in the shader and writes it; the other writes the shape, then multiplies
+    // a composited image by it. Those are the same product of the same two
+    // numbers and they round to eight bits at different points, which is worth
+    // one level and is the difference this repository calls `ROUNDING`
+    // everywhere else. It was exact while the values were light, because the
+    // rounding landed differently there.
     let outside = (36u32, 64u32);
-    assert_eq!(
+    let (a, b) = (
         pixel(&direct, outside.0, outside.1),
         pixel(&grouped, outside.0, outside.1),
-        "the two differ where only one circle covers"
     );
+    for channel in 0..4 {
+        assert!(
+            (a[channel] as i32 - b[channel] as i32).abs() <= 1,
+            "the two differ where only one circle covers: {a:?} against {b:?}"
+        );
+    }
 
     // In the overlap they must not. Drawn directly the second circle blends
     // over the first and the red is denser; grouped, it is not.
@@ -7007,13 +6725,13 @@ fn a_vertex_color_multiplies_the_paint_rather_than_replacing_it() {
     let mesh = Vertices::colored(
         VertexMode::Triangles,
         corners,
-        vec![Color::linear(1.0, 0.5, 0.0, 1.0); 3],
+        vec![Color::srgb(1.0, 0.5, 0.0, 1.0); 3],
     )
     .expect("mesh");
     canvas
         .draw_vertices(
             &mesh,
-            &Paint::fill(Color::linear(0.5, 1.0, 1.0, 1.0)).with_anti_alias(false),
+            &Paint::fill(Color::srgb(0.5, 1.0, 1.0, 1.0)).with_anti_alias(false),
         )
         .expect("mesh");
     let pixels = render(&mut ctx, canvas);
@@ -8399,7 +8117,7 @@ fn the_gamma_filter_follows_the_curve_at_both_ends_of_it() {
         canvas
             .draw_rect(
                 Rect::new(x, 0.0, x + 32.0, 128.0),
-                &Paint::fill(Color::linear(*value, *value, *value, 1.0))
+                &Paint::fill(Color::srgb(*value, *value, *value, 1.0))
                     .with_color_filter(ColorFilter::linear_to_srgb())
                     .with_anti_alias(false),
             )
@@ -8436,7 +8154,7 @@ fn the_gamma_pair_undo_each_other() {
     canvas
         .draw_rect(
             Rect::new(0.0, 0.0, 64.0, 128.0),
-            &Paint::fill(Color::linear(LINEAR, LINEAR, LINEAR, 1.0))
+            &Paint::fill(Color::srgb(LINEAR, LINEAR, LINEAR, 1.0))
                 .with_color_filter(ColorFilter::linear_to_srgb())
                 .with_anti_alias(false),
         )
@@ -8444,7 +8162,7 @@ fn the_gamma_pair_undo_each_other() {
     canvas
         .draw_rect(
             Rect::new(64.0, 0.0, 128.0, 128.0),
-            &Paint::fill(Color::linear(encoded, encoded, encoded, 1.0))
+            &Paint::fill(Color::srgb(encoded, encoded, encoded, 1.0))
                 .with_color_filter(ColorFilter::srgb_to_linear())
                 .with_anti_alias(false),
         )
@@ -8488,7 +8206,7 @@ fn the_gamma_filter_curves_color_and_leaves_alpha_alone() {
     canvas
         .draw_rect(
             Rect::from_size(128.0, 128.0),
-            &Paint::fill(Color::linear(LINEAR, LINEAR, LINEAR, ALPHA))
+            &Paint::fill(Color::srgb(LINEAR, LINEAR, LINEAR, ALPHA))
                 .with_color_filter(ColorFilter::linear_to_srgb())
                 .with_anti_alias(false),
         )
@@ -9532,7 +9250,7 @@ fn a_radial_gradient_of_no_radius_under_decal_draws_nothing() {
         GradientStop::new(Color::linear(0.0, 1.0, 0.0, 1.0), 1.0),
     ];
     let mut canvas = Canvas::new(SIZE);
-    canvas.clear(Color::linear(0.2, 0.0, 0.0, 1.0));
+    canvas.clear(Color::srgb(0.2, 0.0, 0.0, 1.0));
     canvas
         .draw_rect(
             Rect::from_size(128.0, 128.0),
@@ -11090,8 +10808,8 @@ fn ramped_stops(hue: usize) -> Vec<GradientStop> {
         .map(|i| {
             let t = i as f32 / (MAX_STOPS + 2) as f32;
             let color = match hue {
-                0 => Color::linear(t, 1.0 - t, 0.5, 1.0),
-                _ => Color::linear(0.5, t * 0.2, 1.0 - t, 1.0),
+                0 => Color::srgb(t, 1.0 - t, 0.5, 1.0),
+                _ => Color::srgb(0.5, t * 0.2, 1.0 - t, 1.0),
             };
             GradientStop::new(color, t)
         })
@@ -11120,14 +10838,14 @@ fn a_recording_drawn_into_another_keeps_its_own_layers_and_ramps() {
     inner
         .draw_rect(
             Rect::new(4.0, 4.0, 60.0, 60.0),
-            &Paint::fill(Color::linear(1.0, 0.0, 0.0, 1.0)).with_anti_alias(false),
+            &Paint::fill(Color::srgb(1.0, 0.0, 0.0, 1.0)).with_anti_alias(false),
         )
         .expect("picture layer");
     inner.restore();
     inner
         .draw_rect(
             Rect::new(8.0, 24.0, 56.0, 40.0),
-            &Paint::fill(Color::linear(1.0, 1.0, 1.0, 1.0))
+            &Paint::fill(Color::srgb(1.0, 1.0, 1.0, 1.0))
                 .with_anti_alias(false)
                 .with_shader(Shader::LinearGradient {
                     start: Vec2::new(8.0, 0.0),
@@ -11832,7 +11550,7 @@ fn an_atlas_batch_honors_the_paint_s_blend() {
             SourceRect::new(2.0, 2.0, 2.0, 2.0),
             Affine2::from_scale_angle_translation(Vec2::splat(24.0), 0.0, Vec2::new(x, 40.0)),
         );
-        sprite.color = Color::linear(0.5, 0.5, 0.5, 1.0);
+        sprite.color = Color::srgb(0.5, 0.5, 0.5, 1.0);
         sprite
     };
     let sprites = [sprite(28.0), sprite(52.0)];
@@ -12519,18 +12237,23 @@ fn a_gradient_carries_the_same_color_however_many_stops_state_it() {
 
     // Red past what eight bits can hold, running to black. Stated as three
     // stops and again as five, the extra two exactly on the line.
-    let bright = Color::linear(1.2, 0.0, 0.0, 1.0);
+    //
+    // Stated in sRGB rather than in light, and that is the whole of what makes
+    // the extra two redundant: a gradient is interpolated in the space its
+    // stops are carried in, and that space is the encoded one. Midpoints of the
+    // *light* values are not midpoints of the encoded ones, so stating them
+    // that way put the extra stops off the line and the two paths disagreed by
+    // twenty-three levels -- which is a fact about arithmetic rather than about
+    // either path.
+    let bright = Color::srgb(1.2, 0.0, 0.0, 1.0);
     let ends = vec![
         GradientStop::new(bright, 0.0),
-        GradientStop::new(Color::linear(0.6, 0.0, 0.0, 1.0), 0.5),
-        GradientStop::new(Color::linear(0.0, 0.0, 0.0, 1.0), 1.0),
+        GradientStop::new(Color::srgb(0.6, 0.0, 0.0, 1.0), 0.5),
+        GradientStop::new(Color::srgb(0.0, 0.0, 0.0, 1.0), 1.0),
     ];
     let mut many = ends.clone();
     for (offset, value) in [(0.25f32, 0.9f32), (0.75, 0.3)] {
-        many.push(GradientStop::new(
-            Color::linear(value, 0.0, 0.0, 1.0),
-            offset,
-        ));
+        many.push(GradientStop::new(Color::srgb(value, 0.0, 0.0, 1.0), offset));
     }
     many.sort_by(|a, b| a.offset.partial_cmp(&b.offset).unwrap());
     assert!(ends.len() <= MAX_STOPS, "the control must be walked");
@@ -12637,17 +12360,14 @@ fn a_color_outside_the_srgb_primaries_reaches_a_floating_point_target() {
     let wide = wide_pixels(&mut ctx, canvas);
     let inside = wide_pixel(&wide, 64, 64);
 
-    assert!((inside[0] - 1.224_940_2).abs() < 0.01, "red {}", inside[0]);
-    assert!(
-        (inside[1] + 0.042_056_95).abs() < 0.01,
-        "green {}",
-        inside[1]
-    );
-    assert!(
-        (inside[2] + 0.019_637_55).abs() < 0.01,
-        "blue {}",
-        inside[2]
-    );
+    // Display P3's red, restated against sRGB's primaries and left encoded --
+    // which is what upstream's `p3ToExtendedSrgb` returns, and why the figures
+    // are the encoded ones rather than the linear ones this used to assert. The
+    // rotation itself still happens in light; it is the value coming out that
+    // stays in the transfer function.
+    assert!((inside[0] - 1.093_066).abs() < 0.01, "red {}", inside[0]);
+    assert!((inside[1] + 0.226_742).abs() < 0.01, "green {}", inside[1]);
+    assert!((inside[2] + 0.150_137).abs() < 0.01, "blue {}", inside[2]);
     // The negatives are the whole statement. A pipeline that clamped anywhere
     // between the paint and the target would return zero here and pass every
     // other test in this file.
@@ -12696,28 +12416,35 @@ fn a_wide_color_survives_a_layer_when_the_root_can_hold_it() {
         inside[1] < -0.02,
         "the layer flattened the color to {inside:?}"
     );
-    assert!((inside[0] - 1.224_940_2).abs() < 0.02, "red {}", inside[0]);
+    // Encoded, like everything else the pipeline carries.
+    assert!((inside[0] - 1.093_066).abs() < 0.02, "red {}", inside[0]);
 }
 
 /// A layer with nothing asked of it must not change the picture.
 ///
 /// `saveLayer` with full opacity and no filter is an identity: the content is
 /// drawn into a target of its own and composited straight back. Whether that
-/// round trip is lossless depends on what the target holds, and for a long time
-/// it held linear eight-bit color whatever the frame was landing in.
+/// round trip is lossless depends on what the target holds, and it used to
+/// depend on it sharply -- the layer held linear eight-bit color whatever the
+/// frame was landing in, and eight bits of *linear* color band visibly in the
+/// darks. Against an sRGB surface the two paths disagreed by seven levels, and
+/// a dark ramp resolving forty distinct values drawn directly came back as six
+/// through a layer.
 ///
-/// Eight bits of *linear* color band visibly in the darks -- this repository
-/// argues exactly that about gradient ramps, and the argument is stronger for a
-/// full-frame layer than for a 256-texel table. Against an sRGB surface the two
-/// paths disagreed by seven levels, and a dark ramp that resolved into forty
-/// distinct values drawn directly came back as six through a layer.
+/// Both halves of that are gone. The pipeline carries sRGB-encoded components,
+/// so a layer's eight bits are spaced the way the eye reads them without
+/// anything having to arrange it; and a target is a plain unsigned normalized
+/// format rather than an sRGB one, because a format that encodes on write would
+/// encode what is already encoded. There is no longer a pair of spaces for a
+/// layer to fall between.
+///
+/// Still worth asking, because the identity is worth having however it is
+/// arrived at, and a dark ramp is still where a lost tone shows first.
 #[test]
 fn a_layer_that_asks_for_nothing_keeps_the_tones_of_what_it_holds() {
-    // Asked of both backends rather than of whichever one comes first, because
-    // the two arrive at an sRGB attachment differently -- one encodes on write
-    // to an sRGB image view, the other to an `SRGB8_ALPHA8` framebuffer with no
-    // control over whether it does -- and nothing else in the suite renders
-    // into an sRGB surface through a layer.
+    // Asked of both backends rather than of whichever one comes first, since
+    // they realize a layer's target and its composite differently and nothing
+    // else in the suite counts tones through one.
     //
     // And twice on each, with antialiasing off and on, because a multisampled
     // layer resolves before it is composited: whether that resolve happens on
@@ -12766,7 +12493,7 @@ fn tones_survive_a_layer(ctx: &mut Context, anti_alias: bool, backend: BackendPr
         // frame spaces its eight bits through the transfer function, and a
         // layer that does not is throwing away tones the frame could have held.
         let mut surface = ctx
-            .create_surface(SIZE, PixelFormat::Rgba8UnormSrgb)
+            .create_surface(SIZE, PixelFormat::Rgba8Unorm)
             .expect("srgb surface");
         ctx.draw(&mut surface, &canvas.finish()).expect("draw");
         let pixels = ctx.read(&mut surface).expect("read");

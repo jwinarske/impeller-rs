@@ -94,7 +94,12 @@ impl PixelFormat {
     pub const fn intermediate(self) -> Self {
         match self {
             Self::Rgba16Float => Self::Rgba16Float,
-            Self::Rgba8UnormSrgb | Self::Bgra8UnormSrgb => Self::Rgba8UnormSrgb,
+            // Never the sRGB sibling of an eight-bit format, even when the
+            // frame it composites into is one. The pipeline holds encoded
+            // components, so a target that encodes on write would encode them a
+            // second time -- a layer would come back washed out against the
+            // same content drawn directly. This did follow the frame, back when
+            // the values reaching it were light.
             _ => Self::Rgba8Unorm,
         }
     }

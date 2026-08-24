@@ -19,6 +19,14 @@ What stands between here and a first release with an API:
 
 - Two operations are absent: `drawRSuperellipse` and `clipRSuperellipse`.
 
+`Color` stores sRGB-encoded components rather than linear light. `Color::srgb`
+keeps what it is given, `Color::linear` encodes on the way in, and `to_array`
+hands back what is stored. Anything that decomposed a color and rebuilt it needs
+`Color::srgb` on the way back, not `Color::linear` -- rebuilding with the latter
+now applies the transfer function a second time. Render targets are plain
+unsigned normalized formats for the same reason: an sRGB target would encode
+what is already encoded.
+
 `BatchDraw::to_uniform` takes the format it is about to be drawn into. Only the
 backend knows that, and it is what decides a gradient's dither; the same
 recording drawn into an eight-bit surface and a float one wants different

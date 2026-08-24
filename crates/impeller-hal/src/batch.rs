@@ -253,14 +253,20 @@ impl BatchDraw {
         self.filter.pack_into(&mut out);
         out[crate::material::layout::FILTER_PARAMS + 1] = self.tint_blend.code();
         let dither = crate::material::layout::DITHER;
-        // Four times the step, which puts the largest perturbation just under
-        // two of them. That is upstream Impeller's rate -- it spends 1/64 on an
-        // eight-bit target and 4/255 is the same number to within a rounding --
-        // arrived at there for a pipeline whose values are already encoded, and
-        // reachable here only because the amplitude is chosen per target rather
-        // than compiled in.
-        out[dither] = 4.0 * target.quantization_step();
-        out[dither + 1] = if target.is_srgb() { 1.0 } else { 0.0 };
+        // Upstream's rate exactly: `kDitherRate` is 1/64 and is added to the
+        // premultiplied color whatever the target is. That is a single constant
+        // there because its values are encoded, so a quantization step is a
+        // flat 1/255 wherever it stands -- and now for the same reason it is a
+        // single constant here.
+        //
+        // Still zero for a target with no quantum to bridge. Half's precision
+        // is relative, so there is no step to straddle and upstream's constant
+        // would be noise added to a surface that had none.
+        out[dither] = if target.quantization_step() > 0.0 {
+            1.0 / 64.0
+        } else {
+            0.0
+        };
         out
     }
 }

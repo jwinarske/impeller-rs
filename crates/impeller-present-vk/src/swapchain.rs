@@ -709,28 +709,34 @@ fn choose_format(
     }
     if formats.len() == 1 && formats[0].format == vk::Format::UNDEFINED {
         return Ok((
-            vk::Format::B8G8R8A8_SRGB,
+            vk::Format::B8G8R8A8_UNORM,
             vk::ColorSpaceKHR::SRGB_NONLINEAR,
-            PixelFormat::Bgra8UnormSrgb,
+            PixelFormat::Bgra8Unorm,
         ));
     }
 
-    // sRGB first, because the conversion is the attachment format's job and
-    // this is the attachment. Color is linear inside the renderer -- the
-    // shaders end by premultiplying and say so -- and the color space asked for
-    // below is `SRGB_NONLINEAR`, which is the presentation engine being told
-    // the image already holds sRGB-encoded values. An sRGB format is what
-    // encodes them on write; a linear one hands the display linear light to
-    // read as though it were encoded, which is every window a little over a
-    // third too dark at mid gray and wrong nowhere it announces itself.
+    // Unsigned normalized first, and *not* the sRGB variants, which is the
+    // opposite of what this preferred while the renderer worked in light.
     //
-    // The linear formats stay as a fallback, since a surface offering only
-    // those is better served darkly than not at all.
+    // The color space asked for below is `SRGB_NONLINEAR`, which tells the
+    // presentation engine the image already holds sRGB-encoded values -- and it
+    // does, because that is what the pipeline carries from the API boundary all
+    // the way to this write. An sRGB *format* would encode them a second time,
+    // putting every window a little over a third too bright at mid gray. A
+    // plain format hands the engine exactly the numbers it was promised.
+    //
+    // This is what upstream presents to as well: its render targets are
+    // `kB8G8R8A8UNormInt` and `kR8G8B8A8UNormInt`, and the sRGB members of its
+    // format enum are reached by blits and image formats rather than by
+    // anything it draws into.
+    //
+    // The sRGB formats stay last rather than being dropped, because a surface
+    // offering nothing else is better served too brightly than not at all.
     let wanted = [
-        (vk::Format::B8G8R8A8_SRGB, PixelFormat::Bgra8UnormSrgb),
-        (vk::Format::R8G8B8A8_SRGB, PixelFormat::Rgba8UnormSrgb),
         (vk::Format::B8G8R8A8_UNORM, PixelFormat::Bgra8Unorm),
         (vk::Format::R8G8B8A8_UNORM, PixelFormat::Rgba8Unorm),
+        (vk::Format::B8G8R8A8_SRGB, PixelFormat::Bgra8UnormSrgb),
+        (vk::Format::R8G8B8A8_SRGB, PixelFormat::Rgba8UnormSrgb),
     ];
     for (vk_format, format) in wanted {
         if let Some(found) = formats
@@ -854,16 +860,20 @@ mod tests {
             color_space: vk::ColorSpaceKHR::SRGB_NONLINEAR,
         }];
         let (vk_format, _, format) = choose_format(&formats).expect("choose");
-        assert_eq!(vk_format, vk::Format::B8G8R8A8_SRGB);
-        assert_eq!(format, PixelFormat::Bgra8UnormSrgb);
+        assert_eq!(vk_format, vk::Format::B8G8R8A8_UNORM);
+        assert_eq!(format, PixelFormat::Bgra8Unorm);
     }
 
     #[test]
-    fn an_srgb_surface_format_is_chosen_over_a_linear_one() {
-        // The renderer's colors are linear and the presentation engine is told
-        // the image holds sRGB. Something has to encode between the two, and an
-        // sRGB attachment is the thing that does it for free -- so a surface
-        // offering both should be taken at the sRGB one.
+    fn a_plain_surface_format_is_chosen_over_an_srgb_one() {
+        // The pipeline carries sRGB-encoded components all the way to this
+        // write, and the presentation engine is told the image holds
+        // sRGB-encoded components. Nothing has to encode between the two, so
+        // the format that encodes nothing is the right one -- an sRGB
+        // attachment would apply the transfer function a second time.
+        //
+        // This preferred the sRGB one while the renderer worked in light, which
+        // was right then and is exactly backwards now.
         let formats = [
             vk::SurfaceFormatKHR {
                 format: vk::Format::B8G8R8A8_UNORM,
@@ -875,8 +885,8 @@ mod tests {
             },
         ];
         let (vk_format, _, format) = choose_format(&formats).expect("choose");
-        assert_eq!(vk_format, vk::Format::B8G8R8A8_SRGB);
-        assert_eq!(format, PixelFormat::Bgra8UnormSrgb);
+        assert_eq!(vk_format, vk::Format::B8G8R8A8_UNORM);
+        assert_eq!(format, PixelFormat::Bgra8Unorm);
     }
 
     #[test]

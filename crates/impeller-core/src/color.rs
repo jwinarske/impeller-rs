@@ -1,14 +1,28 @@
 //! Color.
 //!
-//! Linear throughout, with conversion at the API boundary. That split is not
-//! cosmetic: blending, filtering, and antialiasing are all averaging
-//! operations, and averaging sRGB-encoded values produces results that are
-//! visibly too dark — the classic symptom being a gray fringe around
-//! antialiased edges on a light background.
+//! Encoded throughout, in sRGB's transfer function, which is what upstream
+//! Impeller does and therefore what this does.
 //!
-//! Callers usually have sRGB values, because that is what design tools and CSS
-//! produce, so [`Color::srgb`] converts on the way in and [`Color::to_srgb`]
-//! converts back.
+//! It is worth being plain that this is not the physically correct choice.
+//! Blending, filtering and antialiasing are all averaging operations, and
+//! averaging encoded values is not averaging light: the classic symptom is a
+//! gray fringe around an antialiased edge on a light background, and it is
+//! real. This renderer worked in linear light for exactly that reason.
+//!
+//! Parity is the criterion, and here parity decides it. A `DlColor` upstream is
+//! built from bytes with no decode, `skia_conversions::ToColor` copies it into
+//! the engine's `Color` unchanged, `impeller/compiler/shader_lib` applies no
+//! transfer function anywhere, and the result is written to a plain unsigned
+//! normalized target rather than an sRGB one. Every Flutter application on
+//! every platform has the edges that produces. A renderer that is at parity
+//! with Impeller has them too, and one that quietly looks different does not
+//! get to call the difference an improvement.
+//!
+//! The one place light is still the space is a change of primaries, because a
+//! change of primaries is a rotation of light and means nothing applied to
+//! encoded numbers. `convert` decodes, rotates and encodes again, which is what
+//! upstream's `p3ToExtendedSrgb` does with the same matrix and the same
+//! odd-extended transfer functions.
 
 /// The primaries a color's components are stated against.
 ///
@@ -56,16 +70,21 @@ pub struct Color {
 }
 
 impl Color {
-    pub const TRANSPARENT: Self = Self::linear(0.0, 0.0, 0.0, 0.0);
-    pub const BLACK: Self = Self::linear(0.0, 0.0, 0.0, 1.0);
-    pub const WHITE: Self = Self::linear(1.0, 1.0, 1.0, 1.0);
+    pub const TRANSPARENT: Self = Self::srgb(0.0, 0.0, 0.0, 0.0);
+    pub const BLACK: Self = Self::srgb(0.0, 0.0, 0.0, 1.0);
+    pub const WHITE: Self = Self::srgb(1.0, 1.0, 1.0, 1.0);
 
-    /// A color whose components are already linear, in sRGB primaries.
-    pub const fn linear(r: f32, g: f32, b: f32, a: f32) -> Self {
+    /// A color whose components are linear light, encoded on the way in.
+    ///
+    /// A convenience rather than a second storage: there is one representation
+    /// here and it is encoded, so this applies the transfer function and keeps
+    /// the result. Zero and one are fixed points, so the primaries and the
+    /// grays at either end are the same number either way; a mid-tone is not.
+    pub fn linear(r: f32, g: f32, b: f32, a: f32) -> Self {
         Self {
-            r,
-            g,
-            b,
+            r: linear_to_srgb(r),
+            g: linear_to_srgb(g),
+            b: linear_to_srgb(b),
             a,
             space: ColorSpace::Srgb,
         }
@@ -94,16 +113,22 @@ impl Color {
         }
     }
 
-    /// A color given in sRGB, converted to linear.
+    /// A color given in sRGB, kept as it was given.
     ///
-    /// Alpha is not transformed: it is a coverage fraction rather than a
-    /// perceptual quantity, and applying a transfer function to it is a
-    /// classic source of washed-out edges.
-    pub fn srgb(r: f32, g: f32, b: f32, a: f32) -> Self {
+    /// The components stay in sRGB's transfer function for the whole of their
+    /// life here, which is what upstream does: a `DlColor` is built from bytes
+    /// with no decode, `skia_conversions::ToColor` copies it into the engine's
+    /// own `Color` unchanged, and no shader in `impeller/compiler/shader_lib`
+    /// applies a transfer function. Blending, filtering and coverage all act on
+    /// encoded numbers.
+    ///
+    /// Alpha is not subject to the transfer function at all: it is a coverage
+    /// fraction rather than a perceptual quantity.
+    pub const fn srgb(r: f32, g: f32, b: f32, a: f32) -> Self {
         Self {
-            r: srgb_to_linear(r),
-            g: srgb_to_linear(g),
-            b: srgb_to_linear(b),
+            r,
+            g,
+            b,
             a,
             space: ColorSpace::Srgb,
         }
@@ -119,11 +144,11 @@ impl Color {
     /// representation inside the sRGB primaries' triangle, and what
     /// [`Self::to_array`] gives for one has a component below zero. That is the
     /// color, stated in coordinates that cannot contain it.
-    pub fn display_p3(r: f32, g: f32, b: f32, a: f32) -> Self {
+    pub const fn display_p3(r: f32, g: f32, b: f32, a: f32) -> Self {
         Self {
-            r: srgb_to_linear(r),
-            g: srgb_to_linear(g),
-            b: srgb_to_linear(b),
+            r,
+            g,
+            b,
             a,
             space: ColorSpace::DisplayP3,
         }
@@ -141,8 +166,12 @@ impl Color {
 
     /// Back to sRGB, for reporting or for a caller that needs it.
     pub fn to_srgb(self) -> [f32; 4] {
-        let [r, g, b, a] = self.to_array();
-        [linear_to_srgb(r), linear_to_srgb(g), linear_to_srgb(b), a]
+        // The same thing [`Self::to_array`] gives, because the pipeline holds
+        // encoded components and there is nothing left to encode. Kept as its
+        // own name so a caller asking for sRGB reads as asking for sRGB, and so
+        // that the day the two stop meaning the same thing there is a place for
+        // the difference to go.
+        self.to_array()
     }
 
     /// Scale alpha, leaving the color itself alone.
@@ -217,10 +246,28 @@ fn apply(matrix: &[[f32; 3]; 3], c: [f32; 3]) -> [f32; 3] {
 /// `Srgb` and `ExtendedSrgb` name the same primaries, so anything between them
 /// is the identity and says so rather than multiplying by a matrix that is one.
 fn convert(from: ColorSpace, to: ColorSpace, c: [f32; 3]) -> [f32; 3] {
+    // A change of primaries is a rotation of light, so it happens in light and
+    // nowhere else: decode, apply the matrix, encode again. That is exactly
+    // what upstream's `p3ToExtendedSrgb` does, and it is the only place a
+    // transfer function is applied on the way through -- the value that comes
+    // out is encoded, like the one that went in.
+    let through_light = |m: &[[f32; 3]; 3], c: [f32; 3]| {
+        let linear = [
+            srgb_to_linear(c[0]),
+            srgb_to_linear(c[1]),
+            srgb_to_linear(c[2]),
+        ];
+        let rotated = apply(m, linear);
+        [
+            linear_to_srgb(rotated[0]),
+            linear_to_srgb(rotated[1]),
+            linear_to_srgb(rotated[2]),
+        ]
+    };
     match (from, to) {
         (ColorSpace::DisplayP3, ColorSpace::DisplayP3) => c,
-        (ColorSpace::DisplayP3, _) => apply(&P3_TO_SRGB, c),
-        (_, ColorSpace::DisplayP3) => apply(&SRGB_TO_P3, c),
+        (ColorSpace::DisplayP3, _) => through_light(&P3_TO_SRGB, c),
+        (_, ColorSpace::DisplayP3) => through_light(&SRGB_TO_P3, c),
         _ => c,
     }
 }
@@ -328,9 +375,11 @@ mod tests {
         let black = Color::rgba8(0, 0, 0, 255);
         assert!(close(black.r, 0.0));
 
-        // A mid gray from a design tool is not half linear.
+        // A mid gray from a design tool is kept as the design tool meant it.
+        // It used to be decoded here, and landed near a fifth; nothing decodes
+        // it now, so the byte and the component say the same thing.
         let gray = Color::rgba8(128, 128, 128, 255);
-        assert!(gray.r < 0.25, "sRGB 128 became {} linear", gray.r);
+        assert!(close(gray.r, 128.0 / 255.0), "sRGB 128 became {}", gray.r);
     }
 
     #[test]
@@ -550,10 +599,16 @@ mod tests {
     /// primaries, and saying so takes components below zero.
     #[test]
     fn a_display_p3_red_leaves_the_srgb_primaries() {
+        // Encoded, because that is what the pipeline carries and what
+        // upstream's `p3ToExtendedSrgb` returns. The rotation onto sRGB's
+        // primaries still happens in light -- it is a rotation of light and
+        // means nothing otherwise -- and the result is encoded again on the way
+        // out. The linear figures are the ones inside that conversion:
+        // (1.224940, -0.042057, -0.019638).
         let [r, g, b, a] = Color::display_p3(1.0, 0.0, 0.0, 1.0).to_array();
-        assert!(close(r, 1.224_940_2), "{r}");
-        assert!(close(g, -0.042_056_95), "{g}");
-        assert!(close(b, -0.019_637_55), "{b}");
+        assert!(close(r, 1.093_066), "{r}");
+        assert!(close(g, -0.226_742), "{g}");
+        assert!(close(b, -0.150_137), "{b}");
         assert_eq!(a, 1.0);
         // And re-encoded, which is the form a caller reads and the one the odd
         // extension of the transfer function decides.
@@ -582,7 +637,11 @@ mod tests {
     /// identity -- would look the same until it did not.
     #[test]
     fn the_two_srgb_spaces_describe_the_same_primaries() {
-        let wide = Color::linear(1.5, -0.2, 0.3, 1.0).with_space(ColorSpace::ExtendedSrgb);
+        // Stated in the space the components are carried in, so that what is
+        // being checked is the change of primaries and not the constructor:
+        // `Color::linear` encodes on the way in, and a test that used it here
+        // would compare an encoded value against the light it came from.
+        let wide = Color::srgb(1.5, -0.2, 0.3, 1.0).with_space(ColorSpace::ExtendedSrgb);
         assert_eq!(wide.to_array(), [1.5, -0.2, 0.3, 1.0]);
     }
 }

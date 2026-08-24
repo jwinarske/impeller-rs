@@ -601,23 +601,25 @@ past that the recorder evaluates the ramp into a small image and the shader
 reads the color at the parameter instead of computing it. That is the case above
 turned around rather than met: such a material wants a gradient's *mapping* and
 a binding, and no longer wants its stops at all, so the budget is not the
-constraint. The ramp is stored as linear half-floats and holds straight
-rather than premultiplied color. Both paths therefore hand the same shape of
+constraint. The ramp is stored as half-floats, encoded like everything else the
+pipeline carries, and holds straight rather than premultiplied color. Both paths therefore hand the same shape of
 value to the same premultiply at the end.
 
 That is what makes the choice between them invisible, and it survives
 dithering because both paths are dithered.
 
-It was stored through an sRGB format, so that eight bits would be spaced the way
-the eye reads them — linear eight-bit color bands in the darks. That argument
-was right and is *answered* rather than overridden: half has no fixed quantum,
-its precision being relative at about eleven bits of mantissa at every
-magnitude, so there are no longer eight bits to spend well and the perceptual
-spacing was buying what the format now gives everywhere. The reason for straight
-storage changed with it — a transfer function not commuting with multiplying by
-alpha no longer applies to a linear table — and the reason that survives is that
-`gradient_color` returns the same shape from both arms, so a premultiplied table
-would fork the two paths at the point the design exists to converge them.
+It was eight bits through an sRGB format once, and then linear half-floats, and
+the reasoning walked a full circle worth recording. Eight bits were spaced
+through the transfer function because eight bits of *linear* color band in the
+darks; then the table went linear and half, which answered that by having no
+fixed quantum to spend well; and now the values are encoded again because the
+pipeline is, so the perceptual spacing is back without the format arranging it.
+What half still buys is range — an eight-bit table cannot hold a component
+outside the sRGB primaries, and upstream's `kR8G8B8A8UNormInt` gradient texture
+cannot either. Straight rather than premultiplied storage survives all of it,
+because `gradient_color` returns the same shape from both arms and a
+premultiplied table would fork the two paths at the point the design exists to
+converge them.
 
 What the old format also could not do was hold a component the sRGB primaries
 cannot describe, and the invariant above quietly depended on it not having to.
@@ -648,16 +650,14 @@ mapping would leave nearly every gradient here on the side upstream nearly
 never takes. `docs/non-parity.md` records where this does knowingly differ.
 
 The amplitude cannot be compiled in, and this is where the interesting part is.
-A step is not one quantity: into a linear eight-bit surface it is a flat 1/255
-of light, and into an sRGB one the hardware encodes on write, so the step is a
-step of *encoded* value and the light it stands for varies across the range by
-about thirty times. Dithering a dark gradient into an sRGB target in light
-rather than in encoded value was measured at roughly six times *worse* than
-leaving it alone. So the offset is applied on whichever side the rounding
-happens on, and both formats come out tracking the unquantized gradient about
-nine times more closely than rounding alone, each in the range where it is the
-one with a problem — the linear surface in the darks, the sRGB one in the
-highlights.
+A step is one quantity, and that is what lets the rate be a constant. The
+pipeline carries encoded components and the target stores them untransformed, so
+a step is a flat 1/255 wherever it stands and `kDitherRate` is upstream's single
+`1.0 / 64.0`. It took an amplitude derived from the target and a space to apply
+it in while the values arriving were light, because a step of the target was
+then worth a different amount of light at every brightness — thirty times as
+much near black as near white. Nothing has to know that now. A float target
+still gets nothing, having no quantum to bridge.
 
 This looks like an exception to the rule that a conversion belongs to the target
 format rather than to a shader, and it is not one. Nothing requires the shader
@@ -1151,11 +1151,14 @@ minimum, which produces a swapchain one pixel across that behaves correctly in
 every other respect — it acquires, presents, cycles images and rebuilds, and
 only a test that reads pixels back notices.
 
-Surface formats are chosen sRGB where one is offered, with the linear formats
-kept as a fallback. Color is linear inside the renderer and the attachment
-format applies the transfer function, and the color space asked for is
-`SRGB_NONLINEAR` — which is the presentation engine being told the image already
-holds encoded values. An sRGB attachment is what encodes them on write.
+Surface formats are chosen plain where one is offered, with the sRGB formats
+kept as a last resort. The pipeline carries sRGB-encoded components all the way
+to this write, and the color space asked for is `SRGB_NONLINEAR` — which is the
+presentation engine being told the image already holds encoded values. It does,
+so nothing has to encode: a plain format hands the engine exactly the numbers it
+was promised, and an sRGB format would apply the transfer a second time and put
+every window over a third too bright at mid gray. This preferred sRGB while the
+renderer worked in light, which was right then and is exactly backwards now.
 
 This was the other way round, on reasoning that inverted itself: that an sRGB
 format would apply the transfer to values already carrying it. Linear values do
@@ -1862,8 +1865,9 @@ every fragment walks, which is the cost specialization would remove.
   quantization, SDF above a threshold size, COLR/CPAL color glyphs, and
   paging — a page boundary would split a glyph run into more than one draw,
   which is why growth was chosen over pages.
-- **Color**: linear f32 internally, in sRGB primaries with no range limit, with
-  sRGB conversion at the API boundary and at target write. Linear internally
+- **Color**: sRGB-encoded f32 throughout, in sRGB primaries with no range
+  limit, with no transfer function between the API boundary and the target
+  write. Encoded internally
   because blending and interpolation are operations on light: averaging two
   encoded bytes is not averaging the two colors, and a gradient built that way
   is visibly wrong in its middle. The conversion on the way out is the target

@@ -8,31 +8,21 @@
 //! honestly. This is the third answer: evaluate the ramp once on the way in and
 //! hand the shader an image of it, so the count stops mattering.
 //!
-//! # Why linear half-floats, and why straight alpha
+//! # Why half-floats, and why straight alpha
 //!
-//! The table is stored the way the walk produced it: linear, unclamped, four
-//! half-floats a texel.
+//! The table is stored the way the walk produced it: sRGB-encoded like
+//! everything else the pipeline carries, unclamped, four half-floats a texel.
 //!
-//! It was stored through an sRGB format, and for a good reason — eight bits of
-//! *linear* color band visibly in the darks, the eye's resolution not being
-//! uniform across the range, so spacing those eight bits by the transfer
-//! function spent them where they could be seen. That argument is *answered*
-//! rather than overridden. Half has no fixed quantum; its precision is
-//! relative, about eleven bits of mantissa at every magnitude, so there are no
-//! longer eight bits to spend well and the perceptual spacing was buying what
-//! the format now gives everywhere.
+//! Half rather than the eight bits upstream's gradient texture uses, and the
+//! reason is range rather than precision. An eight-bit table cannot hold a
+//! component outside the sRGB primaries at all, and a wide-gamut gradient has
+//! them. Upstream's table cannot carry one either; it reaches a table so rarely
+//! -- past two hundred and fifty-six stops -- that it has not had to.
 //!
-//! What the old format could not do at all was hold a component outside the
-//! sRGB primaries, and the invariant below quietly depended on never being
-//! asked to.
-//!
-//! The color is stored straight rather than premultiplied, and the reason for
-//! that changed with the format. It used to be that a transfer function does
-//! not commute with multiplying by alpha, so the multiply had to happen after
-//! the decode. A linear table has no decode. The reason that survives is the
-//! convergence: the shader premultiplies stops read from push constants at the
-//! very end, so a premultiplied table would fork the two paths at exactly the
-//! point this design exists to join them.
+//! The color is stored straight rather than premultiplied, because the shader
+//! premultiplies stops read from push constants at the very end. A
+//! premultiplied table would fork the two paths at exactly the point this
+//! design exists to join them.
 
 use crate::paint::GradientStop;
 
@@ -101,7 +91,7 @@ impl Ramp {
 /// the range a target could show.
 fn sample_at(stops: &[GradientStop], t: f32) -> crate::Color {
     let Some(first) = stops.first() else {
-        return crate::Color::linear(0.0, 0.0, 0.0, 0.0);
+        return crate::Color::TRANSPARENT;
     };
     let mut result = first.color;
     for pair in stops.windows(2) {
@@ -123,10 +113,18 @@ fn sample_at(stops: &[GradientStop], t: f32) -> crate::Color {
 /// obviously so, and one whose error grows with how far apart the two spaces
 /// are. `to_array` puts both against the primaries the pipeline works in, which
 /// is the same thing every other reader of a color does.
+/// Blend two stops, in the space the shader blends them in.
+///
+/// `to_array` hands back encoded components and `Color::srgb` takes encoded
+/// components, so the pair is a decompose and a recompose with nothing applied
+/// between them. Rebuilding with `Color::linear` would encode a second time,
+/// which is what it did for exactly as long as `to_array` returned light: the
+/// walked and tabulated halves of a gradient then disagreed by fifty-one
+/// levels, on the invariant the shared walk exists to provide.
 fn mix(a: crate::Color, b: crate::Color, t: f32) -> crate::Color {
     let [ar, ag, ab, aa] = a.to_array();
     let [br, bg, bb, ba] = b.to_array();
-    crate::Color::linear(
+    crate::Color::srgb(
         ar + (br - ar) * t,
         ag + (bg - ag) * t,
         ab + (bb - ab) * t,
@@ -143,7 +141,7 @@ mod tests {
         (0..n)
             .map(|i| {
                 let t = i as f32 / (n - 1) as f32;
-                GradientStop::new(Color::linear(t, 0.0, 1.0 - t, 1.0), t)
+                GradientStop::new(Color::srgb(t, 0.0, 1.0 - t, 1.0), t)
             })
             .collect()
     }
@@ -235,12 +233,14 @@ mod tests {
 
     #[test]
     fn the_table_holds_what_the_walk_produced() {
-        // Linear in, linear out, and no eight-bit step in between: the table
-        // stores the color rather than a rounding of an encoding of it. Both
-        // channels come back at a half because neither was transformed.
+        // In and out unchanged, with no eight-bit step in between: the table
+        // stores the color rather than a rounding of it. Both channels come
+        // back at a half because neither was transformed -- which is what makes
+        // the color one stated in the space the table holds, since a color
+        // stated in light would be encoded on the way in and would not.
         let ramp = Ramp::bake(&[
-            GradientStop::new(Color::linear(0.5, 0.5, 0.5, 0.5), 0.0),
-            GradientStop::new(Color::linear(0.5, 0.5, 0.5, 0.5), 1.0),
+            GradientStop::new(Color::srgb(0.5, 0.5, 0.5, 0.5), 0.0),
+            GradientStop::new(Color::srgb(0.5, 0.5, 0.5, 0.5), 1.0),
         ]);
         let t = texel(&ramp, RAMP_WIDTH / 2);
         assert!((t[0] - 0.5).abs() < 1e-3, "color came back {}", t[0]);
@@ -253,8 +253,8 @@ mod tests {
     #[test]
     fn a_stop_outside_the_srgb_primaries_survives_being_tabulated() {
         let ramp = Ramp::bake(&[
-            GradientStop::new(Color::linear(1.2, -0.3, 0.0, 1.0), 0.0),
-            GradientStop::new(Color::linear(1.2, -0.3, 0.0, 1.0), 1.0),
+            GradientStop::new(Color::srgb(1.2, -0.3, 0.0, 1.0), 0.0),
+            GradientStop::new(Color::srgb(1.2, -0.3, 0.0, 1.0), 1.0),
         ]);
         let t = texel(&ramp, RAMP_WIDTH / 2);
         assert!((t[0] - 1.2).abs() < 1e-2, "above one became {}", t[0]);

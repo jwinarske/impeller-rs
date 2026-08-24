@@ -694,12 +694,6 @@ vec4 dithered(vec4 color_1, vec2 frag_1) {
     }
     float _e25 = ordered_dither(frag_1);
     float offset_2 = (_e25 * amplitude);
-    float _e30 = _group_1_binding_0_fs.filter_params.w;
-    if ((_e30 > 0.5)) {
-        vec3 _e34 = linear_to_srgb(color_1.xyz);
-        vec3 _e37 = srgb_to_linear((_e34 + vec3(offset_2)));
-        return vec4(_e37, color_1.w);
-    }
     return vec4((color_1.xyz + vec3(offset_2)), color_1.w);
 }
 

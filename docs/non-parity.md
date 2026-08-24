@@ -11,6 +11,15 @@ Two things this file is not. It is not the list of what is *unbuilt*: that is
 list of bugs — everything here is deliberate, and a difference that turns out
 not to be deliberate belongs in a commit that removes it.
 
+Two entries left this file when the pipeline stopped working in light. Color was
+linear here and encoded upstream, which was the deepest difference recorded and
+the one most of the others followed from; and the dither's amplitude had to be
+derived from the target because a step of the target was worth a different
+amount of light at every brightness. Both are gone: the pipeline carries
+sRGB-encoded components from the API boundary to the target write, as upstream's
+does, and the dither is upstream's single `1.0 / 64.0`. What remains below is
+what did not follow from that.
+
 **Every upstream claim below was read at tip of tree**, in the `flutter/flutter`
 monorepo under `engine/src/flutter/impeller`, not from a checkout. A parity
 decision is worth exactly as much as the source it was read from, and a local
@@ -18,56 +27,52 @@ clone of unknown vintage can encode behavior upstream has since changed. Where
 a claim names a symbol or a file, that is what to re-read when checking whether
 this file has gone stale.
 
-## 1. The color pipeline is linear; upstream's is not
+## 1. Four stops fit in the paint block; upstream carries 256
 
-**What differs.** Everything here is linear light, with the transfer function
-applied at the API boundary and at the target write. Upstream applies no
-transfer function at all inside its pipeline: `impeller/compiler/shader_lib`
-contains no linear conversion, and the engine renders into
-`PixelFormat::kB8G8R8A8UNormInt` rather than the `SRGB` variants that exist
-beside it in `core/formats.h`. Its gradients interpolate, its blends composite,
-and its coverage multiplies encoded values as though they were linear, which is
-the behavior Skia has had for a long time. (`SRGBToLinear` does appear upstream,
-in `srgb_to_linear_filter_contents.cc` — that is `ColorFilter.srgbToLinearGamma`,
-an effect a caller asks for, not the space the pipeline works in.)
+**What differs.** Past `MAX_STOPS` — four — the recorder tabulates a gradient
+into a 256-texel ramp texture and the shader samples it. Upstream's
+`kMaxUniformGradientStops` is 256, and its storage-buffer path is bounded only
+by the buffer, so it walks stops in the shader for effectively every real
+gradient and reaches a texture only past 256 stops or on a device without either
+facility.
 
-**Why.** `architecture.md` argues it: blending, filtering and antialiasing are
-all averaging operations, and averaging encoded values is visibly too dark —
-the gray fringe around an antialiased edge on a light background is the usual
-symptom.
+**Why.** The paint block is one uniform block per draw and every member of it is
+a four-component vector; carrying 256 colors and 128 stop pairs would mean the
+dedicated secondary blocks upstream uses, which is a different design for the
+material rather than a larger one.
 
-**Impact.** This is the deepest difference here and most of the rest follow from
-it. For any input where two colors are mixed — a gradient's midpoint, a
-translucent composite, a partially covered edge, every tap of a blur — this
-renderer and upstream produce different numbers, and the difference is largest
-in the darks where the two spaces diverge most. A pixel-for-pixel comparison
-against upstream would not agree on any such pixel, so a comparison against
-upstream can only ever be a comparison of *shape*, and any parity claim about a
-color value has to be read with this in mind.
+**Impact.** A five-stop gradient allocates and samples a texture here where
+upstream would walk uniforms. The picture is meant to be the same, and is
+tested to one level per channel: the ramp holds exactly what the four-stop walk
+produces, so no quantization enters that the walk does not also have. The cost
+is an upload and a sampler binding per gradient past four stops, on a path
+upstream would not have taken.
 
-## 2. The dither's amplitude comes from the target
+Note the trap this sets, because it is easy to fall into and one commit here
+already did. Upstream's *texture* path does not dither, and reading that across
+to this renderer's ramp looks obviously right. It is backwards: upstream reaches
+its texture past 256 stops and this renderer reaches its ramp past four, so
+matching the mechanism would leave nearly every gradient here on the side
+upstream nearly never uses. Both paths are dithered for that reason.
 
-**What differs.** Upstream adds a fixed `kDitherRate = 1.0 / 64.0` to the
-premultiplied color, with no knowledge of what it is drawing into. Here the
-amplitude is four times the target format's quantization step, and it is applied
-in the space that target rounds in — on the encoded side for an sRGB surface,
-in light for a linear one, and not at all for a float one.
+## 2. The gradient ramp is half-float; upstream's is eight-bit
 
-**Why.** It follows from §1. Upstream can use one constant because its values
-are already encoded, so a quantization step is a flat 1/255 wherever it is
-standing. Here the shader holds linear light, and a step of the target is a step
-of the *encoded* value whose worth in light varies across the range by about
-thirty times. Measured, not argued: dithering a dark gradient into an sRGB
-target with a fixed amplitude in light tracks the ideal about six times *worse*
-than not dithering at all.
+**What differs.** `CreateGradientTexture` builds a
+`PixelFormat::kR8G8B8A8UNormInt` texture. This renderer's ramp is
+`Rgba16Float`. Both hold sRGB-encoded components; what differs is the precision
+they hold them at.
 
-**Impact.** Small, and zero in the common case. For an eight-bit target the
-amplitude works out to 4/255, which is upstream's 1/64 to within a rounding, so
-a gradient into the format almost everything uses is perturbed by the same
-amount upstream perturbs it by. It differs on a ten-bit target, where the
-amplitude scales down with the step instead of staying put, and on a float
-target, where upstream would still add 1/64 to a surface that has no
-quantization to break up.
+**Why.** Range rather than precision. An eight-bit table cannot hold a component
+outside the sRGB primaries at all, and a wide-gamut gradient has them — a
+Display P3 red restated against sRGB is `1.093` in red and negative in the other
+two. Upstream's table cannot carry that either, and reaches a table so rarely
+that it has not had to.
+
+**Impact.** Two kilobytes against one, per gradient past four stops. In exchange
+a gradient stated in Display P3 survives being tabulated, and the two gradient
+paths agree to a level rather than to twenty-four. It follows §1: upstream's
+texture path is a fallback past 256 stops where this one is the ordinary path
+past four, so a limitation upstream can live with is one this cannot.
 
 ## 3. Gradients are dithered on GLES
 
@@ -106,51 +111,7 @@ If upstream ever raises its GLES floor past 2.0, this entry should disappear
 rather than be re-argued: the divergence is entirely downstream of that one
 number.
 
-## 4. Four stops fit in the paint block; upstream carries 256
-
-**What differs.** Past `MAX_STOPS` — four — the recorder tabulates a gradient
-into a 256-texel ramp texture and the shader samples it. Upstream's
-`kMaxUniformGradientStops` is 256, and its storage-buffer path is bounded only
-by the buffer, so it walks stops in the shader for effectively every real
-gradient and reaches a texture only past 256 stops or on a device without either
-facility.
-
-**Why.** The paint block is one uniform block per draw and every member of it is
-a four-component vector; carrying 256 colors and 128 stop pairs would mean the
-dedicated secondary blocks upstream uses, which is a different design for the
-material rather than a larger one.
-
-**Impact.** A five-stop gradient allocates and samples a texture here where
-upstream would walk uniforms. The picture is meant to be the same, and is
-tested to one level per channel: the ramp holds exactly what the four-stop walk
-produces, in linear half-floats, so no quantization enters that the walk does
-not also have. The cost is an upload and a sampler binding per gradient past
-four stops, on a path upstream would not have taken.
-
-Note the trap this sets, because it is easy to fall into and one commit here
-already did. Upstream's *texture* path does not dither, and reading that across
-to this renderer's ramp looks obviously right. It is backwards: upstream reaches
-its texture past 256 stops and this renderer reaches its ramp past four, so
-matching the mechanism would leave nearly every gradient here on the side
-upstream nearly never uses. Both paths are dithered for that reason.
-
-## 5. The ramp is linear half-floats; upstream's is eight-bit
-
-**What differs.** `CreateGradientTexture` builds a
-`PixelFormat::kR8G8B8A8UNormInt` texture. This renderer's ramp is
-`Rgba16Float`, linear and unclamped.
-
-**Why.** It is the same argument as §1 arriving one level down. An eight-bit
-table cannot hold a component outside the sRGB primaries, and it was quantizing
-the walk's output — which produced a real defect, where adding a redundant stop
-to a gradient changed the picture by twenty-four levels once a color filter
-brought the difference back into range.
-
-**Impact.** Twice the memory for a ramp, which is 2 KiB against 1 KiB and not
-worth discussing. In exchange the two gradient paths agree, and a wide-gamut
-gradient survives being tabulated.
-
-## 6. Wide gamut is `Rgba16Float`, and is not presented
+## 4. Wide gamut is `Rgba16Float`, and is not presented
 
 **What differs.** Upstream renders wide-gamut content into `BGRA10_XR`, a Metal
 format that is extended-range ten-bit fixed point. Here the wide format is
@@ -170,7 +131,7 @@ difference. The pipeline carries the gamut and can be read back through it, but
 a caller cannot get a wide-gamut image onto a display through this renderer, and
 should not read the parity tables as saying otherwise.
 
-## 7. A shadow's elevation is in device pixels
+## 5. A shadow's elevation is in device pixels
 
 **What differs.** One thing, and it is not the blur's width, its color, or what
 it does with an occluder — those were all on this list and none is now.
@@ -213,7 +174,7 @@ and do give one and a third, and which size the shadow's bounds rather than draw
 it. Reading the wrong pair and skipping the conversion together made every
 shadow here about twice as soft as the same elevation gives upstream.
 
-## 8. A large blur is reduced by halving; upstream reduces in one step
+## 6. A large blur is reduced by halving; upstream reduces in one step
 
 **What differs.** Both shrink the image rather than spreading the taps once the
 kernel outgrows its budget, and both clamp the deviation at five hundred. The
@@ -237,7 +198,7 @@ sixteenth of the size, which is why it was worth having the reduction at all.
 The pictures agree: the reduction preserves light, checked at a deviation of
 twenty-four by the energy test, which takes this path.
 
-## 9. Operations that are absent
+## 7. Operations that are absent
 
 These are listed in [`parity.md`](parity.md) with their reasoning and are
 summarized here only so that this file is the one place to look.
@@ -256,7 +217,7 @@ summarized here only so that this file is the one place to look.
   *Impact:* the geometry is re-walked rather than the draws being replayed,
   which costs recording time on a repeated sub-picture.
 
-## 10. One thing that looks like a difference and is not
+## 8. One thing that looks like a difference and is not
 
 Worth stating because a reviewer raised it as a hole. **The advanced blend modes
 are defined on `[0, 1]` here and clip in `set_lum`,** which looks like an

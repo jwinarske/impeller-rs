@@ -75,13 +75,17 @@ fn combined(ctx: &mut Context, mode: BlendMode, tint: Color, under: Color) -> [u
 
 #[test]
 fn every_advanced_mode_agrees_with_the_reference_formulas() {
+    // Stated in sRGB, which is the space the blend happens in and therefore the
+    // space the reference below has to be computed in. `Color::linear` encodes
+    // on the way in, so a color written that way would be blended as a
+    // different number than the one the reference used.
     let Some(mut ctx) = context() else { return };
 
     // Opaque, because an advanced mode's compositing terms and its blend
     // function are separable only when both sides cover: with alpha in play a
     // disagreement could come from either and the test would not say which.
-    let tint = Color::linear(0.8, 0.35, 0.15, 1.0);
-    let under = Color::linear(0.25, 0.6, 0.9, 1.0);
+    let tint = Color::srgb(0.8, 0.35, 0.15, 1.0);
+    let under = Color::srgb(0.25, 0.6, 0.9, 1.0);
 
     let advanced = [
         BlendMode::Multiply,
@@ -129,8 +133,8 @@ fn an_advanced_mode_composites_as_well_as_blends() {
     // separately are the difference between right and plausible.
     let Some(mut ctx) = context() else { return };
 
-    let tint = Color::linear(0.8, 0.2, 0.1, 0.6);
-    let under = Color::linear(0.2, 0.7, 0.9, 0.4);
+    let tint = Color::srgb(0.8, 0.2, 0.1, 0.6);
+    let under = Color::srgb(0.2, 0.7, 0.9, 0.4);
     // Premultiplied, which is what the reference takes and the target stores.
     let src = [0.8 * 0.6, 0.2 * 0.6, 0.1 * 0.6, 0.6];
     let dst = [0.2 * 0.4, 0.7 * 0.4, 0.9 * 0.4, 0.4];

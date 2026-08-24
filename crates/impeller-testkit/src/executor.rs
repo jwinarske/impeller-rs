@@ -24,7 +24,8 @@ use impeller_geometry::dash::Dash;
 use impeller_hal::{Hal, HalContext, PixelFormat, Result, TextureDescriptor};
 
 fn color_of(c: [f32; 4]) -> Color {
-    Color::linear(c[0], c[1], c[2], c[3])
+    // Components that came out of a color go back in as they came out.
+    Color::srgb(c[0], c[1], c[2], c[3])
 }
 
 fn stops_of(stops: &[crate::scene::Stop]) -> Vec<GradientStop> {

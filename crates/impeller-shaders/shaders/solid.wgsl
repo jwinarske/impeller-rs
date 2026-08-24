@@ -1102,12 +1102,6 @@ fn dithered(color: vec4<f32>, frag: vec2<f32>) -> vec4<f32> {
         return color;
     }
     let offset = ordered_dither(frag) * amplitude;
-    if (paint.filter_params.w > 0.5) {
-        return vec4<f32>(
-            srgb_to_linear(linear_to_srgb(color.rgb) + vec3<f32>(offset)),
-            color.a,
-        );
-    }
     return vec4<f32>(color.rgb + vec3<f32>(offset), color.a);
 }
 
