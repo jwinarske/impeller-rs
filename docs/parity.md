@@ -110,7 +110,7 @@ reason.
 |---|---|---|---|
 | `color` | yes | `Paint::fill`. A color states which primaries it is against — sRGB, extended sRGB, or Display P3 — and converts between them; the pipeline works in linear sRGB primaries with no range limit, so a color the triangle cannot describe is carried rather than clipped, and reaches a floating-point target intact | `a_color_outside_the_srgb_primaries_reaches_a_floating_point_target` |
 | `style` | yes | `with_style` | `rect-fill`, `stroke-polygon-and-curve` |
-| `strokeWidth` | yes | `Style::Stroke` | `stroke-polygon-and-curve`, `rounded-rect-stroked` |
+| `strokeWidth` | yes | `Style::Stroke`, in the space the shape is drawn in. `dart:ui` documents zero as the thinnest line the device can draw; here it draws nothing, so that a caller animating a width down to it stops drawing rather than watching a shape refuse to vanish. A caller wanting a line that stays one pixel wide under zoom divides by the current scale | `stroke-polygon-and-curve`, `rounded-rect-stroked`, `a_shear_is_no_obstacle_to_a_thin_stroke_and_zero_still_means_none` |
 | `strokeCap` | yes | `StrokeStyle::cap` | `stroke-caps` |
 | `strokeJoin` | yes | `StrokeStyle::join` | `stroke-joins` |
 | `strokeMiterLimit` | yes | `StrokeStyle::miter_limit` | `stroke-joins` |

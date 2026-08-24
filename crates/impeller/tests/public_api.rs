@@ -11851,3 +11851,47 @@ fn a_mask_blur_over_a_gradient_matches_what_a_caller_would_assemble() {
         "the gradient did not survive: {left:?} against {right:?}"
     );
 }
+
+/// A thin stroke under a shear draws, and a stroke of no width does not.
+///
+/// Worth pinning together, because the inventory once put a scene out of reach
+/// with "a hairline skew" and the two halves of that are different questions. A
+/// shear is not the difficulty -- half a pixel of width under one draws exactly
+/// as it should. What this renderer does not have is `strokeWidth` of zero
+/// meaning the thinnest line the device can draw, which is what `dart:ui`
+/// documents it as: here it means no line, deliberately, so that a caller
+/// animating a width down to nothing stops drawing rather than watching a
+/// shape refuse to disappear.
+#[test]
+fn a_shear_is_no_obstacle_to_a_thin_stroke_and_zero_still_means_none() {
+    let Some(mut ctx) = context() else { return };
+    let sheared = |ctx: &mut Context, width: f32| {
+        let mut canvas = Canvas::new(SIZE);
+        canvas.clear(Color::BLACK);
+        let mut skew = Affine2::IDENTITY;
+        skew.matrix2.y_axis.x = 0.5;
+        canvas.concat(skew);
+        let mut b = PathBuilder::new();
+        b.move_to(Vec2::new(20.0, 20.0))
+            .line_to(Vec2::new(20.0, 100.0));
+        canvas
+            .draw_path(&b.build(), &Paint::stroke(Color::WHITE, width))
+            .expect("a stroke under a shear");
+        let pixels = render(ctx, canvas);
+        (0..128u32)
+            .flat_map(|x| (0..128u32).map(move |y| (x, y)))
+            .filter(|(x, y)| pixel(&pixels, *x, *y)[0] > 20)
+            .count()
+    };
+
+    assert!(
+        sheared(&mut ctx, 0.5) > 40,
+        "half a pixel of width under a shear should still draw a line"
+    );
+    assert_eq!(
+        sheared(&mut ctx, 0.0),
+        0,
+        "a width of zero draws nothing, which is this renderer's own choice \
+         rather than an inability to draw something thin"
+    );
+}

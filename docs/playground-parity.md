@@ -44,7 +44,9 @@ drifts from what it inventories is worse than none.
 
 The last column says what stops the rest, and it is worth reading with some
 suspicion: an entry there is a claim about this renderer, and a claim nobody
-tests goes stale quietly. Four of them have now. Blurs under rotation and
+tests goes stale quietly. Six of them have now, and the two most recent
+were written by whoever was checking the others -- which is the argument for
+the suspicion rather than against it. Blurs under rotation and
 clipping together were listed as blocked and were merely unwritten -- both
 render, and both agree across the backends. Mipmapped cases were genuinely
 blocked and are not any more. Runtime effects were listed as blocking the
@@ -60,6 +62,23 @@ the API can do, and the cross-backend comparison is the thing being missed:
 the only bug found so far in a backend's sampler bindings passed every test
 on the other backend and was caught by a plate.
 
+The two recent ones were of different kinds. "Wide gamut" went stale twice
+over: the pipeline gained one, and while that was being written this document
+said in the same breath that dithering was the only capability missing, which
+was a contradiction no test here could see. "Mask blurs over a gradient" was
+true when written and was then declared blocked on a decision that turned out
+not to exist -- a mesh is refused elsewhere, a glyph run tints one color
+whatever is done to it, and what was left was a shape with a fill that varies,
+which is well defined and is now built.
+
+"A hairline skew" survives as an obstacle but not as a description. A shear is
+no difficulty: half a pixel of width under one draws exactly as it should, and
+a test says so. What that scene wants is a stroke width of zero meaning the
+thinnest line a device can draw, which is what `dart:ui` documents and is not
+what it means here -- so it is a row of `docs/parity.md` rather than a gap in
+the catalog, and upstream's own handling of it is unsettled enough that copying
+it is not the obvious move.
+
 | File | Scenes there | Here | Blocked on |
 |---|---|---|---|
 | `aiks_dl_basic_unittests.cc` | ~85 | 42 | superellipses, subpass optimizations |
@@ -68,11 +87,11 @@ on the other backend and was caught by a plate.
 | `aiks_dl_clip_unittests.cc` | ~5 | 6 | nothing; this file is covered |
 | `aiks_dl_opacity_unittests.cc` | ~3 | 2 | subpass collapse |
 | `aiks_dl_blend_unittests.cc` | ~79 | 36 | framebuffer fetch, subpass collapse |
-| `aiks_dl_blur_unittests.cc` | ~59 | 26 | backdrop identity keys, mask blurs over a gradient |
+| `aiks_dl_blur_unittests.cc` | ~59 | 26 | backdrop identity keys |
 | `aiks_dl_vertices_unittests.cc` | ~16 | 18 | mask filters on a mesh |
 | `aiks_dl_atlas_unittests.cc` | ~15 | 9 | nothing named; see below |
 | `aiks_dl_shadow_unittests.cc` | ~30 | 12 | a convex-shadow optimization this renderer does not have |
-| `aiks_dl_primitive_shape_unittests.cc` | ~2 | 0 | one is a playground harness, one is a hairline skew |
+| `aiks_dl_primitive_shape_unittests.cc` | ~2 | 0 | one is a playground harness, one wants a stroke width of zero to mean a hairline |
 | `aiks_dl_text_unittests.cc` | — | 5 | shaping and font parsing, which are out of scope; glyph rendering is not, and these use synthetic coverage |
 | `aiks_dl_runtime_effect_unittests.cc` | — | 5 | bounded by having two fixture programs rather than by the renderer |
 | `aiks_dl_unittests.cc` | ~39 | 10 | mostly internal optimizations; the picture cases are here now |
