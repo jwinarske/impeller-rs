@@ -7306,8 +7306,15 @@ fn a_shadow_falls_below_what_casts_it_and_widens_with_elevation() {
     // Beside the card, where the offset does not reach and only the blur can.
     // Without this the test passes on a shadow whose softness ignores the
     // elevation entirely, since moving it down alone darkens the ground below.
-    let beside_low = pixel(&low, 30, 60)[0] as i32;
-    let beside_high = pixel(&high, 30, 60)[0] as i32;
+    //
+    // Six pixels out rather than ten. Elevation gives a kernel radius and the
+    // blur takes a deviation, and while those were treated as the same number
+    // every shadow was about twice as soft as it should be -- so the place the
+    // two elevations separate most sat further from the card than it does now.
+    // Measured across the profile: at ten pixels out the corrected blurs
+    // differ by five levels, and at six by twelve.
+    let beside_low = pixel(&low, 34, 60)[0] as i32;
+    let beside_high = pixel(&high, 34, 60)[0] as i32;
     assert!(
         beside_high < beside_low - 8,
         "raising the object should spread its shadow sideways too: {beside_low} then {beside_high}"

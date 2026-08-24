@@ -2267,7 +2267,10 @@ impl Canvas {
             return Ok(self);
         }
 
-        let sigma = LIGHT_RATIO * elevation;
+        // Elevation gives a kernel radius, which the blur takes as a
+        // deviation only after converting. Skipping the conversion is the
+        // larger half of what made a shadow here twice as soft as upstream's.
+        let sigma = sigma_for_radius(LIGHT_RADIUS * elevation);
         let shade = Color::linear(
             color.to_array()[0],
             color.to_array()[1],
@@ -3561,17 +3564,48 @@ fn circle_path(center: Vec2, radius: f32) -> Path {
     b.build()
 }
 
-/// How far a shadow's blur spreads per unit of elevation.
+/// How far a shadow's blur reaches per unit of elevation, as a kernel radius.
 ///
 /// The light's radius over its height, which is the ratio that decides how
-/// quickly a shadow softens as its caster rises. Impeller writes the same
-/// quantity as `800 / 600` -- and in C++ those are integer literals, so the
-/// constant there evaluates to one rather than to the one and a third its own
-/// comment describes. This uses the ratio the comment states, so a shadow here
-/// is a third wider at the same elevation. Recorded rather than matched
-/// silently: replicating an apparent typo and correcting one are both
-/// decisions, and neither should be made without saying so.
-const LIGHT_RATIO: f32 = 800.0 / 600.0;
+/// quickly a shadow softens as its caster rises. Upstream writes it
+/// `constexpr Scalar kLightRadius = 800 / 600;` in the dispatcher that draws
+/// the shadow, and those are integer literals: the division happens in `int`
+/// and the constant is one, not the one and a third the comment beside it
+/// describes.
+///
+/// One is what this uses, because parity is against what upstream does rather
+/// than against what it appears to have meant. This did carry the ratio the
+/// comment states, and combined with reading the result as a deviation instead
+/// of a radius it made every shadow here about twice as soft as the same
+/// elevation gives upstream.
+///
+/// Note that `DlCanvas` has a second pair of these, `kShadowLightRadius` over
+/// `kShadowLightHeight`, which are `DlScalar` and so do divide to one and a
+/// third. Those size the shadow's *bounds*; this one draws it. Reading the
+/// wrong pair is easy and gives a shadow a third too wide.
+const LIGHT_RADIUS: f32 = 1.0;
+
+/// Kernel radius per deviation, for turning one into the other.
+///
+/// The square root of three, matching upstream's `kKernelRadiusPerSigma`. A
+/// shadow's elevation gives a radius, and the blur takes a deviation, so the
+/// conversion is not optional -- and upstream's is affine rather than a plain
+/// scale, adding half a pixel so that a radius shrinking to nothing still
+/// leaves a deviation the blur can act on.
+const KERNEL_RADIUS_PER_SIGMA: f32 = 1.732_050_8;
+
+/// The deviation upstream blurs a shadow of this radius by.
+///
+/// `Radius::operator Sigma` in `impeller/geometry/sigma.cc`, which is
+/// `radius / kKernelRadiusPerSigma + 0.5` for a positive radius and zero
+/// otherwise.
+fn sigma_for_radius(radius: f32) -> f32 {
+    if radius > 0.0 {
+        radius / KERNEL_RADIUS_PER_SIGMA + 0.5
+    } else {
+        0.0
+    }
+}
 
 /// What fraction of the stated color's alpha a shadow is drawn at.
 ///

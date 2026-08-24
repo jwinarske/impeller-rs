@@ -154,7 +154,46 @@ difference. The pipeline carries the gamut and can be read back through it, but
 a caller cannot get a wide-gamut image onto a display through this renderer, and
 should not read the parity tables as saying otherwise.
 
-## 7. Operations that are absent
+## 7. A shadow is one blurred shape, and carries no device pixel ratio
+
+**What differs.** Four things, none of them the blur's width — that part was
+wrong until recently and now matches. `DlDispatcherBase::drawShadow` takes a
+`dpr` and computes `occluder_z = dpr * elevation`; there is no such parameter
+here and the elevation is used as given. It divides the deviation by
+`GetCurrentTransform().GetScale().y`, so the softness is fixed in device space
+under a scaled canvas, which this does not do. It remaps the shadow's color
+through a port of `SkShadowUtils::ComputeTonalColors` after taking the alpha to
+a quarter, which this does not. And it takes a `transparent_occluder` flag its
+drawing code never reads, where this one branches on it and punches the caster's
+outline out of the shadow beneath it.
+
+**Why.** The first is an API difference: `dpr` is supplied by the engine
+upstream rather than by the caller, and this renderer has no notion of logical
+pixels to convert from. The last is a deliberate addition — the part of a shadow
+its caster covers is spent, and removing it matters for a caster that is not
+opaque. The middle two are unbuilt rather than declined.
+
+**Impact.** The device pixel ratio and the transform scale are both identity in
+the common case and neither shows until a caller scales the canvas or works in
+logical pixels, at which point the shadow is the wrong softness — by exactly the
+scale factor. The tonal remap is identity for a *black* shadow, which is what
+almost everything asks for: at zero luminance the color scale falls out and the
+alpha is left at the quarter both apply. It differs for a colored one, in both
+hue and alpha. The punched-out occluder is invisible wherever an opaque caster
+is drawn over its own shadow, which is the usual arrangement.
+
+Worth recording how the blur width was wrong, since the shape of the mistake is
+more useful than the number. Elevation gives a kernel *radius*, and the blur
+takes a *deviation*; upstream converts with `radius / sqrt(3) + 0.5`, and that
+conversion was simply missing. Compounding it, the light ratio was read as
+`800.0 / 600.0`. Upstream's dispatcher writes `constexpr Scalar kLightRadius =
+800 / 600` with integer literals, so its value is one — while `DlCanvas` has a
+*second* pair, `kShadowLightRadius` over `kShadowLightHeight`, which are floats
+and do give one and a third, and which size the shadow's bounds rather than draw
+it. Reading the wrong pair and skipping the conversion together made every
+shadow here about twice as soft as the same elevation gives upstream.
+
+## 8. Operations that are absent
 
 These are listed in [`parity.md`](parity.md) with their reasoning and are
 summarized here only so that this file is the one place to look.
@@ -173,7 +212,7 @@ summarized here only so that this file is the one place to look.
   *Impact:* the geometry is re-walked rather than the draws being replayed,
   which costs recording time on a repeated sub-picture.
 
-## 8. One thing that looks like a difference and is not
+## 9. One thing that looks like a difference and is not
 
 Worth stating because a reviewer raised it as a hole. **The advanced blend modes
 are defined on `[0, 1]` here and clip in `set_lum`,** which looks like an
