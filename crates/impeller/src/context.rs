@@ -144,7 +144,8 @@ impl Context {
     /// Allocate an image this context can sample.
     ///
     /// The format decides how the bytes written into it are read, and the
-    /// choice is not cosmetic. Color inside the renderer is linear, and an
+    /// choice is not cosmetic -- though it now points the other way. Color
+    /// inside the renderer is sRGB-encoded, and an
     /// Register a fragment program a caller's own build produced.
     ///
     /// Returns the index to name it by, which is what goes into
@@ -167,14 +168,18 @@ impl Context {
         }
     }
 
-    /// sRGB format decodes on sample -- so a picture, whose bytes are
-    /// sRGB-encoded because that is what every image file holds, wants
-    /// [`PixelFormat::Rgba8UnormSrgb`] and comes out washed pale without it.
-    /// A linear format is right for data that is not color: coverage, a mask,
-    /// a lookup table, anything whose numbers mean themselves.
+    /// sRGB format decodes on sample. A picture's bytes are sRGB-encoded,
+    /// because that is what every image file holds, and the pipeline wants them
+    /// encoded -- so a picture wants a *plain* format, and
+    /// [`PixelFormat::Rgba8UnormSrgb`] would decode it into light that nothing
+    /// downstream is expecting and wash it pale. Plain is also right for data
+    /// that is not color at all: coverage, a mask, a lookup table, anything
+    /// whose numbers mean themselves.
     ///
-    /// Neither choice is detectable afterwards, which is why it is stated here.
-    /// Both produce an image; only one produces the right picture.
+    /// This advice was the reverse of itself while the renderer worked in
+    /// light, and neither choice is detectable afterwards, which is why it is
+    /// stated here. Both produce an image; only one produces the right
+    /// picture.
     pub fn create_image(&mut self, extent: Extent2D, format: PixelFormat) -> Result<Image> {
         let descriptor = impeller_hal::TextureDescriptor::offscreen(extent, format);
         match self {

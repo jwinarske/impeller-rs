@@ -499,22 +499,28 @@ where
 
 /// Map a scanout format code onto the renderer's format.
 ///
-/// The eight-bit codes map to their sRGB variants. A format code describes how
+/// The eight-bit codes map to their plain variants. A format code describes how
 /// bytes are laid out and says nothing about what they mean, and a display
-/// controller scanning out eight-bit color reads them as sRGB-encoded -- so
-/// the renderer's linear output has to be encoded on the way in, which is what
-/// an sRGB image view does and costs nothing. Rendering into a linear view and
-/// scanning that out puts linear light in front of a display expecting encoded,
-/// which is a picture a little over a third too dark at mid gray.
+/// controller scanning out eight-bit color reads them as sRGB-encoded -- which
+/// is exactly what the renderer produces, from the API boundary to this write.
+/// Nothing has to encode, so nothing should: an sRGB image view would apply the
+/// transfer a second time and put a picture over a third too bright at mid gray
+/// in front of the display.
 ///
-/// The ten-bit code has no sRGB variant to map to and is left alone. Deep
+/// These mapped to the sRGB variants while the renderer worked in light, and
+/// the reasoning was sound then and is exactly backwards now. It is the same
+/// inversion the Vulkan swapchain's format preference went through, for the
+/// same reason, and it is worth noticing that both of them read as obviously
+/// correct in either direction depending on one fact stated somewhere else.
+///
+/// The ten-bit code has no sRGB variant either way and is left alone. Deep
 /// color scanout generally carries its transfer function out of band, so
-/// guessing one here would be the same mistake in the other direction.
+/// guessing one here would be a mistake in a third direction.
 fn pixel_format_for(fourcc: impeller_hal::Fourcc) -> Result<PixelFormat> {
     use impeller_hal::Fourcc;
     Ok(match fourcc {
-        f if f == Fourcc::ARGB8888 || f == Fourcc::XRGB8888 => PixelFormat::Bgra8UnormSrgb,
-        f if f == Fourcc::ABGR8888 || f == Fourcc::XBGR8888 => PixelFormat::Rgba8UnormSrgb,
+        f if f == Fourcc::ARGB8888 || f == Fourcc::XRGB8888 => PixelFormat::Bgra8Unorm,
+        f if f == Fourcc::ABGR8888 || f == Fourcc::XBGR8888 => PixelFormat::Rgba8Unorm,
         f if f == Fourcc::XRGB2101010 || f == Fourcc::ARGB2101010 => PixelFormat::Rgb10A2Unorm,
         _ => {
             return Err(Error::Unsupported(
@@ -530,13 +536,13 @@ mod format_tests {
     use impeller_hal::Fourcc;
 
     #[test]
-    fn eight_bit_scanout_is_rendered_through_an_srgb_view() {
+    fn eight_bit_scanout_is_rendered_through_a_plain_view() {
         // A display controller reads eight-bit scanout as sRGB-encoded, and the
-        // renderer's colors are linear, so the encode has to happen somewhere.
-        // An sRGB image view does it on write for nothing; a linear one leaves
-        // the display reading linear light as though it were encoded, which is
-        // a picture a little over a third too dark at mid gray and wrong in a
-        // way that never announces itself.
+        // renderer produces sRGB-encoded color, so no encode has to happen
+        // anywhere. A plain image view hands the controller the bytes it was
+        // promised; an sRGB one would encode them a second time, which is a
+        // picture over a third too bright at mid gray and wrong in a way that
+        // never announces itself.
         //
         // The format code is unchanged by this. It describes how bytes sit in
         // memory and says nothing about what they mean, which is why the two
@@ -544,13 +550,13 @@ mod format_tests {
         for fourcc in [Fourcc::ARGB8888, Fourcc::XRGB8888] {
             assert_eq!(
                 pixel_format_for(fourcc).expect("supported"),
-                PixelFormat::Bgra8UnormSrgb
+                PixelFormat::Bgra8Unorm
             );
         }
         for fourcc in [Fourcc::ABGR8888, Fourcc::XBGR8888] {
             assert_eq!(
                 pixel_format_for(fourcc).expect("supported"),
-                PixelFormat::Rgba8UnormSrgb
+                PixelFormat::Rgba8Unorm
             );
         }
     }

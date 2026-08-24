@@ -31,8 +31,9 @@ impl Extent2D {
 
 /// Pixel formats the renderer can target.
 ///
-/// Color is linear f32 internally; these describe storage at the API boundary
-/// and at target write.
+/// Color is sRGB-encoded f32 internally; these describe storage at the API
+/// boundary and at target write, and no transfer function sits between the
+/// two.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum PixelFormat {
     /// 8-bit RGBA, unsigned normalized.
@@ -83,14 +84,17 @@ impl PixelFormat {
     /// opacity -- a value that gets composited -- rather than a scanout channel
     /// nothing reads back.
     ///
-    /// An sRGB root gives an sRGB layer, and that is not cosmetic. Eight bits
-    /// of *linear* color band visibly in the darks, which is the argument this
-    /// tree already makes about a gradient ramp and which is stronger for a
-    /// full-frame layer than for a 256-texel table: a dark ramp resolving forty
-    /// distinct tones drawn straight into an sRGB frame came back as six
-    /// through a layer that held linear eight-bit color. Spacing a layer's bits
-    /// the way the frame spaces its own costs exactly the same memory and the
-    /// same bandwidth.
+    /// Never an sRGB format, whatever the root is. The pipeline carries encoded
+    /// components, so a target that encodes on write would encode them a second
+    /// time and a layer would come back paler than the same content drawn
+    /// straight onto the frame.
+    ///
+    /// This followed the root for a while, and was right to: color was light
+    /// then, eight bits of *linear* color band visibly in the darks, and a dark
+    /// ramp resolving forty distinct tones drawn straight into an sRGB frame
+    /// came back as six through a layer holding linear eight-bit color. Neither
+    /// half of that can happen now -- a layer's eight bits are spaced by the
+    /// transfer function because the values arriving already are.
     pub const fn intermediate(self) -> Self {
         match self {
             Self::Rgba16Float => Self::Rgba16Float,

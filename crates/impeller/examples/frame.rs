@@ -33,12 +33,17 @@ const SIZE: Extent2D = Extent2D {
 
 /// The surface format, which is what makes the written file look right.
 ///
-/// Colors are linear inside the renderer, because blending and interpolation
-/// are operations on light. A file is not: every viewer reads one as sRGB. An
-/// sRGB surface encodes on write, so the bytes that come back are the ones a
-/// viewer expects — and this example rendered into a linear surface for a long
-/// time and produced an image that was correct arithmetic and far too dark.
-const FORMAT: PixelFormat = PixelFormat::Rgba8UnormSrgb;
+/// Colors are sRGB-encoded inside the renderer, and a file is read as sRGB by
+/// every viewer, so the bytes the renderer produces are already the bytes a
+/// viewer expects. A plain surface writes them through unchanged.
+///
+/// An sRGB surface encodes on write, which is right when the values arriving
+/// are light and wrong when they are not. This example rendered into a linear
+/// surface once and produced a picture far too dark; it then rendered into an
+/// sRGB one, which was right until the pipeline stopped carrying light, and
+/// would now be far too bright. The format has to match what the pipeline
+/// holds, and the pipeline says so in one place: `Color`.
+const FORMAT: PixelFormat = PixelFormat::Rgba8Unorm;
 
 fn main() {
     let path = std::env::args()
@@ -74,7 +79,7 @@ fn main() {
     // picks in -- as is every image file. The format is what decodes them on
     // sample; read as linear they come out pale, which is what this did.
     let mut swatch = ctx
-        .create_image(Extent2D::new(2, 2), PixelFormat::Rgba8UnormSrgb)
+        .create_image(Extent2D::new(2, 2), PixelFormat::Rgba8Unorm)
         .expect("swatch image");
     // Premultiplied, which is what a texture holds. These are opaque, so the
     // two conventions agree — the distinction only shows once alpha is
