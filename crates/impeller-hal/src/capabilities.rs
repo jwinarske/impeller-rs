@@ -182,6 +182,20 @@ impl Capabilities {
     /// framebuffer-incomplete number on one backend and a driver error on the
     /// other, neither of which names what was missing.
     pub fn check_texture(&self, desc: &crate::TextureDescriptor) -> crate::Result<()> {
+        // Refused for every device rather than for some, because this is not a
+        // capability: the pipeline carries sRGB-encoded components, so a target
+        // that applies the transfer on write applies it twice and the picture
+        // comes back over a third too bright. See `PixelFormat::is_drawable`.
+        //
+        // Only a render target. Sampling one decodes, which is also not what an
+        // encoded pipeline wants, but a caller may have data this is right for
+        // and `Context::create_image` says which format a picture wants. Drawing
+        // into one has no reading under which it is correct.
+        if desc.usage.render_target && !desc.format.is_drawable() {
+            return Err(crate::Error::Unsupported(
+                "an sRGB render target; this pipeline already holds encoded                  color and the format would encode it a second time",
+            ));
+        }
         if desc.usage.render_target
             && desc.format == crate::PixelFormat::Rgba16Float
             && !self.float_render_targets

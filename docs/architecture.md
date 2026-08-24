@@ -1867,7 +1867,10 @@ every fragment walks, which is the cost specialization would remove.
   which is why growth was chosen over pages.
 - **Color**: sRGB-encoded f32 throughout, in sRGB primaries with no range
   limit, with no transfer function between the API boundary and the target
-  write. Encoded internally
+  write. An sRGB render target is refused for every device rather than for
+  some, because a format that encodes on write would encode what is already
+  encoded; `PixelFormat::is_drawable` states that once and the three places
+  that pick a target consult it. Encoded internally
   because blending and interpolation are operations on light: averaging two
   encoded bytes is not averaging the two colors, and a gradient built that way
   is visibly wrong in its middle. The conversion on the way out is the target

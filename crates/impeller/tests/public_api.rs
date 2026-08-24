@@ -1022,18 +1022,6 @@ fn every_backend() -> Vec<Context> {
         .collect()
 }
 
-/// Fill a surface of the given format with one color and read a texel back.
-fn flat_fill(ctx: &mut Context, format: PixelFormat, color: Color) -> [u8; 4] {
-    let extent = Extent2D::new(16, 16);
-    let mut canvas = Canvas::new(extent);
-    canvas.clear(color);
-    let mut surface = ctx.create_surface(extent, format).expect("surface");
-    ctx.draw(&mut surface, &canvas.finish()).expect("draw");
-    let pixels = ctx.read(&mut surface).expect("read");
-    ctx.destroy_surface(surface);
-    [pixels[0], pixels[1], pixels[2], pixels[3]]
-}
-
 /// No sRGB format is reached for by anything that draws or samples.
 ///
 /// Three tests used to live here, and all three asked what an sRGB format does
@@ -1080,27 +1068,55 @@ fn an_intermediate_is_never_given_an_srgb_format() {
     );
 }
 
+/// Both backends refuse an sRGB surface, and refuse it the same way.
+///
+/// This used to check that they *agreed* on one: two implementations of the
+/// same conversion, one asking for an image view in the sRGB form of a format
+/// and the other attaching a texture whose format carries it with no separate
+/// control, either of which would look plausible alone and disagree by the
+/// transfer function.
+///
+/// There is no conversion left for them to disagree about. The pipeline carries
+/// encoded components, so a target that encodes on write would encode them
+/// twice, and drawing into one has no reading under which it is correct --
+/// so it is refused rather than quietly producing a picture over a third too
+/// bright. What matters now is that both refuse, because a capability present
+/// on one backend and absent on the other is the divergence this file exists
+/// to catch, whichever direction it runs in.
 #[test]
-fn the_backends_agree_on_an_srgb_surface() {
-    // Two implementations converting differently is the failure this is for:
-    // one applying the transfer in the shader and one leaving it to the
-    // format would each look plausible alone and disagree by the transfer.
+fn both_backends_refuse_an_srgb_surface() {
     let mut contexts = every_backend();
     if contexts.len() < 2 {
         eprintln!("skipping: both backends are needed");
         return;
     }
-    let color = Color::srgb(0.42, 0.17, 0.73, 1.0);
-    let first = flat_fill(&mut contexts[0], PixelFormat::Rgba8UnormSrgb, color);
-    for ctx in &mut contexts[1..] {
-        let got = flat_fill(ctx, PixelFormat::Rgba8UnormSrgb, color);
-        assert_eq!(got, first, "the backends disagree on an sRGB surface");
+    for ctx in &mut contexts {
+        let backend = ctx.backend();
+        let outcome = ctx.create_surface(SIZE, PixelFormat::Rgba8UnormSrgb);
+        match outcome {
+            Ok(surface) => {
+                ctx.destroy_surface(surface);
+                panic!("{backend} allowed an sRGB surface, which would encode twice");
+            }
+            Err(Error::Unsupported(message)) => {
+                assert!(
+                    message.contains("encode"),
+                    "{backend} refused for a reason that is not this one: {message}"
+                );
+            }
+            Err(e) => panic!("{backend} refused an sRGB surface wrongly: {e}"),
+        }
     }
-    // Not gray, so a channel swapped on the way through would show.
-    assert!(
-        first[0] != first[1] || first[1] != first[2],
-        "the test color came back gray, so a channel swap would be invisible"
-    );
+
+    // And a plain one is still allowed, or the check above would pass on a
+    // backend that refuses every surface it is offered.
+    for ctx in &mut contexts {
+        let backend = ctx.backend();
+        let surface = ctx
+            .create_surface(SIZE, PixelFormat::Rgba8Unorm)
+            .unwrap_or_else(|e| panic!("{backend} refused a plain surface: {e}"));
+        ctx.destroy_surface(surface);
+    }
 }
 
 /// Nest `count` identical stencil clips, draw, and return what came back.

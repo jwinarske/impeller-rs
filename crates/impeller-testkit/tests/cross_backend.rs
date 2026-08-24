@@ -10,12 +10,12 @@
 //! translation that diverged would show up here rather than as a report from
 //! whoever ran the other backend first.
 
-use impeller_hal::{Hal, HalContext, PixelFormat};
+use impeller_hal::{Hal, HalContext};
 use impeller_hal_gles::Validated as GlesValidated;
 use impeller_hal_gles::{DisplayTarget, GlesHal};
 use impeller_hal_vulkan::Validated;
 use impeller_hal_vulkan::{DevicePreference, VulkanHal};
-use impeller_testkit::{accepts, catalog, compare, corpus, render_scene, render_scene_into, Scene};
+use impeller_testkit::{accepts, catalog, compare, corpus, render_scene, Scene};
 
 #[test]
 fn the_corpus_matches_across_backends() {
@@ -379,63 +379,4 @@ fn a_feature_a_scene_asks_for_has_to_change_the_picture() {
         "no scene in either list carries a feature, which cannot be right"
     );
     eprintln!("checked {checked} scene(s) for a feature that does nothing");
-}
-
-#[test]
-fn the_corpus_matches_across_backends_on_a_target_that_encodes_on_write() {
-    // Everything else here renders into linear eight-bit color, so the path
-    // where the attachment applies the transfer function on write is exercised
-    // by a handful of targeted tests and by nothing else in the corpus. The two
-    // backends reach that path by different means -- one asks for an image view
-    // in the sRGB form of the format, the other attaches a texture whose own
-    // format carries it and has no separate control over whether encoding
-    // happens -- and two implementations of one conversion is exactly what a
-    // comparison between backends is for.
-    //
-    // The color policy rests on this: linear light the whole way and only the
-    // final write encoded. A backend that converted early, twice, or not at all
-    // would still round-trip its own output and would differ from the other one
-    // here.
-    let Ok(mut vulkan) = Validated::new(DevicePreference::Auto) else {
-        eprintln!("skipping: no Vulkan device");
-        return;
-    };
-    let Ok(mut gles) = GlesValidated::new(DisplayTarget::Surfaceless) else {
-        eprintln!("skipping: no GLES context");
-        return;
-    };
-
-    let mut compared = 0;
-    let mut failures = Vec::new();
-    for scene in corpus() {
-        let (Ok(from_vulkan), Ok(from_gles)) = (
-            render_scene_into::<VulkanHal>(&mut vulkan, &scene, PixelFormat::Rgba8UnormSrgb),
-            render_scene_into::<GlesHal>(&mut gles, &scene, PixelFormat::Rgba8UnormSrgb),
-        ) else {
-            // A scene either backend declines is already reported by the
-            // comparison above; this one is about the format and adds nothing
-            // by repeating it.
-            continue;
-        };
-        let difference = compare(&from_vulkan, &from_gles).expect("same size");
-        if !accepts(&difference, scene.tolerance()) {
-            failures.push(format!("{}: {difference:?}", scene.name));
-        }
-        compared += 1;
-    }
-
-    // Most of the corpus, not merely some of it: a filter that quietly
-    // excluded everything would satisfy a floor of one and prove nothing.
-    let total = corpus().len();
-    assert!(
-        compared * 4 >= total * 3,
-        "only {compared} of {total} scenes reached the comparison"
-    );
-    assert!(
-        failures.is_empty(),
-        "{} of {compared} scenes differ between the backends when the target \
-         encodes on write:\n  {}",
-        failures.len(),
-        failures.join("\n  ")
-    );
 }
