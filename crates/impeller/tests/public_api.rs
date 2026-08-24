@@ -331,14 +331,13 @@ fn a_blur_far_wider_than_its_subject_still_draws() {
     let square = Rect::new(40.0, 40.0, 88.0, 88.0);
 
     for case in 0..4 {
-        let (_name, mut canvas) = ("case", Canvas::new(extent));
         let name = match case {
             0 => "a layer bounded to eight pixels",
             1 => "a layer bounded to one pixel",
             2 => "a mask blur wider than the frame",
             _ => "a shadow at an absurd elevation",
         };
-        let _ = name;
+        let mut canvas = Canvas::new(extent);
         canvas.clear(Color::BLACK);
         match case {
             0 | 1 => {
