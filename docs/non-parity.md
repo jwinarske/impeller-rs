@@ -72,23 +72,39 @@ quantization to break up.
 ## 3. Gradients are dithered on GLES
 
 **What differs.** Upstream does not dither on OpenGL ES at all. Its fast path
-guards the call with `#ifndef IMPELLER_TARGET_OPENGLES`, and says why: the `mod`
-operator does not exist in GLES 2.0. Its storage-buffer path is the only other
-one that dithers and needs storage buffers, which are ES 3.1. Its uniform and
-texture paths never dither. Here both backends dither.
+guards the call with `#ifndef IMPELLER_TARGET_OPENGLES`; its storage-buffer path
+is the only other one that dithers and needs storage buffers, which are ES 3.1;
+and its uniform and texture paths never dither. Here both backends dither.
 
-**Why.** Two reasons, and the second is the load-bearing one. The guard is a
-workaround for a language version this project does not target — GLES 3.0 is the
-floor and 2.0 is permanently out of scope, so the operator is present. And the
-cross-backend comparison holds the two backends to `Tolerance::ROUNDING`, one
-unit per channel with no outliers, while a dither reaches two — so importing the
-guard would fail the L3 lane on every gradient scene in the corpus, trading a
-real invariant for a copied workaround.
+**Why.** The guard exists for a constraint this project does not have, and the
+constraint is worth stating exactly rather than from the comment beside it. The
+shader compiler defaults its GLES target to GLSL ES 1.00 —
+`sl_options.version = ... : 100` in `impeller/compiler/compiler.cc` — which is
+the OpenGL ES *2.0* shading language. It has no `uint`, no bitwise operators and
+no `%`, and `IPOrderedDither8x8` is built from all three, so on that target the
+function cannot compile at all. The comment beside the guard says "mod operator"
+and understates it.
+
+Two things follow. Upstream's GLES users lose dithering because the shader is
+compiled once at that floor, not because anybody decided a gradient should band
+there — a modern ES 3.0 device gets the undithered shader along with everything
+else. And this backend's floor is GLES 3.0, with 2.0 permanently out of scope,
+so `uint` and `%` are present and the same shader compiles and runs.
+
+The second reason is load-bearing on its own. The cross-backend comparison holds
+the two backends to `Tolerance::ROUNDING`, one unit per channel with no
+outliers, while a dither reaches two — so importing the guard would fail the L3
+lane on every gradient scene in the corpus, trading a real invariant for a
+copied workaround to a limitation this renderer does not have.
 
 **Impact.** A gradient drawn through this renderer's GLES backend is smoother
 than the same gradient through upstream's. Nothing a caller can be harmed by,
 but a direct comparison against upstream on a GLES device would differ by up to
 two levels across the gradient, and would differ *only* there.
+
+If upstream ever raises its GLES floor past 2.0, this entry should disappear
+rather than be re-argued: the divergence is entirely downstream of that one
+number.
 
 ## 4. Four stops fit in the paint block; upstream carries 256
 
