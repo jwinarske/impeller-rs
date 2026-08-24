@@ -32,8 +32,15 @@
 //! rather than general: DRM master is taken, the connector and mode are read,
 //! and format negotiation agrees on `XR24` with the linear modifier — a format
 //! and layout the display controller itself advertised. What it will not do is
-//! take the memory. Nothing is logged by the kernel and CMA is not exhausted,
-//! so this is the allocation being unsuitable rather than unavailable.
+//! take the memory.
+//!
+//! That the memory is the problem, rather than the import, was shown rather
+//! than inferred. A dumb buffer allocated on `card1` — the display controller's
+//! own allocator — exports as a dma-buf and imports straight back through the
+//! same call that rejects the rendered one. So `vc4` imports dma-bufs perfectly
+//! well; it declines *this* buffer. And `card0` refuses `create_dumb_buffer`
+//! with `ENOSYS`, which is the other half of the same picture: it has no
+//! display role to allocate for, and no connectors either.
 //!
 //! The direction is the thing to reconsider, and it is a design question rather
 //! than a defect to patch. A display controller with no IOMMU can only scan out
