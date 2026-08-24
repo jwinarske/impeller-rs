@@ -1892,11 +1892,73 @@ impl Canvas {
         }
     }
 
+    /// A mask blur over a fill that varies, built the way `dart:ui` states it.
+    ///
+    /// The path below draws the paint through a blurred layer, which is the
+    /// same picture only where the fill does not vary. This is the other order
+    /// and the one a mask filter actually means: blur the shape's coverage,
+    /// then fill through it. It needs no machinery that was not already here --
+    /// the fill goes down across everything the blur reaches, the coverage is
+    /// blurred in a layer of its own, and `DstIn` composites the second onto
+    /// the first as a mask.
+    ///
+    /// Only a path. A glyph run reaches this call too, and a run tints one
+    /// color by its own nature rather than by anything to do with blurring, so
+    /// a gradient over one is refused here exactly as it is refused when
+    /// nothing is blurred at all.
+    fn draw_masked_through_coverage(&mut self, path: &Path, paint: &Paint) -> Result<&mut Self> {
+        let bounds = self.mask_bounds(Masked::Path(path), paint);
+        let reach = blur_reach(paint.mask_blur);
+        let held = Rect::new(
+            bounds.left - reach,
+            bounds.top - reach,
+            bounds.right + reach,
+            bounds.bottom + reach,
+        );
+        // White, because what is wanted from the shape here is its coverage
+        // rather than its color: the fill supplies the color and this supplies
+        // where it lands.
+        let coverage = Paint::fill(Color::WHITE).with_anti_alias(paint.anti_alias);
+        let fill = paint
+            .clone()
+            .with_mask_blur(0.0)
+            .with_blend(BlendMode::SrcOver);
+
+        self.save_layer_bounds(Layer::opacity(1.0).with_blend(paint.blend), held);
+        // Across everything the blur reaches, not across the shape: a blurred
+        // mask is wider than what it was made from, and a fill stopping at the
+        // shape's own edge would cut the halo off square.
+        let failure = self.draw_rect(held, &fill).err().or_else(|| {
+            let mask = Layer::opacity(1.0)
+                .with_blur(paint.mask_blur)
+                .with_blend(BlendMode::DstIn);
+            self.save_layer_bounds(mask, held);
+            let inner = self.draw_path(path, &coverage).err();
+            self.restore();
+            inner
+        });
+        self.restore();
+        match failure {
+            Some(e) => Err(e),
+            None => Ok(self),
+        }
+    }
+
     fn draw_masked(&mut self, content: Masked<'_>, paint: &Paint) -> Result<&mut Self> {
         if !matches!(paint.shader, Shader::Solid(_)) {
-            // See `Paint::mask_blur`: for anything that varies, the two orders
-            // are different pictures, and drawing one while the caller asked
-            // for the other is the substitution this renderer refuses
+            if let Masked::Path(path) = content {
+                if paint.mask_blur_style == MaskBlurStyle::Normal {
+                    return self.draw_masked_through_coverage(path, paint);
+                }
+            }
+            // A run tints one color whatever is done to it, and the three
+            // styles that combine a blurred mask with a sharp one need the
+            // coverage twice over -- neither is built.
+            //
+            // See `Paint::mask_blur`: drawing the paint through a blurred layer
+            // is the other order, and for anything that varies the two are
+            // different pictures. Drawing one while the caller asked for the
+            // other is the substitution this renderer refuses
             // elsewhere.
             return Err(Error::Unsupported(
                 "a mask blur takes a solid color; draw into a blurred layer for anything else",
@@ -2919,6 +2981,21 @@ impl Canvas {
         {
             return Err(Error::Unsupported(
                 "a nine-patch center must lie within the image it divides",
+            ));
+        }
+        if paint.mask_blur > 0.0 {
+            // A nine-patch is nine quads, and each is drawn on its own. A mask
+            // blur asked for here would soften each of them separately -- nine
+            // haloes with seams between them rather than one softened patch --
+            // which is not what was asked for and is not worth guessing at.
+            //
+            // Refused deliberately, because it used to be refused by accident:
+            // the pieces are drawn with an image paint, and a mask blur over
+            // anything that varied was refused wholesale further down. That is
+            // no longer true, so the reason has to live where it applies.
+            return Err(Error::Unsupported(
+                "a mask blur over a nine-patch; its pieces are drawn separately \
+                 and would each be softened on their own",
             ));
         }
 

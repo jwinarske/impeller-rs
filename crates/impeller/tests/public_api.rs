@@ -2319,17 +2319,15 @@ fn a_mask_blur_softens_a_shape_and_matches_a_blurred_layer() {
 }
 
 #[gtest]
-fn a_mask_blur_on_a_gradient_is_refused_rather_than_reordered() {
+fn a_mask_blur_takes_a_gradient_but_not_in_every_style() {
     let Some(mut ctx) = context() else { return };
-    // The identity above holds for a constant fill and not otherwise, so a
-    // gradient asked for one thing would be given the other. Refusing is the
-    // same choice this renderer makes for a blend mode a device cannot do.
+    // The identity the cheap route rests on holds for a constant fill and not
+    // otherwise, so a gradient cannot take that route -- but it can take the
+    // one the specification states, where the mask is blurred and the paint is
+    // applied through it. What still refuses is not about the fill at all.
     let _ = &mut ctx;
-    let mut canvas = Canvas::new(SIZE);
-    canvas.clear(Color::BLACK);
-    let refused = canvas.draw_rect(
-        Rect::new(16.0, 16.0, 112.0, 112.0),
-        &Paint::linear_gradient(
+    let gradient = || {
+        Paint::linear_gradient(
             Vec2::ZERO,
             Vec2::new(128.0, 0.0),
             vec![
@@ -2337,22 +2335,39 @@ fn a_mask_blur_on_a_gradient_is_refused_rather_than_reordered() {
                 GradientStop::new(Color::BLACK, 1.0),
             ],
         )
-        .with_mask_blur(4.0),
-    );
+        .with_mask_blur(4.0)
+    };
+    let square = Rect::new(16.0, 16.0, 112.0, 112.0);
+    let mut canvas = Canvas::new(SIZE);
+    canvas.clear(Color::BLACK);
     expect_true!(
-        refused.is_err(),
-        "a mask blur on a gradient should be refused"
+        canvas.draw_rect(square, &gradient()).is_ok(),
+        "a mask blur over a gradient states the mask blurred and the paint \
+         applied through it, which is defined for any fill"
     );
-    // A solid one of the same size is not.
+    // A solid one of the same size still is too, by the other route.
     expect_true!(
         canvas
-            .draw_rect(
-                Rect::new(16.0, 16.0, 112.0, 112.0),
-                &Paint::fill(Color::WHITE).with_mask_blur(4.0)
-            )
+            .draw_rect(square, &Paint::fill(Color::WHITE).with_mask_blur(4.0))
             .is_ok(),
         "a solid mask blur should be accepted"
     );
+    // The three styles that combine a blurred mask with a sharp one need the
+    // coverage twice over and are built for a solid color only. That is a limit
+    // of what is built rather than of what the operation means, and it is
+    // stated rather than guessed at.
+    for style in [
+        MaskBlurStyle::Solid,
+        MaskBlurStyle::Outer,
+        MaskBlurStyle::Inner,
+    ] {
+        expect_true!(
+            canvas
+                .draw_rect(square, &gradient().with_mask_blur_style(style))
+                .is_err(),
+            "{style:?} over a gradient should be refused rather than guessed"
+        );
+    }
 }
 
 #[test]
@@ -6152,12 +6167,13 @@ fn an_image_filter_blur_of_a_solid_agrees_with_the_mask_blur_of_the_same_shape()
 }
 
 #[test]
-fn an_image_filter_blurs_a_gradient_that_a_mask_blur_refuses() {
-    // What the filter is for. The same call on the same paint is refused as a
-    // mask blur, because blurring coverage and then filling with something
-    // that varies is a different picture from blurring the result -- and
-    // drawing one where the caller asked for the other is the substitution
-    // this renderer declines to make.
+fn an_image_filter_blurs_the_result_where_a_mask_blur_blurs_the_mask() {
+    // What the filter is for, and why both exist. Blurring the coverage and
+    // then filling is a different picture from filling and then blurring the
+    // result, for anything that varies -- that is exactly why a mask blur over
+    // a gradient could not simply be routed through the cheaper of the two.
+    // Both are available now, and this is what says they are not the same
+    // operation wearing two names.
     let Some(mut ctx) = context() else { return };
 
     let gradient = || {
@@ -6173,12 +6189,11 @@ fn an_image_filter_blurs_a_gradient_that_a_mask_blur_refuses() {
     let area = Rect::new(32.0, 40.0, 96.0, 88.0);
 
     let mut canvas = Canvas::new(SIZE);
-    assert!(
-        canvas
-            .draw_rect(area, &gradient().with_mask_blur(6.0))
-            .is_err(),
-        "a mask blur of a gradient should still be refused"
-    );
+    canvas.clear(Color::BLACK);
+    canvas
+        .draw_rect(area, &gradient().with_mask_blur(6.0))
+        .expect("a mask blur over a gradient");
+    let masked = render(&mut ctx, canvas);
 
     let mut canvas = Canvas::new(SIZE);
     canvas.clear(Color::BLACK);
@@ -6210,6 +6225,28 @@ fn an_image_filter_blurs_a_gradient_that_a_mask_blur_refuses() {
     assert!(
         left[0] > right[0] && right[2] > left[2],
         "the gradient should survive the blur: left {left:?}, right {right:?}"
+    );
+
+    // The two orders are different pictures, which is the whole reason a paint
+    // carries both. Blurring the result softens the gradient's own colors into
+    // each other; blurring the mask leaves them and softens only where they
+    // land. A renderer that quietly routed one to the other would agree here.
+    let worst = (0..128u32)
+        .flat_map(|x| (0..128u32).map(move |y| (x, y)))
+        .map(|(x, y)| {
+            let a = pixel(&masked, x, y);
+            let b = pixel(&pixels, x, y);
+            (0..3)
+                .map(|c| (a[c] as i32 - b[c] as i32).abs())
+                .max()
+                .unwrap_or(0)
+        })
+        .max()
+        .expect("a frame");
+    assert!(
+        worst > 8,
+        "the two orders came back within {worst} levels of each other, so one \
+         of them is not doing what its name says"
     );
 }
 
@@ -11723,5 +11760,94 @@ fn tones_survive_a_layer(ctx: &mut Context, anti_alias: bool, backend: BackendPr
         distinct(&direct) > 20,
         "the probe ramp resolved only {} tones, so it cannot show quantization",
         distinct(&direct)
+    );
+}
+
+/// A mask blur over a gradient, which the paint used to refuse.
+///
+/// `dart:ui` is unambiguous about what a mask filter means -- blur the mask,
+/// then fill through it -- and that is well defined for a fill that varies. The
+/// paint implemented the other order, drawing itself through a blurred layer,
+/// which is the same picture only where the fill does not vary; so rather than
+/// hand back a different picture under the same name it refused.
+///
+/// Checked against the arrangement a caller could already assemble by hand out
+/// of two layers and `DstIn`, because that is the same statement made twice by
+/// different means: if the paint's version and the hand-built one agree, the
+/// paint is doing what the caller would have had to.
+#[test]
+fn a_mask_blur_over_a_gradient_matches_what_a_caller_would_assemble() {
+    let Some(mut ctx) = context() else { return };
+    let whole = Rect::new(0.0, 0.0, 128.0, 128.0);
+    let shader = Shader::LinearGradient {
+        start: Vec2::new(0.0, 0.0),
+        end: Vec2::new(128.0, 0.0),
+        stops: vec![
+            GradientStop::new(Color::linear(1.0, 0.0, 0.0, 1.0), 0.0),
+            GradientStop::new(Color::linear(0.0, 0.0, 1.0, 1.0), 1.0),
+        ],
+        tile: TileMode::Clamp,
+    };
+    let circle = (Vec2::new(64.0, 64.0), 36.0);
+    let sigma = 6.0;
+
+    // What the paint does now.
+    let mut canvas = Canvas::new(SIZE);
+    canvas.clear(Color::BLACK);
+    canvas
+        .draw_circle(
+            circle.0,
+            circle.1,
+            &Paint::fill(Color::WHITE)
+                .with_shader(shader.clone())
+                .with_mask_blur(sigma),
+        )
+        .expect("the paint refused a mask blur over a gradient");
+    let built = render(&mut ctx, canvas);
+
+    // What a caller had to write instead: the fill across everything the blur
+    // reaches, then blurred coverage taken out of its alpha.
+    let mut canvas = Canvas::new(SIZE);
+    canvas.clear(Color::BLACK);
+    canvas.save_layer_bounds(Layer::opacity(1.0), whole);
+    canvas
+        .draw_rect(whole, &Paint::fill(Color::WHITE).with_shader(shader))
+        .expect("fill");
+    canvas.save_layer_bounds(
+        Layer::opacity(1.0)
+            .with_blur(sigma)
+            .with_blend(BlendMode::DstIn),
+        whole,
+    );
+    canvas
+        .draw_circle(circle.0, circle.1, &Paint::fill(Color::WHITE))
+        .expect("coverage");
+    canvas.restore();
+    canvas.restore();
+    let assembled = render(&mut ctx, canvas);
+
+    let mut worst = 0i32;
+    for y in (0..128u32).step_by(4) {
+        for x in (0..128u32).step_by(4) {
+            let a = pixel(&built, x, y);
+            let b = pixel(&assembled, x, y);
+            for channel in 0..4 {
+                worst = worst.max((a[channel] as i32 - b[channel] as i32).abs());
+            }
+        }
+    }
+    assert!(
+        worst <= 2,
+        "the paint and the hand-built arrangement disagree by {worst}"
+    );
+
+    // And the gradient survived the mask, which is the thing a solid color
+    // could not have shown: a mask blur that dropped the shader would leave a
+    // flat shape and agree with nothing.
+    let left = pixel(&built, 40, 64);
+    let right = pixel(&built, 88, 64);
+    assert!(
+        left[0] > right[0] + 40 && right[2] > left[2] + 40,
+        "the gradient did not survive: {left:?} against {right:?}"
     );
 }

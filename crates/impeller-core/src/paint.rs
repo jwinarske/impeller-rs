@@ -435,25 +435,24 @@ pub struct Paint {
     /// What a soft shadow is made of: the same shape, softened, drawn behind
     /// the thing casting it. Zero for none.
     ///
-    /// Only a solid color, and the limit belongs to the mechanism rather than
-    /// to the operation -- worth separating, because the first can be lifted
-    /// and the second could not be.
+    /// `dart:ui` states this as blurring the mask and then applying the paint
+    /// through it, and that is what a shape gets. Two orders exist and they
+    /// agree only where the fill does not vary, because a blur is linear:
+    /// `blur(C·α)` is `C·blur(α)` for a constant `C` and for nothing else. A
+    /// solid color therefore takes the cheaper route and is drawn through a
+    /// blurred layer, which is that identity used; anything that varies is
+    /// drawn the way the specification says, with the fill laid across
+    /// everything the blur reaches and blurred coverage composited onto it.
     ///
-    /// `dart:ui` is unambiguous about what this means: the mask is blurred and
-    /// the paint is then applied through it. What is implemented here is the
-    /// other order, a paint drawn through a blurred layer, and the two agree
-    /// exactly when the fill does not vary, because a blur is linear --
-    /// `blur(C·α)` is `C·blur(α)` for a constant `C` and for nothing else. So a
-    /// solid color is that identity used, and a gradient or an image is refused
-    /// rather than given the other picture and called this one.
+    /// Two things still take a solid color only, and neither is about blurring.
+    /// A glyph run tints one color by its own nature, so a gradient over one is
+    /// refused here exactly as it is when nothing is blurred. And a mesh
+    /// carries a color per vertex, which is a second thing multiplying the
+    /// coverage rather than a fill to lay down.
     ///
-    /// The general form is reachable with what is already here and is not
-    /// built: draw the fill across everything the blur reaches, then composite
-    /// blurred white coverage onto it with `DstIn`, which is the same nesting
-    /// of layers and blends the styles below already use. What it needs is a
-    /// decision about the cases a shape's coverage is not simply its own -- a
-    /// mesh carrying a color per vertex, a glyph run -- rather than more
-    /// machinery.
+    /// The three styles that combine a blurred mask with a sharp one need the
+    /// coverage twice and are not built for a varying fill; they take a solid
+    /// color, which is every use a shadow has.
     pub mask_blur: f32,
     pub blend: BlendMode,
     /// How a color carried per vertex or per sprite combines with what this
