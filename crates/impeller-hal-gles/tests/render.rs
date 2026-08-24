@@ -398,3 +398,71 @@ fn textures_can_be_created_and_destroyed_repeatedly() {
         assert_eq!(pixel(&pixels, 0, 0), [0, 255, 255, 255], "iteration {i}");
     }
 }
+
+/// A multisampled pass that preserves is refused, and the refusal is useful.
+///
+/// Both backends decline this. Vulkan's suite has said so for as long as the
+/// refusal has existed; this backend's did not, and neither checked what the
+/// refusal actually said -- which is how the message came to describe only the
+/// operation it could not perform. A caller meets it through the front door,
+/// antialiasing being on by default, a fresh canvas having no background and a
+/// stroked line having only triangles, so what the message names is the whole
+/// of what they have to go on.
+///
+/// The restriction belongs to the technique rather than to either backend, so
+/// the Vulkan suite asserts the same property in the same shape.
+#[test]
+fn a_multisampled_pass_that_preserves_is_refused_with_both_remedies_named() {
+    let Some(mut ctx) = context() else { return };
+    if !ctx.capabilities().sample_counts.supports(4) {
+        eprintln!("skipping: 4x not supported");
+        return;
+    }
+    let mut tex = target(&mut ctx);
+    let mut batch = Batch::new();
+    batch
+        .push(
+            &FULL,
+            &QUAD,
+            Material::solid([1.0, 1.0, 1.0, 1.0]),
+            BlendMode::Src,
+        )
+        .expect("push");
+
+    let outcome = ctx.submit_batch(
+        &mut tex,
+        &batch,
+        PassDescriptor {
+            clear: None,
+            samples: 4,
+        },
+    );
+    let Err(impeller_hal::Error::Unsupported(message)) = outcome else {
+        panic!("expected a refusal, got {outcome:?}");
+    };
+    assert!(
+        message.contains("clear color") && message.contains("one sample"),
+        "the refusal names neither remedy: {message}"
+    );
+
+    // Each remedy on its own, so neither is merely mentioned.
+    ctx.submit_batch(
+        &mut tex,
+        &batch,
+        PassDescriptor {
+            clear: Some(BLACK),
+            samples: 4,
+        },
+    )
+    .expect("clearing makes it drawable");
+    ctx.submit_batch(
+        &mut tex,
+        &batch,
+        PassDescriptor {
+            clear: None,
+            samples: 1,
+        },
+    )
+    .expect("one sample makes it drawable");
+    ctx.destroy_texture(tex);
+}

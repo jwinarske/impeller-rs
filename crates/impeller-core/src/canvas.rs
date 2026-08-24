@@ -671,6 +671,16 @@ impl Canvas {
     }
 
     /// Fill the whole target before drawing anything else.
+    ///
+    /// Required, not merely usual, if anything in the frame is antialiased.
+    /// An antialiased shape that is not analytic renders through a multisample
+    /// buffer, and there is no way to seed that buffer with what the target
+    /// already held -- so a multisampled pass has to clear, and a canvas with
+    /// no background gives its root pass nothing to clear to. Drawing one is
+    /// refused rather than quietly discarding whatever was on the surface.
+    ///
+    /// So a frame is antialiased *or* it preserves what was under it, and the
+    /// choice is made here. [`Paint::with_anti_alias`] is the other end of it.
     pub fn clear(&mut self, color: Color) -> &mut Self {
         self.background = Some(color);
         self

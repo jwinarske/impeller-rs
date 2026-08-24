@@ -264,7 +264,9 @@ impl GlesContext {
             // so the restriction is a property of the technique rather than of
             // one backend.
             return Err(Error::Unsupported(
-                "a multisampled pass must clear; preserving needs a single-to-multisample copy",
+                "a multisampled pass must clear: give the pass a clear color, \
+                 or draw it at one sample. Preserving would need a \
+                 single-to-multisample copy, which is not a legal blit",
             ));
         }
         self.capabilities().check_blend_modes(batch)?;

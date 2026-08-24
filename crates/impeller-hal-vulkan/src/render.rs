@@ -166,7 +166,10 @@ impl VulkanContext {
             // to do it with -- it would take a full-screen draw. Refusing is
             // better than silently discarding what the target held.
             return Err(Error::Unsupported(
-                "a multisampled pass must clear; preserving needs a resolved-to-multisample copy",
+                "a multisampled pass must clear: give the pass a clear color, \
+                 or draw it at one sample. Preserving would need a \
+                 resolved-to-multisample copy, which this technique has no \
+                 reverse of",
             ));
         }
 

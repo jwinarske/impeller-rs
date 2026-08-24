@@ -1179,11 +1179,23 @@ differently — a resolve attachment on one, a blit resolve on the other — and
 both produce identical pixels, which is the kind of agreement the pass-level
 description is meant to allow. The multisample attachment is never
 stored — its contents are consumed by the resolve — which on a tiler keeps it in
-tile memory rather than writing it out. A multisampled pass must clear. Seeding the multisample buffer from a target's
-existing contents has no reverse-resolve to do it with on one backend and no
-legal single-to-multisample blit on the other, so this is a property of the
-technique rather than of a backend, and preserving is refused rather than
-silently discarding what was there.
+tile memory rather than writing it out. A multisampled pass must clear. Seeding
+the multisample buffer from a target's existing contents has no reverse-resolve
+to do it with on one backend and no legal single-to-multisample blit on the
+other, so this is a property of the technique rather than of a backend, and
+preserving is refused rather than silently discarding what was there.
+
+A caller meets that restriction as the first thing they write rather than as an
+edge case, which is worth saying where the technique is described. Antialiasing
+is on by default, a fresh canvas has no background, and a stroked line has only
+triangles to antialias with, so the shortest program that draws an antialiased
+shape is refused. The refusal names both remedies -- a clear color, or a single
+sample -- rather than naming only the copy it could not perform, and
+`Canvas::clear` and `Paint::with_anti_alias` each document the other as the two
+ends of one choice. The asymmetry that makes this confusing is real and
+deliberate: a rectangle, rounded rectangle, oval or circle antialiases inside
+its own fragment shader and is never multisampled, so the same program built
+from those draws works, and only the tessellated shapes are refused.
 
 **Draws within a batch keep submission order.** Sorting by pipeline would cut
 bindings further, but 2D drawing is painter's-algorithm ordered and reordering

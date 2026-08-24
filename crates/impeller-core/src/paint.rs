@@ -834,6 +834,19 @@ impl Paint {
         self
     }
 
+    /// Whether this paint's edges are smoothed. On by default.
+    ///
+    /// How that is paid for depends on the shape rather than on this flag. A
+    /// rectangle, rounded rectangle, oval or circle is drawn from a distance
+    /// field and antialiases itself inside its own fragment shader, costing a
+    /// pass nothing. Anything that reaches the tessellator instead -- an
+    /// arbitrary path, a stroke, a line, a double rounded rectangle -- has only
+    /// triangles to work with, so its pass becomes multisampled.
+    ///
+    /// That second case carries a requirement worth knowing before meeting it:
+    /// a multisampled pass must clear, so the frame it draws into needs a
+    /// background. See [`crate::Canvas::clear`], which is where a caller who
+    /// has been refused for this reason should look.
     pub fn with_anti_alias(mut self, anti_alias: bool) -> Self {
         self.anti_alias = anti_alias;
         self

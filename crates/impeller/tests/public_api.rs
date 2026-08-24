@@ -176,6 +176,78 @@ fn translucent_paint_blends_with_what_is_underneath() {
     }
 }
 
+/// Antialiasing a tessellated shape needs a background to clear to; an
+/// analytic one does not.
+///
+/// The asymmetry is not arbitrary and is the reason this is pinned. A rounded
+/// rectangle antialiases inside its own fragment shader and its pass stays at
+/// one sample, so it draws onto a canvas that was never cleared. A line has
+/// only triangles, so its pass is multisampled -- and a multisampled pass
+/// cannot preserve what the target held, because seeding the multisample
+/// buffer has no reverse-resolve to do it with. So the line is refused.
+///
+/// A caller meets this as the very first thing they write, since antialiasing
+/// is on by default and a fresh canvas has no background. What is checked here
+/// is that the refusal says which of the two knobs to reach for.
+#[test]
+fn a_multisampled_frame_needs_a_background_and_says_so() {
+    let Some(mut ctx) = context() else { return };
+    if !ctx.capabilities().sample_counts.supports(4) {
+        eprintln!("skipping: 4x not supported");
+        return;
+    }
+
+    let draw = |ctx: &mut Context, background: bool, anti_alias: bool| -> Result<()> {
+        let mut canvas = Canvas::new(SIZE);
+        if background {
+            canvas.clear(Color::BLACK);
+        }
+        canvas
+            .draw_line(
+                Vec2::new(8.0, 8.0),
+                Vec2::new(120.0, 120.0),
+                &Paint::stroke(Color::WHITE, 4.0).with_anti_alias(anti_alias),
+            )
+            .expect("record");
+        let mut surface = ctx.create_surface(SIZE, PixelFormat::Rgba8Unorm)?;
+        let outcome = ctx.draw(&mut surface, &canvas.finish()).map(|_| ());
+        ctx.destroy_surface(surface);
+        outcome
+    };
+
+    let refused = draw(&mut ctx, false, true).expect_err("a cleared-less multisampled frame");
+    let Error::Unsupported(message) = refused else {
+        panic!("expected a refusal, got {refused:?}");
+    };
+    // The old message named only the mechanism it could not perform, which
+    // tells a caller nothing they can act on.
+    assert!(
+        message.contains("clear color") && message.contains("one sample"),
+        "the refusal names neither remedy: {message}"
+    );
+
+    // Either knob on its own is enough, which is what makes them remedies.
+    draw(&mut ctx, true, true).expect("a background makes it drawable");
+    draw(&mut ctx, false, false).expect("dropping antialiasing makes it drawable");
+
+    // And the analytic path never needed either, or the asymmetry above would
+    // not be one.
+    let mut canvas = Canvas::new(SIZE);
+    canvas
+        .draw_rrect(
+            Rect::new(8.0, 8.0, 120.0, 120.0),
+            12.0,
+            &Paint::fill(Color::WHITE),
+        )
+        .expect("record");
+    let mut surface = ctx
+        .create_surface(SIZE, PixelFormat::Rgba8Unorm)
+        .expect("surface");
+    ctx.draw(&mut surface, &canvas.finish())
+        .expect("an analytic shape antialiases with no background");
+    ctx.destroy_surface(surface);
+}
+
 #[test]
 fn antialiasing_is_requested_through_the_paint() {
     let Some(mut ctx) = context() else { return };

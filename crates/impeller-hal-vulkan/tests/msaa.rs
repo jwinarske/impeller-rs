@@ -294,7 +294,27 @@ fn a_multisampled_pass_that_would_preserve_is_refused() {
     // buffer, and there is no reverse of a resolve to do it with. Refusing
     // beats silently discarding what the target held.
     let result = ctx.submit_batch(&mut tex, &batch, PassDescriptor::preserve().with_samples(4));
-    assert!(result.is_err());
+    let Err(impeller_hal::Error::Unsupported(message)) = result else {
+        panic!("expected a refusal, got {result:?}");
+    };
+
+    // What the refusal says, and not merely that there was one. This is the
+    // first thing a caller drawing an antialiased line into an uncleared
+    // canvas sees, and naming the operation that could not be performed left
+    // them with nothing to do about it. Both remedies are real and either one
+    // alone is enough, which the two draws below hold to.
+    assert!(
+        message.contains("clear color") && message.contains("one sample"),
+        "the refusal names neither remedy: {message}"
+    );
+    ctx.submit_batch(
+        &mut tex,
+        &batch,
+        PassDescriptor::clear([0.0; 4]).with_samples(4),
+    )
+    .expect("clearing makes it drawable");
+    ctx.submit_batch(&mut tex, &batch, PassDescriptor::preserve())
+        .expect("one sample makes it drawable");
 
     ctx.destroy_texture(tex);
 }
