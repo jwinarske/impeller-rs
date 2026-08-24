@@ -15,7 +15,7 @@ use impeller_hal_gles::Validated as GlesValidated;
 use impeller_hal_gles::{DisplayTarget, GlesHal};
 use impeller_hal_vulkan::Validated;
 use impeller_hal_vulkan::{DevicePreference, VulkanHal};
-use impeller_testkit::{accepts, catalog, compare, corpus, render_scene, Scene};
+use impeller_testkit::{accepts, catalog, compare, corpus, render_scene, Item, Scene, Shape};
 
 #[test]
 fn the_corpus_matches_across_backends() {
@@ -379,4 +379,82 @@ fn a_feature_a_scene_asks_for_has_to_change_the_picture() {
         "no scene in either list carries a feature, which cannot be right"
     );
     eprintln!("checked {checked} scene(s) for a feature that does nothing");
+}
+
+/// A stated color arrives as the bytes it states, on every backend.
+///
+/// Everything else in this file is a *relative* check — one backend against
+/// another, a scene against itself, a bounded layer against a full-size one.
+/// None of them can see a picture that is wrong in a way both implementations
+/// agree on, which is exactly what a mistake in the color pipeline produces:
+/// every comparison here would pass with the whole corpus a third too bright.
+/// `cargo xtask gallery` exists for that, and it needs a person.
+///
+/// This is the cheap half of what the person does. A scene states its colors as
+/// components in sRGB's transfer function, the pipeline carries them in that
+/// transfer function untouched, and a plain eight-bit target stores them
+/// untransformed — so an opaque fill has to come back at exactly
+/// `round(component * 255)`, and so does the background behind it.
+///
+/// Mid-tones, and that is the whole point of the numbers chosen. Zero and one
+/// are fixed points of the transfer function, so a scene of black and white
+/// primaries comes back identical whether the pipeline holds light or encoded
+/// color and anchors nothing at all.
+#[test]
+fn a_stated_color_arrives_as_the_bytes_it_states() {
+    const FILL: [f32; 4] = [0.27, 0.61, 0.44, 1.0];
+    const GROUND: [f32; 4] = [0.71, 0.33, 0.18, 1.0];
+    let byte = |c: f32| (c * 255.0).round() as u8;
+
+    // One sample, no antialiasing to soften an edge, and both sample points
+    // well away from one.
+    let scene = Scene::new(
+        "anchor/a-stated-color",
+        vec![Item::fill(
+            Shape::Rect {
+                min: [32.0, 32.0],
+                max: [96.0, 96.0],
+            },
+            FILL,
+        )],
+    )
+    .with_background(GROUND)
+    .with_samples(1);
+
+    let mut checked = 0;
+    if let Ok(mut vulkan) = Validated::new(DevicePreference::Auto) {
+        check_anchor::<VulkanHal>(&mut vulkan, &scene, "vulkan", FILL, GROUND, byte);
+        checked += 1;
+    }
+    if let Ok(mut gles) = GlesValidated::new(DisplayTarget::Surfaceless) {
+        check_anchor::<GlesHal>(&mut gles, &scene, "gles", FILL, GROUND, byte);
+        checked += 1;
+    }
+    assert!(checked > 0, "no backend was available to anchor against");
+}
+
+fn check_anchor<H: Hal>(
+    ctx: &mut H::Context,
+    scene: &Scene,
+    backend: &str,
+    fill: [f32; 4],
+    ground: [f32; 4],
+    byte: impl Fn(f32) -> u8,
+) where
+    H::Context: HalContext<Hal = H>,
+{
+    let image = render_scene::<H>(ctx, scene).expect("render");
+    let inside = image.pixel(64, 64);
+    let want = [byte(fill[0]), byte(fill[1]), byte(fill[2]), 255];
+    assert_eq!(
+        inside, want,
+        "{backend}: a fill stated as {fill:?} came back {inside:?}, wanted {want:?}"
+    );
+
+    let outside = image.pixel(8, 8);
+    let want = [byte(ground[0]), byte(ground[1]), byte(ground[2]), 255];
+    assert_eq!(
+        outside, want,
+        "{backend}: a background stated as {ground:?} came back {outside:?}, wanted {want:?}"
+    );
 }
