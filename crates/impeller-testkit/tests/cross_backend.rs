@@ -15,7 +15,9 @@ use impeller_hal_gles::Validated as GlesValidated;
 use impeller_hal_gles::{DisplayTarget, GlesHal};
 use impeller_hal_vulkan::Validated;
 use impeller_hal_vulkan::{DevicePreference, VulkanHal};
-use impeller_testkit::{accepts, catalog, compare, corpus, render_scene, Item, Scene, Shape};
+use impeller_testkit::{
+    accepts, catalog, compare, corpus, render_scene, Item, Scene, Shape, Tolerance,
+};
 
 #[test]
 fn the_corpus_matches_across_backends() {
@@ -185,12 +187,32 @@ fn a_bounded_layer_renders_like_a_full_size_one_on_every_backend() {
             scene.name
         );
 
+        // One level per composite rather than bit-exact, and the reason came
+        // from a third device rather than from argument. A bounded layer
+        // composites from a target of another size at another origin, so the
+        // coordinates it samples at differ from a full-size layer's even where
+        // the result is mathematically the same -- and two identical products
+        // can round to eight bits differently. Each composite multiplies a
+        // group alpha and rounds once, so a scene of two nested layers can
+        // differ by two.
+        //
+        // Two is the bound because `layer-nested-clipped` is the deepest scene
+        // in the corpus, at an outer bounded layer and an inner one. A scene
+        // nesting deeper would want a deeper bound, and would fail here rather
+        // than pass quietly, which is the right way round.
+        //
+        // This was exact and passed on two x86 devices for as long as those
+        // were the only ones asked. On a Raspberry Pi 4 it comes back one level
+        // apart on Vulkan and two on GLES, across roughly one percent of the
+        // pixels -- rounding, not a layer moving anything. A bounded layer
+        // landing in the wrong place moves pixels by the whole range.
+        let per_composite = Tolerance::new(2, 0.0);
         if let Some(ctx) = vulkan.as_mut() {
             let with = render_scene::<VulkanHal>(ctx, &scene).expect("bounded");
             let without = render_scene::<VulkanHal>(ctx, &unbounded).expect("unbounded");
             let difference = compare(&without, &with).expect("same size");
-            assert_eq!(
-                difference.max_delta, 0,
+            assert!(
+                accepts(&difference, per_composite),
                 "vulkan moved pixels on {} when the layer was given bounds: {difference:?}",
                 scene.name
             );
@@ -200,8 +222,8 @@ fn a_bounded_layer_renders_like_a_full_size_one_on_every_backend() {
             let with = render_scene::<GlesHal>(ctx, &scene).expect("bounded");
             let without = render_scene::<GlesHal>(ctx, &unbounded).expect("unbounded");
             let difference = compare(&without, &with).expect("same size");
-            assert_eq!(
-                difference.max_delta, 0,
+            assert!(
+                accepts(&difference, per_composite),
                 "gles moved pixels on {} when the layer was given bounds: {difference:?}",
                 scene.name
             );
