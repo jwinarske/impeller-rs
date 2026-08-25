@@ -89,7 +89,7 @@ this scene draws. So the deviation stands for now and its description does not:
 it is one this project has decided against upstream's decided half, not a gap
 nobody upstream has filled.
 
-Eleven of the rows below have now been read against the file they name, at tip
+Twelve of the rows below have now been read against the file they name, at tip
 of tree, and the results are set out after the table. Two named their obstacle
 correctly: shadows, where it governs twenty-six of that file's thirty scenes and
 means what it says, and paths, where nothing blocks the nine it is short. The
@@ -98,7 +98,7 @@ too high -- a test in the file that draws no picture -- so of the two, one was
 right outright and one was right about the only thing the column claims to be
 about.
 
-The other nine were wrong in seven distinguishable ways, and the ways matter
+The other ten were wrong in seven distinguishable ways, and the ways matter
 more than the count.
 
 An obstacle that had been removed and the row not updated (gradients). One
@@ -110,14 +110,15 @@ opacity). One naming an upstream uncertainty that upstream has since resolved
 tests, with a dozen unwritten (blends). One understating badly and missing the
 only real obstacle in its chapter, which was not recorded anywhere -- that a
 rounded rectangle here has one radius where `dart:ui` has eight (basics). One whose "see below" pointed at nothing, and whose own count turned out to be
-the thing that was wrong (atlases). And one that said its file was covered when
+the thing that was wrong (atlases). One that said its file was covered when
 it was not, by a single scene that needed a capability the preferred device here
-lacks -- which is how it came to be overlooked (clips).
+lacks -- which is how it came to be overlooked (clips). And one that said its
+picture cases were all present when two thirds of them were not (miscellany).
 
 Three of the eight turned into renderer changes rather than document ones.
 
-The three not yet checked are the text, runtime-effect and
-`aiks_dl_unittests.cc` rows. Treat them as unverified, which is what they are.
+The two not yet checked are the text and runtime-effect rows, both of which
+describe a boundary this project has drawn rather than an obstacle. Treat them as unverified, which is what they are.
 On the evidence above, the likeliest thing wrong with them is not that they
 name the wrong obstacle but that they name a real one governing far less than
 the gap it is offered to explain.
@@ -144,9 +145,9 @@ column is right and the obvious way to check it is wrong.
 | `aiks_dl_primitive_shape_unittests.cc` | ~2 | 0 | one is a playground harness, one wants a stroke width of zero to mean a hairline |
 | `aiks_dl_text_unittests.cc` | — | 5 | shaping and font parsing, which are out of scope; glyph rendering is not, and these use synthetic coverage |
 | `aiks_dl_runtime_effect_unittests.cc` | — | 5 | bounded by having two fixture programs rather than by the renderer |
-| `aiks_dl_unittests.cc` | ~39 | 10 | mostly internal optimizations; the picture cases are here now |
+| `aiks_dl_unittests.cc` | ~36 | 12 | subpass collapse, for five of them; see below |
 
-The catalog holds two hundred and thirty-eight scenes of roughly four hundred,
+The catalog holds two hundred and forty scenes of roughly four hundred,
 and the proportion is less interesting than which ones: the arithmetic of drawing is largely covered, and
 what is missing is either a capability this renderer does not have or a thing
 the scene model cannot describe.
@@ -194,6 +195,34 @@ combination is the same rules whichever is being combined, so it now happens
 once, over color where the fill is constant and over coverage where it varies,
 and every style takes any fill. Eight scenes followed, five of them upstream's
 stroked gradient oval under each style.
+
+The miscellany row said "mostly internal optimizations; the picture cases are
+here now", and the second half was the false one. Thirty-eight tests, two of
+which are unit tests on a texture -- `EXPECT_EQ(texture, nullptr)` and
+`EXPECT_FALSE(texture->NeedsMipmapGeneration())` -- so thirty-six pictures
+against twelve here. Five of the twenty-four missing are subpass collapse and
+are named for it; the rest are pictures, and the largest family among them is
+eight translucent save layers, each with a different filter on it.
+
+Two of those eight are here now. The family is the point rather than any one of
+them: a translucent group has two things that have to happen in the right
+order, the alpha it composites with and whatever recolors it on the way out, and
+only a filter that is not a plain scale can tell the orders apart. So neither of
+the two is one. Destination-over against a constant reads the group's own alpha,
+so what the filter contributes is strongest where the group is thinnest; and
+upstream's alpha-doubling matrix is chosen to fight the layer's alpha rather
+than to look like anything.
+
+Checked by rendering all three of the family that now exist and comparing them,
+because a filter that was accepted and dropped would leave the plates identical
+and passing. They differ across the whole frame and across a third of it
+respectively, which is the shape each filter should have.
+
+A count that was nearly wrong the other way, worth recording beside the two
+that were: five of that file's tests read like resource tests from their names
+-- mipmap generation, releasing a texture on teardown, setting contents with a
+region, two about depth values -- and all five open a playground and are
+scenes. Only the two named above do not.
 
 The clip row said "nothing; this file is covered" and the file was not covered.
 Six scenes against five tests reads as a surplus, and two of the six are this

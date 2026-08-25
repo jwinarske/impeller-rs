@@ -4398,6 +4398,48 @@ fn layers() -> Vec<Scene> {
             },
             None,
         ),
+        // The same group with a filter on it, twice. Upstream keeps eight of
+        // these and the family is the point: a translucent group has two things
+        // to get in the right order, the alpha it composites with and whatever
+        // recolors it on the way out. Applying the filter after the alpha, or
+        // folding the alpha into the filter, gives a different picture from
+        // applying the filter to the finished group and then compositing it --
+        // and only a filter that is not a plain scale can tell them apart,
+        // which is why neither of these is one.
+        grouped(
+            "dl/translucent-save-layer-with-blend-color-filter-draws-correctly",
+            LayerSpec {
+                alpha: 0.45,
+                // Destination-over against a constant: the group is composited
+                // over red rather than red over the group, so what the filter
+                // contributes is strongest where the group is thinnest. That
+                // reads the group's own alpha, which is what makes it a test of
+                // the order rather than of the color.
+                color_filter: ColorFilter::blend(RED, BlendMode::DstOver)
+                    .expect("destination-over against a constant is affine"),
+                ..LayerSpec::default()
+            },
+            None,
+        ),
+        grouped(
+            "dl/translucent-save-layer-with-color-matrix-color-filter-draws-correctly",
+            LayerSpec {
+                alpha: 0.45,
+                // Upstream's matrix: identity on color and twice on alpha. It
+                // is chosen to fight the layer's own alpha rather than to look
+                // like anything, and the two have to compose in one order only
+                // -- doubling what is already at forty-five hundredths is not
+                // the same as halving what has been doubled.
+                color_filter: ColorFilter::matrix([
+                    1.0, 0.0, 0.0, 0.0, 0.0, //
+                    0.0, 1.0, 0.0, 0.0, 0.0, //
+                    0.0, 0.0, 1.0, 0.0, 0.0, //
+                    0.0, 0.0, 0.0, 2.0, 0.0,
+                ]),
+                ..LayerSpec::default()
+            },
+            None,
+        ),
         grouped(
             "dl/can-perform-save-layer-with-bounds",
             LayerSpec::default(),
