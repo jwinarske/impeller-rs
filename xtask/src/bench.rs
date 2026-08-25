@@ -119,7 +119,7 @@ pub struct Timing {
     /// difference is not incidental. Tessellated shapes all carry one solid
     /// material, so the batch merges them into a single draw; an analytic one
     /// carries its own geometry in its material and cannot merge with its
-    /// neighbour. The same hundred and sixty shapes are one draw down one path
+    /// neighbor. The same hundred and sixty shapes are one draw down one path
     /// and a hundred and sixty down the other, and a timing that did not say so
     /// would look like a comparison of fragment work.
     pub draws: usize,

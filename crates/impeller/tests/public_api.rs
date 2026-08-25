@@ -9357,7 +9357,7 @@ fn no_shader_puts_a_pixel_down_under_a_collapsed_transform() {
     // under a collapsed transform has no area and covers no pixel. The mapping
     // is never consulted.
     //
-    // The neighbouring `a_collapsed_transform_leaves_nothing_reachable` asks a
+    // The neighboring `a_collapsed_transform_leaves_nothing_reachable` asks a
     // different question about the same transform -- what the canvas *reports*
     // as reachable, rather than what it draws -- and one can hold while the
     // other does not.
@@ -9953,7 +9953,7 @@ fn every_draw_that_takes_a_paint_honours_its_image_filter() {
         //
         // The span is measured by counting lit pixels, so each end is decided
         // by whether the outermost one crosses a threshold -- and a dilation
-        // takes the largest sample in a neighbourhood, so its outer pixel sits
+        // takes the largest sample in a neighborhood, so its outer pixel sits
         // right at that boundary by construction. Whether it lands above or
         // below is a device's business: `draw_line` here comes back one pixel
         // wider at the bottom on a Raspberry Pi 5's V3D and exact on two x86

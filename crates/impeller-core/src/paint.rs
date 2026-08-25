@@ -216,7 +216,7 @@ pub enum MaskBlurStyle {
 /// computed.
 ///
 /// The distinction from a color filter is what the input is. A color filter
-/// sees one color at a time and cannot know its neighbours; this sees the
+/// sees one color at a time and cannot know its neighbors; this sees the
 /// picture, which is what a blur needs.
 ///
 /// The distinction from [`Paint::mask_blur`] is what is blurred. A mask blur
@@ -636,7 +636,7 @@ impl Paint {
     /// Linear by default, which is what an image drawn at any size but its own
     /// wants. [`Sampling::Nearest`] is for the cases where blending is the
     /// wrong answer: pixel art, and a sprite drawn at exactly its own size
-    /// where certainty that no neighbour bled in matters more than smoothness.
+    /// where certainty that no neighbor bled in matters more than smoothness.
     ///
     /// Ignored by a paint with no texture.
     pub fn with_sampling(mut self, sampling: Sampling) -> Self {

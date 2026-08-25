@@ -391,8 +391,9 @@ fn the_tree_is_written_in_american_english() {
     // anyway. None of these is a substring of an American word, which is what
     // makes an unanchored search the right one -- "recolours" has to be found
     // as surely as "colours".
-    const BRITISH: [&str; 8] = [
+    const BRITISH: [&str; 9] = [
         "colour",
+        "neighbour",
         "centre",
         "behaviour",
         "recognise",

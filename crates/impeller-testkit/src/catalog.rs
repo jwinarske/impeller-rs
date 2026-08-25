@@ -1557,7 +1557,7 @@ fn gradient() -> Vec<Scene> {
             "gradient/stops-sharing-an-offset-make-a-hard-edge",
             // Two stops at the same position, which is how a caller asks for a
             // band rather than a blend. The interpolation between them spans no
-            // distance, so anything dividing by the gap between neighbouring
+            // distance, so anything dividing by the gap between neighboring
             // stops divides by zero -- and the picture that says it went wrong
             // is a smear where there should be a line.
             vec![Item::filled(

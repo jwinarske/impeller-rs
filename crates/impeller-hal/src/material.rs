@@ -193,7 +193,7 @@ pub enum Sampling {
     /// The one texel the coordinate falls in.
     ///
     /// What pixel art needs, and what a sprite drawn at exactly its own size
-    /// wants in order to be certain no neighbour bled in.
+    /// wants in order to be certain no neighbor bled in.
     Nearest,
     /// A bicubic reconstruction over the sixteen texels around the coordinate.
     ///

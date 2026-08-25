@@ -2205,7 +2205,7 @@ number, and a genuine divergence cannot be waved through by loosening one entry.
 Coverage computed from a distance field gets a third, bounded the opposite way:
 a few units everywhere and no outliers. The width of such an edge comes from a
 screen-space derivative, which both specifications leave to the implementation —
-it may be evaluated once per two-by-two quad or by differencing neighbours —
+it may be evaluated once per two-by-two quad or by differencing neighbors —
 so two devices differ by a unit or two along the whole edge rather than by a
 sample's worth at a few pixels. Bounding it by magnitude keeps it able to tell
 that from a defect, since a shape in the wrong place moves edge pixels by far

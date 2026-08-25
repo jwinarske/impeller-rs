@@ -89,7 +89,7 @@ impl Tolerance {
     /// For coverage computed from a distance field, where the width of the
     /// edge comes from a screen-space derivative. Both specifications leave
     /// those to the implementation -- they may be evaluated once per
-    /// two-by-two quad, or by differencing neighbours, and the choice is not
+    /// two-by-two quad, or by differencing neighbors, and the choice is not
     /// observable except through exactly this. A derivative differing by a
     /// percent moves coverage by a couple of units along the whole edge, which
     /// is small everywhere rather than large somewhere.
