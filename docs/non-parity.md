@@ -223,6 +223,28 @@ summarized here only so that this file is the one place to look.
   erode, matrix, compose, a color filter and a runtime effect; `ImageFilter`
   here offers all but the last. A fragment program is a paint here, so it can
   fill a shape and cannot filter what a layer already drew.
+
+  Unlike the color filter that sat beside this entry until it was built, this
+  one is not a match arm. An image filter here becomes a `Layer`, and a layer
+  composites through `Material::Image` with a `to_local` mapping from clip space
+  to the layer's texture — so binding the layer as a runtime material's texture
+  raises a question the other filters never ask: **what coordinate does the
+  caller's program sample in?** The fixture programs here answer it one way
+  already, and deliberately: `effect_image.wgsl` maps the fragment's own clip
+  position, "rather than from a vertex coordinate", which is right for a paint
+  filling a shape and wrong for a filter over a bounded layer, since clip space
+  spans the target and the layer does not.
+
+  Upstream has settled it, and the answer is worth reading before starting:
+  `RuntimeEffectFilterContents::RenderFilter` re-rasterizes its input whenever
+  the input snapshot's transform is not the identity, because — its comment —
+  "`ImageFilter.shader` will not correctly render as it does not know what the
+  transform is in order to incorporate this into sampling". So the program is
+  handed its input as a plain texture with an identity transform, and the cost
+  of that guarantee is an extra rasterization the filter does on the caller's
+  behalf. Matching it means adopting both halves: the contract *and* the
+  re-rasterization that makes the contract true.
+
   *Impact:* seven of upstream's twelve runtime-effect scenes rest on it and
   cannot be mirrored — every `ComposePaintRuntime` and `ComposeBackdropRuntime`
   variant, `CanRenderRuntimeEffectFilter`, `RuntimeEffectImageFilterRotated`
