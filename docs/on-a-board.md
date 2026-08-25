@@ -201,6 +201,33 @@ the wrong answer to: four samples cost 1.17× on V3D against 1.78× on a desktop
 GPU, which closes the margin the architecture had been reasoning about.
 `docs/architecture.md` carries the measurement.
 
+## What no machine here checks
+
+`cargo xtask gate` prints what the suite says it covered, under the totals, and
+the lines are worth reading together rather than one at a time. They say the
+same thing three ways: **advanced blending is the capability this bench cannot
+reach.**
+
+On the workstation two of three devices check fourteen of twenty-nine blend
+modes against their reference equations, and only the software Vulkan device
+reaches all twenty-nine. On a Raspberry Pi 5 it is fourteen on all three. In CI
+it is fourteen on all three as well, its lavapipe being a version whose answer
+to the question differs from the one here. So the advanced modes are compared
+against their formulas on exactly one device anywhere in this building, and on
+none in CI.
+
+The scene counts say it again from the other side. Twenty of the catalog's
+plates and six of the corpus's need the extension on *both* sides of a
+comparison, and no pair here has it: the catalog compares two hundred and
+thirty-nine of two hundred and fifty-nine, the corpus fifty-one of fifty-seven,
+and those are ceilings rather than shortfalls. A third real GPU would move them;
+nothing else on this bench will.
+
+None of that is asserted against, and none of it is a defect -- a device without
+an extension cannot exercise it. It is written down because a suite that passes
+says nothing about the difference, and because a regression in the advanced
+blend arithmetic would be caught today by one machine.
+
 ## Where it stands
 
 All fifty-three test binaries on a Raspberry Pi 5: **784 passed, 0 failed, 0
