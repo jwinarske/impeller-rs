@@ -48,6 +48,7 @@ fn every_scene_agrees_across_devices() {
     );
 
     let mut failures = Vec::new();
+    let mut compared = 0usize;
     for scene in corpus() {
         // Comparing two devices needs both to be able to render it. Where only
         // one can, there is no comparison to make and saying so is better than
@@ -65,6 +66,7 @@ fn every_scene_agrees_across_devices() {
         let b = render_scene::<VulkanHal>(&mut software, &scene).expect("software reference");
 
         let difference = compare(&a, &b).expect("same size");
+        compared += 1;
         if !accepts(&difference, scene.tolerance()) {
             failures.push(format!(
                 "  {}: {}",
@@ -75,6 +77,19 @@ fn every_scene_agrees_across_devices() {
             eprintln!("  {:<26} {difference}", scene.name);
         }
     }
+
+    // How much of the corpus the two devices actually agreed *about*, in the
+    // shape `cargo xtask verify` carries up. A scene one device cannot render
+    // is reported above and skipped, correctly -- and then the suite passes,
+    // and a total says nothing about how many were left out.
+    // "across devices" rather than "across backends", and the difference is not
+    // decoration: the census keeps one line per distinct sentence, so two
+    // suites reporting the same number in the same words would come out as one
+    // and the reader would be told about half of what ran.
+    eprintln!(
+        "compared {compared} of {} corpus scenes across devices",
+        corpus().len()
+    );
 
     // Reporting every failure rather than the first: one broken capability
     // should not hide the state of the rest of the corpus.

@@ -201,7 +201,10 @@ fn the_catalog_matches_across_backends() {
     // Said out loud rather than left implicit. A comparison that quietly
     // compared nothing passes, and the number is the only thing that
     // distinguishes that from a comparison that found no differences.
-    eprintln!("compared {compared} scene(s)");
+    eprintln!(
+        "compared {compared} of {} catalog scenes across backends",
+        catalog().len()
+    );
     if !gaps.is_empty() {
         eprintln!(
             "{} scene(s) not compared, by declared capability: {}",

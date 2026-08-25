@@ -95,6 +95,14 @@ fn the_corpus_matches_across_backends() {
         }
     }
 
+    // The count first, in the shape `cargo xtask verify` carries up. The list
+    // below says which scenes and why; this says how much of the corpus the
+    // comparison actually covered, which is the number a reader of a total
+    // never sees otherwise.
+    eprintln!(
+        "compared {compared} of {} corpus scenes across backends",
+        corpus().len()
+    );
     if !gaps.is_empty() {
         eprintln!(
             "{} of {} scene(s) not compared, by declared capability:\n{}",
