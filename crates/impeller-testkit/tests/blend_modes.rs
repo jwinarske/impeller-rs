@@ -195,6 +195,15 @@ where
             }
         }
     }
+    // In the shape `cargo xtask verify` carries up, and naming the backend so
+    // that three devices checking three different numbers come out as three
+    // lines. The assertion below is a floor; this is what was actually reached,
+    // and on a device without the advanced extension the two differ by half the
+    // table while the suite passes either way.
+    eprintln!(
+        "compared {checked} of {} blend modes against the equations on {backend}",
+        BlendMode::ALL.len()
+    );
     assert!(
         checked >= BlendMode::PORTER_DUFF.len(),
         "{backend} checked only {checked} modes; every device must do all of Porter-Duff"
