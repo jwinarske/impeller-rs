@@ -262,6 +262,15 @@ cargo test --workspace
 than the exit code when running the pieces by hand: a suite that compiled
 nothing and a suite that passed everything both exit zero.
 
+Read `gate`'s own output whole, though, and not through a filter. Test binaries
+run in parallel and one can write over another's summary line; the count is then
+short by however many tests that binary held, and by its failures too. That is
+detected and said out loud -- "N test binaries said nothing this could read" --
+and the run fails. But it is said in a line that a grep for `passed` or `FAILED`
+does not match, and a pipe hides the exit code that would have caught it. A
+count four short with no failures and no skips is what that looks like from
+behind a narrow filter.
+
 **A green gate is not a green CI, and the difference is not cosmetic.** CI runs
 the same suite against lavapipe with software GL forced, and with the Vulkan
 validation layer installed. Two things follow. A device the machine in front of
