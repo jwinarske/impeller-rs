@@ -636,6 +636,50 @@ impl Item {
     /// depends on which path the call takes -- so a scene that says "rounded
     /// rectangle, filled, antialiased" is saying "coverage from a distance
     /// field", whether or not it knows the name for it.
+    /// Whether any edge of this item can pass close to a pixel's center.
+    ///
+    /// Which is the whole question for an aliased draw. Without multisampling a
+    /// pixel is covered or it is not, decided by whether its center falls
+    /// inside, and both specifications pin that rule down exactly -- so two
+    /// devices rasterizing the same triangle agree, and the corpus's aliased
+    /// scenes compare bit-for-bit across devices because of it.
+    ///
+    /// What neither specification pins down is the triangle. Vertices are
+    /// transformed by the vertex shader, and no specification requires two
+    /// implementations to compute the same product of the same matrix and the
+    /// same vector to the last bit. So an edge arrives a hair either side of
+    /// where it arrived elsewhere, and where a pixel's center sits within that
+    /// hair, one device covers it and the other does not -- one pixel, at full
+    /// scale, because there is no partial coverage to soften it.
+    ///
+    /// An axis-aligned rectangle on integer coordinates cannot do this, and
+    /// that is not luck: its edges land on pixel *boundaries*, and centers sit
+    /// half a pixel away from the nearest one. A hair's difference moves
+    /// nothing. Every other shape here has edges at arbitrary positions,
+    /// including a rectangle that has been rotated, sheared, scaled
+    /// fractionally, or given perspective.
+    ///
+    /// A stroke counts whatever it traces, because its outline is generated
+    /// geometry offset by half a width rather than the shape's own edges.
+    fn edges_can_tie(&self) -> bool {
+        fn whole(v: f32) -> bool {
+            v.fract() == 0.0
+        }
+        let t = &self.transform;
+        let aligned = t.rotate == 0.0
+            && t.skew == [0.0, 0.0]
+            && t.perspective == [0.0, 0.0]
+            && t.scale.iter().all(|v| whole(*v))
+            && t.translate.iter().all(|v| whole(*v));
+        if !aligned || self.stroke.is_some() {
+            return true;
+        }
+        match &self.shape {
+            Shape::Rect { min, max } => !min.iter().chain(max).all(|v| whole(*v)),
+            _ => true,
+        }
+    }
+
     fn is_analytic(&self) -> bool {
         let shaped = match self.shape {
             crate::shape::Shape::RoundedRect { radius, .. } => radius > 0.0,
@@ -902,6 +946,35 @@ impl Node {
             // a picture composites what it recorded.
             Self::NinePatch(_) | Self::Glyphs(_) | Self::Shadow(_) | Self::Picture(_) => false,
             Self::Layer { children, .. } => children.iter().any(Self::blends_additively),
+        }
+    }
+
+    /// How many targets deep the most deeply nested group in this node is.
+    ///
+    /// Zero for anything drawn straight into the frame. One for a group, and
+    /// one more for each group inside it, because each is rendered into a
+    /// target of its own and then composited out of it.
+    ///
+    /// Exhaustive on purpose. This file has now had three derivations go wrong
+    /// by listing the cases that matter and missing one added later, and the
+    /// comment on `tolerance` says the lesson is about enumerating rather than
+    /// about any particular list.
+    fn layer_depth(&self) -> u8 {
+        match self {
+            // A picture is composited from a target of its own whatever it
+            // holds, which is the same extra store a layer is.
+            Self::Picture(_) => 1,
+            Self::Draw(_)
+            | Self::Mesh(_)
+            | Self::Atlas(_)
+            | Self::Shadow(_)
+            | Self::Glyphs(_)
+            | Self::Points(_)
+            | Self::NinePatch(_)
+            | Self::Paint(_) => 0,
+            Self::Layer { children, .. } => {
+                1 + children.iter().map(Node::layer_depth).max().unwrap_or(0)
+            }
         }
     }
 
@@ -1264,6 +1337,11 @@ impl Scene {
         self.items.iter().any(Node::blends_additively)
     }
 
+    /// Whether any aliased edge in this scene can fall on a rasterization tie.
+    pub fn edges_can_tie(&self) -> bool {
+        self.samples == 1 && self.items().any(Item::edges_can_tie)
+    }
+
     /// Whether any group in this scene was told the region it covers.
     /// Whether any layer in this scene filters what is behind it.
     pub fn filters_its_backdrop(&self) -> bool {
@@ -1325,6 +1403,28 @@ impl Scene {
     ///
     /// Assigning this per scene by hand would drift as the corpus grows, and
     /// would let a genuine divergence be waved through by loosening one entry.
+    /// Pixels an aliased scene may lose to a rasterization tie, as a fraction.
+    ///
+    /// A thousandth, which is sixteen pixels at the corpus's size, and is the
+    /// multisample budget's number arrived at by the multisample budget's
+    /// argument: an edge tie is a property of how much edge the geometry has,
+    /// not of how many samples resolve it, so the count that bounds one bounds
+    /// the other. What differs is the price of a tie, not how many there are --
+    /// without multisampling there is no partial coverage, so a tie costs the
+    /// whole pixel instead of a quarter of it.
+    ///
+    /// Measured against the corpus on a Raspberry Pi 5, comparing v3d against
+    /// llvmpipe: one pixel for the perspective and transformed-gradient
+    /// scenes, ten for each sweep -- two contiguous runs of five where the
+    /// circle's edge lies nearest to forty-five degrees and steps diagonally
+    /// through the grid. Ten of sixteen thousand, against a circumference of
+    /// three hundred and fifty pixels.
+    ///
+    /// It stays able to tell a tie from a defect for the same reason: geometry
+    /// in the wrong place moves a whole edge, and a color computed differently
+    /// moves a whole shape, each hundreds of pixels rather than ten.
+    const TIE_BUDGET: f32 = 0.001;
+
     pub fn tolerance(&self) -> crate::image::Tolerance {
         // Any fill that is not a plain color is evaluated per fragment, so
         // this asks what the fill is not rather than listing the kinds that
@@ -1351,7 +1451,7 @@ impl Scene {
         // Overlapping draws then accumulate, so the bound is per draw that can
         // land on a pixel rather than per pixel. See `Tolerance::ACCUMULATED`.
         if self.items.iter().any(Node::blends_additively) {
-            return crate::image::Tolerance::ACCUMULATED;
+            return self.allowing_ties(crate::image::Tolerance::ACCUMULATED);
         }
         // Multisampling first, because it permits something the others do not:
         // a whole sample's worth of difference at an edge, on a few pixels. The
@@ -1375,10 +1475,57 @@ impl Scene {
             || self.items().any(|item| {
                 item.blend == BlendMode::SrcOver || !matches!(item.fill, Fill::Solid(_))
             });
-        if computed {
-            crate::image::Tolerance::ROUNDING
-        } else {
-            crate::image::Tolerance::EXACT
+        if !computed {
+            return self.allowing_ties(crate::image::Tolerance::EXACT);
+        }
+        // One unit per fixed-point store the fragment passes through, which is
+        // what the per-channel bound has always meant -- `ROUNDING` is this
+        // rule at a depth of zero, and every scene without a group still gets
+        // exactly it.
+        //
+        // A group is rendered into a target of its own and then composited out
+        // of it, so its fragments are quantized twice rather than once, and two
+        // devices whose arithmetic differs in the last bits can land two levels
+        // apart rather than one. Measured on a Raspberry Pi 5, where v3d and
+        // llvmpipe put `layer-blended-composite` two levels apart on seventeen
+        // interior pixels -- interior, not edges, so it is the arithmetic and
+        // not the rasterizer.
+        //
+        // Derived from depth rather than from whether a group is present at
+        // all, because the mechanism is per store and says so. The nested
+        // scene in the corpus is allowed three by this and uses two, which is
+        // slack that is stated rather than discovered: if a scene ever needs
+        // the third, the rule already predicted it.
+        let depth = self.items.iter().map(Node::layer_depth).max().unwrap_or(0);
+        self.allowing_ties(crate::image::Tolerance::new(1 + depth, 0.0))
+    }
+
+    /// Add the tie budget to a profile, where this scene's edges can tie.
+    ///
+    /// Applied to every aliased profile rather than to the ones that were seen
+    /// to need it. The mechanism is the vertex transform, which does not know
+    /// what the fragment shader will go on to compute, so a scene that fills a
+    /// circle with a flat color can tie exactly as readily as one that fills it
+    /// with a gradient -- it is only that on this device pair the flat ones did
+    /// not. Granting it where it was measured and withholding it elsewhere
+    /// would be fitting the budget to a device.
+    ///
+    /// That is not free, and the cost is worth naming rather than leaving to be
+    /// found. Fourteen scenes that compare bit-for-bit across devices today are
+    /// aliased, curved or transformed, and hold to [`Tolerance::EXACT`] only
+    /// because no edge of theirs has yet landed on a tie. They keep the exact
+    /// per-channel bound -- what they gain is room for sixteen pixels to fall
+    /// the other way, which is the room the mechanism says they need.
+    ///
+    /// `max` rather than assignment so a profile that already carries a wider
+    /// count keeps it.
+    fn allowing_ties(&self, tolerance: crate::image::Tolerance) -> crate::image::Tolerance {
+        match self.edges_can_tie() {
+            true => crate::image::Tolerance::new(
+                tolerance.per_channel,
+                tolerance.outlier_fraction.max(Self::TIE_BUDGET),
+            ),
+            false => tolerance,
         }
     }
 
@@ -2948,13 +3095,150 @@ mod tolerance_tests {
         }
     }
 
+    /// An axis-aligned rectangle on whole coordinates is the one shape whose
+    /// edges cannot land on a tie, and everything else is judged against it.
+    #[test]
+    fn only_geometry_that_can_land_on_a_tie_gets_that_budget() {
+        let grid = Shape::Rect {
+            min: [10.0, 10.0],
+            max: [90.0, 70.0],
+        };
+        let square = |shape: Shape| Scene::new("s", vec![Item::fill(shape, WHITE)]);
+
+        assert_eq!(
+            square(grid.clone()).tolerance().outlier_fraction,
+            0.0,
+            "a rectangle whose edges sit on pixel boundaries was given room to \
+             lose one, and its centers are half a pixel from the nearest edge"
+        );
+
+        // Curved: an edge crosses the grid at every angle, so it passes close
+        // to a center somewhere along its length.
+        assert!(
+            square(Shape::Circle {
+                center: [50.0, 40.0],
+                radius: 30.0,
+            })
+            .tolerance()
+            .outlier_fraction
+                > 0.0,
+            "a circle's edge cannot avoid pixel centers and was given no room"
+        );
+
+        // The same rectangle, turned. The shape did not change and the
+        // alignment did, which is the distinction the derivation rests on.
+        let turned = Scene::new(
+            "s",
+            vec![Item::fill(grid.clone(), WHITE).with_transform(Transform {
+                rotate: 0.3,
+                ..Transform::default()
+            })],
+        );
+        assert!(
+            turned.tolerance().outlier_fraction > 0.0,
+            "a rotated rectangle was treated as though it were still aligned"
+        );
+
+        // And half a pixel over, which is the case a whole-number test catches
+        // and a "did anyone set a transform" test does not.
+        let nudged = Scene::new(
+            "s",
+            vec![Item::fill(grid, WHITE).with_transform(Transform {
+                translate: [0.5, 0.0],
+                ..Transform::default()
+            })],
+        );
+        assert!(
+            nudged.tolerance().outlier_fraction > 0.0,
+            "a rectangle moved onto pixel centers was treated as aligned"
+        );
+    }
+
+    /// Multisampling resolves a tie into partial coverage, so the aliased
+    /// budget must not follow the geometry into a multisampled scene -- the
+    /// multisample profile already carries its own, for the same edges.
+    #[test]
+    fn a_multisampled_scene_keeps_its_own_budget() {
+        let scene = Scene::new(
+            "s",
+            vec![Item::fill(
+                Shape::Circle {
+                    center: [50.0, 40.0],
+                    radius: 30.0,
+                },
+                WHITE,
+            )],
+        )
+        .with_samples(4);
+        assert_eq!(scene.tolerance(), Tolerance::MULTISAMPLED);
+    }
+
+    /// One unit per store, and a group is a store.
+    #[test]
+    fn a_group_is_allowed_the_rounding_of_the_target_it_is_composited_from() {
+        let inner = || {
+            Item::fill(
+                Shape::Rect {
+                    min: [10.0, 10.0],
+                    max: [90.0, 70.0],
+                },
+                WHITE,
+            )
+            .with_blend(BlendMode::SrcOver)
+        };
+        let flat = Scene::new("flat", vec![inner()]);
+        assert_eq!(flat.tolerance().per_channel, 1, "one store, one rounding");
+
+        let grouped = Scene::tree(
+            "grouped",
+            vec![Node::layer(
+                LayerSpec::default(),
+                vec![Node::Draw(Box::new(inner()))],
+            )],
+        );
+        assert_eq!(
+            grouped.tolerance().per_channel,
+            2,
+            "a group is rendered into a target and composited out of it, so \
+             its fragments are quantized twice"
+        );
+
+        let nested = Scene::tree(
+            "nested",
+            vec![Node::layer(
+                LayerSpec::default(),
+                vec![Node::layer(
+                    LayerSpec::default(),
+                    vec![Node::Draw(Box::new(inner()))],
+                )],
+            )],
+        );
+        assert_eq!(
+            nested.tolerance().per_channel,
+            3,
+            "nesting adds a target, and the bound counts targets"
+        );
+    }
+
     #[test]
     fn only_a_scene_that_will_be_drawn_analytically_gets_that_budget() {
         // The budget is for coverage computed from a screen-space derivative,
         // and a scene drawn from triangles must not receive it just for
         // containing the same shape. Aliased, the call tessellates.
         let aliased = Scene::new("aliased", vec![Item::fill(rounded(12.0), WHITE)]);
-        assert_eq!(aliased.tolerance(), Tolerance::EXACT);
+        // On the per-channel bound, which is what the analytic budget widens
+        // and what this test is about. Not on the whole profile: a rounded
+        // rectangle is curved, so it also carries the tie budget, and asserting
+        // the profile would tie this test to a question it is not asking.
+        assert_eq!(
+            aliased.tolerance().per_channel,
+            Tolerance::EXACT.per_channel
+        );
+        assert_ne!(
+            aliased.tolerance().per_channel,
+            Tolerance::ANALYTIC.per_channel,
+            "a scene drawn from triangles was given the distance-field budget"
+        );
 
         // Composited rather than replaced, which these have to say: the
         // constructors default to replacing, and a shape drawn on a quad
