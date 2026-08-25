@@ -57,6 +57,30 @@ fn pixel(pixels: &[u8], x: u32, y: u32) -> [u8; 4] {
     [pixels[i], pixels[i + 1], pixels[i + 2], pixels[i + 3]]
 }
 
+/// Two colors, equal to within `within` on every channel.
+///
+/// For a comparison against a value a *shader* computed rather than one the API
+/// was handed. Both graphics specifications permit some error there and allow a
+/// compiler to fuse operations differently, so a program that multiplies and
+/// adds its way to a color can land a level either side of another device's
+/// answer without either being wrong. A Raspberry Pi 5's V3D reads 179 where
+/// two x86 drivers read 178, on three separate tests, from the same fixture.
+///
+/// Not for a color the caller stated. Those arrive through the pipeline
+/// untransformed and are compared exactly, which is what
+/// `a_stated_color_arrives_as_the_bytes_it_states` is for.
+#[track_caller]
+fn close_enough(got: [u8; 4], want: [u8; 4], within: u8, what: &str) {
+    let off = (0..4).find(|&i| got[i].abs_diff(want[i]) > within);
+    assert!(
+        off.is_none(),
+        "{what}: got {got:?}, wanted {want:?} within {within} \
+         (channel {} differs by {})",
+        off.unwrap_or(0),
+        got[off.unwrap_or(0)].abs_diff(want[off.unwrap_or(0)])
+    );
+}
+
 #[test]
 fn a_context_reports_which_backend_it_chose() {
     let Some(ctx) = context() else { return };
@@ -1531,7 +1555,21 @@ fn an_analytic_shape_lands_the_same_in_a_bounded_layer() {
         .map(|(a, b)| a.abs_diff(*b))
         .max()
         .unwrap_or(0);
-    assert_eq!(worst, 0, "the shape moved when the layer was bounded");
+    // Within a distance field's own latitude, not bit-exact. A bounded layer
+    // composites from a target of another size and origin, and an analytic
+    // shape's coverage comes from a screen-space derivative that both
+    // specifications leave to the implementation -- so the same shape in the
+    // two targets can differ by a level or two along its edges without either
+    // being wrong. This is the reasoning behind `Tolerance::ANALYTIC` in the
+    // testkit, which budgets eight for the same cause and states how it was
+    // measured; a shape that actually moved is off by the whole range.
+    //
+    // Bit-exact held on two x86 devices and does not on a Raspberry Pi 5's
+    // V3D, which reads two.
+    assert!(
+        worst <= 8,
+        "the shape moved when the layer was bounded: {worst}"
+    );
     assert!(full.iter().any(|&b| b > 64), "the shapes rendered nothing");
 }
 
@@ -5286,8 +5324,13 @@ fn bounds_are_invisible(ctx: &mut Context, build: impl Fn(&mut Canvas, Option<Re
         .map(|(a, b)| a.abs_diff(*b))
         .max()
         .unwrap_or(0);
+    // Two rather than one: a composite multiplies a group alpha and rounds
+    // once, and a rotation puts the two targets' samples at different
+    // fractional offsets, so the arithmetic lands differently either side. A
+    // Pi 5's V3D reads two where x86 reads one, and a layer placed wrongly
+    // under a rotation is off by far more than that.
     assert!(
-        worst <= 1,
+        worst <= 2,
         "a bounded layer differs from a full-size one by {worst}"
     );
     // And the scene drew something, so this is not a comparison of two black
@@ -5564,8 +5607,12 @@ fn a_bounded_blurred_layer_matches_a_full_size_one() {
         .map(|(a, b)| a.abs_diff(*b))
         .max()
         .unwrap_or(0);
-    assert_eq!(
-        worst, 0,
+    // One level, which is a blur's taps being summed in a different order in
+    // the two targets and rounded once at the write. Bit-exact was true on x86
+    // and is not on a Pi 5's V3D; bounding a blur wrongly cuts its tail off
+    // square, which is visible across the whole halo rather than by a level.
+    assert!(
+        worst <= 1,
         "bounding a blurred layer changed the picture by {worst}"
     );
     // And it did bound something, or this compares two identical recordings.
@@ -7608,10 +7655,11 @@ fn a_caller_can_fill_a_shape_with_their_own_fragment_program() {
     // colors -- and outside it the ground shows, which is what says the
     // program filled a shape rather than the frame.
     assert_eq!(pixel(&pixels, 40, 64), [255, 0, 0, 255], "the left half");
-    assert_eq!(
+    close_enough(
         pixel(&pixels, 88, 64),
         [0, 178, 51, 255],
-        "the right half, in the caller's second color"
+        1,
+        "the right half, in the caller's second color",
     );
     assert_eq!(
         pixel(&pixels, 4, 4),
@@ -7653,7 +7701,12 @@ fn an_effects_uniforms_travel_with_the_paint_that_names_it() {
     // A threshold of minus a half falls at pixel thirty-two, and of plus a
     // half at ninety-six. So the middle of the frame is on opposite sides of
     // the two splits.
-    assert_eq!(pixel(&pixels, 64, 30), [0, 178, 51, 255], "past the first");
+    close_enough(
+        pixel(&pixels, 64, 30),
+        [0, 178, 51, 255],
+        1,
+        "past the first",
+    );
     assert_eq!(
         pixel(&pixels, 64, 100),
         [255, 0, 0, 255],
@@ -9896,11 +9949,25 @@ fn every_draw_that_takes_a_paint_honours_its_image_filter() {
                 radius_y: 10.0,
             },
         );
-        assert_eq!(
-            filtered,
-            (left - 10, right + 10),
-            "{name} did not apply a dilation of ten. Its own unfiltered extent \
-             of ({left}, {right}) means the filter was accepted and dropped"
+        // Within a pixel of where a dilation of ten should put each edge.
+        //
+        // The span is measured by counting lit pixels, so each end is decided
+        // by whether the outermost one crosses a threshold -- and a dilation
+        // takes the largest sample in a neighbourhood, so its outer pixel sits
+        // right at that boundary by construction. Whether it lands above or
+        // below is a device's business: `draw_line` here comes back one pixel
+        // wider at the bottom on a Raspberry Pi 5's V3D and exact on two x86
+        // drivers.
+        //
+        // A filter accepted and dropped -- which is what this exists to catch,
+        // and has caught -- leaves the span at the unfiltered one, ten pixels
+        // out at each end rather than one.
+        let (want_left, want_right) = (left - 10, right + 10);
+        assert!(
+            filtered.0.abs_diff(want_left) <= 1 && filtered.1.abs_diff(want_right) <= 1,
+            "{name} did not apply a dilation of ten: got {filtered:?}, wanted \
+             about ({want_left}, {want_right}). Its own unfiltered extent of \
+             ({left}, {right}) means the filter was accepted and dropped"
         );
     }
     ctx.destroy_image(image);
@@ -10595,13 +10662,45 @@ fn every_material_draws_the_same_inside_a_layer_as_outside_one() {
         ctx.destroy_surface(surface);
         px
     };
-    // Nothing rounds. A linear gradient used to be allowed a level here, on
-    // the grounds that its parameter is a projection onto an axis stated in
-    // clip space, which a layer of a different size normalizes differently.
-    // With the layer's origin aligned to the dither the difference is gone, so
-    // whatever that allowance was covering it was not that -- and an allowance
-    // kept after its reason has expired is one that hides the next regression.
-    const ROUNDS: [&str; 0] = [];
+    // A level for everything, and the two reasons are worth keeping apart.
+    //
+    // A linear gradient was once allowed one here on the grounds that its
+    // parameter is a projection onto an axis stated in clip space, which a
+    // layer of another size normalizes differently. That was wrong: aligning
+    // the layer's origin to the dither tile removed the difference entirely, so
+    // whatever the allowance covered, it was not that.
+    //
+    // What is left is a composite rounding once. A layer is drawn into a target
+    // of another size and origin and multiplied by a group alpha on the way
+    // back, and the same product rounds to eight bits differently depending on
+    // where the sampling landed. That is device-dependent rather than
+    // material-dependent, which is why it is one number rather than a list:
+    // every material was exact on two x86 devices and a solid rectangle is off
+    // by one on a Raspberry Pi 5's V3D.
+    //
+    // Two rather than one, and derived rather than fitted: the composite rounds
+    // once, and a material whose color is computed per fragment -- a gradient
+    // walked at each pixel, a mesh interpolating vertex colors -- can round
+    // again where the sampling moved. Both of those are one level each and they
+    // do not cancel.
+    //
+    // A material whose mapping assumed the frame is off by the whole range, so
+    // two levels still catches what this is for.
+    //
+    // Except where the material is drawn from a distance field, which is the
+    // second reason and needs its own number. A rectangle, rounded rectangle or
+    // circle computes its own coverage per fragment from a screen-space
+    // derivative that both specifications leave to the implementation, so the
+    // same shape composited from a target of another size can differ along its
+    // edges by more than the rounding. That is `Tolerance::ANALYTIC` in the
+    // testkit, which budgets eight for this cause and records how it was
+    // measured. A Pi 5's V3D reads two on the rounded rectangle.
+    fn allowance(material: &str) -> i32 {
+        match material {
+            "solid rect" | "rrect" | "circle" => 8,
+            _ => 2,
+        }
+    }
     for name in [
         "solid rect",
         "path",
@@ -10627,7 +10726,7 @@ fn every_material_draws_the_same_inside_a_layer_as_outside_one() {
             .map(|(a, b)| (*a as i32 - *b as i32).abs())
             .max()
             .unwrap_or(0);
-        let allowed = if ROUNDS.contains(&name) { 1 } else { 0 };
+        let allowed = allowance(name);
         assert!(
             worst <= allowed,
             "{name} drew differently inside a layer than outside one, by {worst} \
@@ -11362,10 +11461,11 @@ fn a_mesh_takes_a_runtime_effect_unless_it_is_textured() {
         [255, 0, 0, 255],
         "inside the triangle, left of the split"
     );
-    assert_eq!(
+    close_enough(
         pixel(&pixels, 84, 100),
         [0, 178, 51, 255],
-        "inside the triangle, right of it"
+        1,
+        "inside the triangle, right of it",
     );
     // Above the apex and below the base are both outside the mesh, and the
     // ground has to show through both -- an effect that filled its own bounds
