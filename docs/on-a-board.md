@@ -135,6 +135,20 @@ skip lines. `cargo xtask verify` counts them for you on a workstation; running
 bare binaries on a board loses that, so grep for `skipping` alongside
 `test result`, and read the "drew N of M" line the catalog prints.
 
+**Grepping for them needs `--nocapture`, and forgetting it looks like success.**
+A skip is an `eprintln!` inside a test that then passes, and the harness holds
+the output of a passing test. Without the flag the skips are not in what you
+grep, so the count comes back zero -- which is indistinguishable from a run
+that skipped nothing, and is the more reassuring of the two readings. A full
+run on the Pi 5 read as zero skips that way and has a hundred and fifteen.
+
+Most of those hundred and fifteen say the validation layer is unavailable,
+which is a statement about the board rather than about the renderer: the layer
+is not packaged there, so the API use those tests make goes unchecked while
+their pixels are still compared. The rest are capability gaps that name
+themselves -- no device offering advanced blending, a swapchain returning one
+image for every acquisition, a C shared library not built beside its test.
+
 ## What it found
 
 Recorded because the point of the exercise is not the procedure. Every one of
@@ -168,8 +182,10 @@ GPU, which closes the margin the architecture had been reasoning about.
 
 ## Where it stands
 
-All fifty-three test binaries on a Raspberry Pi 5: **776 passed, 0 failed, 0
-ignored.** It was 794 passed and 23 failed the first time the board was run.
+All fifty-three test binaries on a Raspberry Pi 5: **783 passed, 0 failed, 0
+ignored**, with a hundred and fifteen announced skips and the catalog drawing
+222 of its 242 scenes across two devices. It was 794 passed and 23 failed the
+first time the board was run.
 
 The Pi 4 is a separate case and is not covered by that number. It has no IOMMU,
 so Vulkan does not come up on it at all, and its vc4 display controller refuses
