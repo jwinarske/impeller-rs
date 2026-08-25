@@ -89,11 +89,17 @@ this scene draws. So the deviation stands for now and its description does not:
 it is one this project has decided against upstream's decided half, not a gap
 nobody upstream has filled.
 
-Nine of the rows below have now been read against the file they name, at tip of
-tree, and the results are set out after the table. One was right: shadows,
-where the obstacle named governs twenty-six of that file's thirty scenes and
-means what it says. The other eight were wrong in six distinguishable ways, and
-the ways matter more than the count.
+Ten of the rows below have now been read against the file they name, at tip of
+tree, and the results are set out after the table. Two named their obstacle
+correctly: shadows, where it governs twenty-six of that file's thirty scenes and
+means what it says, and paths, where nothing blocks the nine it is short. The
+path row's count was still one too high, for the reason the atlas row's was four
+too high -- a test in the file that draws no picture -- so of the two, one was
+right outright and one was right about the only thing the column claims to be
+about.
+
+The other eight were wrong in six distinguishable ways, and the ways matter more
+than the count.
 
 An obstacle that had been removed and the row not updated (gradients). One
 stated far more broadly than it held, two scenes rather than a chapter (blurs).
@@ -109,7 +115,7 @@ the thing that was wrong (atlases).
 
 Three of the eight turned into renderer changes rather than document ones.
 
-The five not yet checked are the path, clip, text, runtime-effect and
+The four not yet checked are the clip, text, runtime-effect and
 `aiks_dl_unittests.cc` rows. Treat them as unverified, which is what they are.
 On the evidence above, the likeliest thing wrong with them is not that they
 name the wrong obstacle but that they name a real one governing far less than
@@ -125,7 +131,7 @@ column is right and the obvious way to check it is wrong.
 | File | Scenes there | Here | Blocked on |
 |---|---|---|---|
 | `aiks_dl_basic_unittests.cc` | ~85 | 42 | superellipses, non-uniform rounded-rect radii, subpass optimizations; see below |
-| `aiks_dl_path_unittests.cc` | ~31 | 21 | nothing named; see below |
+| `aiks_dl_path_unittests.cc` | ~30 | 21 | nothing; see below |
 | `aiks_dl_gradient_unittests.cc` | ~40 | 31 | nothing; see below |
 | `aiks_dl_clip_unittests.cc` | ~5 | 6 | nothing; this file is covered |
 | `aiks_dl_opacity_unittests.cc` | ~3 | 3 | nothing; this file is covered |
@@ -187,6 +193,20 @@ combination is the same rules whichever is being combined, so it now happens
 once, over color where the fill is constant and over coverage where it varies,
 and every style takes any fill. Eight scenes followed, five of them upstream's
 stroked gradient oval under each style.
+
+The path row is the second whose count was the thing that was wrong, and by one
+rather than by four. `ArcWithZeroSweepAndBlur` builds a display list and stops,
+with a comment saying that an empty picture has to be creatable without
+crashing; it opens no playground and is not a scene. Thirty pictures, twenty-one
+here, nine short -- and nothing blocking any of the nine, which are strokes,
+lines drawn four different ways, multi-contour paths and a fat stroked arc.
+
+That crash test is worth having and is not worth a plate, so it is a test. An
+arc of zero sweep is a single point, a sweep gradient divides by an angle, and a
+mask blur opens layers around whatever coverage the point produced -- three
+things with degenerate cases meeting on one draw. It records here without
+complaint and reaches a device, and the frame comes back untouched, which is
+what says the point produced no coverage rather than coverage nobody looked at.
 
 The atlas row said "nothing named; see below" and there was nothing below --
 the only row whose pointer went nowhere, which is its own kind of stale.
@@ -336,7 +356,9 @@ that the scenes needing it would arrive when the parity row changed. The row
 changed, and three of them arrived: a curve under perspective, a receding
 plane, and a rectangular clip under one. What that promise did not say, and
 what is worth recording in its place, is that the count above moved by three
-and not by the eleven the path chapter is still short. The blocked-on column
+and not by the nine the path chapter is still short -- eleven when that was
+written, and the number has been checked since rather than carried forward.
+The blocked-on column
 was per-file prose that no test reads, and it named one obstacle where there
 may have been several; nobody has since counted, against the source, how many
 of those scenes actually build a perspective matrix. So the path row now says

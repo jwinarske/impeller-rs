@@ -5803,6 +5803,61 @@ fn a_groups_opacity_is_applied_to_the_group_and_nesting_multiplies_it() {
 }
 
 #[test]
+fn an_arc_that_sweeps_nothing_survives_a_mask_blur_and_a_sweep_gradient() {
+    // Upstream keeps this as a crash test rather than a picture: it builds the
+    // display list and stops, with the comment that an empty picture has to be
+    // creatable without crashing. The combination is what makes it worth
+    // having -- an arc of zero sweep is a single point, a sweep gradient
+    // divides by an angle, and a mask blur opens layers around whatever
+    // coverage the point produced, so three things that each have a degenerate
+    // case meet on one draw.
+    let Some(mut ctx) = context() else { return };
+
+    let mut builder = PathBuilder::default();
+    builder.arc(Vec2::new(60.0, 60.0), Vec2::new(50.0, 50.0), 0.0, 0.0);
+    let path = builder.build();
+
+    let mut canvas = Canvas::new(SIZE);
+    canvas.clear(Color::BLACK);
+    canvas
+        .draw_path(
+            &path,
+            &Paint::default()
+                .with_shader(Shader::SweepGradient {
+                    center: Vec2::new(60.0, 60.0),
+                    start_angle: std::f32::consts::FRAC_PI_4,
+                    end_angle: 3.0 * std::f32::consts::FRAC_PI_4,
+                    stops: vec![
+                        GradientStop::new(Color::srgb(1.0, 0.0, 0.0, 1.0), 0.0),
+                        GradientStop::new(Color::BLACK, 1.0),
+                    ],
+                    tile: TileMode::Mirror,
+                })
+                .with_mask_blur(20.0),
+        )
+        .expect("a degenerate arc is not an error");
+
+    // And it reaches a device, which recording alone does not say: the passes a
+    // mask blur opens are where a zero-area coverage would divide by its own
+    // extent, and that happens in the executor rather than the recorder.
+    let pixels = render(&mut ctx, canvas);
+
+    // Nothing drawn, because there is nothing to draw. Stated as a whole-frame
+    // check rather than a probe: a blur spreads what it is given, so a point
+    // that wrongly produced coverage would show up somewhere unpredictable
+    // rather than at a place worth guessing.
+    let ground = [0u8, 0, 0, 255];
+    let moved = pixels
+        .chunks_exact(4)
+        .filter(|texel| *texel != ground)
+        .count();
+    assert_eq!(
+        moved, 0,
+        "an arc sweeping nothing put color on {moved} pixels"
+    );
+}
+
+#[test]
 fn bounded_layers_nest() {
     let Some(mut ctx) = context() else { return };
     // An inner layer's target is placed within its parent's, not within the
