@@ -95,6 +95,46 @@ rather than `vc4`. A suite that passes on the controller that works says nothing
 about the one beside it; `impeller-present-drm`'s crate documentation has the
 table of what each board actually does.
 
+## A second board, and what it says about reading a green run
+
+A Radxa Zero 3 (RK3566, Mali-G52, Debian 12) is the other target here, and
+almost everything above needs adjusting for it. Its name resolves as `.local`
+and not `.lan`. It has no `rsync`, so the sysroot comes over `tar` piped
+through `ssh` instead. And it needs its *own* sysroot: glibc 2.36 against the
+Pi's newer one, so Pi-built binaries will not run there, while binaries built
+against this one run on both. Its gcc is 12, so the last link argument ends
+`/12` rather than `/14`.
+
+Take the binary paths from `cargo test --no-run --message-format=json`,
+filtering for `.profile.test == true` and reading `.executable`. Not from
+`ls -t`: a stale binary from an earlier build otherwise gets shipped, and reads
+as the change not having worked.
+
+**Vulkan does not reach the Mali GPU there, and a run will not say so.** The
+loader lists a `panfrost_icd.json`, and asking for Vulkan with only that ICD
+fails inside `enumerate_physical_devices` with `ERROR_INITIALIZATION_FAILED`.
+Leave the other ICDs in place and Vulkan succeeds -- on **llvmpipe**, which is
+also installed, so a Vulkan suite runs to completion on a software rasterizer
+while a GPU sits beside it unused. The backend that does reach the Mali part is
+GLES. On it the public API suite is 228 passed, 0 failed.
+
+**Debian 12's llvmpipe is old enough to be wrong.** On LLVM 15.0.6 an
+antialiased line writes half coverage one pixel outside a rectangular clip --
+`(55, 87)` where the scissor begins at 56 -- and dithering improves a bright
+gradient by 2.4 times where the test asks for 3. Both pass on llvmpipe 22.1.8
+and on Mali through GLES, and the aliased line is clean on all three, so the
+clip one is a driver defect against a scissor that is exact by specification.
+Neither is this renderer's, and a board run that did not know which driver it
+was on would have filed two bugs against it.
+
+Which is the lesson worth taking from that board rather than the driver
+version. **`test result: ok` is not a result.** A suite here reported three
+passing tests in a quarter of a second having rendered nothing, because the
+context it wanted could not be created and the test returned early. Read the
+skip lines. `cargo xtask verify` counts them for you on a workstation; running
+bare binaries on a board loses that, so grep for `skipping` alongside
+`test result`, and read the "drew N of M" line the catalog prints.
+
 ## What it found
 
 Recorded because the point of the exercise is not the procedure. Every one of

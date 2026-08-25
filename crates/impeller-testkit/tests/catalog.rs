@@ -157,9 +157,16 @@ fn every_catalog_scene_draws_something() {
 
 #[test]
 fn the_catalog_matches_across_backends() {
-    let Ok(mut vulkan) = Validated::new(DevicePreference::Auto) else {
-        eprintln!("skipping: no Vulkan device");
-        return;
+    let mut vulkan = match Validated::new(DevicePreference::Auto) {
+        Ok(ctx) => ctx,
+        // With the reason. A board with a driver the loader can list and not
+        // open reports one thing here and something quite different from the
+        // error, and "no Vulkan device" sent one such run looking for a device
+        // that was plugged in and working.
+        Err(e) => {
+            eprintln!("skipping: no Vulkan device ({e})");
+            return;
+        }
     };
     let Ok(mut gles) = GlesValidated::new(DisplayTarget::Surfaceless) else {
         eprintln!("skipping: no GLES context");

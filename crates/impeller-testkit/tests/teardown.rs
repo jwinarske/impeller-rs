@@ -13,9 +13,16 @@ use impeller_testkit::{catalog, render_scene};
 
 #[test]
 fn destroying_a_context_leaves_the_validation_layer_with_nothing_to_say() {
-    let Ok(mut ctx) = Validated::new(DevicePreference::Auto) else {
-        eprintln!("skipping: no Vulkan device");
-        return;
+    let mut ctx = match Validated::new(DevicePreference::Auto) {
+        Ok(ctx) => ctx,
+        // With the reason. A board with a driver the loader can list and not
+        // open reports one thing here and something quite different from the
+        // error, and "no Vulkan device" sent one such run looking for a device
+        // that was plugged in and working.
+        Err(e) => {
+            eprintln!("skipping: no Vulkan device ({e})");
+            return;
+        }
     };
     if !ctx.validation_active() {
         eprintln!("skipping: the validation layer is not installed");

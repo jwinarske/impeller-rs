@@ -130,9 +130,16 @@ where
 
 #[test]
 fn a_clip_confines_a_draw_on_vulkan() {
-    let Ok(mut ctx) = Validated::new(DevicePreference::Auto) else {
-        eprintln!("skipping: no Vulkan device");
-        return;
+    let mut ctx = match Validated::new(DevicePreference::Auto) {
+        Ok(ctx) => ctx,
+        // With the reason. A board with a driver the loader can list and not
+        // open reports one thing here and something quite different from the
+        // error, and "no Vulkan device" sent one such run looking for a device
+        // that was plugged in and working.
+        Err(e) => {
+            eprintln!("skipping: no Vulkan device ({e})");
+            return;
+        }
     };
     check_backend::<VulkanHal>(&mut ctx, "vulkan");
 }
