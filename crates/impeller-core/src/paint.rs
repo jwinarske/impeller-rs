@@ -268,6 +268,21 @@ pub enum ImageFilter {
     /// two to disagree about. Where they would disagree is inside a
     /// composition, which is the case this exists for.
     Color(ColorFilter),
+    /// Run a caller's fragment program over what was drawn.
+    ///
+    /// `dart:ui`'s `ImageFilter.shader`, and upstream's
+    /// `DlImageFilter::MakeRuntimeEffect`. The program reads its input as a
+    /// texture with an identity transform -- the same guarantee upstream
+    /// re-rasterizes to provide, and one this renderer has by construction: a
+    /// filter is a pass whose target is the size of its source, covered by a
+    /// quad, so a fragment's clip position *is* its texture coordinate. A
+    /// program written for this samples exactly as the fixture programs do.
+    ///
+    /// The uniforms are the whole material block, because a program replaces
+    /// the shader that would have read it. `RUNTIME_FLOATS` is the bound and
+    /// anything past it is dropped, as it is for a runtime effect used as a
+    /// paint.
+    Runtime { program: u32, uniforms: Vec<f32> },
     /// Filter with `inner`, then filter that result with `outer`.
     ///
     /// `ImageFilter.compose`, and the reason this type is not `Copy`: a filter
@@ -314,6 +329,11 @@ impl ImageFilter {
             // caller who builds one from a default out of a layer they did not
             // ask to pay for.
             Self::Color(filter) => *filter == ColorFilter::None,
+            // Never. What a caller's program does is the caller's business and
+            // nothing here can read it, so the only safe answer is that it does
+            // something -- and answering otherwise would drop the pass that
+            // runs it.
+            Self::Runtime { .. } => false,
             Self::Compose { outer, inner } => outer.is_identity() && inner.is_identity(),
         }
     }
@@ -379,8 +399,10 @@ impl ImageFilter {
     pub(crate) fn covering(&self, min: Vec2, max: Vec2) -> (Vec2, Vec2) {
         match self {
             // A color filter changes what a pixel is and never which pixels
-            // there are, so it needs exactly the region it was given.
-            Self::None | Self::Erode { .. } | Self::Color(_) => (min, max),
+            // there are, so it needs exactly the region it was given. A runtime
+            // effect is the same on the side that matters here: it may read
+            // anywhere in its input, and it writes only where the pass covers.
+            Self::None | Self::Erode { .. } | Self::Color(_) | Self::Runtime { .. } => (min, max),
             Self::Blur { sigma } => {
                 let reach = Vec2::splat(crate::canvas::blur_reach(*sigma));
                 (min - reach, max + reach)

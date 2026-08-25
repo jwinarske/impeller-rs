@@ -11,6 +11,15 @@ Two things this file is not. It is not the list of what is *unbuilt*: that is
 list of bugs — everything here is deliberate, and a difference that turns out
 not to be deliberate belongs in a commit that removes it.
 
+A fourth left it when the last of upstream's seven image filter kinds was
+built. That entry had grown two paragraphs of scoping, and both turned out to
+be arguing the job was larger than it was: the contract it worried about --
+that a caller's program is handed its input as a texture with an identity
+transform -- is one a filter pass here satisfies by construction, and the
+storage question that looked like the real obstacle was answered by keeping the
+program beside the layer rather than inside it. `Layer` is still `Copy` and
+still a hundred and fifty-two bytes.
+
 A third left it when a rounded rectangle here stopped having one radius. That
 entry said the limit had never been a decision, only a generalization nobody had
 written, and named where writing it would cost something -- the analytic route
@@ -219,59 +228,6 @@ summarized here only so that this file is the one place to look.
   that table, and nothing here could check the transcription. Drawing a
   different curve under the same name would be worse than not drawing one.
   *Impact:* a caller who needs Flutter's squircle cannot get it.
-- **A runtime effect as an image filter.** `DlImageFilter` offers blur, dilate,
-  erode, matrix, compose, a color filter and a runtime effect; `ImageFilter`
-  here offers all but the last. A fragment program is a paint here, so it can
-  fill a shape and cannot filter what a layer already drew.
-
-  Unlike the color filter that sat beside this entry until it was built, this
-  one is not a match arm. An image filter here becomes a `Layer`, and a layer
-  composites through `Material::Image` with a `to_local` mapping from clip space
-  to the layer's texture — so binding the layer as a runtime material's texture
-  raises a question the other filters never ask: **what coordinate does the
-  caller's program sample in?** The fixture programs here answer it one way
-  already, and deliberately: `effect_image.wgsl` maps the fragment's own clip
-  position, "rather than from a vertex coordinate", which is right for a paint
-  filling a shape and wrong for a filter over a bounded layer, since clip space
-  spans the target and the layer does not.
-
-  Upstream has settled it:
-  `RuntimeEffectFilterContents::RenderFilter` re-rasterizes its input whenever
-  the input snapshot's transform is not the identity, because — its comment —
-  "`ImageFilter.shader` will not correctly render as it does not know what the
-  transform is in order to incorporate this into sampling". So the program is
-  handed its input as a plain texture with an identity transform, and the price
-  of that guarantee is an extra rasterization.
-
-  **This renderer gets that guarantee without paying for it**, which is the
-  first thing to know before starting and was not obvious. Upstream re-
-  rasterizes because a snapshot travels with a transform; here every filter is a
-  pass of its own, and `filter_pass` says why it does not have the problem — the
-  target is the same size as the source, the quad covers all of it, and the
-  mapping from clip position to texture coordinate is the identity. A program
-  sampling its own clip position, which is what `effect_image.wgsl` already
-  does and documents, therefore reads exactly the texel upstream goes to
-  trouble to give it. The contract is answered and the re-rasterization is not
-  needed.
-
-  What is left is smaller and is about where the uniforms live. `Layer` is
-  `Copy` and a hundred and fifty-two bytes, and it is what an `ImageFilter`
-  becomes on the way to being applied. A program reads the whole material block,
-  so its uniforms are sixty-four floats — another two hundred and fifty-six
-  bytes, on a struct passed by value at every `save_layer`. Three ways out, none
-  free: inline the array and grow `Layer` to about four hundred bytes; drop
-  `Copy` from `Layer`, which is a public type; or stop reducing an `ImageFilter`
-  to a `Layer` before the filter passes run, which is a refactor of how filters
-  are peeled. That choice wants making deliberately rather than by whoever
-  happens to reach it first.
-
-  *Impact:* seven of upstream's twelve runtime-effect scenes rest on it and
-  cannot be mirrored — every `ComposePaintRuntime` and `ComposeBackdropRuntime`
-  variant, `CanRenderRuntimeEffectFilter`, `RuntimeEffectImageFilterRotated`
-  and `ClippedBackdropFilterWithShader`. A caller wanting a shader over a
-  finished layer draws it into one and fills with the program instead, which is
-  a different picture wherever the layer's own bounds differ from the shape
-  being filled.
 - **Text shaping and font parsing.** Out of scope by design; `draw_glyphs` takes
   a positioned run and an atlas. *Impact:* a caller brings their own shaper.
 - **`drawPicture` is tessellated rather than replayed.** `draw_recording`

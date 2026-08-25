@@ -8183,6 +8183,116 @@ fn a_paint_naming_a_program_nobody_registered_is_refused() {
 }
 
 #[test]
+fn a_runtime_effect_can_filter_what_was_drawn_rather_than_fill_it() {
+    // The last of upstream's seven image filter kinds. A fragment program here
+    // was a paint -- it could fill a shape and could not filter a finished one
+    // -- and seven of upstream's runtime-effect scenes are about the second.
+    //
+    // The program is the fixture that samples a texture and multiplies by a
+    // tint. Used as a filter its input is the layer the draw landed in, so a
+    // white rectangle filtered through it comes back the tint.
+    let Some(mut ctx) = context() else { return };
+    let program = ctx
+        .register_program(&impeller::RuntimeProgram {
+            spirv: impeller_shaders::EFFECT_IMAGE_SPV.to_vec(),
+            glsl_es: impeller_shaders::EFFECT_IMAGE_FS_GLSL.to_string(),
+        })
+        .expect("register");
+    let tint = |r: f32, g: f32, b: f32| {
+        let mut uniforms = vec![0.0; RUNTIME_FLOATS];
+        uniforms[0..4].copy_from_slice(&[r, g, b, 1.0]);
+        ImageFilter::Runtime { program, uniforms }
+    };
+
+    let shot = |ctx: &mut Context, filter: ImageFilter| {
+        let mut canvas = Canvas::new(SIZE);
+        canvas.clear(Color::BLACK);
+        canvas
+            .draw_rect(
+                Rect::new(32.0, 32.0, 96.0, 96.0),
+                // A gradient rather than a flat color, and that is the whole
+                // difference between this test working and only appearing to.
+                // Where a binding names no texture the backend binds a
+                // placeholder, so a program handed nothing still samples
+                // something -- and against a flat white layer the tinted
+                // placeholder is the same picture as the tinted layer. A
+                // gradient cannot be faked that way: what comes back has to
+                // vary across the shape the way the input did.
+                &Paint::linear_gradient(
+                    Vec2::new(32.0, 0.0),
+                    Vec2::new(96.0, 0.0),
+                    vec![
+                        GradientStop::new(Color::srgb(1.0, 1.0, 1.0, 1.0), 0.0),
+                        GradientStop::new(Color::srgb(0.15, 0.15, 0.15, 1.0), 1.0),
+                    ],
+                )
+                .with_anti_alias(false)
+                .with_image_filter(filter),
+            )
+            .expect("rect");
+        render(ctx, canvas)
+    };
+
+    let plain = shot(&mut ctx, ImageFilter::None);
+    let (left, right) = (pixel(&plain, 36, 64), pixel(&plain, 92, 64));
+    assert!(
+        left[0] > right[0] + 100,
+        "the unfiltered gradient should run bright to dark: {left:?} to {right:?}"
+    );
+
+    // Filtered, the program has read the layer and multiplied it.
+    let filtered = shot(&mut ctx, tint(1.0, 0.4, 0.0));
+    let got = pixel(&filtered, 36, 64);
+    assert!(
+        got[0] > 200 && got[1] < got[0] / 2 && got[2] < 16,
+        "the program should have tinted what was drawn, got {got:?}"
+    );
+    // And it read *the layer*: the gradient survives the tint, so the input
+    // was what the draw produced and not the placeholder a binding gets when
+    // it names nothing.
+    let (l, r) = (pixel(&filtered, 36, 64), pixel(&filtered, 92, 64));
+    assert!(
+        l[0] > r[0] + 100,
+        "the filtered result is flat, so the program sampled something other \
+         than the layer: {l:?} to {r:?}"
+    );
+    // And only where it was drawn. A filter pass covers the layer, and the
+    // layer covers the shape -- so a program that read the whole frame, or was
+    // handed a target the wrong size, shows up outside it.
+    assert_eq!(
+        pixel(&filtered, 8, 8),
+        [0, 0, 0, 255],
+        "the filter reached outside the layer"
+    );
+
+    // Two tints differ, which says the uniforms arrive rather than some
+    // constant the program would produce either way.
+    let other = shot(&mut ctx, tint(0.0, 0.4, 1.0));
+    assert_ne!(
+        pixel(&filtered, 64, 64),
+        pixel(&other, 64, 64),
+        "both tints gave the same picture, so the uniforms did not arrive"
+    );
+
+    // And it composes, which is the property a paint-only program cannot have.
+    // Blurred first and then tinted: the halo is outside the rectangle and is
+    // tinted too, so both halves ran.
+    let composed = shot(
+        &mut ctx,
+        ImageFilter::compose(tint(1.0, 0.4, 0.0), ImageFilter::Blur { sigma: 6.0 }),
+    );
+    let halo = pixel(&composed, 28, 64);
+    assert!(
+        halo[0] > 4,
+        "the blur half of the composition did nothing: {halo:?}"
+    );
+    assert!(
+        halo[0] > halo[2],
+        "the tint half of the composition did nothing: {halo:?}"
+    );
+}
+
+#[test]
 fn a_runtime_effect_can_read_a_texture_the_caller_supplied() {
     // What closes the gap between this and `dart:ui`'s fragment shader for the
     // common case. No descriptor set of its own: every draw already binds a

@@ -146,7 +146,7 @@ column is right and the obvious way to check it is wrong.
 | `aiks_dl_shadow_unittests.cc` | ~30 | 13 | a convex-shadow optimization this renderer does not have; see below |
 | `aiks_dl_primitive_shape_unittests.cc` | ~2 | 0 | one is a playground harness, one wants a stroke width of zero to mean a hairline |
 | `aiks_dl_text_unittests.cc` | — | 7 | shaping and font parsing, which are out of scope; glyph rendering is not, and these use synthetic coverage |
-| `aiks_dl_runtime_effect_unittests.cc` | — | 5 | a runtime effect cannot be an image filter here; see below |
+| `aiks_dl_runtime_effect_unittests.cc` | — | 5 | nothing; see below |
 | `aiks_dl_unittests.cc` | ~36 | 12 | subpass collapse, for five of them; see below |
 
 The catalog holds two hundred and forty-two scenes of roughly four hundred,
@@ -215,12 +215,10 @@ run, and a run here takes a solid color, which `docs/parity.md` says in the
 
 The runtime-effect row is wrong, and wrong in the way that matters most: it said
 the chapter was "bounded by having two fixture programs rather than by the
-renderer", and it is bounded by the renderer. Upstream's `DlImageFilter` offers
-seven kinds and `ImageFilter` here now offers six; the one missing is a runtime
-effect. (A color filter was the other, and was built a commit later -- it needed
-one match arm, because an image filter here is a layer and a layer already
-carried a color filter.) Seven of that file's twelve scenes rest on the runtime
-effect
+renderer", and it is bounded by the renderer. Upstream's `DlImageFilter` offered
+seven kinds where `ImageFilter` offered five. Both missing kinds have since been
+built, so the row's obstacle is gone and its twelve scenes are unwritten rather
+than blocked. Seven of them rested on the runtime effect
 -- every `ComposePaintRuntime` and `ComposeBackdropRuntime` variant,
 `CanRenderRuntimeEffectFilter`, `RuntimeEffectImageFilterRotated` and
 `ClippedBackdropFilterWithShader`. A fragment program is a paint here, so it can

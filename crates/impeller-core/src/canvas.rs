@@ -425,12 +425,28 @@ struct SavedState {
     layer: Option<LayerFrame>,
 }
 
+/// A caller's program, on its way to the pass that runs it.
+///
+/// Not a field of [`Layer`], which is the whole reason this type exists. A
+/// layer is `Copy` and small, and it is copied at every `save_layer`; a
+/// program's uniforms are the entire material block, sixty-four floats, which
+/// would be paid for by every caller who never used one. So the filter travels
+/// beside the layer in the frame rather than inside it, and the public type is
+/// unchanged.
+#[derive(Debug, Clone, PartialEq)]
+struct RuntimeFilter {
+    program: u32,
+    uniforms: Vec<f32>,
+}
+
 /// A layer in progress: the parent's recording, set aside until it returns.
 #[derive(Debug)]
 struct LayerFrame {
     batch: Batch,
     sources: Vec<TextureSource>,
     paint: Layer,
+    /// A caller's program to run over the finished layer, if one was asked for.
+    runtime: Option<RuntimeFilter>,
     /// The target the parent was drawing into, restored when the layer closes.
     parent: Target,
     /// Whether the parent's own batch had asked for antialiasing yet.
@@ -1099,7 +1115,7 @@ impl Canvas {
     /// which costs some work in the layer and keeps a stencil clip from having
     /// to be rebuilt in a second target.
     pub fn save_layer(&mut self, layer: Layer) -> &mut Self {
-        let pending = self.open_layer(layer);
+        let pending = self.open_layer(layer, None);
         self.seed_backdrop(pending);
         self
     }
@@ -1110,13 +1126,17 @@ impl Canvas {
     /// settled, which is why this is separate from the seeding: a bounded layer
     /// does not know its own target until after the frame exists, and the seed
     /// has to land in the target the content will draw into.
-    fn open_layer(&mut self, layer: Layer) -> Option<(usize, Target)> {
+    fn open_layer(
+        &mut self,
+        layer: Layer,
+        runtime: Option<RuntimeFilter>,
+    ) -> Option<(usize, Target)> {
         let parent = self.target;
         let filtered = (layer.backdrop_blur > 0.0).then(|| {
             let cut = self.cut_pass();
             self.blur_passes(cut, parent, layer.backdrop_blur)
         });
-        self.push_layer_frame(layer);
+        self.push_layer_frame(layer, runtime);
         filtered.map(|index| (index, parent))
     }
 
@@ -1226,7 +1246,7 @@ impl Canvas {
         self.draw_whole_pass(pass, parent, into, BlendMode::Src);
     }
 
-    fn push_layer_frame(&mut self, layer: Layer) {
+    fn push_layer_frame(&mut self, layer: Layer, runtime: Option<RuntimeFilter>) {
         self.stack.push(SavedState {
             transform: self.transform,
             clip: self.clip,
@@ -1236,6 +1256,7 @@ impl Canvas {
                 batch: std::mem::take(&mut self.batch),
                 sources: std::mem::take(&mut self.sources),
                 paint: layer,
+                runtime,
                 parent: self.target,
                 anti_alias: std::mem::take(&mut self.anti_alias),
             }),
@@ -1299,12 +1320,27 @@ impl Canvas {
     /// divided by the scale and multiplied by it again is eight only if nothing
     /// rounds, and the bounds are floored and ceiled at the end.
     fn save_layer_device_bounds(&mut self, layer: Layer, min: Vec2, max: Vec2) -> &mut Self {
+        self.save_layer_device_bounds_running(layer, min, max, None)
+    }
+
+    /// The same, with a caller's program to run over the finished layer.
+    ///
+    /// Separate rather than a defaulted argument because every caller but the
+    /// three filtered draws passes `None`, and a parameter that is almost
+    /// always one value reads as though it were sometimes the other.
+    fn save_layer_device_bounds_running(
+        &mut self,
+        layer: Layer,
+        min: Vec2,
+        max: Vec2,
+        runtime: Option<RuntimeFilter>,
+    ) -> &mut Self {
         let reach = layer.reach();
         // Opened without seeding, because the seed has to land in the target
         // the content will draw into and that target is decided below. A
         // backdrop drawn into the full-size target and then narrowed would be
         // the wrong region of the wrong image.
-        let pending = self.open_layer(layer);
+        let pending = self.open_layer(layer, runtime);
         // A blur reaches past what it was given. The caller states where the
         // content is, which is the question they can answer; how far a blur
         // carries it is this renderer's arithmetic, and a target sized to the
@@ -1811,19 +1847,35 @@ impl Canvas {
     /// reachable when peeling took that half to be a leaf, and composing two
     /// compositions was then refused as unimplemented, having been assembled
     /// out of nothing but implemented filters.
-    fn filter_layer(&self, filter: &ImageFilter) -> Option<Layer> {
-        Some(match *filter {
-            ImageFilter::Blur { sigma } => Layer::opacity(1.0).with_blur(sigma),
-            ImageFilter::Matrix { transform } => Layer::opacity(1.0).with_matrix(transform),
-            ImageFilter::Dilate { radius_x, radius_y } => {
-                Layer::opacity(1.0).with_morphology(Morphology::dilate(radius_x, radius_y))
-            }
-            ImageFilter::Erode { radius_x, radius_y } => {
-                Layer::opacity(1.0).with_morphology(Morphology::erode(radius_x, radius_y))
-            }
-            ImageFilter::Color(filter) => Layer::opacity(1.0).with_color_filter(filter),
-            ImageFilter::None | ImageFilter::Compose { .. } => return None,
-        })
+    fn filter_layer(&self, filter: &ImageFilter) -> Option<(Layer, Option<RuntimeFilter>)> {
+        if let ImageFilter::Runtime { program, uniforms } = filter {
+            // The layer itself is plain: what makes it a filter is the pass run
+            // over it at restore, which needs the program and cannot get it
+            // from a `Copy` layer.
+            return Some((
+                Layer::opacity(1.0),
+                Some(RuntimeFilter {
+                    program: *program,
+                    uniforms: uniforms.clone(),
+                }),
+            ));
+        }
+        Some((
+            match *filter {
+                ImageFilter::Blur { sigma } => Layer::opacity(1.0).with_blur(sigma),
+                ImageFilter::Matrix { transform } => Layer::opacity(1.0).with_matrix(transform),
+                ImageFilter::Dilate { radius_x, radius_y } => {
+                    Layer::opacity(1.0).with_morphology(Morphology::dilate(radius_x, radius_y))
+                }
+                ImageFilter::Erode { radius_x, radius_y } => {
+                    Layer::opacity(1.0).with_morphology(Morphology::erode(radius_x, radius_y))
+                }
+                ImageFilter::Color(filter) => Layer::opacity(1.0).with_color_filter(filter),
+                ImageFilter::Runtime { .. } => unreachable!("handled above"),
+                ImageFilter::None | ImageFilter::Compose { .. } => return None,
+            },
+            None,
+        ))
     }
 
     /// A glyph run drawn into a layer, and the layer filtered.
@@ -1839,7 +1891,7 @@ impl Canvas {
         paint: &Paint,
     ) -> Result<&mut Self> {
         let (outermost, rest) = paint.image_filter.peel();
-        let Some(layer) = self.filter_layer(&outermost) else {
+        let Some((layer, runtime)) = self.filter_layer(&outermost) else {
             return Err(Error::Unsupported("this image filter is not implemented"));
         };
         let (mut min, mut max) = (Vec2::splat(f32::INFINITY), Vec2::splat(f32::NEG_INFINITY));
@@ -1855,7 +1907,7 @@ impl Canvas {
         }
         let (min, max) = transformed_bounds(self.transform, min, max).unwrap_or_else(unbounded);
         let (min, max) = rest.covering(min, max);
-        self.save_layer_device_bounds(layer.with_blend(paint.blend), min, max);
+        self.save_layer_device_bounds_running(layer.with_blend(paint.blend), min, max, runtime);
         let inner = paint
             .clone()
             .with_image_filter(rest)
@@ -1877,7 +1929,7 @@ impl Canvas {
     /// are described there.
     fn draw_vertices_filtered(&mut self, mesh: &Vertices, paint: &Paint) -> Result<&mut Self> {
         let (outermost, rest) = paint.image_filter.peel();
-        let Some(layer) = self.filter_layer(&outermost) else {
+        let Some((layer, runtime)) = self.filter_layer(&outermost) else {
             return Err(Error::Unsupported("this image filter is not implemented"));
         };
         // From the vertices themselves. A mesh has no path to take bounds from,
@@ -1894,7 +1946,7 @@ impl Canvas {
         }
         let (min, max) = transformed_bounds(self.transform, min, max).unwrap_or_else(unbounded);
         let (min, max) = rest.covering(min, max);
-        self.save_layer_device_bounds(layer.with_blend(paint.blend), min, max);
+        self.save_layer_device_bounds_running(layer.with_blend(paint.blend), min, max, runtime);
         let inner = paint
             .clone()
             .with_image_filter(rest)
@@ -1956,7 +2008,7 @@ impl Canvas {
         // one frame at a time rather than all at once -- which keeps the
         // single-filter case exactly what it was, with the remainder `None`.
         let (outermost, rest) = paint.image_filter.peel();
-        let Some(layer) = self.filter_layer(&outermost) else {
+        let Some((layer, runtime)) = self.filter_layer(&outermost) else {
             return Err(Error::Unsupported("this image filter is not implemented"));
         };
         let bounds = self.filter_bounds(path, paint);
@@ -1982,7 +2034,7 @@ impl Canvas {
         // Only the outermost, which is why the inner paint is neutral: peeling
         // a chain opens a layer per link, and a blend carried down would be
         // applied once per link rather than once.
-        self.save_layer_device_bounds(layer.with_blend(paint.blend), min, max);
+        self.save_layer_device_bounds_running(layer.with_blend(paint.blend), min, max, runtime);
         // The mask blur, if there is one, is left on: it applies to the drawing
         // this filter is filtering.
         let inner = paint
@@ -3363,6 +3415,13 @@ impl Canvas {
         if let Some(morphology) = frame.paint.morphology {
             index = self.morphology_passes(index, layer, morphology);
         }
+        // Last of the three, so a caller's program sees whatever the built-in
+        // filters produced rather than the other way round. That is the order a
+        // composition states: the outermost filter is peeled first and becomes
+        // this layer, and anything inner was applied by the draw inside it.
+        if let Some(runtime) = &frame.runtime {
+            index = self.runtime_pass(index, layer, runtime.program, &runtime.uniforms);
+        }
         let slot = self.slot_for(TextureSource::Layer(index));
 
         // Where the layer sits in the parent's clip space, and how much of that
@@ -3447,6 +3506,37 @@ impl Canvas {
             placement.map_or(Transform2D::IDENTITY, |(matrix, _)| matrix),
             &paint,
         );
+    }
+
+    /// A caller's program run over a finished layer, and the pass it landed at.
+    ///
+    /// The whole of what a runtime image filter is, and it is short for the
+    /// reason recorded on [`ImageFilter::Runtime`]: a filter pass covers a
+    /// target the size of its source, so a fragment's clip position is already
+    /// its texture coordinate and the program needs no mapping handed to it.
+    /// Upstream re-rasterizes its input to arrange the same thing.
+    ///
+    /// Slot zero, because `filter_pass` gives the pass one source and that
+    /// source is the layer being filtered. A program declaring the binding
+    /// every draw already fills reads it and nothing further is bound.
+    fn runtime_pass(
+        &mut self,
+        source: usize,
+        target: Target,
+        program: u32,
+        uniforms: &[f32],
+    ) -> usize {
+        let mut textures = [None; impeller_hal::MAX_EFFECT_TEXTURES];
+        textures[0] = Some(0);
+        self.filter_pass(
+            source,
+            target,
+            Material::Runtime {
+                program,
+                uniforms: uniforms.to_vec(),
+                textures,
+            },
+        )
     }
 
     /// One pass covering `target`, drawing `material` over all of it, and the
