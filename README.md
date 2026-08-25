@@ -258,9 +258,28 @@ cargo build --workspace --all-targets                        # smoke test
 cargo test --workspace
 ```
 
-`cargo xtask gate` is all of that as one exit code, and is what CI runs. Read
-the test count rather than the exit code when running the pieces by hand: a
-suite that compiled nothing and a suite that passed everything both exit zero.
+`cargo xtask gate` is all of that as one exit code. Read the test count rather
+than the exit code when running the pieces by hand: a suite that compiled
+nothing and a suite that passed everything both exit zero.
+
+**A green gate is not a green CI, and the difference is not cosmetic.** CI runs
+the same suite against lavapipe with software GL forced, and with the Vulkan
+validation layer installed. Two things follow. A device the machine in front of
+you does not have will disagree — one lavapipe version writes outside a scissor
+where three other drivers do not, and a threshold fitted to one GPU can clear it
+by one per cent there and fail everywhere else. And the validation layer is the
+only thing that reports a Vulkan object outliving its device; without it those
+tests still pass, and on a machine that has no layer they say so, a hundred and
+twenty times, in skips nobody reads.
+
+To run what CI runs:
+
+```sh
+VK_DRIVER_FILES=/usr/share/vulkan/icd.d/lvp_icd.x86_64.json \
+  LIBGL_ALWAYS_SOFTWARE=1 cargo xtask verify
+```
+
+The path is where the distribution puts lavapipe, which differs between them.
 
 The feature axes are meant to compose independently, so check that they still
 do — a backend and a presentation path are orthogonal, and a combination that

@@ -118,17 +118,33 @@ also installed, so a Vulkan suite runs to completion on a software rasterizer
 while a GPU sits beside it unused. The backend that does reach the Mali part is
 GLES. On it the public API suite is 228 passed, 0 failed.
 
-**Debian 12's llvmpipe is old enough to be wrong.** On LLVM 15.0.6 an
-antialiased line writes half coverage one pixel outside a rectangular clip --
-`(55, 87)` where the scissor begins at 56 -- and dithering improves a bright
-gradient by 2.4 times where the test asks for 3. Both pass on llvmpipe 22.1.8
-and on Mali through GLES, and the aliased line is clean on all three, so the
-clip one is a driver defect against a scissor that is exact by specification.
-Neither is this renderer's, and a board run that did not know which driver it
-was on would have filed two bugs against it.
+**Two failures turned up there, and this paragraph got both of them wrong the
+first time.** It said Debian 12's llvmpipe was "old enough to be wrong" and that
+neither failure was this renderer's. One of those is half right and the other is
+backwards, and both were settled by CI rather than by a board.
 
-Which is the lesson worth taking from that board rather than the driver
-version. **`test result: ok` is not a result.** A suite here reported three
+The clip one is a driver defect, and not an age. An antialiased line writes half
+coverage one pixel outside a rectangular clip -- `(55, 87)` where the scissor
+begins at 56 -- on llvmpipe at Mesa 15.0.6 and again at Mesa 25.2.8, which is
+current. Mesa 26.1.7, RADV and PanVK are clean. The scissor this renderer
+records is right either way, and identical whether the paint asks for
+antialiasing or not; what differs is that antialiasing opens a multisampled
+pass. Half coverage is two of four sample positions, which reads as a per-sample
+scissor test half a pixel out. `public_api` probes for it now and skips the clip
+half by name where it finds it.
+
+The dithering one was ours. The test compared a dithered eight-bit render
+against the same gradient in a half-float target, and a half-float's step near
+six tenths is larger than the error being measured -- so it was measuring its
+own reference, and its threshold had been fitted to whatever that came to on one
+device. Calling it a driver defect was the comfortable reading and the wrong one.
+
+The moral is not about llvmpipe. **A board tells you a device disagrees; it
+cannot tell you who is wrong.** Both of these needed a third device and a fourth
+driver before the answer was clear, and one of them needed the answer to be
+"us".
+
+The other lesson from that board. **`test result: ok` is not a result.** A suite here reported three
 passing tests in a quarter of a second having rendered nothing, because the
 context it wanted could not be created and the test returned early. Read the
 skip lines. `cargo xtask verify` counts them for you on a workstation; running
