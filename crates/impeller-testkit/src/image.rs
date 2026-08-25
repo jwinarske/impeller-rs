@@ -115,6 +115,31 @@ impl Tolerance {
         outlier_fraction: 0.001,
     };
 
+    /// Rounding, once per draw that can land on the same pixel.
+    ///
+    /// For a scene whose items blend *additively*. Every other mode here
+    /// replaces the destination or mixes toward it, so a fragment's rounding is
+    /// the last one that happened and one level covers it. `Plus` adds to what
+    /// is already there, so each overlapping draw contributes its own rounding
+    /// and they accumulate rather than cancel -- two draws can be two levels
+    /// apart between implementations that each round correctly.
+    ///
+    /// Three because that is what the corpus contains. The additive atlas scene
+    /// places its sprites sixteen apart at a width of fifty-six and says so in
+    /// its own comment: "the run has single, double and triple coverage in it".
+    /// A scene stacking more would want more, and would fail here rather than
+    /// pass quietly.
+    ///
+    /// Found on a Raspberry Pi 5, where the two backends read two levels apart
+    /// on that scene. They share a GPU and its fixed-function blending, so the
+    /// difference is the two shader compilers arriving at slightly different
+    /// arithmetic -- the same thing that has three runtime-effect tests reading
+    /// 179 against x86's 178 -- and then the blend adding it up.
+    pub const ACCUMULATED: Self = Self {
+        per_channel: 3,
+        outlier_fraction: 0.0,
+    };
+
     pub const fn new(per_channel: u8, outlier_fraction: f32) -> Self {
         Self {
             per_channel,

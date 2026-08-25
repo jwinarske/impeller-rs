@@ -880,6 +880,31 @@ impl Node {
     }
 
     /// Whether this subtree composites a group at all.
+    /// Whether anything here adds to the destination rather than replacing or
+    /// mixing toward it.
+    ///
+    /// An exhaustive match on purpose, and the third time this file has been
+    /// caught by the same thing. A derivation that enumerates what it cares
+    /// about misses whatever is added next: a new *fill* kind inherited the
+    /// exact rule once, a new *node* kind did it again with glyph runs, and
+    /// this was first written as a walk over `items()` -- which cannot see an
+    /// atlas at all, because an atlas is a node and not an item. Written this
+    /// way a new variant does not compile until somebody answers for it.
+    fn blends_additively(&self) -> bool {
+        match self {
+            Self::Draw(item) => item.blend == BlendMode::Plus,
+            Self::Mesh(mesh) => mesh.blend == BlendMode::Plus,
+            Self::Atlas(atlas) => atlas.blend == BlendMode::Plus,
+            Self::Paint(paint) => paint.blend == BlendMode::Plus,
+            Self::Points(points) => points.blend == BlendMode::Plus,
+            // These carry no blend of their own: a nine-patch and a shadow
+            // draw with the paint they are given, a glyph run is coverage, and
+            // a picture composites what it recorded.
+            Self::NinePatch(_) | Self::Glyphs(_) | Self::Shadow(_) | Self::Picture(_) => false,
+            Self::Layer { children, .. } => children.iter().any(Self::blends_additively),
+        }
+    }
+
     fn has_layer(&self) -> bool {
         match self {
             // A picture is composited from a target of its own whatever it
@@ -1231,6 +1256,14 @@ impl Scene {
         self.items.iter_mut().flat_map(Node::items_mut)
     }
 
+    /// Whether anything in this scene adds to the destination.
+    ///
+    /// Exposed because a scene that blends additively has to be judged on a
+    /// different axis: see [`crate::image::Tolerance::ACCUMULATED`].
+    pub fn blends_additively(&self) -> bool {
+        self.items.iter().any(Node::blends_additively)
+    }
+
     /// Whether any group in this scene was told the region it covers.
     /// Whether any layer in this scene filters what is behind it.
     pub fn filters_its_backdrop(&self) -> bool {
@@ -1312,6 +1345,13 @@ impl Scene {
         // drawn from triangles and should still compare exactly.
         if self.samples > 1 && self.items().any(Item::is_analytic) {
             return crate::image::Tolerance::ANALYTIC;
+        }
+        // An additive blend before the rest, because it is the one case where a
+        // fragment's rounding does not replace the last one but is added to it.
+        // Overlapping draws then accumulate, so the bound is per draw that can
+        // land on a pixel rather than per pixel. See `Tolerance::ACCUMULATED`.
+        if self.items.iter().any(Node::blends_additively) {
+            return crate::image::Tolerance::ACCUMULATED;
         }
         // Multisampling first, because it permits something the others do not:
         // a whole sample's worth of difference at an edge, on a few pixels. The
