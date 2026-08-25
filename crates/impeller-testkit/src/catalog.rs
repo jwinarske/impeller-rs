@@ -3565,6 +3565,38 @@ fn glyphs() -> Vec<Scene> {
                 ..run_of(run(&[0, 1, 2, 3], [22.0, 58.0]), RED)
             },
         ),
+        Scene::tree(
+            "text/can-render-text-in-save-layer",
+            // A run inside a group, which is upstream's scene and is a
+            // different path from a run drawn straight onto the frame: the
+            // atlas is sampled into the group's target and the group is then
+            // composited, so the coverage is resampled once more than it
+            // otherwise would be. At half alpha, because a group that is
+            // opaque and unfiltered is one a renderer may legitimately skip.
+            vec![Node::Layer {
+                layer: Box::new(LayerSpec {
+                    alpha: 0.5,
+                    ..LayerSpec::default()
+                }),
+                bounds: None,
+                transform: Transform::default(),
+                children: vec![Node::Glyphs(Box::new(run_of(
+                    run(&[0, 1, 2, 3], [22.0, 70.0]),
+                    WHITE,
+                )))],
+            }],
+        )
+        .with_background(DARK)
+        .with_samples(4),
+        text(
+            "text/can-render-text-outside-boundaries",
+            // Placed so the run leaves the frame on both sides. A glyph is a
+            // quad sampling an atlas, and a quad partly outside the target is
+            // where a coordinate computed from the quad's own corners rather
+            // than from the visible part of it goes wrong -- the surviving half
+            // reads the wrong texels and the run smears instead of being cut.
+            run_of(run(&[0, 1, 2, 3, 0, 1, 2, 3], [-24.0, 64.0]), WHITE),
+        ),
     ]
 }
 

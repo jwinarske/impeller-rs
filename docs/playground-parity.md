@@ -89,17 +89,18 @@ this scene draws. So the deviation stands for now and its description does not:
 it is one this project has decided against upstream's decided half, not a gap
 nobody upstream has filled.
 
-Twelve of the rows below have now been read against the file they name, at tip
-of tree, and the results are set out after the table. Two named their obstacle
-correctly: shadows, where it governs twenty-six of that file's thirty scenes and
+All fourteen of the rows below have now been read against the file they name, at
+tip of tree, and the results are set out after the table. Three named their obstacle correctly. Text, where nearly all forty of that
+file's scenes shape a real font and mirroring them would mean shipping a
+shaper. And: shadows, where it governs twenty-six of that file's thirty scenes and
 means what it says, and paths, where nothing blocks the nine it is short. The
 path row's count was still one too high, for the reason the atlas row's was four
 too high -- a test in the file that draws no picture -- so of the two, one was
 right outright and one was right about the only thing the column claims to be
 about.
 
-The other ten were wrong in seven distinguishable ways, and the ways matter
-more than the count.
+That makes three right and eleven wrong, in eight distinguishable ways, and the
+ways matter more than the count.
 
 An obstacle that had been removed and the row not updated (gradients). One
 stated far more broadly than it held, two scenes rather than a chapter (blurs).
@@ -112,13 +113,14 @@ only real obstacle in its chapter, which was not recorded anywhere -- that a
 rounded rectangle here has one radius where `dart:ui` has eight (basics). One whose "see below" pointed at nothing, and whose own count turned out to be
 the thing that was wrong (atlases). One that said its file was covered when
 it was not, by a single scene that needed a capability the preferred device here
-lacks -- which is how it came to be overlooked (clips). And one that said its
+lacks -- which is how it came to be overlooked (clips). One that said its
 picture cases were all present when two thirds of them were not (miscellany).
+And one that said its chapter was bounded by test fixtures rather than by the
+renderer, when the renderer is exactly what bounds it (runtime effects).
 
 Three of the eight turned into renderer changes rather than document ones.
 
-The two not yet checked are the text and runtime-effect rows, both of which
-describe a boundary this project has drawn rather than an obstacle. Treat them as unverified, which is what they are.
+All fourteen have now been checked. Treat them as unverified, which is what they are.
 On the evidence above, the likeliest thing wrong with them is not that they
 name the wrong obstacle but that they name a real one governing far less than
 the gap it is offered to explain.
@@ -143,11 +145,11 @@ column is right and the obvious way to check it is wrong.
 | `aiks_dl_atlas_unittests.cc` | ~11 | 9 | nothing; see below |
 | `aiks_dl_shadow_unittests.cc` | ~30 | 13 | a convex-shadow optimization this renderer does not have; see below |
 | `aiks_dl_primitive_shape_unittests.cc` | ~2 | 0 | one is a playground harness, one wants a stroke width of zero to mean a hairline |
-| `aiks_dl_text_unittests.cc` | — | 5 | shaping and font parsing, which are out of scope; glyph rendering is not, and these use synthetic coverage |
-| `aiks_dl_runtime_effect_unittests.cc` | — | 5 | bounded by having two fixture programs rather than by the renderer |
+| `aiks_dl_text_unittests.cc` | — | 7 | shaping and font parsing, which are out of scope; glyph rendering is not, and these use synthetic coverage |
+| `aiks_dl_runtime_effect_unittests.cc` | — | 5 | a runtime effect cannot be an image filter here; see below |
 | `aiks_dl_unittests.cc` | ~36 | 12 | subpass collapse, for five of them; see below |
 
-The catalog holds two hundred and forty scenes of roughly four hundred,
+The catalog holds two hundred and forty-two scenes of roughly four hundred,
 and the proportion is less interesting than which ones: the arithmetic of drawing is largely covered, and
 what is missing is either a capability this renderer does not have or a thing
 the scene model cannot describe.
@@ -195,6 +197,33 @@ combination is the same rules whichever is being combined, so it now happens
 once, over color where the fill is constant and over coverage where it varies,
 and every style takes any fill. Eight scenes followed, five of them upstream's
 stroked gradient oval under each style.
+
+The last two rows are the two whose obstacle is a boundary this project drew,
+and they came out opposite ways.
+
+The text row is right. Nearly all forty of that file's scenes shape a real font
+-- emoji, italics, subpixel alignment, a shadow cache keyed on glyph identity --
+and a font file decides those pictures, so mirroring them would mean shipping a
+shaper. Two that are about glyph *rendering* rather than about text were
+mirrorable with synthetic coverage and are here now: a run inside a save layer,
+where the atlas is resampled once more than it otherwise would be, and a run
+that leaves the frame on both sides, which is where a coordinate computed from a
+quad's own corners rather than from its visible part goes wrong. One that looked
+mirrorable is not -- `TextForegroundShaderWithTransform` puts a gradient over a
+run, and a run here takes a solid color, which `docs/parity.md` says in the
+`maskFilter` row and `docs/non-parity.md` explains.
+
+The runtime-effect row is wrong, and wrong in the way that matters most: it said
+the chapter was "bounded by having two fixture programs rather than by the
+renderer", and it is bounded by the renderer. Upstream's `DlImageFilter` offers
+seven kinds and `ImageFilter` here offers five; the two missing are a runtime
+effect and a color filter. Seven of that file's twelve scenes rest on the first
+-- every `ComposePaintRuntime` and `ComposeBackdropRuntime` variant,
+`CanRenderRuntimeEffectFilter`, `RuntimeEffectImageFilterRotated` and
+`ClippedBackdropFilterWithShader`. A fragment program is a paint here, so it can
+fill a shape and cannot filter what a layer already drew. That is now
+`docs/non-parity.md` §8, and the `imageFilter` row of `docs/parity.md` names
+both absences rather than only listing what it has.
 
 The miscellany row said "mostly internal optimizations; the picture cases are
 here now", and the second half was the false one. Thirty-eight tests, two of
