@@ -1731,10 +1731,32 @@ every fragment walks, which is the cost specialization would remove.
   | desktop discrete, immediate | 1.36× | 1.78× |
   | Pi 5 V3D, Vulkan | 0.98× | 1.17× |
   | Pi 5 V3D, GLES | 1.00× | 1.17× |
+  | x86 llvmpipe, 256-bit vectors | 1.51× | 2.19× |
+  | Pi 5 llvmpipe, 128-bit vectors | 0.96× | 3.25× |
 
   Multisampling costs seventeen percent on the tiler against seventy-eight on
   the desktop part, which is the tile-memory resolve doing exactly what it is
-  supposed to. And the margin did not merely narrow: the two paths land on top
+  supposed to. The software rows are there to say how much that is worth: the
+  same board, the same cores and the same memory, rasterizing in software,
+  pays 3.25× — so the tile-memory resolve is not merely cheaper than a desktop
+  GPU's, it is nearly three times cheaper than doing the work the hard way on
+  the machine it is attached to. That is about as controlled a comparison as
+  this hardware offers.
+
+  The two software rows differ by half again on the same operation, and their
+  names carry the reason. Multisampling is four times the fragment work, and a
+  software rasterizer pays that in vector lanes: 256-bit vectors absorb it at
+  2.19× where 128-bit ones cost 3.25×. Worth knowing before reading a CI number
+  from llvmpipe as though it described a device.
+
+  The software figures are the *fastest* frame rather than the median, and the
+  two rows are not measured the same way for a reason. llvmpipe on the Pi is
+  four cores shared with everything else on the board, and contention only ever
+  makes a frame slower — so the median drifts run to run while the floor holds
+  still. Across three runs the medians gave 2.72×, 3.05× and 3.33× and the
+  fastest frames gave 3.23×, 3.25× and 3.28×. The desktop box was quiet enough
+  that its median is honest. A number from a contended machine should say which
+  statistic it is. And the margin did not merely narrow: the two paths land on top
   of each other. The field is two percent faster through Vulkan and level
   through GLES, and the run-to-run spreads overlap in both — 12.69–13.10 against
   12.94–13.11 milliseconds — so the honest reading is that they are the same
