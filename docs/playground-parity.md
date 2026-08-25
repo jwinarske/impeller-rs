@@ -134,7 +134,7 @@ column is right and the obvious way to check it is wrong.
 
 | File | Scenes there | Here | Blocked on |
 |---|---|---|---|
-| `aiks_dl_basic_unittests.cc` | ~85 | 42 | superellipses, non-uniform rounded-rect radii, subpass optimizations; see below |
+| `aiks_dl_basic_unittests.cc` | ~85 | 42 | superellipses, subpass optimizations; see below |
 | `aiks_dl_path_unittests.cc` | ~30 | 21 | nothing; see below |
 | `aiks_dl_gradient_unittests.cc` | ~40 | 31 | nothing; see below |
 | `aiks_dl_clip_unittests.cc` | ~5 | 7 | nothing; this file is covered |
@@ -222,7 +222,7 @@ effect and a color filter. Seven of that file's twelve scenes rest on the first
 `CanRenderRuntimeEffectFilter`, `RuntimeEffectImageFilterRotated` and
 `ClippedBackdropFilterWithShader`. A fragment program is a paint here, so it can
 fill a shape and cannot filter what a layer already drew. That is now
-`docs/non-parity.md` §8, and the `imageFilter` row of `docs/parity.md` names
+`docs/non-parity.md` §7, and the `imageFilter` row of `docs/parity.md` names
 both absences rather than only listing what it has.
 
 The miscellany row said "mostly internal optimizations; the picture cases are
@@ -328,8 +328,13 @@ and upstream's `RoundRect` both carry four corners with independent x and y
 radii, eight numbers against one. Five of the basic chapter's scenes build a
 rounded rectangle this cannot describe. That was not in this column and, worse,
 was not in `docs/parity.md` either, whose `drawRRect` row said "yes" with
-nothing beside it. It is now `docs/non-parity.md` §7, with the three rows that
-inherit the restriction marked.
+nothing beside it.
+
+It was recorded as a non-parity entry and then, a commit later, built instead --
+which is what the entry had said should happen to it, having named the limit as
+a generalization nobody had written rather than a decision anybody took. So the
+five scenes are no longer blocked, and this row is short by superellipses,
+subpass optimizations and forty ordinary pictures nobody has written.
 
 The blend row named two obstacles and both are real, for three of that file's
 twenty-one tests: two need framebuffer fetch by name, and one is the subpass

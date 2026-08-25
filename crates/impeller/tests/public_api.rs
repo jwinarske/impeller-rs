@@ -11,8 +11,8 @@ use impeller::{
     Affine2, Atlas, BackendPreference, BlendMode, Canvas, Color, ColorFilter, Context, Coverage,
     Dash, Error, Extent2D, GlyphKey, GradientStop, ImageFilter, Layer, LineCap, MaskBlurStyle,
     Morphology, Paint, Path, PathBuilder, PixelFormat, PointMode, PositionedGlyph, Rect, Result,
-    Sampling, Shader, SourceRect, Sprite, StrokeStyle, Style, TileMode, Transform2D, Vec2,
-    VertexMode, Vertices, MAX_STOPS, MORPHOLOGY_TAPS, RUNTIME_FLOATS,
+    RoundingRadii, Sampling, Shader, SourceRect, Sprite, StrokeStyle, Style, TileMode, Transform2D,
+    Vec2, VertexMode, Vertices, MAX_STOPS, MORPHOLOGY_TAPS, RUNTIME_FLOATS,
 };
 
 const SIZE: Extent2D = Extent2D {
@@ -2243,6 +2243,124 @@ fn the_analytic_shape_antialiases_without_multisampling() {
     assert!(
         partial > 40,
         "an analytic edge should have partly covered pixels, found {partial}"
+    );
+}
+
+#[test]
+fn each_corner_of_a_rounded_rectangle_can_have_its_own_radii() {
+    // `dart:ui`'s `RRect` carries eight numbers -- four corners, each with an x
+    // and a y radius -- and this took one for a long time. The parity table
+    // said the operation existed and did not say in what form.
+    let Some(mut ctx) = context() else { return };
+
+    let region = Rect::new(20.0, 20.0, 108.0, 108.0);
+    let shot = |ctx: &mut Context, draw: &dyn Fn(&mut Canvas)| {
+        let mut canvas = Canvas::new(SIZE);
+        canvas.clear(Color::BLACK);
+        draw(&mut canvas);
+        render(ctx, canvas)
+    };
+    let paint = || Paint::fill(Color::WHITE).with_anti_alias(false);
+
+    // Spelling a uniform shape the general way has to give the uniform shape,
+    // and not merely something close: it takes the same route, so it is the
+    // same picture.
+    let uniform = shot(&mut ctx, &|c| {
+        c.draw_rrect(region, 16.0, &paint()).expect("uniform");
+    });
+    let spelled_out = shot(&mut ctx, &|c| {
+        c.draw_rrect_with_radii(region, [[16.0, 16.0]; 4], &paint())
+            .expect("uniform, spelled out");
+    });
+    assert_eq!(
+        uniform, spelled_out,
+        "a uniform shape asked for the general way should be the uniform shape"
+    );
+
+    // One corner square, the opposite one round. The picture has to differ from
+    // the uniform one, or the radii are being ignored.
+    let mixed = shot(&mut ctx, &|c| {
+        c.draw_rrect_with_radii(
+            region,
+            [[0.0, 0.0], [16.0, 16.0], [16.0, 16.0], [40.0, 40.0]],
+            &paint(),
+        )
+        .expect("mixed");
+    });
+    assert_ne!(
+        uniform, mixed,
+        "corners that differ should not draw the uniform shape"
+    );
+
+    // And which corner got which, checked where it can only be one of them.
+    // The top-left corner is square, so a pixel just inside it is painted; the
+    // bottom-right is rounded hardest, so the matching pixel there is not.
+    let at = |p: &[u8], x: u32, y: u32| pixel(p, x, y)[0];
+    assert!(
+        at(&mixed, 22, 22) > 200,
+        "the square corner should be filled to its point"
+    );
+    assert_eq!(
+        at(&mixed, 106, 106),
+        0,
+        "the corner given the largest radii should be cut back furthest"
+    );
+    // The uniform shape cuts both alike, which is what says the two probes
+    // above are reading the radii and not the rectangle.
+    assert_eq!(
+        at(&uniform, 22, 22),
+        at(&uniform, 106, 106),
+        "a uniform shape is symmetric about its diagonal"
+    );
+}
+
+#[test]
+fn radii_that_overrun_a_side_are_scaled_together_rather_than_singly() {
+    // `dart:ui`'s rule, and the reason it is one rule rather than a clamp per
+    // corner: when two radii along an edge do not fit, every radius in the
+    // shape is scaled by the same ratio. Clamping only the pair that overran
+    // would also stop the outline crossing itself, and would leave a shape with
+    // proportions the caller did not ask for.
+    let Some(mut ctx) = context() else { return };
+
+    let region = Rect::new(20.0, 40.0, 108.0, 88.0);
+    let shot = |ctx: &mut Context, radii: RoundingRadii| {
+        let mut canvas = Canvas::new(SIZE);
+        canvas.clear(Color::BLACK);
+        canvas
+            .draw_rrect_with_radii(
+                region,
+                radii,
+                &Paint::fill(Color::WHITE).with_anti_alias(false),
+            )
+            .expect("rrect");
+        render(ctx, canvas)
+    };
+
+    // Twice what fits, everywhere: the scale is a half, so this is the shape
+    // asked for at half the radii -- which is the shape that exactly fits.
+    let overrun = shot(&mut ctx, [[48.0, 48.0]; 4]);
+    let fitted = shot(&mut ctx, [[24.0, 24.0]; 4]);
+    assert_eq!(
+        overrun, fitted,
+        "radii twice too large should scale to the ones that fit"
+    );
+
+    // And the scaling is global. Only the top edge overruns here -- 96 across a
+    // side of 88 -- so a rule that clamped the offending pair alone would leave
+    // the bottom corners at twelve, and one that scales everything takes them
+    // to eleven with the top pair.
+    let one_edge = shot(
+        &mut ctx,
+        [[48.0, 48.0], [48.0, 48.0], [12.0, 12.0], [12.0, 12.0]],
+    );
+    let scaled_all = shot(
+        &mut ctx,
+        [[44.0, 44.0], [44.0, 44.0], [11.0, 11.0], [11.0, 11.0]],
+    );
+    assert_eq!(
+        one_edge, scaled_all,
+        "one overrunning edge should scale every corner, not just its own two"
     );
 }
 

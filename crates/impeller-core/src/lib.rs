@@ -19,7 +19,9 @@ pub mod paint;
 pub mod ramp;
 pub mod vertices;
 
-pub use canvas::{Canvas, Layer, Morphology, Pass, PointMode, Recording, Rect, TextureSource};
+pub use canvas::{
+    Canvas, Layer, Morphology, Pass, PointMode, Recording, Rect, RoundingRadii, TextureSource,
+};
 pub use color::{Color, ColorSpace};
 pub use execute::{
     execute, execute_deferred, execute_layers, render_offscreen, render_offscreen_into,

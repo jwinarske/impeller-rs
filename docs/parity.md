@@ -71,7 +71,7 @@ reason.
 | `dart:ui` | Status | Here | Evidence |
 |---|---|---|---|
 | `drawRect` | yes | `draw_rect` | `rect-fill`, `transformed` |
-| `drawRRect` | yes | `draw_rrect`, with one circular radius for all four corners. `dart:ui`'s `RRect` carries four corners with independent x and y radii and this does not reach them; see `docs/non-parity.md` §7 | `rounded-rect`, `rounded-rect-analytic` |
+| `drawRRect` | yes | `draw_rrect` for one circular radius, which keeps the fragment-evaluated route; `draw_rrect_with_radii` for the eight numbers `RRect` carries, which tessellates. Radii that overrun a side are scaled together by `dart:ui`'s rule | `rounded-rect`, `rounded-rect-analytic`, `each_corner_of_a_rounded_rectangle_can_have_its_own_radii` |
 | `drawCircle` | yes | `draw_circle` | `circle-fill`, `circle-antialiased` |
 | `drawOval` | yes | `draw_oval` | `oval` |
 | `drawLine` | yes | `draw_line` | `stroke-caps` |
@@ -86,13 +86,13 @@ reason.
 | `drawVertices` | yes | `draw_vertices`, with positions, texture coordinates and per-vertex colors, and `Paint::with_tint_blend` for how those colors combine | `every_advanced_mode_agrees_with_the_reference_formulas` |
 | `drawAtlas`, `drawRawAtlas` | yes | `draw_atlas`, one draw for the whole batch, each sprite with its own transform and color, combined by `Paint::with_tint_blend` | `an_atlas_tints_each_sprite_on_its_own_in_one_draw` |
 | `drawPoints`, `drawRawPoints` | yes | `draw_points`, in all three modes. A point is a segment of no length, so the cap is the whole shape | `a_point_is_drawn_as_the_cap_it_would_have_had` |
-| `drawDRRect` | yes | `draw_drrect`: two contours filled even-odd, which is what makes the inner one a hole. One circular radius each, as `drawRRect` | `the_ring_between_two_rounded_rectangles_is_hollow` |
+| `drawDRRect` | yes | `draw_drrect`: two contours filled even-odd, which is what makes the inner one a hole. `draw_drrect_with_radii` takes eight numbers per rectangle, as `drawRRect` does | `the_ring_between_two_rounded_rectangles_is_hollow` |
 | `drawShadow` | yes | `draw_shadow`: offset, blur and alpha all from the elevation, under one light | `a_shadow_falls_below_what_casts_it_and_widens_with_elevation` |
 | `drawRSuperellipse` | no | | |
 | `drawPicture` | yes | `draw_recording`, which composes a finished recording into this one. Tessellated rather than replayed -- see below for what that costs | `a_recording_drawn_into_another_keeps_its_own_layers_and_ramps` |
 | `clipRect` | yes | `clip_rect`, and `clip_out_rect` for `ClipOp.difference` | `a_difference_clip_removes_the_rectangle_and_nothing_else` |
 | `clipPath` | yes | `clip_path` | `clip-varies-between-draws`, `shape-clipped-fill` |
-| `clipRRect` | via | `clip_path` of `Rect::to_rounded_path`, so one circular radius, as `drawRRect` | |
+| `clipRRect` | via | `clip_path` of `Rect::to_rounded_path`, or of `to_rounded_path_with_radii` where the corners differ | |
 | `clipRSuperellipse` | no | | |
 | `save`, `restore` | yes | `save`, `restore` | `translucent-stack` |
 | `saveLayer` | yes | `save_layer`, `save_layer_bounds` | `layer-group-opacity`, `layer-bounded` |
@@ -118,7 +118,7 @@ reason.
 | `blendMode` | yes | `with_blend`, all of Porter-Duff and the fifteen advanced modes where the device offers them. The Porter-Duff modes are weighted sums, so they carry a color outside the sRGB primaries unchanged; the advanced ones are defined by the compositing specification on components between zero and one, so their operands are brought to the triangle's edge first | `advanced-blend-*` |
 | `shader` | yes | linear, radial, sweep and conical gradients, images, and a caller's own fragment program | `a_caller_can_fill_a_shape_with_their_own_fragment_program` |
 | `colorFilter` | yes | `with_color_filter`: a color matrix, the sRGB transfer function in either direction, and any blend against a constant that is affine in what it blends. Not the advanced blend modes, which the paint's own blend mode covers | `the_gamma_filter_follows_the_curve_at_both_ends_of_it` |
-| `imageFilter` | yes | `with_image_filter`: a blur, a matrix, dilate, erode and any composition of them, applied to what the paint drew rather than to the color it computed. Not a runtime effect and not a color filter, which upstream's `DlImageFilter` also offers; see `docs/non-parity.md` §8 | `composing_an_erosion_with_a_dilation_depends_on_which_runs_first` |
+| `imageFilter` | yes | `with_image_filter`: a blur, a matrix, dilate, erode and any composition of them, applied to what the paint drew rather than to the color it computed. Not a runtime effect and not a color filter, which upstream's `DlImageFilter` also offers; see `docs/non-parity.md` §7 | `composing_an_erosion_with_a_dilation_depends_on_which_runs_first` |
 | `maskFilter` | yes | `with_mask_blur` and `with_mask_blur_style`: a blur of a shape's coverage in all four styles. A shape's blur is stated the way `dart:ui` does it -- the mask blurred, the paint applied through it -- so a gradient or an image blurs correctly. A solid color takes the cheaper route of a paint drawn through a blurred layer, which is the same picture only because it does not vary. Solid only over a glyph run, which tints one color however it is drawn | `each_mask_blur_style_keeps_the_part_of_the_blur_it_names` |
 | `filterQuality` | yes | `with_sampling`: nearest, linear, the Mitchell bicubic `high` means, and the mip chain `medium` does. An image states whether it carries a chain when it is created, since it costs a third again in memory. The bicubic is the one path that holds a color inside the sRGB primaries: its kernel invents values no texel it read contains, and an overshoot cannot be told from a color outside the triangle at the point it would have to be | `mipmapped_sampling_reads_the_level_built_for_the_size_it_is_drawn_at` |
 | `invertColors` | via | a color filter whose matrix negates each channel and adds one | |

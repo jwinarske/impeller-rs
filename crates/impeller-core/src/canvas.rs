@@ -117,6 +117,87 @@ impl Rect {
         path.build()
     }
 
+    /// This rectangle with each corner rounded to its own pair of radii.
+    ///
+    /// The eight numbers `dart:ui`'s `RRect` carries, in upstream's order:
+    /// top-left, top-right, bottom-left, bottom-right, each an x radius and a
+    /// y radius. [`Self::to_rounded_path`] is this with all four the same and
+    /// circular, and goes through the same code.
+    pub fn to_rounded_path_with_radii(self, radii: RoundingRadii) -> Path {
+        if self.is_empty() {
+            return Path::default();
+        }
+        let radii = self.fitted_radii(radii);
+        if radii.iter().flatten().all(|v| *v <= 0.0) {
+            return self.to_path();
+        }
+        let mut path = PathBuilder::new();
+        self.add_rounded_contour_with_radii(&mut path, radii);
+        path.build()
+    }
+
+    /// The radii this rectangle can actually carry, made finite and made to fit.
+    ///
+    /// The fitting is `dart:ui`'s rule: find the edge whose two radii overrun
+    /// it worst, and scale *every* radius by that one ratio. Scaling only the
+    /// offending pair would also keep the outline from crossing itself, and
+    /// would change the shape's proportions -- the difference between a rounded
+    /// rectangle whose corners all got smaller and one that came back with a
+    /// lopsided pair nobody asked for.
+    ///
+    /// It is applied to the radii as given, which is the part that has to be
+    /// resisted tidying. Holding each radius to the side it runs along first
+    /// looks like a harmless guard and is not: it changes the ratios the rule
+    /// then works from, so a circular radius larger than the rectangle comes
+    /// back elliptical -- half the width across and half the height down,
+    /// instead of the round end the caller asked for.
+    ///
+    /// Which leaves the two values the rule cannot divide by. NaN and anything
+    /// at or below zero become zero, so a corner whose arithmetic went wrong is
+    /// square rather than enormous. An infinity becomes the longer side, which
+    /// is not arbitrary: once a uniform radius is large enough to bind, the
+    /// result stops depending on how large it was -- the ratio shrinks exactly
+    /// as fast as the radius grows -- so any sufficiently large stand-in gives
+    /// the same shape a huge finite radius gives, which is what an infinite one
+    /// has always meant here.
+    fn fitted_radii(self, radii: RoundingRadii) -> RoundingRadii {
+        let (w, h) = (self.width(), self.height());
+        let mut r = radii;
+        for corner in r.iter_mut() {
+            for value in corner.iter_mut() {
+                *value = if value.is_nan() || *value <= 0.0 {
+                    0.0
+                } else if value.is_infinite() {
+                    w.max(h)
+                } else {
+                    *value
+                };
+            }
+        }
+        let [tl, tr, bl, br] = r;
+        // Each edge against the two radii that meet along it. A sum of zero
+        // cannot bind, and is skipped rather than divided by.
+        let mut scale = 1.0f32;
+        for (side, sum) in [
+            (w, tl[0] + tr[0]),
+            (h, tr[1] + br[1]),
+            (w, bl[0] + br[0]),
+            (h, tl[1] + bl[1]),
+        ] {
+            if sum > side {
+                scale = scale.min(side / sum);
+            }
+        }
+        if scale < 1.0 {
+            for corner in r.iter_mut() {
+                for value in corner.iter_mut() {
+                    *value *= scale;
+                }
+            }
+        }
+        r
+    }
+
     /// Append this rectangle's rounded outline to a builder, as one contour.
     ///
     /// Separate from [`Self::to_rounded_path`] because a shape made of two of
@@ -124,39 +205,69 @@ impl Rect {
     /// both in one path, and a path built from two paths is not something this
     /// crate offers.
     fn add_rounded_contour(self, path: &mut PathBuilder, radius: f32) {
-        let radius = radius.min(self.width() / 2.0).min(self.height() / 2.0);
-        // The same constant that makes four cubics a circle, which is what the
-        // four corners are: a quarter turn each, at the same radius.
-        let k = KAPPA * radius;
+        let radii = self.fitted_radii([[radius; 2]; 4]);
+        self.add_rounded_contour_with_radii(path, radii);
+    }
+
+    /// The same, for radii that have already been fitted by `fitted_radii`.
+    fn add_rounded_contour_with_radii(self, path: &mut PathBuilder, radii: RoundingRadii) {
+        let [tl, tr, bl, br] = radii;
+        // The same constant that makes four cubics a circle. A corner here is a
+        // quarter *ellipse* rather than a quarter circle, and the constant
+        // carries over unchanged: an ellipse is a circle scaled along each axis
+        // independently, and scaling a cubic's control points by the same
+        // factors scales the curve they describe.
+        let k = |v: f32| KAPPA * v;
         let (l, t, r, b) = (self.left, self.top, self.right, self.bottom);
-        path.move_to(Vec2::new(l + radius, t))
-            .line_to(Vec2::new(r - radius, t))
+        path.move_to(Vec2::new(l + tl[0], t))
+            .line_to(Vec2::new(r - tr[0], t))
             .cubic_to(
-                Vec2::new(r - radius + k, t),
-                Vec2::new(r, t + radius - k),
-                Vec2::new(r, t + radius),
+                Vec2::new(r - tr[0] + k(tr[0]), t),
+                Vec2::new(r, t + tr[1] - k(tr[1])),
+                Vec2::new(r, t + tr[1]),
             )
-            .line_to(Vec2::new(r, b - radius))
+            .line_to(Vec2::new(r, b - br[1]))
             .cubic_to(
-                Vec2::new(r, b - radius + k),
-                Vec2::new(r - radius + k, b),
-                Vec2::new(r - radius, b),
+                Vec2::new(r, b - br[1] + k(br[1])),
+                Vec2::new(r - br[0] + k(br[0]), b),
+                Vec2::new(r - br[0], b),
             )
-            .line_to(Vec2::new(l + radius, b))
+            .line_to(Vec2::new(l + bl[0], b))
             .cubic_to(
-                Vec2::new(l + radius - k, b),
-                Vec2::new(l, b - radius + k),
-                Vec2::new(l, b - radius),
+                Vec2::new(l + bl[0] - k(bl[0]), b),
+                Vec2::new(l, b - bl[1] + k(bl[1])),
+                Vec2::new(l, b - bl[1]),
             )
-            .line_to(Vec2::new(l, t + radius))
+            .line_to(Vec2::new(l, t + tl[1]))
             .cubic_to(
-                Vec2::new(l, t + radius - k),
-                Vec2::new(l + radius - k, t),
-                Vec2::new(l + radius, t),
+                Vec2::new(l, t + tl[1] - k(tl[1])),
+                Vec2::new(l + tl[0] - k(tl[0]), t),
+                Vec2::new(l + tl[0], t),
             )
             .close();
     }
 }
+
+/// The single radius these corners all are, if they are all the same one.
+///
+/// `None` for anything the fragment-evaluated route cannot describe: a corner
+/// that differs from another, or one whose two radii differ from each other.
+fn uniform_circular_radius(radii: RoundingRadii) -> Option<f32> {
+    let radius = radii[0][0];
+    radii
+        .iter()
+        .flatten()
+        .all(|v| *v == radius)
+        .then_some(radius)
+}
+
+/// A rounded rectangle's four corners, each with an x and a y radius.
+///
+/// In upstream's order -- top-left, top-right, bottom-left, bottom-right --
+/// rather than in the order the outline is traced, so that a caller porting
+/// from `RoundingRadii` or from `dart:ui`'s `RRect` can copy the four across
+/// without reordering them. The tracing order is the contour's business.
+pub type RoundingRadii = [[f32; 2]; 4];
 
 /// Where a pass's texture slot gets its content.
 ///
@@ -2210,6 +2321,40 @@ impl Canvas {
         self.draw_path(&path, paint)
     }
 
+    /// A rounded rectangle whose corners need not match.
+    ///
+    /// The eight numbers `dart:ui`'s `RRect` carries, in the order upstream's
+    /// `RoundingRadii` carries them: top-left, top-right, bottom-left,
+    /// bottom-right, each an x radius and a y radius. Radii that overrun the
+    /// side they share are fitted by `dart:ui`'s rule -- see
+    /// [`Rect::to_rounded_path_with_radii`].
+    ///
+    /// Tessellated, always. The fragment-evaluated route [`Self::draw_rrect`]
+    /// can take is a signed distance to a shape with one circular radius, and
+    /// eight numbers is a different function rather than that one with more
+    /// arguments -- so a corner that differs from its neighbors costs the
+    /// tessellation a uniform one avoids. That is the whole of what this costs,
+    /// and it is why the uniform call is still the one to reach for: it is not
+    /// a worse spelling of this, it is the case that has a shader.
+    pub fn draw_rrect_with_radii(
+        &mut self,
+        rect: Rect,
+        radii: RoundingRadii,
+        paint: &Paint,
+    ) -> Result<&mut Self> {
+        if rect.is_empty() {
+            return Ok(self);
+        }
+        // A caller who spells a uniform shape this way still gets the shader,
+        // which matters because the general call is the one a `dart:ui` port
+        // reaches for and most of what it is handed is uniform.
+        if let Some(radius) = uniform_circular_radius(radii) {
+            return self.draw_rrect(rect, radius, paint);
+        }
+        let path = rect.to_rounded_path_with_radii(radii);
+        self.draw_path(&path, paint)
+    }
+
     /// A paint for the fragment-evaluated rounded rectangle, where one applies.
     ///
     /// Only a solid fill that asked for antialiasing. A stroke is a different
@@ -2989,10 +3134,36 @@ impl Canvas {
         if outer.is_empty() {
             return Ok(self);
         }
+        self.draw_drrect_with_radii(
+            outer,
+            [[outer_radius; 2]; 4],
+            inner,
+            [[inner_radius; 2]; 4],
+            paint,
+        )
+    }
+
+    /// A ring between two rounded rectangles whose corners need not match.
+    ///
+    /// [`Self::draw_drrect`] with the eight numbers each, and the same shape:
+    /// two contours filled even-odd, which is what makes the inner one a hole.
+    /// Each rectangle's radii are fitted to it on its own, since a ring is two
+    /// rounded rectangles and not one shape with a thickness.
+    pub fn draw_drrect_with_radii(
+        &mut self,
+        outer: Rect,
+        outer_radii: RoundingRadii,
+        inner: Rect,
+        inner_radii: RoundingRadii,
+        paint: &Paint,
+    ) -> Result<&mut Self> {
+        if outer.is_empty() {
+            return Ok(self);
+        }
         let mut b = PathBuilder::new().with_fill_rule(FillRule::EvenOdd);
-        outer.add_rounded_contour(&mut b, outer_radius);
+        outer.add_rounded_contour_with_radii(&mut b, outer.fitted_radii(outer_radii));
         if !inner.is_empty() {
-            inner.add_rounded_contour(&mut b, inner_radius);
+            inner.add_rounded_contour_with_radii(&mut b, inner.fitted_radii(inner_radii));
         }
         self.draw_path(&b.build(), paint)
     }
