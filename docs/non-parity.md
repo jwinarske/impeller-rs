@@ -235,15 +235,35 @@ summarized here only so that this file is the one place to look.
   filling a shape and wrong for a filter over a bounded layer, since clip space
   spans the target and the layer does not.
 
-  Upstream has settled it, and the answer is worth reading before starting:
+  Upstream has settled it:
   `RuntimeEffectFilterContents::RenderFilter` re-rasterizes its input whenever
   the input snapshot's transform is not the identity, because — its comment —
   "`ImageFilter.shader` will not correctly render as it does not know what the
   transform is in order to incorporate this into sampling". So the program is
-  handed its input as a plain texture with an identity transform, and the cost
-  of that guarantee is an extra rasterization the filter does on the caller's
-  behalf. Matching it means adopting both halves: the contract *and* the
-  re-rasterization that makes the contract true.
+  handed its input as a plain texture with an identity transform, and the price
+  of that guarantee is an extra rasterization.
+
+  **This renderer gets that guarantee without paying for it**, which is the
+  first thing to know before starting and was not obvious. Upstream re-
+  rasterizes because a snapshot travels with a transform; here every filter is a
+  pass of its own, and `filter_pass` says why it does not have the problem — the
+  target is the same size as the source, the quad covers all of it, and the
+  mapping from clip position to texture coordinate is the identity. A program
+  sampling its own clip position, which is what `effect_image.wgsl` already
+  does and documents, therefore reads exactly the texel upstream goes to
+  trouble to give it. The contract is answered and the re-rasterization is not
+  needed.
+
+  What is left is smaller and is about where the uniforms live. `Layer` is
+  `Copy` and a hundred and fifty-two bytes, and it is what an `ImageFilter`
+  becomes on the way to being applied. A program reads the whole material block,
+  so its uniforms are sixty-four floats — another two hundred and fifty-six
+  bytes, on a struct passed by value at every `save_layer`. Three ways out, none
+  free: inline the array and grow `Layer` to about four hundred bytes; drop
+  `Copy` from `Layer`, which is a public type; or stop reducing an `ImageFilter`
+  to a `Layer` before the filter passes run, which is a refactor of how filters
+  are peeled. That choice wants making deliberately rather than by whoever
+  happens to reach it first.
 
   *Impact:* seven of upstream's twelve runtime-effect scenes rest on it and
   cannot be mirrored — every `ComposePaintRuntime` and `ComposeBackdropRuntime`
