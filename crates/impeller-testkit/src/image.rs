@@ -149,23 +149,76 @@ impl Tolerance {
 }
 
 /// What a comparison found.
+///
+/// The per-pixel differences are retained rather than reduced to a count,
+/// because how many pixels are "outliers" is not a property of the comparison:
+/// it depends on the per-channel bound they are being counted against, and one
+/// difference is judged against several. Counting at a fixed threshold here is
+/// how [`Tolerance::outlier_fraction`] came to mean something other than what
+/// it says.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Difference {
     pub max_delta: u8,
-    /// Pixels exceeding the per-channel tolerance.
-    pub outliers: usize,
+    /// Pixels that are not identical, whatever the margin.
+    ///
+    /// Not the outlier count: a pixel a single level out is counted here and
+    /// is within every tolerance but [`Tolerance::EXACT`]. For the count that
+    /// a tolerance is judged on, see [`Difference::exceeding`].
+    pub differing: usize,
     pub total: usize,
     /// Where the largest difference was, for pointing at the failure.
     pub worst_at: Option<(u32, u32)>,
+    /// Largest single-channel difference at each pixel, in row-major order.
+    deltas: Vec<u8>,
 }
 
 impl Difference {
-    pub fn outlier_fraction(&self) -> f32 {
+    /// Fraction of the image that is not identical.
+    ///
+    /// Answers "how much of this picture moved", which is a question about the
+    /// two images. It is not what a tolerance is checked against.
+    pub fn fraction_differing(&self) -> f32 {
         if self.total == 0 {
             0.0
         } else {
-            self.outliers as f32 / self.total as f32
+            self.differing as f32 / self.total as f32
         }
+    }
+
+    /// Pixels differing by more than `per_channel` in some channel.
+    ///
+    /// The outlier count, and the one [`accepts`] uses: a tolerance says how
+    /// many pixels may exceed its per-channel bound, so the bound has to be
+    /// known before they can be counted.
+    pub fn exceeding(&self, per_channel: u8) -> usize {
+        self.deltas.iter().filter(|d| **d > per_channel).count()
+    }
+
+    /// [`Difference::exceeding`] as a fraction of the image.
+    pub fn fraction_exceeding(&self, per_channel: u8) -> f32 {
+        if self.total == 0 {
+            0.0
+        } else {
+            self.exceeding(per_channel) as f32 / self.total as f32
+        }
+    }
+
+    /// Why a tolerance rejected this, in the terms the tolerance is written in.
+    ///
+    /// [`Difference`]'s own `Display` cannot say this: it does not know the
+    /// bound, so it reports every pixel that moved, and a reader takes that
+    /// percentage for the one that was judged. It is usually far larger --
+    /// three per cent of a frame differing by a single level, against a
+    /// hundredth of a per cent exceeding the bound -- so the message points at
+    /// the wrong number and reads as though a wider budget were needed.
+    pub fn describe(&self, tolerance: Tolerance) -> String {
+        let over = self.exceeding(tolerance.per_channel);
+        format!(
+            "{self}; {over} exceed {} ({:.4}%, budget {:.4}%)",
+            tolerance.per_channel,
+            self.fraction_exceeding(tolerance.per_channel) * 100.0,
+            tolerance.outlier_fraction * 100.0
+        )
     }
 
     pub fn is_identical(&self) -> bool {
@@ -183,9 +236,9 @@ impl std::fmt::Display for Difference {
             f,
             "max delta {}, {} of {} pixels differing ({:.4}%)",
             self.max_delta,
-            self.outliers,
+            self.differing,
             self.total,
-            self.outlier_fraction() * 100.0
+            self.fraction_differing() * 100.0
         )?;
         if let Some((x, y)) = self.worst_at {
             write!(f, ", worst at ({x}, {y})")?;
@@ -211,9 +264,11 @@ pub fn compare(a: &Image, b: &Image) -> Result<Difference, String> {
 
     let mut max_delta = 0u8;
     let mut worst_at = None;
-    let mut outliers = 0usize;
+    let mut differing = 0usize;
     // Recorded per comparison rather than passed in, so the same difference can
-    // be judged against different tolerances without re-scanning.
+    // be judged against different tolerances without re-scanning. It is kept
+    // rather than counted away, which is the point: a count taken here can only
+    // be taken at a threshold this function does not know.
     let mut per_pixel_max = vec![0u8; a.pixel_count()];
 
     for (i, (pa, pb)) in a
@@ -236,15 +291,16 @@ pub fn compare(a: &Image, b: &Image) -> Result<Difference, String> {
     }
     for delta in &per_pixel_max {
         if *delta > 0 {
-            outliers += 1;
+            differing += 1;
         }
     }
 
     Ok(Difference {
         max_delta,
-        outliers,
+        differing,
         total: a.pixel_count(),
         worst_at,
+        deltas: per_pixel_max,
     })
 }
 
@@ -253,7 +309,7 @@ pub fn accepts(difference: &Difference, tolerance: Tolerance) -> bool {
     if difference.max_delta <= tolerance.per_channel {
         return true;
     }
-    difference.outlier_fraction() <= tolerance.outlier_fraction
+    difference.fraction_exceeding(tolerance.per_channel) <= tolerance.outlier_fraction
 }
 
 #[cfg(test)]
@@ -278,7 +334,7 @@ mod tests {
         let a = solid(4, 4, [10, 20, 30, 255]);
         let d = compare(&a, &a).unwrap();
         assert!(d.is_identical());
-        assert_eq!(d.outliers, 0);
+        assert_eq!(d.differing, 0);
         assert!(accepts(&d, Tolerance::EXACT));
     }
 
@@ -346,10 +402,61 @@ mod tests {
         }
         let d = compare(&a, &b).unwrap();
         assert_eq!(d.max_delta, 200);
-        assert_eq!(d.outliers, 2);
+        assert_eq!(d.differing, 2);
 
         assert!(accepts(&d, Tolerance::new(1, 0.05)));
         assert!(!accepts(&d, Tolerance::new(1, 0.01)));
+    }
+
+    /// The distinction the outlier budget is written in terms of, and which it
+    /// did not make until this test existed.
+    ///
+    /// An outlier is a pixel exceeding the per-channel bound. Counting instead
+    /// every pixel that differs at all folds ordinary rounding into the budget,
+    /// and rounding is exactly what the per-channel bound is there to absorb --
+    /// so a picture within tolerance on every pixel but a handful is rejected
+    /// for the pixels that were never in question.
+    ///
+    /// The numbers are a real case: two devices rendering the corpus's
+    /// antialiased circle, where four pixels of sixteen thousand land a sample
+    /// apart at the edge and nine hundredths of the frame round differently.
+    /// The budget is a thousandth, the four are a fortieth of it, and it failed
+    /// on the nine hundredths.
+    #[test]
+    fn rounding_is_not_an_outlier() {
+        let a = solid(100, 100, [40, 40, 40, 255]);
+        let mut b = a.clone();
+        // Nine hundred pixels a single level out: inside the per-channel bound,
+        // and nothing a comparison is meant to care about.
+        for i in 0..900 {
+            b.pixels[i * 4] = 41;
+        }
+        // Four a whole sample's worth out, which is what the budget is for.
+        for i in 900..904 {
+            b.pixels[i * 4] = 104;
+        }
+        let d = compare(&a, &b).unwrap();
+        assert_eq!(d.max_delta, 64);
+        assert_eq!(d.differing, 904, "every pixel that moved");
+        assert_eq!(d.exceeding(1), 4, "only those past the per-channel bound");
+
+        // Four in ten thousand is four ten-thousandths, inside a thousandth.
+        assert!(
+            accepts(&d, Tolerance::MULTISAMPLED),
+            "four outliers against a budget of ten were rejected -- \
+             counting the nine hundred rounded pixels as outliers is the only \
+             way to reach that"
+        );
+        // And the budget still discriminates: eleven is past ten.
+        for i in 904..911 {
+            b.pixels[i * 4] = 104;
+        }
+        let d = compare(&a, &b).unwrap();
+        assert_eq!(d.exceeding(1), 11);
+        assert!(
+            !accepts(&d, Tolerance::MULTISAMPLED),
+            "eleven outliers against a budget of ten were admitted"
+        );
     }
 
     #[test]

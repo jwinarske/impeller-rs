@@ -80,7 +80,11 @@ fn the_corpus_matches_across_backends() {
             eprintln!("  {:<26} {difference}", scene.name);
             compared += 1;
         } else {
-            failures.push(format!("  {}: {difference}", scene.name));
+            failures.push(format!(
+                "  {}: {}",
+                scene.name,
+                difference.describe(scene.tolerance())
+            ));
         }
     }
 

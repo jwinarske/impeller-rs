@@ -144,7 +144,11 @@ fn the_catalog_matches_across_backends() {
         compared += 1;
         let difference = compare(&a, &b).expect("same size");
         if !accepts(&difference, tolerance_for(&scene)) {
-            failures.push(format!("{}: {difference}", scene.name));
+            failures.push(format!(
+                "{}: {}",
+                scene.name,
+                difference.describe(tolerance_for(&scene))
+            ));
         }
     }
     // Said out loud rather than left implicit. A comparison that quietly

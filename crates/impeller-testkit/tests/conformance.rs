@@ -66,7 +66,11 @@ fn every_scene_agrees_across_devices() {
 
         let difference = compare(&a, &b).expect("same size");
         if !accepts(&difference, scene.tolerance()) {
-            failures.push(format!("  {}: {difference}", scene.name));
+            failures.push(format!(
+                "  {}: {}",
+                scene.name,
+                difference.describe(scene.tolerance())
+            ));
         } else {
             eprintln!("  {:<26} {difference}", scene.name);
         }
@@ -219,9 +223,9 @@ fn antialiased_scenes_differ_from_their_aliased_counterparts() {
 
     // And the difference must be confined to edges rather than the whole shape.
     assert!(
-        difference.outlier_fraction() < 0.25,
+        difference.fraction_differing() < 0.25,
         "antialiasing changed {:.1}% of pixels; that is more than an edge",
-        difference.outlier_fraction() * 100.0
+        difference.fraction_differing() * 100.0
     );
 }
 
