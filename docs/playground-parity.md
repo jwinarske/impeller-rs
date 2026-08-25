@@ -147,9 +147,9 @@ column is right and the obvious way to check it is wrong.
 | `aiks_dl_primitive_shape_unittests.cc` | ~2 | 0 | one is a playground harness, one wants a stroke width of zero to mean a hairline |
 | `aiks_dl_text_unittests.cc` | — | 7 | shaping and font parsing, which are out of scope; glyph rendering is not, and these use synthetic coverage |
 | `aiks_dl_runtime_effect_unittests.cc` | — | 12 | nothing; see below |
-| `aiks_dl_unittests.cc` | ~36 | 12 | subpass collapse, for five of them; see below |
+| `aiks_dl_unittests.cc` | ~36 | 15 | subpass collapse, for five of them; see below |
 
-The catalog holds two hundred and forty-nine scenes of roughly four hundred,
+The catalog holds two hundred and fifty-two scenes of roughly four hundred,
 and the proportion is less interesting than which ones: the arithmetic of drawing is largely covered, and
 what is missing is either a capability this renderer does not have or a thing
 the scene model cannot describe.
@@ -270,7 +270,13 @@ against twelve here. Five of the twenty-four missing are subpass collapse and
 are named for it; the rest are pictures, and the largest family among them is
 eight translucent save layers, each with a different filter on it.
 
-Two of those eight are here now. The family is the point rather than any one of
+Five of those eight are here now, and the family divides in two once a group
+can be filtered as a whole. Two recolor the group on its way out, two run a
+filter over the finished group, and one does both -- and the two halves are not
+two spellings of one thing: the same blend against a constant, put one way and
+then the other, differs across the whole frame.
+
+The family is the point rather than any one of
 them: a translucent group has two things that have to happen in the right
 order, the alpha it composites with and whatever recolors it on the way out, and
 only a filter that is not a plain scale can tell the orders apart. So neither of

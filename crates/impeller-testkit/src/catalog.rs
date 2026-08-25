@@ -4431,6 +4431,69 @@ fn layers() -> Vec<Scene> {
             },
             None,
         ),
+        // The family's other half: a filter on the *group* rather than a color
+        // filter on its way out. Upstream keeps four of these and the
+        // distinction they turn on is the same one -- what a translucent group
+        // is worth depends on when the recoloring happens relative to the
+        // alpha, and a filter that is not a plain scale is what tells the
+        // orders apart.
+        grouped(
+            "dl/translucent-save-layer-with-blend-image-filter-draws-correctly",
+            LayerSpec {
+                alpha: 0.45,
+                // Destination-over against a constant, as an *image* filter --
+                // so it runs over the finished group where the entry below runs
+                // over each color on its way out. The pair is here to show the
+                // two are not the same picture.
+                filter: ImageFilter::Color(
+                    ColorFilter::blend(RED, BlendMode::DstOver)
+                        .expect("destination-over against a constant is affine"),
+                ),
+                ..LayerSpec::default()
+            },
+            None,
+        ),
+        grouped(
+            "dl/translucent-save-layer-with-color-matrix-image-filter-draws-correctly",
+            // Upstream's matrix, which doubles alpha and leaves color alone --
+            // and this plate moves barely one per cent of its frame against the
+            // unfiltered group, which is right rather than broken. The group's
+            // content is opaque, so doubling its alpha clamps to what it
+            // already was; only the edges, where coverage is partial, have
+            // anywhere to go. It is kept because it is upstream's, and it is
+            // still a different picture from every other plate in this family
+            // by between a quarter and the whole frame.
+            LayerSpec {
+                alpha: 0.45,
+                filter: ImageFilter::Color(ColorFilter::matrix([
+                    1.0, 0.0, 0.0, 0.0, 0.0, //
+                    0.0, 1.0, 0.0, 0.0, 0.0, //
+                    0.0, 0.0, 1.0, 0.0, 0.0, //
+                    0.0, 0.0, 0.0, 2.0, 0.0,
+                ])),
+                ..LayerSpec::default()
+            },
+            None,
+        ),
+        grouped(
+            "dl/translucent-save-layer-with-color-and-image-filter-draws-correctly",
+            LayerSpec {
+                alpha: 0.45,
+                // Both at once, which is the scene that says they are separate
+                // stages rather than two spellings: the color filter recolors
+                // what the group produced, and the image filter then blurs
+                // that. Either alone is a different plate.
+                color_filter: ColorFilter::matrix([
+                    0.0, 0.0, 1.0, 0.0, 0.0, //
+                    0.0, 1.0, 0.0, 0.0, 0.0, //
+                    1.0, 0.0, 0.0, 0.0, 0.0, //
+                    0.0, 0.0, 0.0, 1.0, 0.0,
+                ]),
+                filter: ImageFilter::Blur { sigma: 4.0 },
+                ..LayerSpec::default()
+            },
+            None,
+        ),
         // The same group with a filter on it, twice. Upstream keeps eight of
         // these and the family is the point: a translucent group has two things
         // to get in the right order, the alpha it composites with and whatever

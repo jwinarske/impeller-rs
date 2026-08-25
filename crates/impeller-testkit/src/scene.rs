@@ -712,6 +712,13 @@ impl Item {
 /// no geometry to stroke, so a paint would mostly be fields that do nothing.
 #[derive(Debug, Clone, PartialEq)]
 pub struct LayerSpec {
+    /// Filter the finished group as a whole.
+    ///
+    /// The fields below cover the four kinds a `Layer` can hold and apply them
+    /// in one fixed order. This is what a group can be given that they cannot
+    /// say: a caller's program, and a composition in whichever order it was
+    /// written. See `Canvas::save_layer_filtered`.
+    pub filter: ImageFilter,
     /// Filter what lies behind the group before drawing over it.
     ///
     /// [`Self::backdrop_blur`] is the same operation with the one filter that
@@ -762,6 +769,7 @@ impl Default for LayerSpec {
             matrix: None,
             alpha: 1.0,
             blend: BlendMode::SrcOver,
+            filter: ImageFilter::None,
             backdrop: ImageFilter::None,
             backdrop_blur: 0.0,
             morphology: None,
