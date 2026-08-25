@@ -198,7 +198,40 @@ sixteenth of the size, which is why it was worth having the reduction at all.
 The pictures agree: the reduction preserves light, checked at a deviation of
 twenty-four by the energy test, which takes this path.
 
-## 7. Operations that are absent
+## 7. A rounded rectangle has one radius; upstream's has eight
+
+**What differs.** `draw_rrect` takes a rectangle and a single scalar radius, so
+every corner is the same and every corner is circular. Upstream's `RoundRect`
+carries a `RoundingRadii` -- four corners, each a `Size` with its own width and
+height -- and `dart:ui`'s `RRect` is the same shape of thing, with
+`RRect.fromRectAndCorners` and `Radius.elliptical` reaching all eight numbers.
+`draw_drrect` and the rounded path behind `clipRRect` inherit the same limit,
+since both are built from `Rect::to_rounded_path`.
+
+**Why.** It is not a decision that was taken; it is a generalization that was
+never written, and saying so is more useful than inventing a reason. The one
+place it would cost something to add is the analytic path: the fragment-
+evaluated rounded rectangle computes a signed distance to a shape with one
+circular radius, and eight numbers is a different function rather than the same
+one with more arguments. That path is an optimization, so a rounded rectangle
+with unequal corners could tessellate while a uniform one keeps the shader --
+which is the shape the fix should take, and is why the limit is not load-bearing.
+
+**Impact.** A caller who needs Flutter's asymmetric rounded rectangle cannot
+get it from `draw_rrect` and has to build the path themselves from arcs. Every
+uniform rounded rectangle -- which is most of an interface, and all of what
+this renderer is tested on -- is unaffected. Five of upstream's basic-chapter
+scenes build a rounded rectangle this cannot describe, counted by looking for
+`MakeRectRadii` or a `MakeRectXY` whose two radii differ:
+`CanRenderRoundedRectWithNonUniformRadii`, `CanRenderRoundedRectWithUniformRadii`
+-- uniform across the corners and elliptical within each, which one scalar
+cannot say either -- `CanRenderSimpleClips`, `FilledRoundRectsRenderCorrectly`
+and `CompareDiffRoundRectAndRoundRect`. A sixth,
+`CanRenderAsymmetricRoundSuperellipses`, is blocked by §8 first.
+`docs/parity.md` marks the three rows that carry the restriction rather than
+claiming the operation whole.
+
+## 8. Operations that are absent
 
 These are listed in [`parity.md`](parity.md) with their reasoning and are
 summarized here only so that this file is the one place to look.
@@ -217,7 +250,7 @@ summarized here only so that this file is the one place to look.
   *Impact:* the geometry is re-walked rather than the draws being replayed,
   which costs recording time on a repeated sub-picture.
 
-## 8. One thing that looks like a difference and is not
+## 9. One thing that looks like a difference and is not
 
 Worth stating because a reviewer raised it as a hole. **The advanced blend modes
 are defined on `[0, 1]` here and clip in `set_lum`,** which looks like an

@@ -112,7 +112,7 @@ column is right and the obvious way to check it is wrong.
 
 | File | Scenes there | Here | Blocked on |
 |---|---|---|---|
-| `aiks_dl_basic_unittests.cc` | ~85 | 42 | superellipses, subpass optimizations |
+| `aiks_dl_basic_unittests.cc` | ~85 | 42 | superellipses, non-uniform rounded-rect radii, subpass optimizations; see below |
 | `aiks_dl_path_unittests.cc` | ~31 | 21 | nothing named; see below |
 | `aiks_dl_gradient_unittests.cc` | ~40 | 31 | nothing; see below |
 | `aiks_dl_clip_unittests.cc` | ~5 | 6 | nothing; this file is covered |
@@ -175,6 +175,22 @@ combination is the same rules whichever is being combined, so it now happens
 once, over color where the fill is constant and over coverage where it varies,
 and every style takes any fill. Eight scenes followed, five of them upstream's
 stroked gradient oval under each style.
+
+The basic row named superellipses and subpass optimizations, and understated
+what it was covering. Superellipses account for seven of that file's
+eighty-five, and the file is short by forty-one -- so the two names between
+them explain a fraction of the gap, and the rest of the missing scenes are
+`CanDrawPaint`, `CanPerformSkew`, `CanRenderSimpleClips`, a dozen `StrokedArcs`
+variants and other ordinary pictures that are unwritten rather than blocked.
+
+Checking it did find one obstacle nobody had written down, and it is a real
+one. A rounded rectangle here has a single circular radius; `dart:ui`'s `RRect`
+and upstream's `RoundRect` both carry four corners with independent x and y
+radii, eight numbers against one. Five of the basic chapter's scenes build a
+rounded rectangle this cannot describe. That was not in this column and, worse,
+was not in `docs/parity.md` either, whose `drawRRect` row said "yes" with
+nothing beside it. It is now `docs/non-parity.md` §7, with the three rows that
+inherit the restriction marked.
 
 The blend row named two obstacles and both are real, for three of that file's
 twenty-one tests: two need framebuffer fetch by name, and one is the subpass
