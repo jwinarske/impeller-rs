@@ -89,6 +89,27 @@ this scene draws. So the deviation stands for now and its description does not:
 it is one this project has decided against upstream's decided half, not a gap
 nobody upstream has filled.
 
+Six of the rows below have now been read against the file they name, at tip of
+tree, and the results are set out after the table. Five of the six were wrong:
+gradients, blurs, meshes and nested opacity each named an obstacle that was
+gone, narrower than stated, or read off the shape of a scene rather than off
+anything standing in the way; the primitive-shape row named an upstream
+uncertainty that upstream has since resolved. The sixth, shadows, was right.
+Two of the five turned into renderer changes rather than document ones.
+
+The eight not yet checked are the basic, path, clip, blend, atlas, text,
+runtime-effect and `aiks_dl_unittests.cc` rows. Three of those name subpass
+collapse or framebuffer fetch, which on the evidence of the four checked so far
+tends to mean "this scene's shape resembles an optimization" rather than "this
+cannot be drawn". Treat them as unverified, which is what they are.
+
+One thing the checking did *not* find, and it is worth saying because the
+opposite was nearly recorded: the "Scenes there" counts are in scenes and not
+in tests. Two of them look badly stale against a count of `TEST_P` -- the blend
+file holds twenty-one and the row says about eighty -- and they are not, because
+`IMPELLER_FOR_EACH_BLEND_MODE` expands one test over every blend mode. The
+column is right and the obvious way to check it is wrong.
+
 | File | Scenes there | Here | Blocked on |
 |---|---|---|---|
 | `aiks_dl_basic_unittests.cc` | ~85 | 42 | superellipses, subpass optimizations |
@@ -100,13 +121,13 @@ nobody upstream has filled.
 | `aiks_dl_blur_unittests.cc` | ~59 | 34 | backdrop identity keys, for two of them; see below |
 | `aiks_dl_vertices_unittests.cc` | ~16 | 19 | nothing; see below |
 | `aiks_dl_atlas_unittests.cc` | ~15 | 9 | nothing named; see below |
-| `aiks_dl_shadow_unittests.cc` | ~30 | 12 | a convex-shadow optimization this renderer does not have |
+| `aiks_dl_shadow_unittests.cc` | ~30 | 13 | a convex-shadow optimization this renderer does not have; see below |
 | `aiks_dl_primitive_shape_unittests.cc` | ~2 | 0 | one is a playground harness, one wants a stroke width of zero to mean a hairline |
 | `aiks_dl_text_unittests.cc` | — | 5 | shaping and font parsing, which are out of scope; glyph rendering is not, and these use synthetic coverage |
 | `aiks_dl_runtime_effect_unittests.cc` | — | 5 | bounded by having two fixture programs rather than by the renderer |
 | `aiks_dl_unittests.cc` | ~39 | 10 | mostly internal optimizations; the picture cases are here now |
 
-The catalog holds two hundred and thirty-three scenes of roughly four hundred,
+The catalog holds two hundred and thirty-four scenes of roughly four hundred,
 and the proportion is less interesting than which ones: the arithmetic of drawing is largely covered, and
 what is missing is either a capability this renderer does not have or a thing
 the scene model cannot describe.
@@ -154,6 +175,25 @@ combination is the same rules whichever is being combined, so it now happens
 once, over color where the fill is constant and over coverage where it varies,
 and every style takes any fill. Eight scenes followed, five of them upstream's
 stroked gradient oval under each style.
+
+The shadow row is the first of these to survive being checked, and is worth
+recording for that rather than in spite of it. Twenty-six of that file's thirty
+scenes are named `DrawShadowCanOptimize` or `DrawShadowDoesNotOptimize`
+something, and what they are for is deciding which paths upstream's
+convex-shadow optimization applies to. That optimization is not here. The
+scenes would still *draw* -- an optimization that changed the picture would be
+a bug -- so they are not blocked in the way the column's other entries claimed
+to be; they are scenes whose whole subject is a thing this renderer does not
+do, and mirroring them would produce pictures that check nothing. That is a
+better reason not to write them than being unable to, and the row means it.
+
+One of the four that are not about the optimization was missing and is now
+here. `CanDrawPerspectiveConvexShadow` is filed with the others and is not one
+of them: it draws a mask blur under a three-dimensional rotation and a
+perspective matrix, where its two siblings rotate and scale. Its siblings were
+already translated as a shadow under a transform, and perspective is a field of
+that transform, so the third followed once perspective existed. It did not
+exist when the row was written, which is the other way one of these goes stale.
 
 The opacity row said "subpass collapse", and its one missing scene needed
 nothing of the sort. Subpass collapse is upstream's optimization for a save

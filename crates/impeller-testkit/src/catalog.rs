@@ -3617,6 +3617,31 @@ fn shadow() -> Vec<Scene> {
             },
         ),
         shadow_plate(
+            "shadow/can-draw-perspective-convex-shadow",
+            // The third of upstream's three, and the one that is not about the
+            // convex-shadow optimization at all -- it draws a mask blur under a
+            // three-dimensional rotation and a perspective matrix, where the
+            // other two rotate and scale. Translated here the way its two
+            // siblings above are, as a shadow under the transform, since what
+            // this catalog can say about it is whether the shadow follows the
+            // caster through a projection.
+            //
+            // Well short of the vanishing line: at the plate's far edge the
+            // divisor is a third above one, where the transform's own
+            // documentation warns that a scene meant to be compared across
+            // devices should stay away from where it reaches zero.
+            ShadowSpec {
+                transform: Transform {
+                    perspective: [0.0025, 0.0],
+                    ..Transform::default()
+                },
+                ..caster(Shape::Rect {
+                    min: [34.0, 34.0],
+                    max: [94.0, 90.0],
+                })
+            },
+        ),
+        shadow_plate(
             "shadow/can-draw-nonuniform-scale-convex-shadow",
             ShadowSpec {
                 transform: Transform {
