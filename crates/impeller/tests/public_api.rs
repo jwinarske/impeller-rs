@@ -10016,6 +10016,96 @@ fn a_composition_may_hold_a_composition_in_either_half() {
 }
 
 #[test]
+fn a_color_filter_can_be_half_of_an_image_filter_composition() {
+    // Upstream's `DlImageFilter` offers seven kinds and this offered five; a
+    // color filter was one of the two missing, and it is the one that sounds
+    // like it was already here. A paint carries a color filter too. What that
+    // one cannot do is be half of a composition -- there is no other way here
+    // to recolor a blurred result, or to blur a recolored one.
+    let Some(mut ctx) = context() else { return };
+
+    let shot = |ctx: &mut Context, filter: ImageFilter| {
+        let mut canvas = Canvas::new(SIZE);
+        canvas.clear(Color::BLACK);
+        canvas
+            .draw_rect(
+                Rect::new(40.0, 40.0, 88.0, 88.0),
+                &Paint::fill(Color::srgb(0.9, 0.3, 0.1, 1.0)).with_image_filter(filter),
+            )
+            .expect("rect");
+        render(ctx, canvas)
+    };
+    let gamma = || ImageFilter::Color(ColorFilter::srgb_to_linear());
+    let blur = || ImageFilter::Blur { sigma: 6.0 };
+    let at = |p: &[u8], x: u32, y: u32| pixel(p, x, y);
+
+    // It does something, which is the first thing to establish: a filter
+    // accepted and dropped is the failure this codebase least wants.
+    let plain = shot(&mut ctx, ImageFilter::None);
+    let recolored = shot(&mut ctx, gamma());
+    assert_ne!(
+        at(&plain, 64, 64),
+        at(&recolored, 64, 64),
+        "a color filter used as an image filter changed nothing"
+    );
+
+    // And on one solid draw it agrees with the paint's own color filter. Not a
+    // limitation being confessed -- it is what the two mean, and pinning it is
+    // what says this route computes the same thing rather than merely something
+    // else that also differs from plain.
+    let mut through_paint = Canvas::new(SIZE);
+    through_paint.clear(Color::BLACK);
+    through_paint
+        .draw_rect(
+            Rect::new(40.0, 40.0, 88.0, 88.0),
+            &Paint::fill(Color::srgb(0.9, 0.3, 0.1, 1.0))
+                .with_color_filter(ColorFilter::srgb_to_linear()),
+        )
+        .expect("rect");
+    let through_paint = render(&mut ctx, through_paint);
+    // To a level, and the level is not slack: an image filter draws into a
+    // layer and composites it back, so its fragments are quantized twice where
+    // the paint's filter quantizes once. That is the same arithmetic
+    // `Scene::tolerance` counts stores for, arriving here as a difference
+    // between two spellings of one filter rather than between two devices.
+    let (a, b) = (at(&recolored, 64, 64), at(&through_paint, 64, 64));
+    let apart = a
+        .iter()
+        .zip(&b)
+        .map(|(x, y)| x.abs_diff(*y))
+        .max()
+        .unwrap_or(0);
+    assert!(
+        apart <= 1,
+        "the two spellings of one color filter should agree to the rounding of \
+         the extra store: {a:?} against {b:?}"
+    );
+
+    // The composition, which is the capability. Both orders differ from the
+    // blur alone -- the halo is recolored in one and the blurred edge is
+    // recolored in the other -- and a `Compose` that dropped its color half
+    // would match the blur exactly.
+    let blurred = shot(&mut ctx, blur());
+    for (label, filter) in [
+        ("color outside blur", ImageFilter::compose(gamma(), blur())),
+        ("blur outside color", ImageFilter::compose(blur(), gamma())),
+    ] {
+        let composed = shot(&mut ctx, filter);
+        assert_ne!(
+            at(&composed, 40, 64),
+            at(&blurred, 40, 64),
+            "{label}: the color half of the composition did nothing"
+        );
+        // And it is still a blur: the halo outside the shape exists, which is
+        // what says the blur half survived being composed with a color filter.
+        assert!(
+            at(&composed, 34, 64)[0] > 4,
+            "{label}: the blur half of the composition did nothing"
+        );
+    }
+}
+
+#[test]
 fn a_color_filter_recolors_what_a_runtime_effect_drew() {
     // A color filter is arithmetic in this renderer's own fragment shader, and
     // a runtime effect replaces that shader outright -- the caller's program is

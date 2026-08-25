@@ -219,21 +219,17 @@ summarized here only so that this file is the one place to look.
   that table, and nothing here could check the transcription. Drawing a
   different curve under the same name would be worse than not drawing one.
   *Impact:* a caller who needs Flutter's squircle cannot get it.
-- **Two of upstream's seven image filter kinds.** `DlImageFilter` offers blur,
-  dilate, erode, matrix, compose, a runtime effect and a color filter;
-  `ImageFilter` here offers the first five. A runtime effect as an *image*
-  filter is the larger of the two — a fragment program is a paint here, so it
-  can fill a shape and cannot filter what a layer already drew. A color filter
-  as an image filter sounds like something already present and is not: a paint
-  carries both, but they are separate fields applied at separate points, and
-  neither can be the inner or outer half of an `ImageFilter.compose`.
-  *Impact:* seven of upstream's twelve runtime-effect scenes rest on the first
-  and cannot be mirrored — every `ComposePaintRuntime` and
-  `ComposeBackdropRuntime` variant, `CanRenderRuntimeEffectFilter`,
-  `RuntimeEffectImageFilterRotated` and `ClippedBackdropFilterWithShader`. A
-  caller wanting a shader over a finished layer draws it into one and fills
-  with the program instead, which is a different picture wherever the layer's
-  own bounds differ from the shape being filled.
+- **A runtime effect as an image filter.** `DlImageFilter` offers blur, dilate,
+  erode, matrix, compose, a color filter and a runtime effect; `ImageFilter`
+  here offers all but the last. A fragment program is a paint here, so it can
+  fill a shape and cannot filter what a layer already drew.
+  *Impact:* seven of upstream's twelve runtime-effect scenes rest on it and
+  cannot be mirrored — every `ComposePaintRuntime` and `ComposeBackdropRuntime`
+  variant, `CanRenderRuntimeEffectFilter`, `RuntimeEffectImageFilterRotated`
+  and `ClippedBackdropFilterWithShader`. A caller wanting a shader over a
+  finished layer draws it into one and fills with the program instead, which is
+  a different picture wherever the layer's own bounds differ from the shape
+  being filled.
 - **Text shaping and font parsing.** Out of scope by design; `draw_glyphs` takes
   a positioned run and an atlas. *Impact:* a caller brings their own shaper.
 - **`drawPicture` is tessellated rather than replayed.** `draw_recording`

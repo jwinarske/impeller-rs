@@ -1821,6 +1821,7 @@ impl Canvas {
             ImageFilter::Erode { radius_x, radius_y } => {
                 Layer::opacity(1.0).with_morphology(Morphology::erode(radius_x, radius_y))
             }
+            ImageFilter::Color(filter) => Layer::opacity(1.0).with_color_filter(filter),
             ImageFilter::None | ImageFilter::Compose { .. } => return None,
         })
     }

@@ -252,6 +252,22 @@ pub enum ImageFilter {
     /// `ImageFilter.erode`, and the dual of [`Self::Dilate`]: what one does to
     /// a shape the other does to the space around it.
     Erode { radius_x: f32, radius_y: f32 },
+    /// Recolor what was drawn, rather than what the paint computed.
+    ///
+    /// `dart:ui`'s `ColorFilter` is itself an `ImageFilter`, and upstream's
+    /// `DlImageFilter::MakeColorFilter` is the same thing. A paint carries a
+    /// color filter of its own, so the obvious question is what this adds, and
+    /// the answer is narrower than it first looks: **it can be half of a
+    /// [`Self::Compose`], and `Paint::color_filter` cannot.** Recoloring a
+    /// blurred result, or blurring a recolored one, has no other spelling here.
+    ///
+    /// On a single draw with a solid fill it is the same picture as the paint's
+    /// own filter, and a test pins that rather than leaving it to be discovered.
+    /// A paint's image filter applies per draw -- each draw gets a layer of its
+    /// own -- so there is no arrangement of two draws under one paint for the
+    /// two to disagree about. Where they would disagree is inside a
+    /// composition, which is the case this exists for.
+    Color(ColorFilter),
     /// Filter with `inner`, then filter that result with `outer`.
     ///
     /// `ImageFilter.compose`, and the reason this type is not `Copy`: a filter
@@ -294,6 +310,10 @@ impl ImageFilter {
             }
             // Composing two filters that each change nothing changes nothing,
             // and costs two layers to say so.
+            // A color filter that recolors nothing is one, which keeps a
+            // caller who builds one from a default out of a layer they did not
+            // ask to pay for.
+            Self::Color(filter) => *filter == ColorFilter::None,
             Self::Compose { outer, inner } => outer.is_identity() && inner.is_identity(),
         }
     }
@@ -358,7 +378,9 @@ impl ImageFilter {
     /// needs costs a little memory; covering less loses drawing.
     pub(crate) fn covering(&self, min: Vec2, max: Vec2) -> (Vec2, Vec2) {
         match self {
-            Self::None | Self::Erode { .. } => (min, max),
+            // A color filter changes what a pixel is and never which pixels
+            // there are, so it needs exactly the region it was given.
+            Self::None | Self::Erode { .. } | Self::Color(_) => (min, max),
             Self::Blur { sigma } => {
                 let reach = Vec2::splat(crate::canvas::blur_reach(*sigma));
                 (min - reach, max + reach)

@@ -216,8 +216,11 @@ run, and a run here takes a solid color, which `docs/parity.md` says in the
 The runtime-effect row is wrong, and wrong in the way that matters most: it said
 the chapter was "bounded by having two fixture programs rather than by the
 renderer", and it is bounded by the renderer. Upstream's `DlImageFilter` offers
-seven kinds and `ImageFilter` here offers five; the two missing are a runtime
-effect and a color filter. Seven of that file's twelve scenes rest on the first
+seven kinds and `ImageFilter` here now offers six; the one missing is a runtime
+effect. (A color filter was the other, and was built a commit later -- it needed
+one match arm, because an image filter here is a layer and a layer already
+carried a color filter.) Seven of that file's twelve scenes rest on the runtime
+effect
 -- every `ComposePaintRuntime` and `ComposeBackdropRuntime` variant,
 `CanRenderRuntimeEffectFilter`, `RuntimeEffectImageFilterRotated` and
 `ClippedBackdropFilterWithShader`. A fragment program is a paint here, so it can
