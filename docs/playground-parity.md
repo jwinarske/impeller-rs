@@ -146,10 +146,10 @@ column is right and the obvious way to check it is wrong.
 | `aiks_dl_shadow_unittests.cc` | ~30 | 13 | a convex-shadow optimization this renderer does not have; see below |
 | `aiks_dl_primitive_shape_unittests.cc` | ~2 | 0 | one is a playground harness, one wants a stroke width of zero to mean a hairline |
 | `aiks_dl_text_unittests.cc` | — | 7 | shaping and font parsing, which are out of scope; glyph rendering is not, and these use synthetic coverage |
-| `aiks_dl_runtime_effect_unittests.cc` | — | 8 | nothing; see below |
+| `aiks_dl_runtime_effect_unittests.cc` | — | 12 | nothing; see below |
 | `aiks_dl_unittests.cc` | ~36 | 12 | subpass collapse, for five of them; see below |
 
-The catalog holds two hundred and forty-five scenes of roughly four hundred,
+The catalog holds two hundred and forty-nine scenes of roughly four hundred,
 and the proportion is less interesting than which ones: the arithmetic of drawing is largely covered, and
 what is missing is either a capability this renderer does not have or a thing
 the scene model cannot describe.
@@ -229,6 +229,18 @@ the reason is a mutation that passed. Where a texture binding names nothing the
 backend binds a placeholder, so a program handed no input still samples
 something -- and against a flat fill, tinting the placeholder is the same
 picture as tinting the layer. A gradient is not reproducible that way.
+
+Four more followed once a backdrop could be filtered by something other than a
+blur, which is the other half of what those scenes need: a group whose backdrop
+is a program, composed with a blur, bounded and unbounded. They are drawn at one
+sample, for the reason the blur chapter's backdrop plates are -- a backdrop cuts
+the pass to read what it was writing, and a multisampled pass cannot be resumed.
+
+Their ground is a gradient with hard-edged bars over it, and the bars were added
+after measuring. On a smooth ramp a blur does so little that the two sigmas came
+out four levels apart and the inner half of the composition was barely tested;
+with edges to work on they are a hundred and thirty-three apart over
+ninety-seven per cent of the frame.
 
 Seven of the twelve rested on the runtime effect
 -- every `ComposePaintRuntime` and `ComposeBackdropRuntime` variant,

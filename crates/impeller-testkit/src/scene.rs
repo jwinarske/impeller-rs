@@ -710,8 +710,18 @@ impl Item {
 ///
 /// The two parts of a layer that mean anything: there is no shape to fill and
 /// no geometry to stroke, so a paint would mostly be fields that do nothing.
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct LayerSpec {
+    /// Filter what lies behind the group before drawing over it.
+    ///
+    /// [`Self::backdrop_blur`] is the same operation with the one filter that
+    /// fits in a number, and is what nearly every plate wants. This is the
+    /// rest -- a color filter, a morphology, a caller's program, or a
+    /// composition -- and it is why this type is not `Copy`: a filter holds a
+    /// program's uniforms, and no amount of arranging makes that fit in a
+    /// register. It is a test-support type held in a `Box` already, so the cost
+    /// is a `clone` at two call sites rather than anything a caller pays.
+    pub backdrop: ImageFilter,
     /// Standard deviation of a blur over the finished group, in device pixels.
     /// Zero for none.
     pub blur: f32,
@@ -752,6 +762,7 @@ impl Default for LayerSpec {
             matrix: None,
             alpha: 1.0,
             blend: BlendMode::SrcOver,
+            backdrop: ImageFilter::None,
             backdrop_blur: 0.0,
             morphology: None,
             color_filter: ColorFilter::None,
@@ -1001,6 +1012,22 @@ impl Node {
         }
     }
 
+    /// Whether an image filter runs a caller's program, at any depth.
+    fn filters_with_one(filter: &ImageFilter) -> bool {
+        match filter {
+            ImageFilter::Runtime { .. } => true,
+            ImageFilter::Compose { outer, inner } => {
+                Self::filters_with_one(outer) || Self::filters_with_one(inner)
+            }
+            ImageFilter::None
+            | ImageFilter::Blur { .. }
+            | ImageFilter::Matrix { .. }
+            | ImageFilter::Dilate { .. }
+            | ImageFilter::Erode { .. }
+            | ImageFilter::Color(_) => false,
+        }
+    }
+
     /// Whether this subtree reads the fixture sheet.
     ///
     /// Exhaustive on purpose. The scene-level derivations used to walk items
@@ -1008,33 +1035,19 @@ impl Node {
     /// sampled a texture and was not an item would have been missed silently,
     /// and the draw refused for naming a texture nobody supplied.
     fn uses_effect(&self) -> bool {
-        // A program can arrive two ways and this used to look for one. As a
+        // A program can arrive three ways and this used to look for one. As a
         // fill it is the material; as an image filter it is a pass run over the
         // finished draw, and the fill beside it may be a plain color. A scene
         // taking the second route would have left the fixture programs
         // unregistered and named an index nothing was registered at.
-        fn filters_with_one(filter: &ImageFilter) -> bool {
-            match filter {
-                ImageFilter::Runtime { .. } => true,
-                ImageFilter::Compose { outer, inner } => {
-                    filters_with_one(outer) || filters_with_one(inner)
-                }
-                ImageFilter::None
-                | ImageFilter::Blur { .. }
-                | ImageFilter::Matrix { .. }
-                | ImageFilter::Dilate { .. }
-                | ImageFilter::Erode { .. }
-                | ImageFilter::Color(_) => false,
-            }
-        }
         match self {
             Self::Draw(item) => {
                 matches!(item.fill, Fill::RuntimeEffect { .. })
-                    || filters_with_one(&item.image_filter)
+                    || Self::filters_with_one(&item.image_filter)
             }
             Self::Mesh(mesh) => {
                 matches!(mesh.fill, Fill::RuntimeEffect { .. })
-                    || filters_with_one(&mesh.image_filter)
+                    || Self::filters_with_one(&mesh.image_filter)
             }
             Self::Atlas(_)
             | Self::Shadow(_)
@@ -1043,7 +1056,17 @@ impl Node {
             | Self::NinePatch(_)
             | Self::Paint(_) => false,
             Self::Picture(picture) => picture.children.iter().any(Node::uses_effect),
-            Self::Layer { children, .. } => children.iter().any(Node::uses_effect),
+            // The backdrop as well as the children, and the omission is why
+            // this comment exists. A group whose *backdrop* is a program has
+            // nothing inside it that names one -- the group is often empty --
+            // so looking only at the children left the fixture programs
+            // unregistered. It passed anyway, because another scene in the same
+            // run had registered them and registration is idempotent, so the
+            // failure was an ordering one: those plates worked in a catalog and
+            // not on their own.
+            Self::Layer {
+                layer, children, ..
+            } => Self::filters_with_one(&layer.backdrop) || children.iter().any(Node::uses_effect),
         }
     }
 

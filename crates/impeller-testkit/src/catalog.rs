@@ -76,6 +76,7 @@ pub fn catalog() -> Vec<Scene> {
     scenes.extend(blur_variants());
     scenes.extend(layers());
     scenes.extend(runtime_effect());
+    scenes.extend(backdrops());
     scenes.extend(image_filters());
     scenes.extend(glyphs());
     scenes.extend(pictures());
@@ -4735,6 +4736,118 @@ fn runtime_effect() -> Vec<Scene> {
                     uniforms: crate::fixture::tint_uniforms([0.2, 0.9, 0.5, 1.0]),
                 },
             ))],
+        ),
+    ]
+}
+
+/// The backdrop scenes, which a blur-only backdrop could not describe.
+///
+/// Each draws a gradient, then an empty group whose *backdrop* is filtered and
+/// which replaces rather than composites -- with `SrcOver` an empty group is
+/// transparent and the plate would show the gradient untouched while appearing
+/// to pass. Then a mark on top, so the plate says the group closed and left the
+/// canvas where it found it.
+fn backdrops() -> Vec<Scene> {
+    // A gradient with hard-edged bars over it, and the bars are the point. A
+    // blur does almost nothing to a smooth ramp, so a ground of gradient alone
+    // made the two sigmas four levels apart and the inner half of the
+    // composition nearly untested. An edge is what a blur has something to do
+    // with.
+    let ground = || {
+        let mut items = vec![Node::Draw(Box::new(Item::filled(
+            Shape::Rect {
+                min: [0.0, 0.0],
+                max: [128.0, 128.0],
+            },
+            Fill::LinearGradient {
+                start: [0.0, 0.0],
+                end: [128.0, 128.0],
+                stops: vec![Stop::new(WHITE, 0.0), Stop::new([0.1, 0.2, 0.8, 1.0], 1.0)],
+                tile: TileMode::Clamp,
+            },
+        )))];
+        for i in 0..4 {
+            let x = 12.0 + i as f32 * 30.0;
+            items.push(Node::Draw(Box::new(Item::fill(
+                Shape::Rect {
+                    min: [x, 8.0],
+                    max: [x + 12.0, 120.0],
+                },
+                [0.05, 0.05, 0.08, 1.0],
+            ))));
+        }
+        items
+    };
+    let mark = || {
+        Node::Draw(Box::new(
+            Item::stroke(
+                Shape::Polyline(vec![[16.0, 16.0], [112.0, 16.0]]),
+                StrokeSpec::new(4.0),
+                GREEN,
+            )
+            .with_blend(BlendMode::SrcOver),
+        ))
+    };
+    let tint = || ImageFilter::Runtime {
+        program: 2,
+        uniforms: crate::fixture::tint_uniforms([1.0, 0.5, 0.2, 1.0]),
+    };
+    let plate = |name: &'static str, backdrop: ImageFilter, bounds: Option<[f32; 4]>| {
+        Scene::tree(
+            name,
+            [
+                ground(),
+                vec![Node::Layer {
+                    layer: Box::new(LayerSpec {
+                        backdrop,
+                        // Replaces, as upstream's save paint does: the group is
+                        // empty, and a composited empty group is nothing.
+                        blend: BlendMode::Src,
+                        ..LayerSpec::default()
+                    }),
+                    bounds,
+                    transform: Transform::default(),
+                    children: Vec::new(),
+                }],
+                vec![mark()],
+            ]
+            .concat(),
+        )
+        .with_background(DARK)
+        // Single-sampled, and not by preference: the same reason the backdrop
+        // plates in the blur chapter are. A backdrop filter cuts the pass to
+        // read what it was writing, and a multisampled pass cannot be resumed
+        // -- restoring one would want a resolved-to-multisample copy, which
+        // this technique has no reverse of.
+        .with_samples(1)
+    };
+    vec![
+        plate(
+            "effect/compose-backdrop-runtime-outer-blur-inner",
+            ImageFilter::compose(tint(), ImageFilter::Blur { sigma: 8.0 }),
+            None,
+        ),
+        plate(
+            "effect/compose-backdrop-runtime-outer-blur-inner-small-sigma",
+            // The same pair at a sigma small enough that the blur is barely
+            // there, which is upstream's second scene and is not redundant: a
+            // composition that dropped its inner half would draw this one
+            // correctly and the one above wrongly.
+            ImageFilter::compose(tint(), ImageFilter::Blur { sigma: 2.0 }),
+            None,
+        ),
+        plate(
+            "effect/clipped-compose-backdrop-runtime-outer-blur-inner-small-sigma",
+            ImageFilter::compose(tint(), ImageFilter::Blur { sigma: 2.0 }),
+            // Bounded, which for a backdrop is the filtered region rather than
+            // an optimization -- so this is a panel and the two above are the
+            // whole frame.
+            Some([24.0, 40.0, 104.0, 96.0]),
+        ),
+        plate(
+            "effect/clipped-backdrop-filter-with-shader",
+            tint(),
+            Some([24.0, 40.0, 104.0, 96.0]),
         ),
     ]
 }

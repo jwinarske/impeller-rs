@@ -480,6 +480,8 @@ fn record_node(canvas: &mut Canvas, node: &Node, anti_alias: bool) -> Result<()>
         } => {
             canvas.save();
             canvas.concat(transform.to_projective());
+            // Taken before the binding below shadows the spec it came from.
+            let backdrop = layer.backdrop.clone();
             let layer = Layer {
                 blur: layer.blur,
                 alpha: layer.alpha,
@@ -500,10 +502,19 @@ fn record_node(canvas: &mut Canvas, node: &Node, anti_alias: bool) -> Result<()>
                     }
                 }),
             };
-            match bounds {
-                Some(bounds) => canvas.save_layer_bounds(layer, rect_of(*bounds)),
-                None => canvas.save_layer(layer),
-            };
+            // A general backdrop goes through the call that takes one, and a
+            // scene that names none takes the path every other plate takes --
+            // so the two are not two spellings of the same thing here, and a
+            // plate that asked for a matrix backdrop reports the refusal rather
+            // than drawing something else.
+            if backdrop.is_identity() {
+                match bounds {
+                    Some(bounds) => canvas.save_layer_bounds(layer, rect_of(*bounds)),
+                    None => canvas.save_layer(layer),
+                };
+            } else {
+                canvas.save_layer_backdrop(layer, bounds.map(rect_of), &backdrop)?;
+            }
             for child in children {
                 record_node(canvas, child, anti_alias)?;
             }
