@@ -96,6 +96,7 @@ reason.
 | `clipRSuperellipse` | no | | |
 | `save`, `restore` | yes | `save`, `restore` | `translucent-stack` |
 | `saveLayer` | yes | `save_layer`, `save_layer_bounds` | `layer-group-opacity`, `layer-bounded` |
+| `pushBackdropFilter` | yes | `save_layer_backdrop` takes any image filter but a matrix, which is refused rather than approximated because it moves the image instead of recomputing it in place; `Layer::with_backdrop_blur` is the blur, which a `Copy` layer can hold. Bounds are the filtered region here rather than an optimization | `layer-backdrop-blurred`, `a_backdrop_takes_any_image_filter_and_refuses_the_one_that_moves_it` |
 | `restoreToCount` | via | `save_depth` and a loop | |
 | `getSaveCount` | yes | `save_depth` | `saves_nest` |
 | `translate`, `scale`, `rotate` | yes | same names | `transformed` |
@@ -137,7 +138,7 @@ above it or not at all:
 
 ## Where that leaves it
 
-Of forty-seven rows across `Canvas` and `Paint`: thirty-nine exist, five are
+Of forty-eight rows across `Canvas` and `Paint`: forty exist, five are
 expressible by a caller who assembles them, two are absent, and one is out of
 scope. Counting them is the least interesting thing
 about the table -- the absences are not equal, and a reader deciding whether

@@ -3362,6 +3362,102 @@ fn a_mask_blur_takes_a_gradient_in_every_style_but_not_over_a_glyph_run() {
 }
 
 #[test]
+fn a_backdrop_takes_any_image_filter_and_refuses_the_one_that_moves_it() {
+    // `Layer::backdrop_blur` is a sigma, because a layer is `Copy` and a filter
+    // is not. That made a blur the only backdrop this renderer could apply,
+    // where `SceneBuilder.pushBackdropFilter` takes any `ImageFilter` and
+    // upstream's `SaveLayer` takes a `DlImageFilter`.
+    let Some(mut ctx) = context() else { return };
+
+    // A hard vertical edge to filter: black left, white right.
+    let ground = |canvas: &mut Canvas| {
+        canvas.clear(Color::BLACK);
+        canvas
+            .draw_rect(
+                Rect::new(64.0, 0.0, 128.0, 128.0),
+                &Paint::fill(Color::srgb(1.0, 1.0, 1.0, 1.0)).with_anti_alias(false),
+            )
+            .expect("ground");
+    };
+    let shot = |ctx: &mut Context, backdrop: Option<ImageFilter>| {
+        let mut canvas = Canvas::new(SIZE);
+        ground(&mut canvas);
+        if let Some(filter) = backdrop {
+            canvas
+                .save_layer_backdrop(Layer::opacity(1.0), None, &filter)
+                .expect("backdrop");
+            canvas.restore();
+        }
+        render(ctx, canvas)
+    };
+
+    let plain = shot(&mut ctx, None);
+    assert_eq!(
+        pixel(&plain, 96, 64),
+        [255, 255, 255, 255],
+        "the right half"
+    );
+    assert_eq!(pixel(&plain, 32, 64), [0, 0, 0, 255], "the left half");
+
+    // A color filter as a backdrop, which was not expressible at all. Inverting
+    // swaps the two halves, and swapping is the result no blur could produce.
+    let inverted = shot(
+        &mut ctx,
+        Some(ImageFilter::Color(ColorFilter::matrix([
+            -1.0, 0.0, 0.0, 0.0, 1.0, //
+            0.0, -1.0, 0.0, 0.0, 1.0, //
+            0.0, 0.0, -1.0, 0.0, 1.0, //
+            0.0, 0.0, 0.0, 1.0, 0.0,
+        ]))),
+    );
+    assert_eq!(
+        pixel(&inverted, 96, 64),
+        [0, 0, 0, 255],
+        "the white half should have come back black"
+    );
+    assert_eq!(
+        pixel(&inverted, 32, 64),
+        [255, 255, 255, 255],
+        "the black half should have come back white"
+    );
+
+    // A dilation, which spreads the white half leftward across the edge. A
+    // color filter cannot move an edge and a blur cannot move it this far, so
+    // the two backdrops above and this one are three different pictures.
+    let spread = shot(
+        &mut ctx,
+        Some(ImageFilter::Dilate {
+            radius_x: 12.0,
+            radius_y: 0.0,
+        }),
+    );
+    assert_eq!(
+        pixel(&spread, 56, 64),
+        [255, 255, 255, 255],
+        "the dilation should have carried the edge left of where it was"
+    );
+
+    // And the one that is refused rather than guessed at. A matrix moves the
+    // image, so as a pass it needs a target sized for where the content went
+    // rather than where it was.
+    let mut canvas = Canvas::new(SIZE);
+    ground(&mut canvas);
+    let outcome = canvas
+        .save_layer_backdrop(
+            Layer::opacity(1.0),
+            None,
+            &ImageFilter::Matrix {
+                transform: Transform2D::from(Affine2::from_translation(Vec2::new(8.0, 0.0))),
+            },
+        )
+        .map(|_| ());
+    assert!(
+        matches!(outcome, Err(Error::Unsupported(_))),
+        "a matrix backdrop should be refused rather than approximated, got {outcome:?}"
+    );
+}
+
+#[test]
 fn a_backdrop_blur_softens_what_is_behind_the_layer_and_nothing_else() {
     let Some(mut ctx) = context() else { return };
     // Frosted glass, which is the other blur. A layer blur softens the layer's

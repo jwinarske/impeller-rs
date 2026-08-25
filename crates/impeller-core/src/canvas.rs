@@ -1115,7 +1115,7 @@ impl Canvas {
     /// which costs some work in the layer and keeps a stencil clip from having
     /// to be rebuilt in a second target.
     pub fn save_layer(&mut self, layer: Layer) -> &mut Self {
-        let pending = self.open_layer(layer, None);
+        let pending = self.open_layer(layer, None, None).unwrap_or(None);
         self.seed_backdrop(pending);
         self
     }
@@ -1130,14 +1130,36 @@ impl Canvas {
         &mut self,
         layer: Layer,
         runtime: Option<RuntimeFilter>,
-    ) -> Option<(usize, Target)> {
+        backdrop: Option<&ImageFilter>,
+    ) -> Result<Option<(usize, Target)>> {
         let parent = self.target;
-        let filtered = (layer.backdrop_blur > 0.0).then(|| {
+        // The layer's own sigma is the `Copy`-friendly spelling of the same
+        // thing, so it becomes a filter here and there is one path below.
+        let asked = match backdrop {
+            Some(filter) => filter.clone(),
+            None if layer.backdrop_blur > 0.0 => ImageFilter::Blur {
+                sigma: layer.backdrop_blur,
+            },
+            None => ImageFilter::None,
+        };
+        let filtered = if asked.is_identity() {
+            None
+        } else {
             let cut = self.cut_pass();
-            self.blur_passes(cut, parent, layer.backdrop_blur)
-        });
+            // Cut before the filter can refuse, and the frame pushed after
+            // either way: a layer that fails to filter its backdrop still has
+            // to be a layer, or the `restore` the caller has already written
+            // closes something else.
+            match self.filter_passes(cut, parent, &asked) {
+                Ok(index) => Some(index),
+                Err(e) => {
+                    self.push_layer_frame(layer, runtime);
+                    return Err(e);
+                }
+            }
+        };
         self.push_layer_frame(layer, runtime);
-        filtered.map(|index| (index, parent))
+        Ok(filtered.map(|index| (index, parent)))
     }
 
     /// End the current target's pass here, and answer which pass now holds it.
@@ -1308,6 +1330,40 @@ impl Canvas {
         self.save_layer_device_bounds(layer, min, max)
     }
 
+    /// A layer over a backdrop filtered by any image filter.
+    ///
+    /// [`Layer::backdrop_blur`] is the same operation with the one filter a
+    /// `Copy` layer can hold, and is the spelling to reach for when a blur is
+    /// what is wanted. This takes the rest: a color filter, a morphology, a
+    /// caller's fragment program, or a composition of them -- which is what
+    /// `SceneBuilder.pushBackdropFilter` accepts and what upstream's
+    /// `SaveLayer` takes a `DlImageFilter` for.
+    ///
+    /// The bounds are the filtered region rather than an optimization, for the
+    /// reason [`Layer::backdrop_blur`] gives: a frosted panel is a bounded
+    /// layer, and the same layer unbounded filters the whole frame. Both are
+    /// meaningful and they are different pictures.
+    ///
+    /// Refuses a matrix, which is the one kind that moves the image rather than
+    /// recomputing it in place. See `filter_passes`.
+    pub fn save_layer_backdrop(
+        &mut self,
+        layer: Layer,
+        bounds: Option<Rect>,
+        backdrop: &ImageFilter,
+    ) -> Result<&mut Self> {
+        let (min, max) = match bounds {
+            Some(bounds) => transformed_bounds(
+                self.transform,
+                Vec2::new(bounds.left, bounds.top),
+                Vec2::new(bounds.right, bounds.bottom),
+            )
+            .unwrap_or_else(unbounded),
+            None => unbounded(),
+        };
+        self.save_layer_device_bounds_running(layer, min, max, None, Some(backdrop))
+    }
+
     /// A bounded layer whose region is already in device pixels.
     ///
     /// The same thing [`Self::save_layer_bounds`] does, minus the transform.
@@ -1320,7 +1376,9 @@ impl Canvas {
     /// divided by the scale and multiplied by it again is eight only if nothing
     /// rounds, and the bounds are floored and ceiled at the end.
     fn save_layer_device_bounds(&mut self, layer: Layer, min: Vec2, max: Vec2) -> &mut Self {
-        self.save_layer_device_bounds_running(layer, min, max, None)
+        // Cannot fail: only a backdrop filter can refuse, and this passes none.
+        let _ = self.save_layer_device_bounds_running(layer, min, max, None, None);
+        self
     }
 
     /// The same, with a caller's program to run over the finished layer.
@@ -1334,13 +1392,14 @@ impl Canvas {
         min: Vec2,
         max: Vec2,
         runtime: Option<RuntimeFilter>,
-    ) -> &mut Self {
+        backdrop: Option<&ImageFilter>,
+    ) -> Result<&mut Self> {
         let reach = layer.reach();
         // Opened without seeding, because the seed has to land in the target
         // the content will draw into and that target is decided below. A
         // backdrop drawn into the full-size target and then narrowed would be
         // the wrong region of the wrong image.
-        let pending = self.open_layer(layer, runtime);
+        let pending = self.open_layer(layer, runtime, backdrop)?;
         // A blur reaches past what it was given. The caller states where the
         // content is, which is the question they can answer; how far a blur
         // carries it is this renderer's arithmetic, and a target sized to the
@@ -1365,14 +1424,14 @@ impl Canvas {
             // The layer keeps the full-size target it was opened with, so the
             // backdrop is seeded across that instead.
             self.seed_backdrop(pending);
-            return self;
+            return Ok(self);
         }
         self.aim_at(Target {
             origin: Vec2::new(left, top),
             extent: Extent2D::new((right - left) as u32, (bottom - top) as u32),
         });
         self.seed_backdrop(pending);
-        self
+        Ok(self)
     }
 
     /// How many layers are open, for a caller checking its own balance.
@@ -1907,7 +1966,13 @@ impl Canvas {
         }
         let (min, max) = transformed_bounds(self.transform, min, max).unwrap_or_else(unbounded);
         let (min, max) = rest.covering(min, max);
-        self.save_layer_device_bounds_running(layer.with_blend(paint.blend), min, max, runtime);
+        let _ = self.save_layer_device_bounds_running(
+            layer.with_blend(paint.blend),
+            min,
+            max,
+            runtime,
+            None,
+        );
         let inner = paint
             .clone()
             .with_image_filter(rest)
@@ -1946,7 +2011,13 @@ impl Canvas {
         }
         let (min, max) = transformed_bounds(self.transform, min, max).unwrap_or_else(unbounded);
         let (min, max) = rest.covering(min, max);
-        self.save_layer_device_bounds_running(layer.with_blend(paint.blend), min, max, runtime);
+        let _ = self.save_layer_device_bounds_running(
+            layer.with_blend(paint.blend),
+            min,
+            max,
+            runtime,
+            None,
+        );
         let inner = paint
             .clone()
             .with_image_filter(rest)
@@ -2034,7 +2105,13 @@ impl Canvas {
         // Only the outermost, which is why the inner paint is neutral: peeling
         // a chain opens a layer per link, and a blend carried down would be
         // applied once per link rather than once.
-        self.save_layer_device_bounds_running(layer.with_blend(paint.blend), min, max, runtime);
+        let _ = self.save_layer_device_bounds_running(
+            layer.with_blend(paint.blend),
+            min,
+            max,
+            runtime,
+            None,
+        );
         // The mask blur, if there is one, is left on: it applies to the drawing
         // this filter is filtering.
         let inner = paint
@@ -3508,6 +3585,77 @@ impl Canvas {
         );
     }
 
+    /// Run an image filter over a pass, and answer which pass now holds it.
+    ///
+    /// The one place that knows how each kind of filter becomes passes, so a
+    /// caller with an `ImageFilter` and a pass does not have to. A composition
+    /// is its inner half then its outer, which is what composing means and is
+    /// the order `peel` takes them apart in.
+    ///
+    /// A matrix is refused rather than approximated. Every other kind reads its
+    /// input where the fragment is and writes there; a matrix *moves* the
+    /// image, so as a pass it needs a mapping the other filters do not have and
+    /// a target sized for where the content went rather than where it was. That
+    /// is real work and guessing at it would put the backdrop somewhere nobody
+    /// asked for, which is the substitution this renderer refuses elsewhere.
+    fn filter_passes(
+        &mut self,
+        source: usize,
+        target: Target,
+        filter: &ImageFilter,
+    ) -> Result<usize> {
+        Ok(match filter {
+            ImageFilter::None => source,
+            ImageFilter::Blur { sigma } => self.blur_passes(source, target, *sigma),
+            ImageFilter::Dilate { radius_x, radius_y } => {
+                self.morphology_passes(source, target, Morphology::dilate(*radius_x, *radius_y))
+            }
+            ImageFilter::Erode { radius_x, radius_y } => {
+                self.morphology_passes(source, target, Morphology::erode(*radius_x, *radius_y))
+            }
+            ImageFilter::Runtime { program, uniforms } => {
+                self.runtime_pass(source, target, *program, uniforms)
+            }
+            ImageFilter::Color(recolor) => self.recolor_pass(source, target, *recolor),
+            ImageFilter::Compose { outer, inner } => {
+                let inner = self.filter_passes(source, target, inner)?;
+                self.filter_passes(inner, target, outer)?
+            }
+            ImageFilter::Matrix { .. } => {
+                return Err(Error::Unsupported(
+                    "a matrix is not available as a backdrop filter; it moves the \
+                     image rather than recomputing it in place",
+                ))
+            }
+        })
+    }
+
+    /// A color filter run over a pass, and the pass it landed at.
+    ///
+    /// The image material with the filter on the paint rather than on the
+    /// material, which is where a color filter lives: it acts on whatever the
+    /// fragment computed, and here what the fragment computed is the texel.
+    fn recolor_pass(&mut self, source: usize, target: Target, recolor: ColorFilter) -> usize {
+        let to_local = to_local_columns(Transform2D::from(
+            Affine2::from_mat2(Mat2::from_diagonal(Vec2::new(0.5, -0.5)))
+                * Affine2::from_translation(Vec2::new(1.0, -1.0)),
+        ));
+        self.filter_pass_recolored(
+            source,
+            target,
+            Material::Image {
+                to_local,
+                slot: 0,
+                alpha: 1.0,
+                tile: TileMode::Clamp,
+                sampling: Sampling::Linear,
+                source: [0.0, 0.0, 1.0, 1.0],
+                tint: [1.0, 1.0, 1.0, 1.0],
+            },
+            recolor,
+        )
+    }
+
     /// A caller's program run over a finished layer, and the pass it landed at.
     ///
     /// The whole of what a runtime image filter is, and it is short for the
@@ -3550,13 +3698,24 @@ impl Canvas {
     /// and blend: keeping the filter passes pure means neither has to know
     /// about compositing.
     fn filter_pass(&mut self, source: usize, target: Target, material: Material) -> usize {
+        self.filter_pass_recolored(source, target, material, ColorFilter::None)
+    }
+
+    /// The same, with a color filter applied to what the material produced.
+    fn filter_pass_recolored(
+        &mut self,
+        source: usize,
+        target: Target,
+        material: Material,
+        recolor: ColorFilter,
+    ) -> usize {
         // A pass of its own, so its slot table starts empty and the one slot it
         // uses is the pass it samples.
         let mut batch = Batch::new();
         let sources = vec![TextureSource::Layer(source)];
         let paint = RenderPaint {
             material,
-            filter: ColorFilter::None,
+            filter: recolor,
             // Replaces rather than blends: the target is cleared and this
             // covers all of it, so anything else would blend against the clear
             // for no reason.
