@@ -127,7 +127,6 @@ pub fn recording(path: Path) -> Recording {
 
 /// What a run of one configuration on one device came to.
 pub struct Timing {
-    pub device: String,
     pub path: Path,
     /// How many draws the frame came to.
     ///
@@ -201,7 +200,6 @@ fn percentile(sorted: &[Duration], fraction: f64) -> Duration {
 /// with an occasional frame a hundred times that when the queue backed up.
 fn time_frames<H: Hal>(
     ctx: &mut H::Context,
-    device: String,
     path: Path,
     recording: &Recording,
     finish: fn(&mut H::Context),
@@ -234,7 +232,6 @@ where
     let mut samples = outcome?;
     samples.sort();
     Some(Timing {
-        device,
         path,
         draws: recording.draw_count(),
         median: percentile(&samples, 0.5),
@@ -252,7 +249,7 @@ where
 /// result rather than no result at all. Collecting everything and formatting at
 /// the end lost three runs on a board that left the network mid-run, each of
 /// which had measured several configurations and printed none of them.
-pub fn gather(report: &mut dyn FnMut(Timing)) {
+pub fn gather(report: &mut dyn FnMut(Event)) {
     let paths = [
         Path::Analytic,
         Path::TessellatedMultisampled,
@@ -263,30 +260,32 @@ pub fn gather(report: &mut dyn FnMut(Timing)) {
         let Ok(mut ctx) = VulkanContext::new(DevicePreference::Index(index)) else {
             break;
         };
-        let device = format!("vulkan:{index} {}", ctx.capabilities().device_name);
+        report(Event::Device(format!(
+            "vulkan:{index} {}",
+            ctx.capabilities().device_name
+        )));
         for path in paths {
             let recording = recording(path);
             // Nothing: the Vulkan submit waits on its own fence before it
             // returns, so the frame is already over when the clock stops.
-            if let Some(timing) =
-                time_frames::<VulkanHal>(&mut ctx, device.clone(), path, &recording, |_| {})
-            {
-                report(timing);
+            if let Some(timing) = time_frames::<VulkanHal>(&mut ctx, path, &recording, |_| {}) {
+                report(Event::Measured(timing));
             }
         }
     }
 
     if let Ok(mut ctx) = GlesContext::new(DisplayTarget::Surfaceless) {
-        let device = format!("gles {}", ctx.capabilities().device_name);
+        report(Event::Device(format!(
+            "gles {}",
+            ctx.capabilities().device_name
+        )));
         for path in paths {
             let recording = recording(path);
-            if let Some(timing) =
-                time_frames::<GlesHal>(&mut ctx, device.clone(), path, &recording, |ctx| {
-                    // SAFETY: a context is current on this thread.
-                    unsafe { glow::HasContext::finish(ctx.raw_gl()) }
-                })
-            {
-                report(timing);
+            if let Some(timing) = time_frames::<GlesHal>(&mut ctx, path, &recording, |ctx| {
+                // SAFETY: a context is current on this thread.
+                unsafe { glow::HasContext::finish(ctx.raw_gl()) }
+            }) {
+                report(Event::Measured(timing));
             }
         }
     }
@@ -306,18 +305,32 @@ fn header() -> String {
     )
 }
 
-/// One configuration's line, and the device heading above it when the device
-/// changes.
+/// What a run emits as it goes.
 ///
-/// `current` is the device the last row named, which this updates. Threading it
-/// rather than grouping in the caller is what lets the streamed run and the
-/// assembled one share this function: the streamed one has no list to group.
-fn row(timing: &Timing, current: &mut String) -> String {
+/// A device is announced when it is *opened* rather than when its first result
+/// arrives, and that distinction is the reason this is an enum rather than a
+/// stream of timings. A run on a Raspberry Pi 5 measured all three of V3D's
+/// configurations and then took the board off the network before printing
+/// anything about the next device -- and from the output alone there was no
+/// way to tell whether it had died opening that device or measuring on it,
+/// because both look like silence.
+pub enum Event {
+    /// A device was opened and its configurations are about to be measured.
+    Device(String),
+    /// One configuration finished.
+    Measured(Timing),
+}
+
+/// One event's contribution to the report.
+///
+/// Both the streamed run and the assembled one go through here, so the format
+/// cannot change in one and not the other.
+fn render(event: &Event) -> String {
+    let timing = match event {
+        Event::Device(device) => return format!("\n{device}\n"),
+        Event::Measured(timing) => timing,
+    };
     let mut out = String::new();
-    if timing.device != *current {
-        current.clone_from(&timing.device);
-        out.push_str(&format!("\n{current}\n"));
-    }
     out.push_str(&format!(
         "  {:<24} {:>10} ({:>6.0} fps)   p99 {:>10}   fastest {:>10}   \
          slowest {:>10}   {:>4} draws{}\n",
@@ -355,21 +368,20 @@ fn epilogue() -> &'static str {
      where the regression gating this deliberately is not belongs too.\n"
 }
 
-/// Render a set of timings that have already been measured.
+/// Render the events a run would have emitted.
 ///
-/// Only the tests reach this, because only they have timings without a device
-/// to measure them on; a real run takes [`stream`]. Both compose the same three
-/// pieces, so a change to the format cannot reach one and miss the other, and
-/// the assertions below hold over what a run actually prints.
+/// Only the tests reach this, because only they have events without a device
+/// to measure them on; a real run takes [`stream`]. Both go through `render`,
+/// so what the assertions below hold over is what a run prints rather than a
+/// second rendering that happens to agree today.
 #[cfg(test)]
-pub fn text(timings: &[Timing]) -> String {
-    if timings.is_empty() {
+pub fn text(events: &[Event]) -> String {
+    if !events.iter().any(|e| matches!(e, Event::Measured(_))) {
         return NOTHING.to_string();
     }
     let mut out = header();
-    let mut current = String::new();
-    for timing in timings {
-        out.push_str(&row(timing, &mut current));
+    for event in events {
+        out.push_str(&render(event));
     }
     out.push_str(epilogue());
     out
@@ -385,15 +397,16 @@ pub fn stream(out: &mut impl Write) -> io::Result<()> {
     write!(out, "{}", header())?;
     out.flush()?;
 
-    let mut current = String::new();
     let mut measured = 0usize;
     let mut failed = None;
-    gather(&mut |timing| {
+    gather(&mut |event| {
         if failed.is_some() {
             return;
         }
-        measured += 1;
-        let line = row(&timing, &mut current);
+        if matches!(event, Event::Measured(_)) {
+            measured += 1;
+        }
+        let line = render(&event);
         if let Err(e) = write!(out, "{line}").and_then(|()| out.flush()) {
             failed = Some(e);
         }
@@ -409,6 +422,19 @@ pub fn stream(out: &mut impl Write) -> io::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A timing with unremarkable numbers, for the tests that are about the
+    /// report rather than about what was measured.
+    fn a_timing(path: Path) -> Timing {
+        Timing {
+            path,
+            draws: SHAPES,
+            median: Duration::from_micros(100),
+            p99: Duration::from_micros(140),
+            fastest: Duration::from_micros(90),
+            slowest: Duration::from_micros(110),
+        }
+    }
 
     /// The two paths do not cost the same number of draws, and the difference
     /// is the first thing to know about the comparison rather than a detail.
@@ -438,15 +464,7 @@ mod tests {
 
         // And the number reaches the reader, because a comparison that hid it
         // would look like a measurement of shading alone.
-        let rendered = text(&[Timing {
-            device: "test".into(),
-            path: Path::Analytic,
-            draws: SHAPES,
-            median: Duration::from_micros(100),
-            p99: Duration::from_micros(140),
-            fastest: Duration::from_micros(90),
-            slowest: Duration::from_micros(110),
-        }]);
+        let rendered = text(&[Event::Measured(a_timing(Path::Analytic))]);
         assert!(rendered.contains("160 draws"), "{rendered}");
     }
 
@@ -519,44 +537,35 @@ mod tests {
         assert!(text(&[]).contains("no device"));
     }
 
-    /// A device is named once however many of its configurations follow.
+    /// A device is named when it is opened, so a run that dies measuring on it
+    /// still says which one it was on.
     ///
-    /// This is the whole of what streaming had to reimplement. The assembled
-    /// report could group its list; a streamed one sees one timing at a time
-    /// and has to carry the last device named, so the heading is the one thing
-    /// that could come out right in a test over a vector and wrong in a run.
+    /// This is the whole reason [`Event`] is an enum. When a device's name
+    /// arrived with its first result, a run that opened a device and finished
+    /// no configuration on it printed nothing about that device at all --
+    /// which is what a run on a Raspberry Pi 5 did, leaving no way to tell
+    /// whether it had died opening the second device or measuring on it.
     #[test]
-    fn a_device_is_named_once_and_not_once_per_configuration() {
-        let on = |device: &str, path: Path| Timing {
-            device: device.into(),
-            path,
-            draws: SHAPES,
-            median: Duration::from_micros(100),
-            p99: Duration::from_micros(140),
-            fastest: Duration::from_micros(90),
-            slowest: Duration::from_micros(110),
-        };
+    fn a_device_that_measures_nothing_is_still_named() {
+        let rendered = text(&[
+            Event::Device("vulkan:0 a".into()),
+            Event::Measured(a_timing(Path::Analytic)),
+            Event::Measured(a_timing(Path::TessellatedMultisampled)),
+            // Opened, and then the run ended before a configuration finished.
+            Event::Device("vulkan:1 b".into()),
+        ]);
 
-        // Fed one at a time, exactly as `stream` feeds them.
-        let mut current = String::new();
-        let streamed: String = [
-            on("vulkan:0 a", Path::Analytic),
-            on("vulkan:0 a", Path::TessellatedMultisampled),
-            on("gles b", Path::Analytic),
-        ]
-        .iter()
-        .map(|t| row(t, &mut current))
-        .collect();
-
-        assert_eq!(streamed.matches("vulkan:0 a").count(), 1, "{streamed}");
-        assert_eq!(streamed.matches("gles b").count(), 1, "{streamed}");
-        assert_eq!(streamed.lines().filter(|l| l.starts_with("  ")).count(), 3);
+        assert!(
+            rendered.contains("vulkan:1 b"),
+            "a device that measured nothing went unnamed: {rendered}"
+        );
+        assert_eq!(rendered.matches("vulkan:0 a").count(), 1, "{rendered}");
+        assert_eq!(rendered.lines().filter(|l| l.starts_with("  ")).count(), 2);
     }
 
     #[test]
     fn a_wide_spread_is_reported_rather_than_hidden() {
         let timing = |fastest: u64, slowest: u64| Timing {
-            device: "test".into(),
             path: Path::Analytic,
             draws: SHAPES,
             median: Duration::from_micros((fastest + slowest) / 2),
@@ -566,6 +575,6 @@ mod tests {
         };
         assert!(timing(100, 500).noisy());
         assert!(!timing(100, 150).noisy());
-        assert!(text(&[timing(100, 500)]).contains("noisy"));
+        assert!(text(&[Event::Measured(timing(100, 500))]).contains("noisy"));
     }
 }
