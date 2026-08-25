@@ -2307,6 +2307,121 @@ fn blend() -> Vec<Scene> {
             .collect(),
     ));
 
+    scenes.push(
+        Scene::tree(
+            "blend/can-draw-paint-with-advanced-blend",
+            // `drawPaint` twice, the second under a non-separable mode. Worth its
+            // own plate because a paint has no shape: an advanced mode needs its
+            // destination, and the destination here is the whole frame rather than
+            // whatever a shape happens to cover. A renderer that read the
+            // destination from a shape's bounds would be right on every other
+            // plate in this chapter and wrong on this one.
+            vec![
+                Node::Paint(Box::new(PaintSpec {
+                    color: [0.282, 0.820, 0.800, 1.0],
+                    blend: BlendMode::Src,
+                    clip: None,
+                    clip_out: None,
+                    transform: Transform::default(),
+                })),
+                Node::Paint(Box::new(PaintSpec {
+                    color: [1.0, 0.271, 0.0, 0.5],
+                    blend: BlendMode::Hue,
+                    clip: None,
+                    clip_out: None,
+                    transform: Transform::default(),
+                })),
+            ],
+        )
+        .with_background(DARK)
+        .with_samples(4),
+    );
+
+    scenes.push(
+        Scene::tree(
+            "blend/destructive-blend-color-filter-floods-clip",
+            // An empty group whose color filter replaces whatever it is given.
+            // Nothing is drawn inside it, so the group is transparent -- and a
+            // filter that ignores its input turns transparent into opaque red,
+            // which then covers everything the group's bounds admit.
+            //
+            // The picture is the flood. A renderer that skipped an empty group as
+            // an optimization, or applied the filter only where something had been
+            // drawn, leaves the ground showing and is obviously wrong rather than
+            // subtly so.
+            //
+            // Stated as a matrix because that is how a blend against a constant is
+            // stated here: `Src` against red keeps none of its input, so every
+            // coefficient is zero and the constant is the color. `docs/parity.md`
+            // puts it as any blend against a constant that is affine in what it
+            // blends, and a constant function is the affine one with no slope.
+            vec![
+                Node::Draw(Box::new(Item::fill(
+                    Shape::Rect {
+                        min: [0.0, 0.0],
+                        max: [128.0, 128.0],
+                    },
+                    [0.1, 0.2, 0.85, 1.0],
+                ))),
+                Node::Layer {
+                    layer: Box::new(LayerSpec {
+                        color_filter: ColorFilter::matrix([
+                            0.0, 0.0, 0.0, 0.0, 1.0, //
+                            0.0, 0.0, 0.0, 0.0, 0.0, //
+                            0.0, 0.0, 0.0, 0.0, 0.0, //
+                            0.0, 0.0, 0.0, 0.0, 1.0,
+                        ]),
+                        blend: BlendMode::SrcOver,
+                        ..LayerSpec::default()
+                    }),
+                    bounds: None,
+                    transform: Transform::default(),
+                    children: Vec::new(),
+                },
+            ],
+        )
+        .with_background(DARK)
+        .with_samples(4),
+    );
+
+    scenes.push(plate(
+        "blend/draw-advanced-blend-partly-offscreen",
+        // An advanced mode where its destination runs out. The circle is
+        // clipped along the bottom, so part of what it would blend with is not
+        // there -- and a mode reading its destination has to find the ground
+        // outside the clip rather than what a texture the size of the shape
+        // happens to hold beyond its edge.
+        //
+        // The fill repeats so the boundary is legible: a solid one clipped
+        // wrongly still looks like a circle with a straight edge.
+        vec![
+            Item::fill(
+                Shape::Rect {
+                    min: [0.0, 0.0],
+                    max: [128.0, 128.0],
+                },
+                [0.1, 0.2, 0.85, 1.0],
+            ),
+            Item::filled(
+                Shape::Circle {
+                    center: [64.0, 64.0],
+                    radius: 52.0,
+                },
+                Fill::LinearGradient {
+                    start: [0.0, 0.0],
+                    end: [30.0, 30.0],
+                    stops: vec![
+                        Stop::new([0.957, 0.263, 0.212, 1.0], 0.0),
+                        Stop::new([0.129, 0.588, 0.953, 1.0], 1.0),
+                    ],
+                    tile: TileMode::Repeat,
+                },
+            )
+            .with_blend(BlendMode::Lighten)
+            .with_clip([0.0, 0.0, 128.0, 90.0]),
+        ],
+    ));
+
     scenes
 }
 

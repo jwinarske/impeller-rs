@@ -117,7 +117,7 @@ column is right and the obvious way to check it is wrong.
 | `aiks_dl_gradient_unittests.cc` | ~40 | 31 | nothing; see below |
 | `aiks_dl_clip_unittests.cc` | ~5 | 6 | nothing; this file is covered |
 | `aiks_dl_opacity_unittests.cc` | ~3 | 3 | nothing; this file is covered |
-| `aiks_dl_blend_unittests.cc` | ~79 | 36 | framebuffer fetch, subpass collapse |
+| `aiks_dl_blend_unittests.cc` | ~79 | 39 | framebuffer fetch and subpass collapse, for three of them; see below |
 | `aiks_dl_blur_unittests.cc` | ~59 | 34 | backdrop identity keys, for two of them; see below |
 | `aiks_dl_vertices_unittests.cc` | ~16 | 19 | nothing; see below |
 | `aiks_dl_atlas_unittests.cc` | ~15 | 9 | nothing named; see below |
@@ -127,7 +127,7 @@ column is right and the obvious way to check it is wrong.
 | `aiks_dl_runtime_effect_unittests.cc` | — | 5 | bounded by having two fixture programs rather than by the renderer |
 | `aiks_dl_unittests.cc` | ~39 | 10 | mostly internal optimizations; the picture cases are here now |
 
-The catalog holds two hundred and thirty-four scenes of roughly four hundred,
+The catalog holds two hundred and thirty-seven scenes of roughly four hundred,
 and the proportion is less interesting than which ones: the arithmetic of drawing is largely covered, and
 what is missing is either a capability this renderer does not have or a thing
 the scene model cannot describe.
@@ -175,6 +175,31 @@ combination is the same rules whichever is being combined, so it now happens
 once, over color where the fill is constant and over coverage where it varies,
 and every style takes any fill. Eight scenes followed, five of them upstream's
 stroked gradient oval under each style.
+
+The blend row named two obstacles and both are real, for three of that file's
+twenty-one tests: two need framebuffer fetch by name, and one is the subpass
+collapse optimization itself. Twelve of the rest were unwritten rather than
+blocked, and three of those are here now -- `drawPaint` twice under a
+non-separable mode, an advanced blend clipped so its destination runs out, and
+an empty group whose color filter floods what its bounds admit. That last is
+the interesting one: nothing is drawn inside the group, so it is transparent,
+and a filter that ignores its input turns transparent into opaque red. It comes
+out solid red on both devices here, which is what upstream's comment says it
+should be.
+
+Checking that row turned up something larger than the row. Two of the three new
+scenes need advanced blending, which the preferred device on the machine this
+was written on does not have -- and `every_catalog_scene_draws_something` asked
+only the preferred device and skipped what it could not render, without saying
+so. Nineteen plates were never drawn at all, and the test reported a pass. The
+software rasterizer beside it has the extension and renders every one of them.
+
+So that test now asks every Vulkan device on the machine, in the order the
+conformance suite already asks them, and says how many of the catalog it drew.
+It draws all two hundred and thirty-seven. The cross-backend comparison beside
+it was already honest -- it reports its nineteen gaps by name -- and those stay
+gaps, because the GLES driver here lacks the extension too, so there is no pair
+to compare them on. Reported, not hidden, which was the whole difference.
 
 The shadow row is the first of these to survive being checked, and is worth
 recording for that rather than in spite of it. Twenty-six of that file's thirty

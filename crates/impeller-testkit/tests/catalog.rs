@@ -79,17 +79,45 @@ where
 
 #[test]
 fn every_catalog_scene_draws_something() {
-    let Ok(mut ctx) = Validated::new(DevicePreference::Auto) else {
+    // Every Vulkan device on this machine rather than the preferred one, and
+    // the difference is not small. Advanced blending is an extension a discrete
+    // or integrated GPU can lack while the software rasterizer beside it has
+    // it, and nineteen plates of this catalog need it -- so asking only the
+    // preferred device skipped nineteen scenes here, silently, and reported a
+    // pass. The count in `docs/playground-parity.md` said what the catalog
+    // holds and nothing said what had been looked at.
+    let mut devices: Vec<Validated> = Vec::new();
+    for preference in [DevicePreference::Auto, DevicePreference::Software] {
+        if let Ok(ctx) = Validated::new(preference) {
+            let name = ctx.capabilities().device_name.clone();
+            if devices.iter().any(|d| d.capabilities().device_name == name) {
+                continue;
+            }
+            devices.push(ctx);
+        }
+    }
+    if devices.is_empty() {
         eprintln!("skipping: no Vulkan device");
         return;
-    };
+    }
 
     let mut blank = Vec::new();
+    let mut orphans = Vec::new();
+    let mut drawn = 0usize;
     for scene in catalog() {
-        if !scene.supported_by(ctx.capabilities()) {
+        let Some(index) = devices
+            .iter()
+            .position(|ctx| scene.supported_by(ctx.capabilities()))
+        else {
+            // Reported by name rather than asserted, the way the corpus reports
+            // its own: a scene nothing here can render is not a failure of the
+            // renderer, and naming it is what keeps it from reading as coverage.
+            orphans.push(scene.name);
             continue;
-        }
-        let image = render::<VulkanHal>(&mut ctx, &scene);
+        };
+        let ctx = &mut devices[index];
+        drawn += 1;
+        let image = render::<VulkanHal>(ctx, &scene);
         // Something other than the ground it cleared to. A scene whose
         // geometry landed offscreen, or whose color matched the background,
         // is one nobody would notice was wrong by scrolling past it.
@@ -108,6 +136,18 @@ fn every_catalog_scene_draws_something() {
         if pixels.chunks_exact(4).all(|texel| texel == ground) {
             blank.push(scene.name);
         }
+    }
+    eprintln!(
+        "drew {drawn} of {} catalog scenes across {} device(s)",
+        catalog().len(),
+        devices.len()
+    );
+    if !orphans.is_empty() {
+        eprintln!(
+            "{} scene(s) no available device can render: {}",
+            orphans.len(),
+            orphans.join(", ")
+        );
     }
     assert!(
         blank.is_empty(),
