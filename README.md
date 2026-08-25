@@ -229,6 +229,12 @@ and modifier negotiation, the shader pipeline, dependency purity, and the
 testing model. Read it before proposing structural changes — a fair number of
 alternatives were considered and rejected for recorded reasons.
 
+[`docs/on-a-board.md`](docs/on-a-board.md) is how to cross-build the suite and
+run it on a real device, and what doing so has found. Most of what this suite
+checks is agreement between two devices, and on a workstation both of them are
+software — so the board is not a nice-to-have lane, it is where a class of
+defect is visible at all.
+
 ## Releases
 
 Nothing is released. `impeller-rs 0.0.0` exists on crates.io and contains **no
