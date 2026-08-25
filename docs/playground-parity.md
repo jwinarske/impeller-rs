@@ -134,7 +134,7 @@ column is right and the obvious way to check it is wrong.
 
 | File | Scenes there | Here | Blocked on |
 |---|---|---|---|
-| `aiks_dl_basic_unittests.cc` | ~85 | 42 | superellipses, subpass optimizations; see below |
+| `aiks_dl_basic_unittests.cc` | ~85 | 46 | superellipses, subpass optimizations; see below |
 | `aiks_dl_path_unittests.cc` | ~30 | 21 | nothing; see below |
 | `aiks_dl_gradient_unittests.cc` | ~40 | 31 | nothing; see below |
 | `aiks_dl_clip_unittests.cc` | ~5 | 7 | nothing; this file is covered |
@@ -149,7 +149,7 @@ column is right and the obvious way to check it is wrong.
 | `aiks_dl_runtime_effect_unittests.cc` | — | 12 | nothing; see below |
 | `aiks_dl_unittests.cc` | ~36 | 15 | subpass collapse, for five of them; see below |
 
-The catalog holds two hundred and fifty-two scenes of roughly four hundred,
+The catalog holds two hundred and fifty-six scenes of roughly four hundred,
 and the proportion is less interesting than which ones: the arithmetic of drawing is largely covered, and
 what is missing is either a capability this renderer does not have or a thing
 the scene model cannot describe.
@@ -372,6 +372,17 @@ radii, eight numbers against one. Five of the basic chapter's scenes build a
 rounded rectangle this cannot describe. That was not in this column and, worse,
 was not in `docs/parity.md` either, whose `drawRRect` row said "yes" with
 nothing beside it.
+
+Four of those forty went in as the stroked-arc family, which is the one cluster
+among them that is a mechanism rather than a picture: an arc has ends, where a
+cap shows, and through its center a vertex, where a join does. Butt and round
+ends were already here; square ends, the two joins and a full turn were not.
+
+The joins needed their sweep narrowed before the pair meant anything. At a
+hundred and thirty-seven degrees a miter and a round join agree to within
+twenty-five pixels, which is two plates that look identical to anyone comparing
+them; at forty the miter runs out to a point and they are three times as far
+apart. Small either way, and now small about something.
 
 It was recorded as a non-parity entry and then, a commit later, built instead --
 which is what the entry had said should happen to it, having named the limit as

@@ -662,6 +662,95 @@ fn basic() -> Vec<Scene> {
             )],
         ),
         plate(
+            "basic/stroked-arcs-render-correctly-with-square-ends",
+            // The third cap, and the one an arc shows differently from a line:
+            // a square end projects along the tangent, so on a curve it leaves
+            // the circle rather than continuing it, and the two ends project in
+            // directions that are not parallel.
+            vec![Item::stroke(
+                Shape::Arc {
+                    center: [64.0, 64.0],
+                    radii: [46.0, 46.0],
+                    start: -2.2,
+                    sweep: 3.6,
+                    through_center: false,
+                },
+                StrokeSpec {
+                    cap: LineCap::Square,
+                    ..StrokeSpec::new(14.0)
+                },
+                WHITE,
+            )],
+        ),
+        // A stroked slice, which is where a *join* shows on an arc rather than
+        // a cap: through the center the outline has a vertex, and the two
+        // straight edges meet there at whatever angle the sweep left. A miter
+        // runs the edges out to their crossing; a round join arcs between them.
+        // On an open arc neither is reachable, which is why the pair above says
+        // nothing about joins.
+        //
+        // A narrow sweep, and that is the difference between this pair meaning
+        // something and not. At a hundred and thirty-seven degrees the vertex
+        // is obtuse enough that a miter and a round join agree to within a
+        // fifteenth of a per cent of the frame -- twenty-five pixels, which is
+        // a pair of plates that would look identical to anyone comparing them.
+        // At forty the miter runs out to a point and the two are three times as
+        // far apart -- seventy-eight pixels against twenty-five, which is
+        // still a small plate and is now a plate about something.
+        plate(
+            "basic/stroked-arcs-render-correctly-with-miter-joins-and-center",
+            vec![Item::stroke(
+                Shape::Arc {
+                    center: [64.0, 64.0],
+                    radii: [42.0, 42.0],
+                    start: -1.2,
+                    sweep: 0.7,
+                    through_center: true,
+                },
+                StrokeSpec {
+                    join: LineJoin::Miter,
+                    ..StrokeSpec::new(10.0)
+                },
+                WHITE,
+            )],
+        ),
+        plate(
+            "basic/stroked-arcs-render-correctly-with-round-joins-and-center",
+            vec![Item::stroke(
+                Shape::Arc {
+                    center: [64.0, 64.0],
+                    radii: [42.0, 42.0],
+                    start: -1.2,
+                    sweep: 0.7,
+                    through_center: true,
+                },
+                StrokeSpec {
+                    join: LineJoin::Round,
+                    ..StrokeSpec::new(10.0)
+                },
+                WHITE,
+            )],
+        ),
+        plate(
+            "basic/stroked-arcs-cover-full-arc-with-butt-ends",
+            // A whole turn, where the two butt ends meet each other rather than
+            // ending in air. The picture that says it went wrong is a seam: a
+            // sweep flattened to slightly less than a turn leaves a gap, and one
+            // slightly more leaves the ends overlapping where the stroke is
+            // translucent. Opaque here, so a gap is the visible failure.
+            vec![Item::stroke(
+                Shape::Arc {
+                    center: [64.0, 64.0],
+                    radii: [44.0, 44.0],
+                    start: 0.0,
+                    sweep: std::f32::consts::TAU,
+                    through_center: false,
+                },
+                StrokeSpec::new(16.0),
+                WHITE,
+            )],
+        ),
+        plate(
             "basic/translucent-filled-arcs-render-correctly",
             vec![
                 Item::fill(
