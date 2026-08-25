@@ -242,6 +242,18 @@ out four levels apart and the inner half of the composition was barely tested;
 with edges to work on they are a hundred and thirty-three apart over
 ninety-seven per cent of the frame.
 
+Writing them found a bug that a catalog cannot show. The fixture programs were
+registered by a derivation that walked a scene for anything naming one, and a
+group whose *backdrop* is a program has nothing inside it that does -- so they
+went unregistered, and the plates drew correctly anyway because an earlier scene
+had registered them and registration is idempotent. Alone they failed every
+time. The derivation had been wrong four times by then and is deleted rather
+than corrected: registering stores a program's SPIR-V against an index and
+pipelines are built lazily from it, so the gate was buying three clones of a
+byte vector per context at the price of having to be right. There is a test now
+that renders one scene per context for each way a scene can depend on something
+the executor arranges.
+
 Seven of the twelve rested on the runtime effect
 -- every `ComposePaintRuntime` and `ComposeBackdropRuntime` variant,
 `CanRenderRuntimeEffectFilter`, `RuntimeEffectImageFilterRotated` and
