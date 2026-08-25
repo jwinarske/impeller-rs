@@ -1926,6 +1926,54 @@ fn clip() -> Vec<Scene> {
                 }),
             ],
         ),
+        plate(
+            "clip/framebuffer-blends-respect-clips",
+            // An advanced blend confined to a clip. The mode is the subject
+            // rather than the shape: a separable mode is a fixed-function
+            // blend the hardware applies as it writes, so the clip is already
+            // deciding which pixels get written and nothing more is needed. An
+            // advanced mode is not -- it reads the destination, either through
+            // a framebuffer fetch or through a copy of the target, and a
+            // reader that ignores the clip happily blends into pixels no draw
+            // should have touched.
+            //
+            // So the red square is drawn under `Multiply` across a region much
+            // larger than the circle it is clipped to, and the corners of that
+            // square are the answer: the ground has to be exactly as it was
+            // outside the circle, whatever the blend did inside it.
+            vec![
+                Item::fill(
+                    Shape::Rect {
+                        min: [0.0, 0.0],
+                        max: [128.0, 128.0],
+                    },
+                    WHITE,
+                ),
+                Item::fill(
+                    Shape::Rect {
+                        min: [28.0, 28.0],
+                        max: [100.0, 100.0],
+                    },
+                    RED,
+                )
+                .with_blend(BlendMode::Multiply)
+                .with_clip_shape(Shape::Circle {
+                    center: [64.0, 64.0],
+                    radius: 30.0,
+                }),
+                // And something ordinary through the same clip afterwards, so
+                // the plate says the clip is still the clip once an advanced
+                // mode has been through it.
+                Item::fill(
+                    Shape::Circle {
+                        center: [64.0, 64.0],
+                        radius: 30.0,
+                    },
+                    [0.0, 0.7, 0.2, 0.55],
+                )
+                .with_blend(BlendMode::SrcOver),
+            ],
+        ),
     ]
 }
 

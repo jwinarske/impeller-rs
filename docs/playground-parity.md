@@ -89,8 +89,8 @@ this scene draws. So the deviation stands for now and its description does not:
 it is one this project has decided against upstream's decided half, not a gap
 nobody upstream has filled.
 
-Ten of the rows below have now been read against the file they name, at tip of
-tree, and the results are set out after the table. Two named their obstacle
+Eleven of the rows below have now been read against the file they name, at tip
+of tree, and the results are set out after the table. Two named their obstacle
 correctly: shadows, where it governs twenty-six of that file's thirty scenes and
 means what it says, and paths, where nothing blocks the nine it is short. The
 path row's count was still one too high, for the reason the atlas row's was four
@@ -98,8 +98,8 @@ too high -- a test in the file that draws no picture -- so of the two, one was
 right outright and one was right about the only thing the column claims to be
 about.
 
-The other eight were wrong in six distinguishable ways, and the ways matter more
-than the count.
+The other nine were wrong in seven distinguishable ways, and the ways matter
+more than the count.
 
 An obstacle that had been removed and the row not updated (gradients). One
 stated far more broadly than it held, two scenes rather than a chapter (blurs).
@@ -109,13 +109,14 @@ opacity). One naming an upstream uncertainty that upstream has since resolved
 (primitive shapes). One naming real obstacles but for three of twenty-one
 tests, with a dozen unwritten (blends). One understating badly and missing the
 only real obstacle in its chapter, which was not recorded anywhere -- that a
-rounded rectangle here has one radius where `dart:ui` has eight (basics). And
-one whose "see below" pointed at nothing, and whose own count turned out to be
-the thing that was wrong (atlases).
+rounded rectangle here has one radius where `dart:ui` has eight (basics). One whose "see below" pointed at nothing, and whose own count turned out to be
+the thing that was wrong (atlases). And one that said its file was covered when
+it was not, by a single scene that needed a capability the preferred device here
+lacks -- which is how it came to be overlooked (clips).
 
 Three of the eight turned into renderer changes rather than document ones.
 
-The four not yet checked are the clip, text, runtime-effect and
+The three not yet checked are the text, runtime-effect and
 `aiks_dl_unittests.cc` rows. Treat them as unverified, which is what they are.
 On the evidence above, the likeliest thing wrong with them is not that they
 name the wrong obstacle but that they name a real one governing far less than
@@ -133,7 +134,7 @@ column is right and the obvious way to check it is wrong.
 | `aiks_dl_basic_unittests.cc` | ~85 | 42 | superellipses, non-uniform rounded-rect radii, subpass optimizations; see below |
 | `aiks_dl_path_unittests.cc` | ~30 | 21 | nothing; see below |
 | `aiks_dl_gradient_unittests.cc` | ~40 | 31 | nothing; see below |
-| `aiks_dl_clip_unittests.cc` | ~5 | 6 | nothing; this file is covered |
+| `aiks_dl_clip_unittests.cc` | ~5 | 7 | nothing; this file is covered |
 | `aiks_dl_opacity_unittests.cc` | ~3 | 3 | nothing; this file is covered |
 | `aiks_dl_blend_unittests.cc` | ~79 | 39 | framebuffer fetch and subpass collapse, for three of them; see below |
 | `aiks_dl_blur_unittests.cc` | ~59 | 34 | backdrop identity keys, for two of them; see below |
@@ -145,7 +146,7 @@ column is right and the obvious way to check it is wrong.
 | `aiks_dl_runtime_effect_unittests.cc` | — | 5 | bounded by having two fixture programs rather than by the renderer |
 | `aiks_dl_unittests.cc` | ~39 | 10 | mostly internal optimizations; the picture cases are here now |
 
-The catalog holds two hundred and thirty-seven scenes of roughly four hundred,
+The catalog holds two hundred and thirty-eight scenes of roughly four hundred,
 and the proportion is less interesting than which ones: the arithmetic of drawing is largely covered, and
 what is missing is either a capability this renderer does not have or a thing
 the scene model cannot describe.
@@ -193,6 +194,27 @@ combination is the same rules whichever is being combined, so it now happens
 once, over color where the fill is constant and over coverage where it varies,
 and every style takes any fill. Eight scenes followed, five of them upstream's
 stroked gradient oval under each style.
+
+The clip row said "nothing; this file is covered" and the file was not covered.
+Six scenes against five tests reads as a surplus, and two of the six are this
+chapter's own, so four of upstream's five were mirrored and the fifth was not.
+`FramebufferBlendsRespectClips` is now here and the row's claim is now true.
+
+It is worth a plate rather than being folded into the blend chapter, because
+what it is about is the clip and not the mode. A separable blend is applied by
+the hardware as it writes, so the clip has already decided which pixels are
+written and there is nothing further to respect. An advanced mode reads its
+destination -- through a framebuffer fetch, or through a copy of the target --
+and a reader that ignores the clip blends happily into pixels no draw should
+have touched. The plate multiplies a red square across a region much larger
+than the circle it is clipped to, and its corners are the answer: pure white on
+a software device, which is the ground exactly as it was.
+
+That plate is also the first thing to be drawn by the device fix two commits
+ago rather than in spite of it. `Multiply` is an advanced mode and the
+preferred device here has no extension for it, so before that change this
+scene would have been skipped by the only test that draws every plate, and
+skipped silently.
 
 The path row is the second whose count was the thing that was wrong, and by one
 rather than by four. `ArcWithZeroSweepAndBlur` builds a display list and stops,
