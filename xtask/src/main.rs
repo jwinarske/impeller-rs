@@ -94,7 +94,14 @@ fn main() {
             }
         }
         Some("bench") => {
-            print!("{}", bench::text(&bench::gather()));
+            // Straight to the handle rather than through `print!`, because the
+            // point of streaming is that each line has left this process by the
+            // time the next configuration starts.
+            let mut out = std::io::stdout().lock();
+            if let Err(e) = bench::stream(&mut out) {
+                eprintln!("bench: {e}");
+                std::process::exit(1);
+            }
         }
         Some("drm") => {
             let survey = drm::survey(

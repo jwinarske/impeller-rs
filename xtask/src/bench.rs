@@ -28,6 +28,7 @@ use impeller_core::{Canvas, Color, Paint, Recording, Rect};
 use impeller_hal::{Extent2D, Hal, HalContext, PixelFormat, TextureDescriptor};
 use impeller_hal_gles::{DisplayTarget, GlesContext, GlesHal};
 use impeller_hal_vulkan::{DevicePreference, VulkanContext, VulkanHal};
+use std::io::{self, Write};
 use std::time::{Duration, Instant};
 
 /// The frame the document's number was taken from.
@@ -243,9 +244,15 @@ where
     })
 }
 
-/// Run every configuration on every device this machine offers.
-pub fn gather() -> Vec<Timing> {
-    let mut timings = Vec::new();
+/// Run every configuration on every device this machine offers, handing each
+/// result to `report` as soon as it is measured.
+///
+/// The observer rather than a returned vector because a full run takes minutes
+/// on a slow device, and one that is interrupted partway should be a partial
+/// result rather than no result at all. Collecting everything and formatting at
+/// the end lost three runs on a board that left the network mid-run, each of
+/// which had measured several configurations and printed none of them.
+pub fn gather(report: &mut dyn FnMut(Timing)) {
     let paths = [
         Path::Analytic,
         Path::TessellatedMultisampled,
@@ -264,7 +271,7 @@ pub fn gather() -> Vec<Timing> {
             if let Some(timing) =
                 time_frames::<VulkanHal>(&mut ctx, device.clone(), path, &recording, |_| {})
             {
-                timings.push(timing);
+                report(timing);
             }
         }
     }
@@ -279,66 +286,124 @@ pub fn gather() -> Vec<Timing> {
                     unsafe { glow::HasContext::finish(ctx.raw_gl()) }
                 })
             {
-                timings.push(timing);
+                report(timing);
             }
         }
     }
-    timings
 }
 
 fn millis(duration: Duration) -> String {
     format!("{:.3} ms", duration.as_secs_f64() * 1000.0)
 }
 
-pub fn text(timings: &[Timing]) -> String {
-    if timings.is_empty() {
-        return "no device on this machine could render the frame\n".to_string();
-    }
-    let mut out = format!(
+/// What a run that measured nothing says.
+const NOTHING: &str = "no device on this machine could render the frame\n";
+
+fn header() -> String {
+    format!(
         "{SHAPES} rounded rectangles at {}x{}, {FRAMES} frames after {WARMUP} warm-up\n",
         EXTENT.width, EXTENT.height
-    );
+    )
+}
+
+/// One configuration's line, and the device heading above it when the device
+/// changes.
+///
+/// `current` is the device the last row named, which this updates. Threading it
+/// rather than grouping in the caller is what lets the streamed run and the
+/// assembled one share this function: the streamed one has no list to group.
+fn row(timing: &Timing, current: &mut String) -> String {
+    let mut out = String::new();
+    if timing.device != *current {
+        current.clone_from(&timing.device);
+        out.push_str(&format!("\n{current}\n"));
+    }
+    out.push_str(&format!(
+        "  {:<24} {:>10} ({:>6.0} fps)   p99 {:>10}   fastest {:>10}   \
+         slowest {:>10}   {:>4} draws{}\n",
+        timing.path.name(),
+        millis(timing.median),
+        timing.rate(),
+        millis(timing.p99),
+        millis(timing.fastest),
+        millis(timing.slowest),
+        timing.draws,
+        if timing.noisy() { "   (noisy)" } else { "" }
+    ));
+    out
+}
+
+fn epilogue() -> &'static str {
+    "\nMedians, with the frame ninety-nine hundredths came in under beside \n\
+     them. Nothing here passes or fails: these are what this machine did, \n\
+     and the balance between the two paths is hardware-dependent by design \n\
+     -- see the distance-field section of docs/architecture.md.\n\
+     \n\
+     The rate is what a median frame would sustain with nothing else in it: \n\
+     no present, no vertical blank, and a scene that is a hundred and sixty \n\
+     rectangles rather than an interface. Read it against the other paths \n\
+     here rather than against a target in `plan.md`, which names a different \n\
+     scene and counts a whole frame.\n\
+     \n\
+     Read each p99 against the median on its own line before reading it as \n\
+     a renderer's tail. On a machine with a desktop on it a configuration \n\
+     can come back with a median under three milliseconds and a ninety-ninth \n\
+     percentile near thirty -- a tail ten times the frame it is the tail of, \n\
+     which is this process being descheduled rather than the frame taking \n\
+     that long. Which lines do it changes from run to run, and they are the \n\
+     ones marked noisy. A p99 worth trusting wants a quiet runner, which is \n\
+     where the regression gating this deliberately is not belongs too.\n"
+}
+
+/// Render a set of timings that have already been measured.
+///
+/// Only the tests reach this, because only they have timings without a device
+/// to measure them on; a real run takes [`stream`]. Both compose the same three
+/// pieces, so a change to the format cannot reach one and miss the other, and
+/// the assertions below hold over what a run actually prints.
+#[cfg(test)]
+pub fn text(timings: &[Timing]) -> String {
+    if timings.is_empty() {
+        return NOTHING.to_string();
+    }
+    let mut out = header();
     let mut current = String::new();
     for timing in timings {
-        if timing.device != current {
-            current.clone_from(&timing.device);
-            out.push_str(&format!("\n{current}\n"));
-        }
-        out.push_str(&format!(
-            "  {:<24} {:>10} ({:>6.0} fps)   p99 {:>10}   fastest {:>10}   \
-             slowest {:>10}   {:>4} draws{}\n",
-            timing.path.name(),
-            millis(timing.median),
-            timing.rate(),
-            millis(timing.p99),
-            millis(timing.fastest),
-            millis(timing.slowest),
-            timing.draws,
-            if timing.noisy() { "   (noisy)" } else { "" }
-        ));
+        out.push_str(&row(timing, &mut current));
     }
-    out.push_str(
-        "\nMedians, with the frame ninety-nine hundredths came in under beside \n\
-         them. Nothing here passes or fails: these are what this machine did, \n\
-         and the balance between the two paths is hardware-dependent by design \n\
-         -- see the distance-field section of docs/architecture.md.\n\
-         \n\
-         The rate is what a median frame would sustain with nothing else in it: \n\
-         no present, no vertical blank, and a scene that is a hundred and sixty \n\
-         rectangles rather than an interface. Read it against the other paths \n\
-         here rather than against a target in `plan.md`, which names a different \n\
-         scene and counts a whole frame.\n\
-         \n\
-         Read the p99 against the medians beside it before reading it as a \n\
-         renderer's tail. On a machine with a desktop on it every configuration \n\
-         here comes back with a p99 near thirty milliseconds -- the same figure \n\
-         on a path whose median is under one and on one whose median is thirty \n\
-         -- and a tail that does not vary with the work is the machine \n\
-         descheduling this process, not the frame. A p99 worth trusting wants a \n\
-         quiet runner, which is where the regression gating this deliberately \n\
-         is not belongs too.\n",
-    );
+    out.push_str(epilogue());
     out
+}
+
+/// Measure every configuration, writing each line as it is measured.
+///
+/// The header goes out before the first device is opened, so a run that is
+/// killed before anything finishes still says what it was attempting -- and
+/// every line is flushed, because a buffer that is never drained is the same
+/// as not having printed at all.
+pub fn stream(out: &mut impl Write) -> io::Result<()> {
+    write!(out, "{}", header())?;
+    out.flush()?;
+
+    let mut current = String::new();
+    let mut measured = 0usize;
+    let mut failed = None;
+    gather(&mut |timing| {
+        if failed.is_some() {
+            return;
+        }
+        measured += 1;
+        let line = row(&timing, &mut current);
+        if let Err(e) = write!(out, "{line}").and_then(|()| out.flush()) {
+            failed = Some(e);
+        }
+    });
+    if let Some(e) = failed {
+        return Err(e);
+    }
+
+    write!(out, "{}", if measured == 0 { NOTHING } else { epilogue() })?;
+    out.flush()
 }
 
 #[cfg(test)]
@@ -452,6 +517,40 @@ mod tests {
     #[test]
     fn an_empty_run_says_so_rather_than_printing_a_bare_header() {
         assert!(text(&[]).contains("no device"));
+    }
+
+    /// A device is named once however many of its configurations follow.
+    ///
+    /// This is the whole of what streaming had to reimplement. The assembled
+    /// report could group its list; a streamed one sees one timing at a time
+    /// and has to carry the last device named, so the heading is the one thing
+    /// that could come out right in a test over a vector and wrong in a run.
+    #[test]
+    fn a_device_is_named_once_and_not_once_per_configuration() {
+        let on = |device: &str, path: Path| Timing {
+            device: device.into(),
+            path,
+            draws: SHAPES,
+            median: Duration::from_micros(100),
+            p99: Duration::from_micros(140),
+            fastest: Duration::from_micros(90),
+            slowest: Duration::from_micros(110),
+        };
+
+        // Fed one at a time, exactly as `stream` feeds them.
+        let mut current = String::new();
+        let streamed: String = [
+            on("vulkan:0 a", Path::Analytic),
+            on("vulkan:0 a", Path::TessellatedMultisampled),
+            on("gles b", Path::Analytic),
+        ]
+        .iter()
+        .map(|t| row(t, &mut current))
+        .collect();
+
+        assert_eq!(streamed.matches("vulkan:0 a").count(), 1, "{streamed}");
+        assert_eq!(streamed.matches("gles b").count(), 1, "{streamed}");
+        assert_eq!(streamed.lines().filter(|l| l.starts_with("  ")).count(), 3);
     }
 
     #[test]
