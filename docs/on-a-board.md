@@ -140,9 +140,14 @@ A skip is an `eprintln!` inside a test that then passes, and the harness holds
 the output of a passing test. Without the flag the skips are not in what you
 grep, so the count comes back zero -- which is indistinguishable from a run
 that skipped nothing, and is the more reassuring of the two readings. A full
-run on the Pi 5 read as zero skips that way and has a hundred and fifteen.
+run on the Pi 5 read as zero skips that way and has a hundred and twenty-one.
 
-Most of those hundred and fifteen say the validation layer is unavailable,
+Count them with `grep -c skipping` and not by adding up a `uniq -c` by eye. The
+first number written here was a hundred and fifteen and was wrong twice over:
+the categories were mis-added, and the pattern had a colon in it, which four
+lines saying "skipping validation assertions" do not.
+
+Most of those say the validation layer is unavailable,
 which is a statement about the board rather than about the renderer: the layer
 is not packaged there, so the API use those tests make goes unchecked while
 their pixels are still compared. The rest are capability gaps that name
@@ -182,9 +187,9 @@ GPU, which closes the margin the architecture had been reasoning about.
 
 ## Where it stands
 
-All fifty-three test binaries on a Raspberry Pi 5: **783 passed, 0 failed, 0
-ignored**, with a hundred and fifteen announced skips and the catalog drawing
-222 of its 242 scenes across two devices. It was 794 passed and 23 failed the
+All fifty-three test binaries on a Raspberry Pi 5: **784 passed, 0 failed, 0
+ignored**, with a hundred and twenty-one announced skips and the catalog
+drawing 222 of its 242 scenes across two devices. It was 794 passed and 23 failed the
 first time the board was run.
 
 The Pi 4 is a separate case and is not covered by that number. It has no IOMMU,
