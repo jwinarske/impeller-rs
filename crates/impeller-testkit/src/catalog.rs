@@ -4666,6 +4666,76 @@ fn runtime_effect() -> Vec<Scene> {
                 ..Transform::default()
             })],
         ),
+        // A program as an image filter rather than as a fill. Its input is the
+        // layer the draw landed in, so what these show is the draw multiplied
+        // by the program's tint -- and the fill under it is a gradient on
+        // purpose. A flat fill would be tinted to the same picture by a program
+        // that read the placeholder texture instead of the layer, which is what
+        // a binding gets when it names nothing; a gradient survives the tint
+        // and would not survive the substitution.
+        plate(
+            "effect/can-render-runtime-effect-filter",
+            vec![Item::filled(
+                Shape::Rect {
+                    min: [16.0, 16.0],
+                    max: [112.0, 112.0],
+                },
+                Fill::LinearGradient {
+                    start: [16.0, 0.0],
+                    end: [112.0, 0.0],
+                    stops: vec![
+                        Stop::new(WHITE, 0.0),
+                        Stop::new([0.15, 0.15, 0.15, 1.0], 1.0),
+                    ],
+                    tile: TileMode::Clamp,
+                },
+            )
+            .with_image_filter(ImageFilter::Runtime {
+                program: 2,
+                uniforms: crate::fixture::tint_uniforms([1.0, 0.45, 0.1, 1.0]),
+            })],
+        ),
+        // The same program composed with a blur, both ways round. Upstream
+        // keeps a pair for this and the pair is the point: composing is the one
+        // thing a program used as a filter can do that a program used as a
+        // paint cannot, and the two orders are different pictures -- tinting a
+        // blurred edge is not blurring a tinted one.
+        plate(
+            "effect/compose-paint-runtime-outer",
+            vec![Item::filled(
+                Shape::Circle {
+                    center: [64.0, 64.0],
+                    radius: 34.0,
+                },
+                Fill::Solid(WHITE),
+            )
+            .with_blend(BlendMode::SrcOver)
+            .with_image_filter(ImageFilter::compose(
+                ImageFilter::Runtime {
+                    program: 2,
+                    uniforms: crate::fixture::tint_uniforms([0.2, 0.9, 0.5, 1.0]),
+                },
+                ImageFilter::Blur { sigma: 7.0 },
+            ))],
+        ),
+        plate(
+            "effect/compose-paint-runtime-inner",
+            vec![Item::filled(
+                Shape::Circle {
+                    center: [64.0, 64.0],
+                    radius: 34.0,
+                },
+                Fill::Solid(WHITE),
+            )
+            .with_blend(BlendMode::SrcOver)
+            .with_image_filter(ImageFilter::compose(
+                ImageFilter::Blur { sigma: 7.0 },
+                ImageFilter::Runtime {
+                    program: 2,
+                    uniforms: crate::fixture::tint_uniforms([0.2, 0.9, 0.5, 1.0]),
+                },
+            ))],
+        ),
     ]
 }
 

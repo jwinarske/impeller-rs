@@ -146,10 +146,10 @@ column is right and the obvious way to check it is wrong.
 | `aiks_dl_shadow_unittests.cc` | ~30 | 13 | a convex-shadow optimization this renderer does not have; see below |
 | `aiks_dl_primitive_shape_unittests.cc` | ~2 | 0 | one is a playground harness, one wants a stroke width of zero to mean a hairline |
 | `aiks_dl_text_unittests.cc` | — | 7 | shaping and font parsing, which are out of scope; glyph rendering is not, and these use synthetic coverage |
-| `aiks_dl_runtime_effect_unittests.cc` | — | 5 | nothing; see below |
+| `aiks_dl_runtime_effect_unittests.cc` | — | 8 | nothing; see below |
 | `aiks_dl_unittests.cc` | ~36 | 12 | subpass collapse, for five of them; see below |
 
-The catalog holds two hundred and forty-two scenes of roughly four hundred,
+The catalog holds two hundred and forty-five scenes of roughly four hundred,
 and the proportion is less interesting than which ones: the arithmetic of drawing is largely covered, and
 what is missing is either a capability this renderer does not have or a thing
 the scene model cannot describe.
@@ -217,8 +217,20 @@ The runtime-effect row is wrong, and wrong in the way that matters most: it said
 the chapter was "bounded by having two fixture programs rather than by the
 renderer", and it is bounded by the renderer. Upstream's `DlImageFilter` offered
 seven kinds where `ImageFilter` offered five. Both missing kinds have since been
-built, so the row's obstacle is gone and its twelve scenes are unwritten rather
-than blocked. Seven of them rested on the runtime effect
+built, so the row's obstacle is gone. Three of the twelve are mirrored now: a
+program used as an image filter, and the pair that composes one with a blur
+both ways round. The pair is the point rather than either half -- composing is
+the one thing a program used as a filter can do that a program used as a paint
+cannot, and the two orders come out thirty-six per cent apart, which is what
+says the order is carried rather than collapsed.
+
+The plates fill with a gradient where a flat color would have been easier, and
+the reason is a mutation that passed. Where a texture binding names nothing the
+backend binds a placeholder, so a program handed no input still samples
+something -- and against a flat fill, tinting the placeholder is the same
+picture as tinting the layer. A gradient is not reproducible that way.
+
+Seven of the twelve rested on the runtime effect
 -- every `ComposePaintRuntime` and `ComposeBackdropRuntime` variant,
 `CanRenderRuntimeEffectFilter`, `RuntimeEffectImageFilterRotated` and
 `ClippedBackdropFilterWithShader`. A fragment program is a paint here, so it can

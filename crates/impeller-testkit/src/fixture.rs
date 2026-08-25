@@ -90,6 +90,28 @@ pub fn two_image_effect() -> impeller_hal::RuntimeProgram {
     }
 }
 
+/// A program that samples one texture and multiplies it by a color.
+///
+/// Registered third, so a scene naming it names program two. It exists for the
+/// scenes where a program is an *image filter* rather than a fill: its input is
+/// then the layer the draw landed in, and multiplying is the operation that
+/// cannot be mistaken for either operand -- a plate whose program read the
+/// placeholder instead of the layer is flat where this one carries whatever the
+/// draw put there.
+pub fn image_effect() -> impeller_hal::RuntimeProgram {
+    impeller_hal::RuntimeProgram {
+        spirv: impeller_shaders::EFFECT_IMAGE_SPV.to_vec(),
+        glsl_es: impeller_shaders::EFFECT_IMAGE_FS_GLSL.to_string(),
+    }
+}
+
+/// The color [`image_effect`] multiplies its input by.
+pub fn tint_uniforms(tint: [f32; 4]) -> Vec<f32> {
+    let mut out = vec![0.0; impeller_hal::RUNTIME_FLOATS];
+    out[0..4].copy_from_slice(&tint);
+    out
+}
+
 /// Lay two colors and a threshold out where [`effect`] reads them.
 pub fn effect_uniforms(left: [f32; 4], right: [f32; 4], threshold: f32) -> Vec<f32> {
     let mut out = vec![0.0; impeller_hal::RUNTIME_FLOATS];

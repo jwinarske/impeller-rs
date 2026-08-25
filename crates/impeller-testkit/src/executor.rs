@@ -573,6 +573,7 @@ where
         for (expected, program) in [
             (0, crate::fixture::effect()),
             (1, crate::fixture::two_image_effect()),
+            (2, crate::fixture::image_effect()),
         ] {
             let id = ctx.register_program(&program)?;
             if id != expected {

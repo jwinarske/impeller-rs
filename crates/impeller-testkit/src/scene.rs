@@ -1008,9 +1008,34 @@ impl Node {
     /// sampled a texture and was not an item would have been missed silently,
     /// and the draw refused for naming a texture nobody supplied.
     fn uses_effect(&self) -> bool {
+        // A program can arrive two ways and this used to look for one. As a
+        // fill it is the material; as an image filter it is a pass run over the
+        // finished draw, and the fill beside it may be a plain color. A scene
+        // taking the second route would have left the fixture programs
+        // unregistered and named an index nothing was registered at.
+        fn filters_with_one(filter: &ImageFilter) -> bool {
+            match filter {
+                ImageFilter::Runtime { .. } => true,
+                ImageFilter::Compose { outer, inner } => {
+                    filters_with_one(outer) || filters_with_one(inner)
+                }
+                ImageFilter::None
+                | ImageFilter::Blur { .. }
+                | ImageFilter::Matrix { .. }
+                | ImageFilter::Dilate { .. }
+                | ImageFilter::Erode { .. }
+                | ImageFilter::Color(_) => false,
+            }
+        }
         match self {
-            Self::Draw(item) => matches!(item.fill, Fill::RuntimeEffect { .. }),
-            Self::Mesh(mesh) => matches!(mesh.fill, Fill::RuntimeEffect { .. }),
+            Self::Draw(item) => {
+                matches!(item.fill, Fill::RuntimeEffect { .. })
+                    || filters_with_one(&item.image_filter)
+            }
+            Self::Mesh(mesh) => {
+                matches!(mesh.fill, Fill::RuntimeEffect { .. })
+                    || filters_with_one(&mesh.image_filter)
+            }
             Self::Atlas(_)
             | Self::Shadow(_)
             | Self::Glyphs(_)
