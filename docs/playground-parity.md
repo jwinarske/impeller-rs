@@ -95,7 +95,7 @@ nobody upstream has filled.
 | `aiks_dl_path_unittests.cc` | ~31 | 21 | nothing named; see below |
 | `aiks_dl_gradient_unittests.cc` | ~40 | 31 | nothing; see below |
 | `aiks_dl_clip_unittests.cc` | ~5 | 6 | nothing; this file is covered |
-| `aiks_dl_opacity_unittests.cc` | ~3 | 2 | subpass collapse |
+| `aiks_dl_opacity_unittests.cc` | ~3 | 3 | nothing; this file is covered |
 | `aiks_dl_blend_unittests.cc` | ~79 | 36 | framebuffer fetch, subpass collapse |
 | `aiks_dl_blur_unittests.cc` | ~59 | 34 | backdrop identity keys, for two of them; see below |
 | `aiks_dl_vertices_unittests.cc` | ~16 | 19 | nothing; see below |
@@ -106,7 +106,7 @@ nobody upstream has filled.
 | `aiks_dl_runtime_effect_unittests.cc` | — | 5 | bounded by having two fixture programs rather than by the renderer |
 | `aiks_dl_unittests.cc` | ~39 | 10 | mostly internal optimizations; the picture cases are here now |
 
-The catalog holds two hundred and thirty-two scenes of roughly four hundred,
+The catalog holds two hundred and thirty-three scenes of roughly four hundred,
 and the proportion is less interesting than which ones: the arithmetic of drawing is largely covered, and
 what is missing is either a capability this renderer does not have or a thing
 the scene model cannot describe.
@@ -154,6 +154,23 @@ combination is the same rules whichever is being combined, so it now happens
 once, over color where the fill is constant and over coverage where it varies,
 and every style takes any fill. Eight scenes followed, five of them upstream's
 stroked gradient oval under each style.
+
+The opacity row said "subpass collapse", and its one missing scene needed
+nothing of the sort. Subpass collapse is upstream's optimization for a save
+layer whose contents let it be folded into its parent, which is what that
+scene's nested layers are shaped like -- so the name was read off the scene
+rather than off any obstacle. It decides how many passes a picture costs, not
+what the picture is. The scene draws, the file is covered, and what the scene
+is actually about turned out to be unchecked anywhere: that a group's alpha
+applies to the finished group rather than to each draw in it, and that nesting
+two of them multiplies. There is a test for that now.
+
+Its first draft could not have failed. It compared a nested pair against a
+single layer worth their product, and every such comparison survives
+compositing each layer at the square root of its alpha -- the root of
+forty-nine hundredths is seven tenths, and seven tenths squared is back where
+it started. So it now also asserts what the alpha is worth against a value
+derived rather than measured, and both mutations fail it.
 
 The vertices row said "mask filters on a mesh", and that was true: a mask blur
 over one was refused outright. The reason given was that a mesh carries a color

@@ -5704,6 +5704,104 @@ fn a_bounded_layer_renders_the_same_under_a_rotation() {
     });
 }
 
+/// Two overlapping opaque rectangles, drawn however the caller says.
+///
+/// Overlapping is the whole point. A group's alpha is applied to the group once
+/// it is finished, so the two rectangles have already covered each other and
+/// the overlap comes out the same as the rest. Applied per draw it is applied
+/// twice where they overlap, and the overlap is darker. The two are the same
+/// picture everywhere else, so nothing but an overlap can tell them apart.
+fn two_overlapping(canvas: &mut Canvas, alpha: f32, grouped: bool) {
+    let red = Color::srgb(1.0, 0.0, 0.0, if grouped { 1.0 } else { alpha });
+    if grouped {
+        canvas.save_layer(Layer::opacity(alpha));
+    }
+    for rect in [
+        Rect::new(16.0, 16.0, 96.0, 96.0),
+        Rect::new(32.0, 32.0, 112.0, 112.0),
+    ] {
+        canvas
+            .draw_rect(rect, &Paint::fill(red).with_blend(BlendMode::SrcOver))
+            .expect("rect");
+    }
+    if grouped {
+        canvas.restore();
+    }
+}
+
+#[test]
+fn a_groups_opacity_is_applied_to_the_group_and_nesting_multiplies_it() {
+    // The semantics upstream's `CanRenderGroupOpacityToSavelayer` is about, and
+    // which nothing here asserted: a save layer forwarding its opacity to
+    // another has to distribute it rather than apply it twice on one side and
+    // not at all on the other.
+    let Some(mut ctx) = context() else { return };
+
+    let shot = |ctx: &mut Context, draw: &dyn Fn(&mut Canvas)| {
+        let mut canvas = Canvas::new(SIZE);
+        canvas.clear(Color::BLACK);
+        draw(&mut canvas);
+        render(ctx, canvas)
+    };
+    // Inside both rectangles, and inside only the first.
+    let (both, one) = ((64u32, 64u32), (20u32, 20u32));
+
+    // A group at just under a half, which is what two sevenths-tenths
+    // multiply to. Its overlap and its single-covered part have to agree:
+    // the group was flattened before the alpha reached it.
+    let flat = shot(&mut ctx, &|c| two_overlapping(c, 0.49, true));
+    assert_eq!(
+        pixel(&flat, both.0, both.1),
+        pixel(&flat, one.0, one.1),
+        "a group's alpha applies to the finished group, so its overlap is not \
+         darker than the rest of it"
+    );
+
+    // And what the alpha is worth, which neither of the comparisons below can
+    // say. Both of them relate one layer alpha to another, and a relation is
+    // all they check: composite every layer at the square root of its alpha and
+    // a half stays a half -- the root of forty-nine hundredths is seven tenths,
+    // and seven tenths squared is back where it started. So both would pass
+    // while every layer in the tree was composited wrongly.
+    //
+    // Opaque red under a layer alpha of `a`, over black, source-over: the
+    // destination contributes nothing and the source contributes `a` of full
+    // red, so the channel is `a`. Derived rather than measured, which is the
+    // point of having it.
+    let got = pixel(&flat, both.0, both.1);
+    let want = (0.49 * 255.0) as u8;
+    assert!(
+        got[0].abs_diff(want) <= 2,
+        "a layer at forty-nine hundredths over black should give {want} in red, \
+         got {got:?}"
+    );
+
+    // The same alpha per draw instead. This is the picture a group must *not*
+    // produce, and saying so is what stops the assertion above from passing on
+    // a renderer that had no group semantics at all.
+    let per_draw = shot(&mut ctx, &|c| two_overlapping(c, 0.49, false));
+    assert_ne!(
+        pixel(&per_draw, both.0, both.1),
+        pixel(&per_draw, one.0, one.1),
+        "two translucent draws should compound where they overlap; if they do \
+         not, the check above proves nothing"
+    );
+
+    // And nesting multiplies rather than taking one of the two, or adding.
+    let nested = shot(&mut ctx, &|c| {
+        c.save_layer(Layer::opacity(0.7));
+        two_overlapping(c, 0.7, true);
+        c.restore();
+    });
+    let (got, want) = (pixel(&nested, both.0, both.1), pixel(&flat, both.0, both.1));
+    let apart = got[0].abs_diff(want[0]);
+    assert!(
+        apart <= 2,
+        "seven tenths inside seven tenths should be forty-nine hundredths: \
+         {got:?} against {want:?}"
+    );
+}
+
 #[test]
 fn bounded_layers_nest() {
     let Some(mut ctx) = context() else { return };

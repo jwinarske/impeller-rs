@@ -2030,6 +2030,58 @@ fn opacity() -> Vec<Scene> {
         )
         .with_background(DARK)
         .with_samples(4),
+        Scene::tree(
+            "opacity/can-render-group-opacity-to-savelayer",
+            // A group at seven tenths inside another group at seven tenths,
+            // which upstream words as one save layer forwarding its opacity to
+            // the next. What it checks is that the opacity is distributed and
+            // not applied twice over on one side and not at all on the other:
+            // the two rectangles overlap, so the inner group has to be
+            // flattened before either alpha touches it.
+            //
+            // The row above this one named subpass collapse as the obstacle,
+            // which is upstream's optimization for exactly this arrangement --
+            // it collapses the inner layer into the outer where the contents
+            // allow. That decides how many passes the picture costs, not what
+            // the picture is, and nothing here needs it to draw one.
+            vec![Node::Layer {
+                layer: Box::new(LayerSpec {
+                    alpha: 0.7,
+                    ..LayerSpec::default()
+                }),
+                bounds: None,
+                transform: Transform::default(),
+                children: vec![Node::Layer {
+                    layer: Box::new(LayerSpec {
+                        alpha: 0.7,
+                        ..LayerSpec::default()
+                    }),
+                    bounds: None,
+                    transform: Transform::default(),
+                    children: vec![
+                        Node::Draw(Box::new(Item::fill(
+                            Shape::Rect {
+                                min: [16.0, 16.0],
+                                max: [96.0, 96.0],
+                            },
+                            RED,
+                        ))),
+                        Node::Draw(Box::new(
+                            Item::fill(
+                                Shape::Rect {
+                                    min: [32.0, 32.0],
+                                    max: [112.0, 112.0],
+                                },
+                                RED,
+                            )
+                            .with_blend(BlendMode::SrcOver),
+                        )),
+                    ],
+                }],
+            }],
+        )
+        .with_background(DARK)
+        .with_samples(4),
     ]
 }
 
