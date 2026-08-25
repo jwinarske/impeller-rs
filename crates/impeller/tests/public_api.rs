@@ -3167,7 +3167,7 @@ fn a_mask_blur_softens_a_shape_and_matches_a_blurred_layer() {
 }
 
 #[gtest]
-fn a_mask_blur_takes_a_gradient_but_not_in_every_style() {
+fn a_mask_blur_takes_a_gradient_in_every_style_but_not_over_a_glyph_run() {
     let Some(mut ctx) = context() else { return };
     // The identity the cheap route rests on holds for a constant fill and not
     // otherwise, so a gradient cannot take that route -- but it can take the
@@ -3200,10 +3200,14 @@ fn a_mask_blur_takes_a_gradient_but_not_in_every_style() {
             .is_ok(),
         "a solid mask blur should be accepted"
     );
-    // The three styles that combine a blurred mask with a sharp one need the
-    // coverage twice over and are built for a solid color only. That is a limit
-    // of what is built rather than of what the operation means, and it is
-    // stated rather than guessed at.
+    // The three styles that combine a blurred mask with a sharp one were
+    // refused here for a while, and the reason given was that they need the
+    // coverage twice over. That was a limit of what was built rather than of
+    // what the operation means, and it is built now: the combination is the
+    // same rules whether what is combined is color or coverage, so the styles
+    // compose the two coverages and the varying fill is drawn through the
+    // result. `each_mask_blur_style_keeps_its_own_part_of_a_gradient_too`
+    // checks each one keeps what it names.
     for style in [
         MaskBlurStyle::Solid,
         MaskBlurStyle::Outer,
@@ -3212,10 +3216,31 @@ fn a_mask_blur_takes_a_gradient_but_not_in_every_style() {
         expect_true!(
             canvas
                 .draw_rect(square, &gradient().with_mask_blur_style(style))
-                .is_err(),
-            "{style:?} over a gradient should be refused rather than guessed"
+                .is_ok(),
+            "{style:?} over a gradient should be drawn, not refused"
         );
     }
+
+    // What still refuses, and it is not about the fill varying. A glyph run
+    // tints one color by its own nature -- the atlas supplies coverage and the
+    // paint supplies the color -- so a gradient over one is refused whether it
+    // is blurred or not, and blurring changes nothing about why.
+    let (atlas, solid, _) = two_glyph_atlas();
+    expect_true!(
+        canvas
+            .draw_glyphs(
+                &[PositionedGlyph::new(
+                    solid,
+                    [32.0, 80.0],
+                    atlas.get(solid).unwrap()
+                )],
+                &atlas,
+                0,
+                &gradient(),
+            )
+            .is_err(),
+        "a gradient over a glyph run should be refused, blurred or not"
+    );
 }
 
 #[test]
@@ -7242,6 +7267,156 @@ fn each_mask_blur_style_keeps_the_part_of_the_blur_it_names() {
     assert!(
         edge[0] > 4 && edge[0] < 240,
         "inner fades toward the shape's own edge: {edge:?}"
+    );
+}
+
+/// The same three places, with a fill that varies across the shape.
+///
+/// A gradient rather than a color, which changes what the renderer has to do
+/// rather than merely what it draws: a solid mask blur can be drawn by putting
+/// the paint through a blurred layer, and a varying one cannot, because the
+/// blur would then act on the fill as well as on the coverage. So this takes
+/// the other route -- coverage blurred, fill drawn through it -- and the three
+/// styles that combine a blurred mask with a sharp one have to compose the two
+/// coverages before either is filled.
+fn mask_blur_gradient_probe(
+    ctx: &mut Context,
+    style: MaskBlurStyle,
+) -> ([u8; 4], [u8; 4], [u8; 4], [u8; 4]) {
+    let mut canvas = Canvas::new(SIZE);
+    canvas.clear(Color::BLACK);
+    canvas
+        .draw_circle(
+            Vec2::new(64.0, 64.0),
+            34.0,
+            &Paint::default()
+                .with_shader(Shader::LinearGradient {
+                    start: Vec2::new(30.0, 0.0),
+                    end: Vec2::new(98.0, 0.0),
+                    stops: vec![
+                        GradientStop::new(Color::srgb(1.0, 0.0, 0.0, 1.0), 0.0),
+                        GradientStop::new(Color::srgb(0.0, 0.0, 1.0, 1.0), 1.0),
+                    ],
+                    tile: TileMode::Clamp,
+                })
+                .with_mask_blur(6.0)
+                .with_mask_blur_style(style),
+        )
+        .expect("mask blur over a gradient");
+    let pixels = render(ctx, canvas);
+    (
+        // Two points inside, on opposite sides of the gradient's axis.
+        pixel(&pixels, 44, 64),
+        pixel(&pixels, 84, 64),
+        pixel(&pixels, 64, 30),
+        pixel(&pixels, 64, 24),
+    )
+}
+
+#[test]
+fn each_mask_blur_style_keeps_its_own_part_of_a_gradient_too() {
+    // The styles were solid-only until this test existed, and the refusal said
+    // so: three of the four combine a blurred mask with a sharp one, which
+    // needs the coverage twice over, and only the default style had a route
+    // that produced coverage at all.
+    //
+    // Two things are checked at once, and both matter. Each style still
+    // discards what it names -- the same three probes as the solid case. And
+    // the fill is still sampled at each pixel's own position, which is what
+    // says the blur acted on the coverage rather than on the filled result: the
+    // left half of the shape has to come out red and the right half blue. A
+    // renderer that blurred the finished picture would leave both halves
+    // pulled toward each other.
+    let Some(mut ctx) = context() else { return };
+
+    // What the edge probe reads when the shape is drawn at full coverage, with
+    // no mask blur in the paint at all. It cannot be assumed the way the solid
+    // case assumes 240: the fill varies, so "full strength" at that pixel is
+    // whatever the gradient is worth there, which at the axis's midpoint is
+    // half of each end rather than all of one.
+    //
+    // Drawn unblurred rather than taken from one of the styles, which would
+    // compare a style against itself and pass whatever it did.
+    let sharp_edge = {
+        let mut canvas = Canvas::new(SIZE);
+        canvas.clear(Color::BLACK);
+        canvas
+            .draw_circle(
+                Vec2::new(64.0, 64.0),
+                34.0,
+                &Paint::default().with_shader(Shader::LinearGradient {
+                    start: Vec2::new(30.0, 0.0),
+                    end: Vec2::new(98.0, 0.0),
+                    stops: vec![
+                        GradientStop::new(Color::srgb(1.0, 0.0, 0.0, 1.0), 0.0),
+                        GradientStop::new(Color::srgb(0.0, 0.0, 1.0, 1.0), 1.0),
+                    ],
+                    tile: TileMode::Clamp,
+                }),
+            )
+            .expect("unblurred reference");
+        pixel(&render(&mut ctx, canvas), 64, 30)
+    };
+    let strength = |p: [u8; 4]| p[0] as u32 + p[1] as u32 + p[2] as u32;
+    let full = strength(sharp_edge);
+
+    let red_then_blue = |left: [u8; 4], right: [u8; 4], what: &str| {
+        assert!(
+            left[0] > left[2] + 60,
+            "{what}: the gradient's red end should be red, got {left:?}"
+        );
+        assert!(
+            right[2] > right[0] + 60,
+            "{what}: the gradient's blue end should be blue, got {right:?}"
+        );
+    };
+
+    let (left, right, edge, outside) = mask_blur_gradient_probe(&mut ctx, MaskBlurStyle::Normal);
+    red_then_blue(left, right, "normal");
+    assert!(
+        strength(edge) * 10 < full * 9,
+        "normal should be soft at the edge: {edge:?} against {full} at full coverage"
+    );
+    assert!(
+        outside.iter().take(3).any(|c| *c > 4),
+        "normal should reach outside: {outside:?}"
+    );
+
+    let (left, right, edge, outside) = mask_blur_gradient_probe(&mut ctx, MaskBlurStyle::Solid);
+    red_then_blue(left, right, "solid");
+    assert_eq!(
+        edge, sharp_edge,
+        "solid keeps the shape at full strength, so its own edge is the \
+         unblurred one"
+    );
+    assert!(
+        outside.iter().take(3).any(|c| *c > 4),
+        "solid should still blur outside: {outside:?}"
+    );
+
+    let (left, right, edge, outside) = mask_blur_gradient_probe(&mut ctx, MaskBlurStyle::Outer);
+    assert_eq!(left, [0, 0, 0, 255], "outer draws nothing inside the shape");
+    assert_eq!(
+        right,
+        [0, 0, 0, 255],
+        "outer draws nothing inside the shape"
+    );
+    assert!(
+        outside.iter().take(3).any(|c| *c > 4),
+        "outer is the blur outside: {outside:?}"
+    );
+    assert!(
+        strength(edge) < full,
+        "the shape is taken out of the blur, so its edge is not full strength: \
+         {edge:?} against {full}"
+    );
+
+    let (left, right, _edge, outside) = mask_blur_gradient_probe(&mut ctx, MaskBlurStyle::Inner);
+    red_then_blue(left, right, "inner");
+    assert_eq!(
+        outside,
+        [0, 0, 0, 255],
+        "inner draws nothing outside the shape"
     );
 }
 

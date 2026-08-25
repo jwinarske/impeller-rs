@@ -3987,6 +3987,143 @@ fn blur_variants() -> Vec<Scene> {
         .with_background(DARK)
         .with_samples(4),
     );
+
+    // A stroked stadium filled with a gradient and mask blurred, one plate per
+    // style. Every other mask-blur plate above fills its shape with a flat
+    // color, and the two white guide lines under this one are upstream's: a mask
+    // blur that stretched what it blurred rather than blurring the coverage
+    // would move the stroke off them.
+    //
+    // The crossing is the point. A mask blur acts on coverage and the fill
+    // colors whatever survives, so a stroke gives it coverage that is a band
+    // rather than a disc, and a gradient makes it obvious if the fill were
+    // sampled at the blurred position instead of the shape's own.
+    let stadium = || Shape::RoundedRect {
+        min: [14.0, 44.0],
+        max: [114.0, 74.0],
+        // Larger than half the shorter side, so it clamps and the shape is a
+        // stadium -- which is what upstream's 50-by-100 on a 200-by-60 rect
+        // gives, and the reason this reads as an oval rather than a rectangle.
+        radius: 25.0,
+    };
+    let guides = || {
+        vec![
+            Item::stroke(
+                Shape::Polyline(vec![[64.0, 40.0], [64.0, 78.0]]),
+                StrokeSpec::new(1.0),
+                WHITE,
+            ),
+            Item::stroke(
+                Shape::Polyline(vec![[10.0, 59.0], [118.0, 59.0]]),
+                StrokeSpec::new(1.0),
+                WHITE,
+            ),
+        ]
+    };
+    let banded = |sigma: f32, style: MaskBlurStyle| {
+        let mut items = guides();
+        items.push(
+            Item::filled(
+                stadium(),
+                Fill::LinearGradient {
+                    start: [0.0, 0.0],
+                    end: [128.0, 128.0],
+                    stops: vec![Stop::new(RED, 0.0), Stop::new(BLUE, 1.0)],
+                    tile: TileMode::Clamp,
+                },
+            )
+            .with_stroke(StrokeSpec::new(10.0))
+            .with_mask_blur(sigma)
+            .with_mask_blur_style(style)
+            .with_blend(BlendMode::SrcOver),
+        );
+        items
+    };
+
+    for (name, sigma, style) in [
+        (
+            "blur/gradient-oval-stroke-mask-blur",
+            5.0,
+            MaskBlurStyle::Normal,
+        ),
+        (
+            "blur/gradient-oval-stroke-mask-blur-sigma-zero",
+            0.0,
+            MaskBlurStyle::Normal,
+        ),
+        (
+            "blur/gradient-oval-stroke-mask-blur-outer",
+            5.0,
+            MaskBlurStyle::Outer,
+        ),
+        (
+            "blur/gradient-oval-stroke-mask-blur-inner",
+            5.0,
+            MaskBlurStyle::Inner,
+        ),
+        (
+            "blur/gradient-oval-stroke-mask-blur-solid",
+            5.0,
+            MaskBlurStyle::Solid,
+        ),
+    ] {
+        scenes.push(plate(name, banded(sigma, style)));
+    }
+
+    // The blur styles again, over a gradient-filled triangle, and each followed
+    // by a flat rectangle that overlaps nothing of it.
+    //
+    // That rectangle is the subject and is upstream's. Inner and solid are
+    // implemented by clipping to the shape before compositing the blurred
+    // coverage, and a clip that is not popped afterwards is invisible in a
+    // plate holding one draw -- there is nothing after it to be wrongly
+    // clipped. So the plate holds something after it, in a corner the triangle
+    // does not reach: if the clip leaked, the rectangle is missing rather than
+    // merely different.
+    let triangle = || Shape::Polygon(vec![[64.0, 34.0], [94.0, 94.0], [34.0, 94.0]]);
+    for (name, style) in [
+        (
+            "blur/gaussian-blur-style-inner-gradient",
+            MaskBlurStyle::Inner,
+        ),
+        (
+            "blur/gaussian-blur-style-outer-gradient",
+            MaskBlurStyle::Outer,
+        ),
+        (
+            "blur/gaussian-blur-style-solid-gradient",
+            MaskBlurStyle::Solid,
+        ),
+    ] {
+        scenes.push(plate(
+            name,
+            vec![
+                Item::filled(
+                    triangle(),
+                    Fill::LinearGradient {
+                        start: [0.0, 0.0],
+                        end: [64.0, 64.0],
+                        stops: vec![
+                            Stop::new([0.957, 0.263, 0.212, 1.0], 0.0),
+                            Stop::new([0.757, 0.263, 0.212, 1.0], 1.0),
+                        ],
+                        tile: TileMode::Mirror,
+                    },
+                )
+                .with_mask_blur(6.0)
+                .with_mask_blur_style(style)
+                .with_blend(BlendMode::SrcOver),
+                Item::fill(
+                    Shape::Rect {
+                        min: [4.0, 4.0],
+                        max: [30.0, 30.0],
+                    },
+                    RED,
+                )
+                .with_blend(BlendMode::SrcOver),
+            ],
+        ));
+    }
     scenes
 }
 

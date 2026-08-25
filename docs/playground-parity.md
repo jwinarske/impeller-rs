@@ -87,7 +87,7 @@ it is not the obvious move.
 | `aiks_dl_clip_unittests.cc` | ~5 | 6 | nothing; this file is covered |
 | `aiks_dl_opacity_unittests.cc` | ~3 | 2 | subpass collapse |
 | `aiks_dl_blend_unittests.cc` | ~79 | 36 | framebuffer fetch, subpass collapse |
-| `aiks_dl_blur_unittests.cc` | ~59 | 26 | backdrop identity keys |
+| `aiks_dl_blur_unittests.cc` | ~59 | 34 | backdrop identity keys, for two of them; see below |
 | `aiks_dl_vertices_unittests.cc` | ~16 | 18 | mask filters on a mesh |
 | `aiks_dl_atlas_unittests.cc` | ~15 | 9 | nothing named; see below |
 | `aiks_dl_shadow_unittests.cc` | ~30 | 12 | a convex-shadow optimization this renderer does not have |
@@ -96,7 +96,7 @@ it is not the obvious move.
 | `aiks_dl_runtime_effect_unittests.cc` | — | 5 | bounded by having two fixture programs rather than by the renderer |
 | `aiks_dl_unittests.cc` | ~39 | 10 | mostly internal optimizations; the picture cases are here now |
 
-The catalog holds two hundred and twenty-three scenes of roughly four hundred,
+The catalog holds two hundred and thirty-one scenes of roughly four hundred,
 and the proportion is less interesting than which ones: the arithmetic of drawing is largely covered, and
 what is missing is either a capability this renderer does not have or a thing
 the scene model cannot describe.
@@ -128,7 +128,25 @@ dithering plates the cell was named for, the incomplete-stops scene for the
 three gradient kinds that were missing the one the linear kind already had, and
 a gradient under a mask blur.
 
-Fifteen of the file's forty are still not mirrored, and none is blocked either.
+The blur row was wrong in a more interesting way, and checking it changed the
+renderer rather than the document. It said "backdrop identity keys", which is
+real -- upstream's `SaveLayer` takes a `backdrop_id` so several layers can share
+one snapshot of what is behind them, and this renderer's `Layer` has no such
+key. It governs two of the file's scenes. It was not what stopped the other
+twenty-one, and writing the scenes is what found the thing that was: a mask
+blur here took a solid color for three of its four styles.
+
+The default style blurs coverage and fills through it, which works for any
+fill. The three that combine a blurred mask with a sharp one -- solid, outer,
+inner -- were built for a color only, and refused a gradient rather than
+guessing at it. The refusal was right and the limit was not necessary: the
+combination is the same rules whichever is being combined, so it now happens
+once, over color where the fill is constant and over coverage where it varies,
+and every style takes any fill. Eight scenes followed, five of them upstream's
+stroked gradient oval under each style.
+
+Fifteen of the gradient file's forty are still not mirrored, and none is
+blocked either.
 Four are upstream's fast-gradient scenes, which exist to check an optimization
 that decides whether a two-stop gradient can be drawn as a full-screen quad --
 an internal choice with no `dart:ui` surface, and one this renderer does not

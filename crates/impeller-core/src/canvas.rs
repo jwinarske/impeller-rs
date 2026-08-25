@@ -1972,11 +1972,29 @@ impl Canvas {
         // mask is wider than what it was made from, and a fill stopping at the
         // shape's own edge would cut the halo off square.
         let failure = self.draw_rect(held, &fill).err().or_else(|| {
-            let mask = Layer::opacity(1.0)
-                .with_blur(paint.mask_blur)
-                .with_blend(BlendMode::DstIn);
-            self.save_layer_bounds(mask, held);
-            let inner = self.draw_path(path, &coverage).err();
+            if paint.mask_blur_style == MaskBlurStyle::Normal {
+                // The blurred coverage is the whole mask, so the layer that
+                // carries it can be the layer that blurs it.
+                let mask = Layer::opacity(1.0)
+                    .with_blur(paint.mask_blur)
+                    .with_blend(BlendMode::DstIn);
+                self.save_layer_bounds(mask, held);
+                let inner = self.draw_path(path, &coverage).err();
+                self.restore();
+                return inner;
+            }
+            // The other three combine the blurred coverage with the sharp one,
+            // and the combination is not itself blurred -- so this layer
+            // carries no blur, and the blur happens inside it on the operand
+            // that wants it.
+            self.save_layer_bounds(Layer::opacity(1.0).with_blend(BlendMode::DstIn), held);
+            let inner = self.draw_mask_styles(
+                Masked::Path(path),
+                &coverage,
+                paint.mask_blur,
+                paint.mask_blur_style,
+                bounds,
+            );
             self.restore();
             inner
         });
@@ -1990,13 +2008,12 @@ impl Canvas {
     fn draw_masked(&mut self, content: Masked<'_>, paint: &Paint) -> Result<&mut Self> {
         if !matches!(paint.shader, Shader::Solid(_)) {
             if let Masked::Path(path) = content {
-                if paint.mask_blur_style == MaskBlurStyle::Normal {
-                    return self.draw_masked_through_coverage(path, paint);
-                }
+                return self.draw_masked_through_coverage(path, paint);
             }
-            // A run tints one color whatever is done to it, and the three
-            // styles that combine a blurred mask with a sharp one need the
-            // coverage twice over -- neither is built.
+            // A glyph run, and it is the only thing left here. A run tints one
+            // color by its own nature rather than by anything to do with
+            // blurring, so a varying fill over one is refused exactly as it is
+            // refused when nothing is blurred at all.
             //
             // See `Paint::mask_blur`: drawing the paint through a blurred layer
             // is the other order, and for anything that varies the two are
@@ -2004,7 +2021,8 @@ impl Canvas {
             // other is the substitution this renderer refuses
             // elsewhere.
             return Err(Error::Unsupported(
-                "a mask blur takes a solid color; draw into a blurred layer for anything else",
+                "a mask blur over a glyph run takes a solid color; \
+                 draw into a blurred layer for anything else",
             ));
         }
         let bounds = self.mask_bounds(content, paint);
@@ -2045,39 +2063,70 @@ impl Canvas {
         }
 
         // Every other style combines the blurred coverage with the shape's
-        // own, so both have to exist at once, inside a layer that confines the
-        // combination. Drawn straight onto the target, a blend that reads the
-        // destination would reach what was already there.
-        //
-        // Which of the two is drawn first is not a matter of taste. A blend
-        // only runs where its source produces a fragment, and the shape
-        // produces none outside itself -- so a rule that has to *remove*
-        // something outside the shape cannot be written with the shape as the
-        // source. The blurred layer composites as a quad over the whole
-        // region, so it is the operand that can act everywhere, and the two
-        // rules needing that are the two where the shape goes down first.
-
-        // The outer layer holds the blur as well as the shape, and it is not
-        // itself blurred, so nothing widens it on its behalf.
+        // own. That combination is the same whether what is being combined is
+        // color or coverage, so it lives in `draw_mask_styles` and both routes
+        // through here call it.
         let held = bounds.outset(blur_reach(paint.mask_blur));
-        let blurred = Layer::opacity(1.0).with_blur(paint.mask_blur);
-
         self.save_layer_bounds(Layer::opacity(1.0).with_blend(paint.blend), held);
-        let failure = match paint.mask_blur_style {
+        let failure = self.draw_mask_styles(
+            content,
+            &inner,
+            paint.mask_blur,
+            paint.mask_blur_style,
+            bounds,
+        );
+        self.restore();
+        match failure {
+            Some(e) => Err(e),
+            None => Ok(self),
+        }
+    }
+
+    /// Combine a shape's blurred coverage with its sharp own, per style.
+    ///
+    /// Draws into whatever layer the caller has already opened, and that layer
+    /// is not optional: drawn straight onto the target, a blend that reads the
+    /// destination would reach what was already there rather than only what
+    /// this is building.
+    ///
+    /// What is being combined is the caller's business. Given the paint the
+    /// shape is filled with, this composes colors and is the whole picture;
+    /// given white, it composes coverage, and the caller masks a varying fill
+    /// through the result. The rules are identical either way, which is why
+    /// there is one of these rather than two.
+    ///
+    /// Which of the two operands is drawn first is not a matter of taste. A
+    /// blend only runs where its source produces a fragment, and the shape
+    /// produces none outside itself -- so a rule that has to *remove*
+    /// something outside the shape cannot be written with the shape as the
+    /// source. The blurred layer composites as a quad over the whole region, so
+    /// it is the operand that can act everywhere, and the two rules needing
+    /// that are the two where the shape goes down first.
+    fn draw_mask_styles(
+        &mut self,
+        content: Masked<'_>,
+        inner: &Paint,
+        sigma: f32,
+        style: MaskBlurStyle,
+        bounds: Rect,
+    ) -> Option<Error> {
+        // Not itself blurred, so nothing widens it on its behalf.
+        let blurred = Layer::opacity(1.0).with_blur(sigma);
+        match style {
             // Blur first, then the shape over it. `SrcOver` leaves the blur
             // where the shape is not, and `DstOut` takes the shape out of it
             // -- both of which want the destination untouched outside the
             // shape, which is what a source that draws nothing there gives.
             MaskBlurStyle::Solid | MaskBlurStyle::Outer => {
-                let blend = match paint.mask_blur_style {
+                let blend = match style {
                     MaskBlurStyle::Solid => BlendMode::SrcOver,
                     _ => BlendMode::DstOut,
                 };
                 self.save_layer_bounds(blurred, bounds);
-                let first = self.draw_mask_content(content, &inner).err();
+                let first = self.draw_mask_content(content, inner).err();
                 self.restore();
                 first.or_else(|| {
-                    self.draw_mask_content(content, &inner.with_blend(blend))
+                    self.draw_mask_content(content, &inner.clone().with_blend(blend))
                         .err()
                 })
             }
@@ -2088,22 +2137,17 @@ impl Canvas {
             // Compositing a layer covers the whole region, so putting the
             // blur on that side is what makes the rule act everywhere.
             MaskBlurStyle::Inner => {
-                let first = self.draw_mask_content(content, &inner).err();
+                let first = self.draw_mask_content(content, inner).err();
                 if first.is_none() {
                     self.save_layer_bounds(blurred.with_blend(BlendMode::DstIn), bounds);
-                    let second = self.draw_mask_content(content, &inner).err();
+                    let second = self.draw_mask_content(content, inner).err();
                     self.restore();
                     second
                 } else {
                     first
                 }
             }
-            MaskBlurStyle::Normal => unreachable!("handled above"),
-        };
-        self.restore();
-        match failure {
-            Some(e) => Err(e),
-            None => Ok(self),
+            MaskBlurStyle::Normal => unreachable!("handled by the caller"),
         }
     }
 
