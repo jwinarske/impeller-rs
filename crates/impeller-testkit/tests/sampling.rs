@@ -244,7 +244,7 @@ fn a_mesh_reads_its_own_coordinates_the_same_way_on_both_backends() {
         ran += 1;
     }
     if ran == 0 {
-        eprintln!("no backend available");
+        eprintln!("skipping: no backend available");
     }
 }
 
@@ -371,7 +371,7 @@ fn a_vertex_color_reaches_the_shader_the_same_way_on_both_backends() {
         ran += 1;
     }
     if ran == 0 {
-        eprintln!("no backend available");
+        eprintln!("skipping: no backend available");
     }
 }
 
@@ -405,7 +405,7 @@ fn nearest_sampling_steps_between_texels_on_both_backends() {
         ran += 1;
     }
     if ran == 0 {
-        eprintln!("no backend available");
+        eprintln!("skipping: no backend available");
     }
 }
 

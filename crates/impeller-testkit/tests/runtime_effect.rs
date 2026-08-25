@@ -93,7 +93,7 @@ fn the_same_effect_draws_the_same_picture_on_both_backends() {
         ran += 1;
     }
     if ran == 0 {
-        eprintln!("no backend available");
+        eprintln!("skipping: no backend available");
         return;
     }
 

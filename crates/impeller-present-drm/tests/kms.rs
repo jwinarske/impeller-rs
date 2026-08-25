@@ -421,6 +421,6 @@ fn a_frame_with_layers_reaches_a_real_display_controller() {
             .collect();
         assert!(errors.is_empty(), "validation errors: {errors:?}");
     } else {
-        eprintln!("note: validation layers unavailable, so lifetimes went unchecked");
+        eprintln!("skipping: the validation layer is unavailable, so lifetimes went unchecked");
     }
 }

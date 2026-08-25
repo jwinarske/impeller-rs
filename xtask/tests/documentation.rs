@@ -377,6 +377,90 @@ fn the_playground_inventory_counts_each_file_correctly() {
     );
 }
 
+/// A skip has to say "skipping", because that is the word the census counts.
+///
+/// `cargo xtask verify` exists because a skipped test passes and its reason is
+/// discarded, and it finds the reasons by looking for that word. A test that
+/// announces itself some other way is therefore counted as having run -- which
+/// is the exact condition `verify` was written to end, arrived at from the
+/// other side.
+///
+/// Four sites said "no backend available" and one called itself a note. All
+/// five were invisible to the census, and one of them had been since it was
+/// written.
+///
+/// The vocabulary below is small on purpose. It is not trying to recognize
+/// every sentence a skip might be written in; it recognizes the ones this
+/// workspace has actually used, so a sixth site copied from any existing one
+/// is caught.
+#[test]
+fn a_skip_says_the_word_the_census_counts() {
+    const SKIP_LIKE: [&str; 6] = [
+        "no backend available",
+        "unavailable",
+        "not installed",
+        "not supported",
+        "not built",
+        "no device",
+    ];
+    // Its own walk, because `sources` hands back contents and not paths -- and
+    // the first draft of this took them for paths, found no file to open, and
+    // passed having read nothing. A check that cannot fail is worse than none,
+    // so this one counts what it looked at and says so if that is zero.
+    fn test_files(dir: &std::path::Path, into: &mut Vec<(String, String)>) {
+        let Ok(entries) = std::fs::read_dir(dir) else {
+            return;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                test_files(&path, into);
+            } else if path.extension().is_some_and(|e| e == "rs") {
+                let name = path.display().to_string();
+                if name.contains("/tests/") {
+                    into.push((name, std::fs::read_to_string(&path).unwrap_or_default()));
+                }
+            }
+        }
+    }
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .expect("xtask sits inside the workspace")
+        .join("crates");
+    let mut files = Vec::new();
+    test_files(&root, &mut files);
+    assert!(
+        files.len() > 10,
+        "found {} test files to scan, which cannot be right",
+        files.len()
+    );
+
+    let mut bare = Vec::new();
+    for (path, text) in files {
+        for (number, line) in text.lines().enumerate() {
+            let Some(rest) = line.split_once("eprintln!(\"") else {
+                continue;
+            };
+            let Some((message, _)) = rest.1.split_once('"') else {
+                continue;
+            };
+            let lower = message.to_lowercase();
+            if lower.contains("skipping") {
+                continue;
+            }
+            if SKIP_LIKE.iter().any(|word| lower.contains(word)) {
+                bare.push(format!("{path}:{}: {message}", number + 1));
+            }
+        }
+    }
+    assert!(
+        bare.is_empty(),
+        "these read as skips and do not say \"skipping\", so `cargo xtask \
+         verify` counts the tests as having run:\n  {}",
+        bare.join("\n  ")
+    );
+}
+
 #[test]
 fn the_tree_is_written_in_american_english() {
     // A stated convention for this project, and one that drifts silently:

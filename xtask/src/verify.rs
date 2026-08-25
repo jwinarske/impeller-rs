@@ -12,6 +12,14 @@
 //! three tests that had been skipping since they were written, and a whole file
 //! of them skipping because of a lock two threads were contending for.
 //!
+//! The word is the contract. A skip is found by looking for "skipping" in the
+//! line, so a test that announces itself any other way is counted as having
+//! run -- which is the condition this exists to end, reached from the other
+//! side. Four sites said "no backend available" and one called itself a note,
+//! and all five were invisible here until
+//! `a_skip_says_the_word_the_census_counts` in `xtask/tests/documentation.rs`
+//! went looking for them.
+//!
 //! A skip is not a failure and this does not treat it as one. Some are correct:
 //! a device without the advanced-blend extension genuinely cannot render those
 //! scenes, and the corpus reports that as coverage it did not get. The point is
