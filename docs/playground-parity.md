@@ -89,19 +89,31 @@ this scene draws. So the deviation stands for now and its description does not:
 it is one this project has decided against upstream's decided half, not a gap
 nobody upstream has filled.
 
-Six of the rows below have now been read against the file they name, at tip of
-tree, and the results are set out after the table. Five of the six were wrong:
-gradients, blurs, meshes and nested opacity each named an obstacle that was
-gone, narrower than stated, or read off the shape of a scene rather than off
-anything standing in the way; the primitive-shape row named an upstream
-uncertainty that upstream has since resolved. The sixth, shadows, was right.
-Two of the five turned into renderer changes rather than document ones.
+Nine of the rows below have now been read against the file they name, at tip of
+tree, and the results are set out after the table. One was right: shadows,
+where the obstacle named governs twenty-six of that file's thirty scenes and
+means what it says. The other eight were wrong in six distinguishable ways, and
+the ways matter more than the count.
 
-The eight not yet checked are the basic, path, clip, blend, atlas, text,
-runtime-effect and `aiks_dl_unittests.cc` rows. Three of those name subpass
-collapse or framebuffer fetch, which on the evidence of the four checked so far
-tends to mean "this scene's shape resembles an optimization" rather than "this
-cannot be drawn". Treat them as unverified, which is what they are.
+An obstacle that had been removed and the row not updated (gradients). One
+stated far more broadly than it held, two scenes rather than a chapter (blurs).
+One resting on a precedent that a later change took away (meshes). One read off
+the shape of a scene rather than off anything standing in the way (nested
+opacity). One naming an upstream uncertainty that upstream has since resolved
+(primitive shapes). One naming real obstacles but for three of twenty-one
+tests, with a dozen unwritten (blends). One understating badly and missing the
+only real obstacle in its chapter, which was not recorded anywhere -- that a
+rounded rectangle here has one radius where `dart:ui` has eight (basics). And
+one whose "see below" pointed at nothing, and whose own count turned out to be
+the thing that was wrong (atlases).
+
+Three of the eight turned into renderer changes rather than document ones.
+
+The five not yet checked are the path, clip, text, runtime-effect and
+`aiks_dl_unittests.cc` rows. Treat them as unverified, which is what they are.
+On the evidence above, the likeliest thing wrong with them is not that they
+name the wrong obstacle but that they name a real one governing far less than
+the gap it is offered to explain.
 
 One thing the checking did *not* find, and it is worth saying because the
 opposite was nearly recorded: the "Scenes there" counts are in scenes and not
@@ -120,7 +132,7 @@ column is right and the obvious way to check it is wrong.
 | `aiks_dl_blend_unittests.cc` | ~79 | 39 | framebuffer fetch and subpass collapse, for three of them; see below |
 | `aiks_dl_blur_unittests.cc` | ~59 | 34 | backdrop identity keys, for two of them; see below |
 | `aiks_dl_vertices_unittests.cc` | ~16 | 19 | nothing; see below |
-| `aiks_dl_atlas_unittests.cc` | ~15 | 9 | nothing named; see below |
+| `aiks_dl_atlas_unittests.cc` | ~11 | 9 | nothing; see below |
 | `aiks_dl_shadow_unittests.cc` | ~30 | 13 | a convex-shadow optimization this renderer does not have; see below |
 | `aiks_dl_primitive_shape_unittests.cc` | ~2 | 0 | one is a playground harness, one wants a stroke width of zero to mean a hairline |
 | `aiks_dl_text_unittests.cc` | — | 5 | shaping and font parsing, which are out of scope; glyph rendering is not, and these use synthetic coverage |
@@ -175,6 +187,33 @@ combination is the same rules whichever is being combined, so it now happens
 once, over color where the fill is constant and over coverage where it varies,
 and every style takes any fill. Eight scenes followed, five of them upstream's
 stroked gradient oval under each style.
+
+The atlas row said "nothing named; see below" and there was nothing below --
+the only row whose pointer went nowhere, which is its own kind of stale.
+Checking it moved the other column instead.
+
+That file holds fifteen tests and eleven pictures. Four of them --
+`DlAtlasGeometryNoBlendRenamed`, `DlAtlasGeometryBlend`,
+`DlAtlasGeometryColorButNoBlend` and `DlAtlasGeometrySkip` -- never open a
+playground at all: they build an atlas geometry and assert on its flags and its
+vertex buffer, `EXPECT_TRUE(geom.ShouldSkip())` and the like. They are unit
+tests that happen to live in the playground file, and counting them as scenes
+made the chapter look a third emptier than it is. So the count beside it is
+eleven, and the nine here are nine of eleven.
+
+Of the two that are neither mirrored nor unit tests, plus the four advanced ones
+that are: three need advanced blending, which nothing on the machines this was
+written on has, so they would be reported as gaps rather than compared; one is
+`Plus` into a wide-gamut target, which §4 of `docs/non-parity.md` covers; and
+two compare upstream's conversion of `drawImageRect` into a `drawAtlas` against
+the unconverted path. That conversion is an optimization with no counterpart
+here, and the picture the pair would contribute -- an image under a color filter
+-- is already `basic/can-render-inverted-image-with-color-filter`.
+
+This is the one place the counting caveat above cuts the other way. The "Scenes
+there" column is in scenes and not tests, which is why the blend row's eighty
+is right against twenty-one tests; here the same distinction makes fifteen
+wrong against eleven pictures. Both directions have now been checked once each.
 
 The basic row named superellipses and subpass optimizations, and understated
 what it was covering. Superellipses account for seven of that file's
