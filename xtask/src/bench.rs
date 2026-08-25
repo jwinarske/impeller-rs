@@ -327,7 +327,16 @@ pub fn text(timings: &[Timing]) -> String {
          no present, no vertical blank, and a scene that is a hundred and sixty \n\
          rectangles rather than an interface. Read it against the other paths \n\
          here rather than against a target in `plan.md`, which names a different \n\
-         scene and counts a whole frame.\n",
+         scene and counts a whole frame.\n\
+         \n\
+         Read the p99 against the medians beside it before reading it as a \n\
+         renderer's tail. On a machine with a desktop on it every configuration \n\
+         here comes back with a p99 near thirty milliseconds -- the same figure \n\
+         on a path whose median is under one and on one whose median is thirty \n\
+         -- and a tail that does not vary with the work is the machine \n\
+         descheduling this process, not the frame. A p99 worth trusting wants a \n\
+         quiet runner, which is where the regression gating this deliberately \n\
+         is not belongs too.\n",
     );
     out
 }
