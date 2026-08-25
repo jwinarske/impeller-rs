@@ -12,7 +12,8 @@
 //! decided rather than something that arrived with a dependency bump.
 //!
 //! Set `UPDATE_SHADER_SNAPSHOTS=1` to rewrite them, which is the reviewed
-//! event: the diff is the thing to look at.
+//! event: the diff is the thing to look at. Set `IMPELLER_SHADER_SNAPSHOTS`
+//! to say where they are, which a cross-built binary on a board has to.
 
 use std::path::PathBuf;
 
@@ -20,7 +21,19 @@ use std::path::PathBuf;
 ///
 /// A workspace-level directory, because the question they answer is about the
 /// dependency the whole workspace shares rather than about this crate.
+///
+/// `IMPELLER_SHADER_SNAPSHOTS` overrides it, and the reason is cross
+/// compilation. The default is built from `CARGO_MANIFEST_DIR`, which is
+/// baked in at compile time and names a path on the machine that did the
+/// compiling -- so a binary cross-built here and copied to a board looks for
+/// its snapshots under the host's source tree and finds nothing. Every other
+/// test in this workspace runs from a bare binary on a board; without this,
+/// these two are the only ones that cannot, and a device run can never come
+/// out clean.
 fn directory() -> PathBuf {
+    if let Some(path) = std::env::var_os("IMPELLER_SHADER_SNAPSHOTS") {
+        return PathBuf::from(path);
+    }
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("../..")
         .join("tests/shader-snapshots")
