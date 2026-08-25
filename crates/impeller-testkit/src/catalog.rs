@@ -4504,7 +4504,125 @@ fn blur_variants() -> Vec<Scene> {
             ],
         ));
     }
+
+    scenes.push(
+        Scene::tree(
+            "blur/gaussian-blur-at-periphery-horizontal",
+            // A backdrop blur whose region runs to the frame's own edge, so the
+            // kernel reaches past the target on one side and has to answer with
+            // the clamped edge texel rather than with whatever is there. The
+            // band is deliberately at the top: a blur that read past the top row
+            // and found the clear would darken the band's upper half, and even
+            // bars under it make that visible where a flat color would not.
+            [
+                barred_ground(),
+                vec![Node::Layer {
+                    layer: Box::new(LayerSpec {
+                        backdrop_blur: 8.0,
+                        blend: BlendMode::Src,
+                        ..LayerSpec::default()
+                    }),
+                    bounds: Some([0.0, 0.0, 128.0, 34.0]),
+                    transform: Transform::default(),
+                    children: Vec::new(),
+                }],
+            ]
+            .concat(),
+        )
+        .with_background(DARK)
+        .with_samples(1),
+    );
+
+    scenes.push(
+        Scene::tree(
+            "blur/can-render-nested-backdrop-blur",
+            // A backdrop inside a backdrop. The inner group filters what the
+            // outer one had already filtered, so the middle of the plate is
+            // blurred twice and the ring around it once -- and a renderer that
+            // seeded the inner group from the *unfiltered* target would leave
+            // the middle looking like the outside.
+            [
+                barred_ground(),
+                vec![Node::Layer {
+                    layer: Box::new(LayerSpec {
+                        backdrop_blur: 5.0,
+                        blend: BlendMode::Src,
+                        ..LayerSpec::default()
+                    }),
+                    bounds: Some([12.0, 12.0, 116.0, 116.0]),
+                    transform: Transform::default(),
+                    children: vec![Node::Layer {
+                        layer: Box::new(LayerSpec {
+                            backdrop_blur: 5.0,
+                            blend: BlendMode::Src,
+                            ..LayerSpec::default()
+                        }),
+                        bounds: Some([40.0, 40.0, 88.0, 88.0]),
+                        transform: Transform::default(),
+                        children: Vec::new(),
+                    }],
+                }],
+            ]
+            .concat(),
+        )
+        .with_background(DARK)
+        .with_samples(1),
+    );
+
+    scenes.push(plate(
+        "blur/mask-blur-doesnt-stretch-contents",
+        // A mask blur over an image, under a scale. The blur acts on coverage
+        // and the image fills what survives, so the image keeps the size the
+        // transform gave it -- a renderer that blurred the filled result would
+        // spread the picture as well as the outline, and the sheet's own edges
+        // are what show that. A flat fill could not.
+        vec![Item::filled(
+            Shape::Rect {
+                min: [24.0, 24.0],
+                max: [104.0, 104.0],
+            },
+            sheet(
+                [24.0, 24.0, 104.0, 104.0],
+                ALL,
+                TileMode::Clamp,
+                Sampling::Linear,
+            ),
+        )
+        .with_mask_blur(9.0)
+        .with_blend(BlendMode::SrcOver)],
+    ));
+
     scenes
+}
+
+/// A ground of even bars, for the plates that measure what a blur did to it.
+///
+/// A photograph will not do, and that is measured rather than assumed: the
+/// fixture sheet's own detail varies across it, so comparing how much a region
+/// varies before and after a blur compares the sheet's content as much as the
+/// blur's work -- the first version of the two backdrop plates below came out
+/// saying an unblurred corner was smoother than a twice-blurred middle, which
+/// is the sheet being flat there. Even bars vary the same everywhere, so what
+/// changes between regions is what was done to them.
+fn barred_ground() -> Vec<Node> {
+    let mut items = vec![Node::Draw(Box::new(Item::fill(
+        Shape::Rect {
+            min: [0.0, 0.0],
+            max: [128.0, 128.0],
+        },
+        WHITE,
+    )))];
+    for i in 0..16 {
+        let x = i as f32 * 8.0;
+        items.push(Node::Draw(Box::new(Item::fill(
+            Shape::Rect {
+                min: [x, 0.0],
+                max: [x + 4.0, 128.0],
+            },
+            [0.05, 0.05, 0.1, 1.0],
+        ))));
+    }
+    items
 }
 
 /// `aiks_dl_unittests.cc` and `aiks_dl_opacity_unittests.cc`, for the scenes
