@@ -83,7 +83,7 @@ it is not the obvious move.
 |---|---|---|---|
 | `aiks_dl_basic_unittests.cc` | ~85 | 42 | superellipses, subpass optimizations |
 | `aiks_dl_path_unittests.cc` | ~31 | 21 | nothing named; see below |
-| `aiks_dl_gradient_unittests.cc` | ~40 | 23 | dithering |
+| `aiks_dl_gradient_unittests.cc` | ~40 | 31 | nothing; see below |
 | `aiks_dl_clip_unittests.cc` | ~5 | 6 | nothing; this file is covered |
 | `aiks_dl_opacity_unittests.cc` | ~3 | 2 | subpass collapse |
 | `aiks_dl_blend_unittests.cc` | ~79 | 36 | framebuffer fetch, subpass collapse |
@@ -96,7 +96,7 @@ it is not the obvious move.
 | `aiks_dl_runtime_effect_unittests.cc` | — | 5 | bounded by having two fixture programs rather than by the renderer |
 | `aiks_dl_unittests.cc` | ~39 | 10 | mostly internal optimizations; the picture cases are here now |
 
-The catalog holds two hundred and fifteen scenes of roughly four hundred,
+The catalog holds two hundred and twenty-three scenes of roughly four hundred,
 and the proportion is less interesting than which ones: the arithmetic of drawing is largely covered, and
 what is missing is either a capability this renderer does not have or a thing
 the scene model cannot describe.
@@ -116,6 +116,26 @@ which made this document contradict itself for the length of one commit. Worth
 recording rather than quietly fixing, because it is the failure mode this
 column already has a warning about: prose no test reads goes stale, and the
 person who wrote both halves is not exempt.
+
+It went stale a second time, in the other direction and for much longer. The
+gradient row went on saying "dithering" after the sentence above said there was
+nothing left, so the two halves of the same claim sat nine lines apart
+disagreeing, and the count under that row stayed where the blocker had left it.
+Nobody had counted the chapter against the source -- this document said so
+about wide gamut and the admission applied here too -- and counting it found
+that nothing in the file was blocked at all. Eight scenes went in: the four
+dithering plates the cell was named for, the incomplete-stops scene for the
+three gradient kinds that were missing the one the linear kind already had, and
+a gradient under a mask blur.
+
+Fifteen of the file's forty are still not mirrored, and none is blocked either.
+Four are upstream's fast-gradient scenes, which exist to check an optimization
+that decides whether a two-stop gradient can be drawn as a full-screen quad --
+an internal choice with no `dart:ui` surface, and one this renderer does not
+make. The rest are tile modes crossed with many-colors, which is the one shape
+of gap where writing the next scene is arithmetic rather than coverage: the
+tile modes are each mirrored once already, and the many-colors ramp is mirrored
+once already, and crossing them tests the crossing and nothing else.
 
 The pipeline carries a wide gamut now. Colors state which primaries they are
 against, a color outside the sRGB primaries' triangle keeps the components

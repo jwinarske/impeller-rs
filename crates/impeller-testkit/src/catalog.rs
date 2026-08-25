@@ -44,6 +44,7 @@ use impeller_geometry::FillRule;
 use impeller_hal::{BlendMode, ColorFilter, Extent2D, Sampling, TileMode};
 
 const WHITE: [f32; 4] = [1.0, 1.0, 1.0, 1.0];
+const BLACK: [f32; 4] = [0.0, 0.0, 0.0, 1.0];
 const RED: [f32; 4] = [1.0, 0.0, 0.0, 1.0];
 const GREEN: [f32; 4] = [0.0, 1.0, 0.0, 1.0];
 const BLUE: [f32; 4] = [0.2, 0.4, 1.0, 1.0];
@@ -1598,6 +1599,201 @@ fn gradient() -> Vec<Scene> {
                 },
             )
             .with_stroke(StrokeSpec::new(12.0))],
+        ),
+        // The three gradient kinds that were missing the incomplete-stops
+        // scene the linear one above already has. Same property in each: the
+        // first stop is not at zero and the last is not at one, so the shader
+        // has to hold the end colors across the interval nobody named rather
+        // than running off the end of the table.
+        //
+        // Upstream draws all four kinds in one four-quadrant plate with
+        // alignment lines under the gradient. The lines are there so a human at
+        // a playground can see where the repeats land; nothing here is looked
+        // at by a human, and a plate that holds four gradients tells you which
+        // of the four broke only by where the difference is. One kind each.
+        plate(
+            "gradient/can-render-radial-gradient-with-incomplete-stops",
+            vec![Item::filled(
+                band.clone(),
+                Fill::RadialGradient {
+                    center: [64.0, 64.0],
+                    radius: 56.0,
+                    stops: vec![Stop::new(RED, 0.3), Stop::new(BLUE, 0.7)],
+                    tile: TileMode::Clamp,
+                },
+            )],
+        ),
+        plate(
+            "gradient/can-render-sweep-gradient-with-incomplete-stops",
+            vec![Item::filled(
+                band.clone(),
+                Fill::SweepGradient {
+                    center: [64.0, 64.0],
+                    start_angle: 0.0,
+                    end_angle: std::f32::consts::TAU,
+                    stops: vec![Stop::new(RED, 0.3), Stop::new(BLUE, 0.7)],
+                    tile: TileMode::Clamp,
+                },
+            )],
+        ),
+        plate(
+            "gradient/can-render-conical-gradient-with-incomplete-stops",
+            vec![Item::filled(
+                band.clone(),
+                Fill::ConicalGradient {
+                    start_center: [50.0, 50.0],
+                    start_radius: 6.0,
+                    end_center: [64.0, 64.0],
+                    end_radius: 52.0,
+                    stops: vec![Stop::new(RED, 0.3), Stop::new(BLUE, 0.7)],
+                    tile: TileMode::Clamp,
+                },
+            )],
+        ),
+        plate(
+            "gradient/can-render-linear-gradient-mask-blur",
+            // A gradient under a mask blur, which is worth a plate of its own
+            // because of the order the two happen in: the blur acts on the
+            // shape's coverage and the gradient fills what survives, so a
+            // renderer that blurred the filled result instead would smear the
+            // stripes as well as the outline. Alternating stops make that
+            // visible -- a smeared ramp between two colors still looks like a
+            // ramp, and a smeared stripe pattern does not look like stripes.
+            vec![
+                Item::filled(
+                    Shape::Circle {
+                        center: [46.0, 50.0],
+                        radius: 30.0,
+                    },
+                    Fill::LinearGradient {
+                        start: [20.0, 20.0],
+                        end: [76.0, 76.0],
+                        stops: (0..11)
+                            .map(|i| {
+                                let c = if i % 2 == 0 { RED } else { WHITE };
+                                Stop::new(c, i as f32 / 10.0)
+                            })
+                            .collect(),
+                        tile: TileMode::Clamp,
+                    },
+                )
+                .with_mask_blur(6.0)
+                .with_blend(BlendMode::SrcOver),
+                Item::filled(
+                    Shape::Rect {
+                        min: [24.0, 74.0],
+                        max: [110.0, 108.0],
+                    },
+                    Fill::LinearGradient {
+                        start: [20.0, 20.0],
+                        end: [76.0, 76.0],
+                        stops: (0..11)
+                            .map(|i| {
+                                let c = if i % 2 == 0 { RED } else { WHITE };
+                                Stop::new(c, i as f32 / 10.0)
+                            })
+                            .collect(),
+                        tile: TileMode::Clamp,
+                    },
+                )
+                .with_mask_blur(6.0)
+                .with_blend(BlendMode::SrcOver),
+            ],
+        ),
+        // The four dithering plates, and what they are for is worth stating
+        // exactly, because their names promise something the plate cannot
+        // deliver at this size.
+        //
+        // Banding needs a ramp that spends many pixels on each representable
+        // value. Upstream's linear plate runs 0xCC to 0x33 along a diagonal of
+        // about nine hundred and forty pixels: a hundred and fifty-three levels
+        // over that distance is a band six pixels wide, which is why it is the
+        // picture attached to the issue that put dithering in the renderer. The
+        // same two colors across this plate's hundred-and-seventy-pixel
+        // diagonal cross a level about every pixel. There is no band here to
+        // break up, and scaling the plate up to make one would cost more memory
+        // than every other plate in the catalog put together.
+        //
+        // So these do not show dithering working, and nothing in this file
+        // could: both backends dither identically, so the comparison this
+        // catalog performs is blind to it either way. What measures it is
+        // `dithering_tracks_a_gradient_better_than_rounding_does` in the public
+        // API's tests, which reconstructs the same ramp undithered and requires
+        // the dithered one to track it at least three times as closely.
+        //
+        // What these are is the rest of the chapter's reason: four scenes that
+        // exist upstream and now exist here, running each gradient kind through
+        // the dither on both backends. The colors and geometry are upstream's,
+        // scaled.
+        plate(
+            "gradient/can-render-linear-gradient-with-dithering-enabled",
+            // 0xCCCCCC to 0x333333, which is upstream's pair and is taken from
+            // the issue that put dithering in the renderer at all. Both are
+            // grey, so all three channels band together and in step, which is
+            // what makes it visible rather than merely present.
+            vec![Item::filled(
+                band.clone(),
+                Fill::LinearGradient {
+                    start: [4.0, 4.0],
+                    end: [124.0, 124.0],
+                    stops: vec![
+                        Stop::new([0.8, 0.8, 0.8, 1.0], 0.0),
+                        Stop::new([0.2, 0.2, 0.2, 1.0], 1.0),
+                    ],
+                    tile: TileMode::Clamp,
+                },
+            )],
+        ),
+        plate(
+            "gradient/can-render-radial-gradient-with-dithering-enabled",
+            // White to black across the full radius. A radial ramp bands in
+            // rings rather than stripes, which is a different picture of the
+            // same defect and the reason upstream keeps all four.
+            vec![Item::filled(
+                band.clone(),
+                Fill::RadialGradient {
+                    center: [64.0, 64.0],
+                    radius: 60.0,
+                    stops: vec![Stop::new(WHITE, 0.0), Stop::new(BLACK, 1.0)],
+                    tile: TileMode::Clamp,
+                },
+            )],
+        ),
+        plate(
+            "gradient/can-render-sweep-gradient-with-dithering-enabled",
+            // Ninety degrees of arc, mirrored, about a center a sixth of the
+            // way into the plate -- upstream's arrangement, which puts the
+            // center near a corner so the bands fan across the whole plate
+            // instead of meeting at the middle.
+            vec![Item::filled(
+                band.clone(),
+                Fill::SweepGradient {
+                    center: [24.0, 24.0],
+                    start_angle: std::f32::consts::FRAC_PI_4,
+                    end_angle: 3.0 * std::f32::consts::FRAC_PI_4,
+                    stops: vec![Stop::new(WHITE, 0.0), Stop::new(BLACK, 1.0)],
+                    tile: TileMode::Mirror,
+                },
+            )],
+        ),
+        plate(
+            "gradient/can-render-conical-gradient-with-dithering-enabled",
+            // A degenerate start circle -- a point -- opening onto one of
+            // radius twenty, which is upstream's, scaled. Mirrored, so the
+            // parameter past the far circle folds back rather than clamping,
+            // and the banding continues out to the plate's edge instead of
+            // stopping at a flat surround.
+            vec![Item::filled(
+                band.clone(),
+                Fill::ConicalGradient {
+                    start_center: [4.0, 4.2],
+                    start_radius: 0.0,
+                    end_center: [24.0, 24.0],
+                    end_radius: 20.0,
+                    stops: vec![Stop::new(WHITE, 0.0), Stop::new(BLACK, 1.0)],
+                    tile: TileMode::Mirror,
+                },
+            )],
         ),
     ]
 }
