@@ -43,9 +43,16 @@ const SHAPES: usize = 160;
 /// allocation of every buffer are not counted as frame cost.
 const WARMUP: usize = 5;
 
-/// Timed frames. Enough for the spread to mean something without making a run
-/// something a person avoids doing.
-const FRAMES: usize = 30;
+/// Timed frames.
+///
+/// Two hundred rather than the thirty this began with, and the reason is the
+/// percentile below. A ninety-ninth percentile of thirty samples is the
+/// largest of them by another name -- `ceil(0.99 * 30)` is thirty -- so
+/// reporting one would have dressed the maximum up as a distribution. Two
+/// hundred puts the ninety-ninth at the third-largest, which is a tail rather
+/// than an outlier, and costs about fifty milliseconds a configuration at the
+/// times this actually measures.
+const FRAMES: usize = 200;
 
 /// How a frame's shapes are drawn, which is the whole question.
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -126,6 +133,15 @@ pub struct Timing {
     /// The middle frame, which is what to read: a mean folds in whatever else
     /// the machine was doing during the slowest one.
     pub median: Duration,
+    /// The frame ninety-nine hundredths of them came in under.
+    ///
+    /// Reported beside the median because that pair is what a frame budget is
+    /// written against -- `plan.md`'s desktop target is a rate *and* a p99
+    /// within twice the median, and a renderer that hits an average while
+    /// missing one frame in fifty is not the same thing as one that does not.
+    /// The slowest frame is a different statement: one interruption owns it,
+    /// and on a machine doing anything else there is always one.
+    pub p99: Duration,
     pub fastest: Duration,
     pub slowest: Duration,
 }
@@ -140,6 +156,30 @@ impl Timing {
     pub fn noisy(&self) -> bool {
         self.slowest > self.fastest * 2
     }
+
+    /// Frames a second, if every frame took the median.
+    ///
+    /// A rate is what the targets are written in and a duration is what was
+    /// measured, so the conversion belongs here rather than in a reader's head.
+    pub fn rate(&self) -> f64 {
+        let seconds = self.median.as_secs_f64();
+        if seconds > 0.0 {
+            1.0 / seconds
+        } else {
+            f64::INFINITY
+        }
+    }
+}
+
+/// The sample `fraction` of the way through a sorted run, by nearest rank.
+///
+/// Nearest rank rather than an interpolation: every value here is a frame that
+/// happened, and a p99 that lands between two of them is a number no frame
+/// took. Panics on an empty slice, which the caller cannot produce -- the run
+/// that fills it returns `None` before this is reached.
+fn percentile(sorted: &[Duration], fraction: f64) -> Duration {
+    let rank = (fraction * sorted.len() as f64).ceil() as usize;
+    sorted[rank.clamp(1, sorted.len()) - 1]
 }
 
 /// Time one configuration, forcing the device to finish each frame.
@@ -188,7 +228,8 @@ where
         device,
         path,
         draws: recording.draw_count(),
-        median: samples[samples.len() / 2],
+        median: percentile(&samples, 0.5),
+        p99: percentile(&samples, 0.99),
         fastest: samples[0],
         slowest: samples[samples.len() - 1],
     })
@@ -256,9 +297,12 @@ pub fn text(timings: &[Timing]) -> String {
             out.push_str(&format!("\n{current}\n"));
         }
         out.push_str(&format!(
-            "  {:<24} {:>10}   fastest {:>10}   slowest {:>10}   {:>4} draws{}\n",
+            "  {:<24} {:>10} ({:>6.0} fps)   p99 {:>10}   fastest {:>10}   \
+             slowest {:>10}   {:>4} draws{}\n",
             timing.path.name(),
             millis(timing.median),
+            timing.rate(),
+            millis(timing.p99),
             millis(timing.fastest),
             millis(timing.slowest),
             timing.draws,
@@ -266,9 +310,16 @@ pub fn text(timings: &[Timing]) -> String {
         ));
     }
     out.push_str(
-        "\nMedians. Nothing here passes or fails: these are what this machine \n\
-         did, and the balance between the two paths is hardware-dependent by \n\
-         design -- see the distance-field section of docs/architecture.md.\n",
+        "\nMedians, with the frame ninety-nine hundredths came in under beside \n\
+         them. Nothing here passes or fails: these are what this machine did, \n\
+         and the balance between the two paths is hardware-dependent by design \n\
+         -- see the distance-field section of docs/architecture.md.\n\
+         \n\
+         The rate is what a median frame would sustain with nothing else in it: \n\
+         no present, no vertical blank, and a scene that is a hundred and sixty \n\
+         rectangles rather than an interface. Read it against the other paths \n\
+         here rather than against a target in `plan.md`, which names a different \n\
+         scene and counts a whole frame.\n",
     );
     out
 }
@@ -310,6 +361,7 @@ mod tests {
             path: Path::Analytic,
             draws: SHAPES,
             median: Duration::from_micros(100),
+            p99: Duration::from_micros(140),
             fastest: Duration::from_micros(90),
             slowest: Duration::from_micros(110),
         }]);
@@ -325,6 +377,54 @@ mod tests {
         assert!(first
             .iter()
             .all(|r| r.width() > 0.0 && r.height() > 0.0 && r.right <= EXTENT.width as f32));
+    }
+
+    #[test]
+    fn a_percentile_is_a_frame_that_happened() {
+        // Nearest rank, so every answer is a sample rather than a point
+        // between two of them: these are frames that were rendered, and a
+        // duration nothing took is not a frame time.
+        let run: Vec<Duration> = (1..=100).map(Duration::from_millis).collect();
+        assert_eq!(percentile(&run, 0.5), Duration::from_millis(50));
+        assert_eq!(percentile(&run, 0.99), Duration::from_millis(99));
+        assert_eq!(percentile(&run, 1.0), Duration::from_millis(100));
+        // A length the fractions do not divide, which is what tells nearest
+        // rank from the alternatives. At a hundred samples `0.5 * 100` is a
+        // whole number and every rounding agrees; at seven it is three and a
+        // half, and rounding it down picks the third of seven where the rank is
+        // the fourth. The first version of this test used only round hundreds
+        // and passed with the rounding reversed.
+        let seven: Vec<Duration> = (1..=7).map(Duration::from_millis).collect();
+        assert_eq!(percentile(&seven, 0.5), Duration::from_millis(4));
+        assert_eq!(percentile(&seven, 0.99), Duration::from_millis(7));
+        assert_eq!(percentile(&seven, 0.25), Duration::from_millis(2));
+
+        // And the ends hold: nothing indexes past either edge.
+        assert_eq!(percentile(&run, 0.0), Duration::from_millis(1));
+        assert_eq!(
+            percentile(&[Duration::from_millis(7)], 0.99),
+            Duration::from_millis(7)
+        );
+    }
+
+    #[test]
+    fn a_ninety_ninth_percentile_is_not_the_slowest_frame() {
+        // The reason `FRAMES` is what it is. At thirty samples `ceil(0.99 * 30)`
+        // is thirty, so a p99 would be the maximum wearing another name -- one
+        // interruption, reported as a distribution. At two hundred it is the
+        // third from the end, which a single stall cannot reach.
+        let mut run: Vec<Duration> = vec![Duration::from_millis(1); FRAMES];
+        let last = run.len() - 1;
+        run[last] = Duration::from_millis(500);
+        assert_eq!(
+            percentile(&run, 0.99),
+            Duration::from_millis(1),
+            "one stalled frame in {FRAMES} reached the ninety-ninth percentile"
+        );
+        assert!(
+            FRAMES >= 100,
+            "a ninety-ninth percentile of {FRAMES} samples is the maximum"
+        );
     }
 
     #[test]
@@ -348,6 +448,7 @@ mod tests {
             path: Path::Analytic,
             draws: SHAPES,
             median: Duration::from_micros((fastest + slowest) / 2),
+            p99: Duration::from_micros(slowest),
             fastest: Duration::from_micros(fastest),
             slowest: Duration::from_micros(slowest),
         };
