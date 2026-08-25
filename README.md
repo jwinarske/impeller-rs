@@ -290,11 +290,12 @@ twenty times, in skips nobody reads.
 To run what CI runs:
 
 ```sh
-VK_DRIVER_FILES=/usr/share/vulkan/icd.d/lvp_icd.x86_64.json \
-  LIBGL_ALWAYS_SOFTWARE=1 cargo xtask verify
+cargo xtask verify --software
 ```
 
-The path is where the distribution puts lavapipe, which differs between them.
+Which finds the CPU drivers wherever the distribution put them and prints the
+variables it set, so the run says which drivers answered it. `gate` takes the
+flag too.
 
 The feature axes are meant to compose independently, so check that they still
 do — a backend and a presentation path are orthogonal, and a combination that
