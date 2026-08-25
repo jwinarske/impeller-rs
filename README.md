@@ -262,6 +262,12 @@ cargo test --workspace
 than the exit code when running the pieces by hand: a suite that compiled
 nothing and a suite that passed everything both exit zero.
 
+It also prints what the suite said about its own coverage -- how many catalog
+plates were drawn and how many compared -- because those are different numbers
+and only one of them is in the total. A plate needing a capability one backend
+lacks is reported and skipped, correctly, and the suite still passes; "834
+passed" reads the same whether it compared every plate or four fifths of them.
+
 Read `gate`'s own output whole, though, and not through a filter. Test binaries
 run in parallel and one can write over another's summary line; the count is then
 short by however many tests that binary held, and by its failures too. That is

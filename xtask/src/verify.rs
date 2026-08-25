@@ -72,6 +72,18 @@ pub struct Outcome {
     /// and reach nobody. Anything here means the run misused Vulkan somewhere,
     /// whatever the tests decided about the pixels.
     pub validation: Vec<Skip>,
+    /// Scenes a comparison declined to make, as the suite reported them.
+    ///
+    /// A skip is a test that did not run; this is a test that ran and covered
+    /// less than it holds. The catalog compares every plate across two
+    /// backends, and where a plate needs a capability one of them lacks it says
+    /// so and moves on -- correctly, since there is no comparison to make. But
+    /// the suite then passes, and "834 passed" is the same sentence whether it
+    /// compared every plate or four fifths of them.
+    ///
+    /// So the numbers the suite prints about its own coverage are carried up
+    /// here and said out loud, for the reason the skips are.
+    pub coverage: Vec<String>,
     /// True where the suite itself came back non-zero.
     pub broke: bool,
 }
@@ -148,6 +160,7 @@ pub fn run_with_env(extra: &[String], env: &[(&str, String)]) -> Outcome {
                 log: None,
                 skips: Vec::new(),
                 validation: Vec::new(),
+                coverage: Vec::new(),
                 broke: true,
             };
         }
@@ -200,6 +213,10 @@ fn parse(text: &str, broke: bool) -> Outcome {
     // impossible to miss.
     let mut binaries = 0usize;
     let mut summaries = 0usize;
+    // Lines a suite prints about how much of itself it covered. Recognized by
+    // shape rather than by which test wrote them, so a second suite that starts
+    // reporting coverage is carried without this having to learn its name.
+    let mut coverage: Vec<String> = Vec::new();
     let mut failures: Vec<Failure> = Vec::new();
     // Collected separately and joined afterwards, because the two are not in
     // the order they read in. Under `--nocapture` a panic is written when it
@@ -312,6 +329,22 @@ fn parse(text: &str, broke: bool) -> Outcome {
                 failed += f;
             }
         }
+        // "drew N of M ..." and "compared N scene(s)", as the catalog prints
+        // them. Matched on the shape of the sentence rather than on the test
+        // that writes it: a suite is entitled to report its own coverage, and
+        // this is the one place that can pass the report on to a reader who
+        // only sees a total.
+        if let Some(at) = line.find("drew ").or_else(|| line.find("compared ")) {
+            let said = line[at..].trim();
+            if said
+                .split_whitespace()
+                .nth(1)
+                .is_some_and(|n| n.parse::<usize>().is_ok())
+                && !coverage.iter().any(|held| held == said)
+            {
+                coverage.push(said.to_string());
+            }
+        }
         if line.contains("skipping") {
             let reason = normalize(line);
             match reasons.iter_mut().find(|(r, _)| *r == reason) {
@@ -363,6 +396,7 @@ fn parse(text: &str, broke: bool) -> Outcome {
             .into_iter()
             .map(|(reason, count)| Skip { reason, count })
             .collect(),
+        coverage,
         validation: complaints
             .into_iter()
             .map(|(reason, count)| Skip { reason, count })
@@ -395,6 +429,12 @@ pub fn text(outcome: &Outcome) -> String {
         "{} passed, {} failed\n",
         outcome.passed, outcome.failed
     ));
+    if !outcome.coverage.is_empty() {
+        out.push_str("what the suite says it covered:\n");
+        for line in &outcome.coverage {
+            out.push_str(&format!("    {line}\n"));
+        }
+    }
     if outcome.lost > 0 {
         out.push_str(&format!(
             "    {} test binar{} said nothing this could read -- no summary, or \
@@ -541,6 +581,42 @@ test result: FAILED. 1 passed; 1 failed; 0 ignored; 0 measured; 1 filtered out;
         let doubled = format!("{OUTPUT}\nfailures:\n    the_broken_one\n");
         let outcome = parse(&doubled, true);
         assert_eq!(outcome.failures.len(), 1);
+    }
+
+    #[test]
+    fn what_a_suite_says_about_its_own_coverage_is_carried_up() {
+        // A suite that compares less than it holds passes, and the total says
+        // nothing about it. These lines are the only place that difference is
+        // visible, so they have to survive being read.
+        let text = "\
+test every_catalog_scene_draws_something ... drew 259 of 259 catalog scenes across 2 device(s)
+test the_catalog_matches_across_backends ... compared 239 scene(s)
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out;
+";
+        let outcome = parse(text, false);
+        assert_eq!(
+            outcome.coverage,
+            vec![
+                "drew 259 of 259 catalog scenes across 2 device(s)".to_string(),
+                "compared 239 scene(s)".to_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn a_sentence_that_only_looks_like_a_coverage_line_is_left_alone() {
+        // "compared" and "drew" are ordinary words. What makes one of these a
+        // report is a number straight after it, and a line without one is prose
+        // that happens to share a verb.
+        let text = "the two backends compared badly on this plate
+                    a stroke drew outside its clip
+";
+        let outcome = parse(text, false);
+        assert!(
+            outcome.coverage.is_empty(),
+            "prose was taken for a coverage report: {:?}",
+            outcome.coverage
+        );
     }
 
     #[test]
