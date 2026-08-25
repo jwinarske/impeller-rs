@@ -425,28 +425,20 @@ struct SavedState {
     layer: Option<LayerFrame>,
 }
 
-/// A caller's program, on its way to the pass that runs it.
-///
-/// Not a field of [`Layer`], which is the whole reason this type exists. A
-/// layer is `Copy` and small, and it is copied at every `save_layer`; a
-/// program's uniforms are the entire material block, sixty-four floats, which
-/// would be paid for by every caller who never used one. So the filter travels
-/// beside the layer in the frame rather than inside it, and the public type is
-/// unchanged.
-#[derive(Debug, Clone, PartialEq)]
-struct RuntimeFilter {
-    program: u32,
-    uniforms: Vec<f32>,
-}
-
 /// A layer in progress: the parent's recording, set aside until it returns.
 #[derive(Debug)]
 struct LayerFrame {
     batch: Batch,
     sources: Vec<TextureSource>,
     paint: Layer,
-    /// A caller's program to run over the finished layer, if one was asked for.
-    runtime: Option<RuntimeFilter>,
+    /// An image filter to run over the finished layer, if one was asked for.
+    ///
+    /// Beside the layer rather than inside it, because [`Layer`] is `Copy` and
+    /// small and is copied at every `save_layer`, while a filter can hold a
+    /// composition or a program's sixty-four uniform floats. The fields on the
+    /// layer cover the four kinds that fit in one; this covers the rest, and
+    /// the two orders a composition can take.
+    filter: Option<ImageFilter>,
     /// The target the parent was drawing into, restored when the layer closes.
     parent: Target,
     /// Whether the parent's own batch had asked for antialiasing yet.
@@ -1129,7 +1121,7 @@ impl Canvas {
     fn open_layer(
         &mut self,
         layer: Layer,
-        runtime: Option<RuntimeFilter>,
+        filter: Option<ImageFilter>,
         backdrop: Option<&ImageFilter>,
     ) -> Result<Option<(usize, Target)>> {
         let parent = self.target;
@@ -1153,12 +1145,12 @@ impl Canvas {
             match self.filter_passes(cut, parent, &asked) {
                 Ok(index) => Some(index),
                 Err(e) => {
-                    self.push_layer_frame(layer, runtime);
+                    self.push_layer_frame(layer, filter);
                     return Err(e);
                 }
             }
         };
-        self.push_layer_frame(layer, runtime);
+        self.push_layer_frame(layer, filter);
         Ok(filtered.map(|index| (index, parent)))
     }
 
@@ -1268,7 +1260,7 @@ impl Canvas {
         self.draw_whole_pass(pass, parent, into, BlendMode::Src);
     }
 
-    fn push_layer_frame(&mut self, layer: Layer, runtime: Option<RuntimeFilter>) {
+    fn push_layer_frame(&mut self, layer: Layer, filter: Option<ImageFilter>) {
         self.stack.push(SavedState {
             transform: self.transform,
             clip: self.clip,
@@ -1278,7 +1270,7 @@ impl Canvas {
                 batch: std::mem::take(&mut self.batch),
                 sources: std::mem::take(&mut self.sources),
                 paint: layer,
-                runtime,
+                filter,
                 parent: self.target,
                 anti_alias: std::mem::take(&mut self.anti_alias),
             }),
@@ -1328,6 +1320,45 @@ impl Canvas {
         )
         .unwrap_or_else(unbounded);
         self.save_layer_device_bounds(layer, min, max)
+    }
+
+    /// A layer filtered as a whole by any image filter.
+    ///
+    /// [`Layer`]'s own fields carry the four kinds that fit in a `Copy` struct
+    /// -- a blur, a morphology, a matrix and a color filter -- and apply them
+    /// in one fixed order. This takes an [`ImageFilter`], which adds the two
+    /// they cannot say: a caller's fragment program, and a composition in
+    /// whichever order the caller wrote it.
+    ///
+    /// The same operation `dart:ui` spells as an `imageFilter` on the paint
+    /// handed to `saveLayer`, and the group counterpart of what
+    /// `Paint::with_image_filter` already does for one draw.
+    ///
+    /// Refuses a matrix for the reason `filter_passes` gives, and refuses it
+    /// here rather than at `restore`: a `restore` has no result to fail into,
+    /// and by then the caller has drawn into the layer.
+    pub fn save_layer_filtered(
+        &mut self,
+        layer: Layer,
+        bounds: Option<Rect>,
+        filter: &ImageFilter,
+    ) -> Result<&mut Self> {
+        if matches!(filter, ImageFilter::Matrix { .. }) {
+            return Err(Error::Unsupported(
+                "a matrix filters a group through `Layer::with_matrix`, which \
+                 states where the finished image goes",
+            ));
+        }
+        let (min, max) = match bounds {
+            Some(bounds) => transformed_bounds(
+                self.transform,
+                Vec2::new(bounds.left, bounds.top),
+                Vec2::new(bounds.right, bounds.bottom),
+            )
+            .unwrap_or_else(unbounded),
+            None => unbounded(),
+        };
+        self.save_layer_device_bounds_running(layer, min, max, Some(filter.clone()), None)
     }
 
     /// A layer over a backdrop filtered by any image filter.
@@ -1391,7 +1422,7 @@ impl Canvas {
         layer: Layer,
         min: Vec2,
         max: Vec2,
-        runtime: Option<RuntimeFilter>,
+        filter: Option<ImageFilter>,
         backdrop: Option<&ImageFilter>,
     ) -> Result<&mut Self> {
         let reach = layer.reach();
@@ -1399,7 +1430,7 @@ impl Canvas {
         // the content will draw into and that target is decided below. A
         // backdrop drawn into the full-size target and then narrowed would be
         // the wrong region of the wrong image.
-        let pending = self.open_layer(layer, runtime, backdrop)?;
+        let pending = self.open_layer(layer, filter, backdrop)?;
         // A blur reaches past what it was given. The caller states where the
         // content is, which is the question they can answer; how far a blur
         // carries it is this renderer's arithmetic, and a target sized to the
@@ -1906,14 +1937,14 @@ impl Canvas {
     /// reachable when peeling took that half to be a leaf, and composing two
     /// compositions was then refused as unimplemented, having been assembled
     /// out of nothing but implemented filters.
-    fn filter_layer(&self, filter: &ImageFilter) -> Option<(Layer, Option<RuntimeFilter>)> {
+    fn filter_layer(&self, filter: &ImageFilter) -> Option<(Layer, Option<ImageFilter>)> {
         if let ImageFilter::Runtime { program, uniforms } = filter {
             // The layer itself is plain: what makes it a filter is the pass run
             // over it at restore, which needs the program and cannot get it
             // from a `Copy` layer.
             return Some((
                 Layer::opacity(1.0),
-                Some(RuntimeFilter {
+                Some(ImageFilter::Runtime {
                     program: *program,
                     uniforms: uniforms.clone(),
                 }),
@@ -3492,12 +3523,21 @@ impl Canvas {
         if let Some(morphology) = frame.paint.morphology {
             index = self.morphology_passes(index, layer, morphology);
         }
-        // Last of the three, so a caller's program sees whatever the built-in
-        // filters produced rather than the other way round. That is the order a
-        // composition states: the outermost filter is peeled first and becomes
-        // this layer, and anything inner was applied by the draw inside it.
-        if let Some(runtime) = &frame.runtime {
-            index = self.runtime_pass(index, layer, runtime.program, &runtime.uniforms);
+        // Last, so a filter given to the layer as a whole sees whatever the
+        // layer's own fields produced rather than the other way round. That is
+        // the order a composition states: the outermost filter is peeled first
+        // and becomes this layer, and anything inner was applied by the draw
+        // inside it.
+        //
+        // The failure is swallowed rather than returned, and it is the one
+        // place in this file that does so: `restore` has no result, and the
+        // only filter that can refuse here is a matrix, which the two callers
+        // that can supply one already refuse before opening the layer. So this
+        // is unreachable rather than ignored.
+        if let Some(filter) = frame.filter.clone() {
+            if let Ok(filtered) = self.filter_passes(index, layer, &filter) {
+                index = filtered;
+            }
         }
         let slot = self.slot_for(TextureSource::Layer(index));
 

@@ -95,7 +95,7 @@ reason.
 | `clipRRect` | via | `clip_path` of `Rect::to_rounded_path`, or of `to_rounded_path_with_radii` where the corners differ | |
 | `clipRSuperellipse` | no | | |
 | `save`, `restore` | yes | `save`, `restore` | `translucent-stack` |
-| `saveLayer` | yes | `save_layer`, `save_layer_bounds` | `layer-group-opacity`, `layer-bounded` |
+| `saveLayer` | yes | `save_layer`, `save_layer_bounds`, and `save_layer_filtered` for a group filtered as a whole. A `Layer`'s own fields carry a blur, a morphology, a matrix and a color filter in one fixed order; the call takes an `ImageFilter`, which adds a caller's program and a composition in either order | `layer-group-opacity`, `layer-bounded`, `a_group_can_be_filtered_by_a_composition_in_either_order` |
 | `pushBackdropFilter` | yes | `save_layer_backdrop` takes any image filter but a matrix, which is refused rather than approximated because it moves the image instead of recomputing it in place; `Layer::with_backdrop_blur` is the blur, which a `Copy` layer can hold. Bounds are the filtered region here rather than an optimization | `layer-backdrop-blurred`, `a_backdrop_takes_any_image_filter_and_refuses_the_one_that_moves_it` |
 | `restoreToCount` | via | `save_depth` and a loop | |
 | `getSaveCount` | yes | `save_depth` | `saves_nest` |

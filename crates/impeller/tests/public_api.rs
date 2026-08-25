@@ -3362,6 +3362,119 @@ fn a_mask_blur_takes_a_gradient_in_every_style_but_not_over_a_glyph_run() {
 }
 
 #[test]
+fn a_group_can_be_filtered_by_a_composition_in_either_order() {
+    // A draw could carry any image filter through its paint and a group could
+    // not: `Layer` holds four kinds in fields and applies them in one fixed
+    // order, so a composition the other way round, or a caller's program over
+    // a group, had no spelling. `saveLayer` claimed parity without saying so.
+    let Some(mut ctx) = context() else { return };
+
+    // Two shapes with a gap between them narrower than the structuring element
+    // below, which is what makes the two orders two pictures. A dilation then
+    // an erosion closes the gap and leaves it closed; an erosion then a
+    // dilation returns each shape to itself and the gap with it. On a single
+    // convex shape both orders are the identity, which is why the first
+    // version of this test compared two identical frames and said so.
+    let content = |canvas: &mut Canvas| {
+        for rect in [
+            Rect::new(30.0, 48.0, 60.0, 80.0),
+            Rect::new(68.0, 48.0, 98.0, 80.0),
+        ] {
+            canvas
+                .draw_rect(
+                    rect,
+                    &Paint::fill(Color::srgb(1.0, 1.0, 1.0, 1.0))
+                        .with_anti_alias(false)
+                        .with_blend(BlendMode::SrcOver),
+                )
+                .expect("rect");
+        }
+    };
+    let shot = |ctx: &mut Context, filter: Option<ImageFilter>| {
+        let mut canvas = Canvas::new(SIZE);
+        canvas.clear(Color::BLACK);
+        match filter {
+            Some(filter) => {
+                canvas
+                    .save_layer_filtered(Layer::opacity(1.0), None, &filter)
+                    .expect("filtered group");
+            }
+            None => {
+                canvas.save_layer(Layer::opacity(1.0));
+            }
+        }
+        content(&mut canvas);
+        canvas.restore();
+        render(ctx, canvas)
+    };
+
+    // Both on both axes, and that matters: a dilation across and an erosion
+    // down act on independent axes and commute, so a pair chosen that way
+    // gives the same picture whichever order it runs in and proves nothing.
+    // The first version of this test was written that way and passed zero
+    // differing pixels, which is what said so.
+    let dilate = || ImageFilter::Dilate {
+        radius_x: 6.0,
+        radius_y: 6.0,
+    };
+    let erode = || ImageFilter::Erode {
+        radius_x: 6.0,
+        radius_y: 6.0,
+    };
+
+    // The two orders. A dilation then an erosion is not an erosion then a
+    // dilation -- that is what closing and opening are, and they differ on a
+    // shape with a corner. `Layer` can hold only one morphology, so neither of
+    // these was expressible before, let alone both.
+    let closed = shot(&mut ctx, Some(ImageFilter::compose(erode(), dilate())));
+    let opened = shot(&mut ctx, Some(ImageFilter::compose(dilate(), erode())));
+    let difference = closed
+        .chunks_exact(4)
+        .zip(opened.chunks_exact(4))
+        .filter(|(a, b)| a != b)
+        .count();
+    assert!(
+        difference > 200,
+        "the two orders of one composition gave nearly the same picture, so the \
+         order was not carried: {difference} pixels differ"
+    );
+
+    // And which of the two moved, which is the sharper statement. Closing
+    // bridges the gap, so it is not the identity; opening returns each
+    // rectangle to itself, so it *is* -- and that is not a filter doing
+    // nothing but the arithmetic being right. Asserting both differ from the
+    // plain group is what the first version of this did, and it is false.
+    let plain = shot(&mut ctx, None);
+    assert_ne!(plain, closed, "closing should have bridged the gap");
+    assert_eq!(
+        plain, opened,
+        "opening a pair of rectangles by a rectangle returns them unchanged, so \
+         this order should give the group back as it was"
+    );
+    // The gap itself, named rather than left to the pixel count.
+    let between = |p: &[u8]| pixel(p, 64, 64)[0];
+    assert_eq!(between(&plain), 0, "the gap should be open to begin with");
+    assert!(between(&closed) > 200, "closing should have filled the gap");
+
+    // A matrix is refused here rather than at `restore`, which has no result to
+    // fail into and by then has the caller's drawing in it.
+    let mut canvas = Canvas::new(SIZE);
+    let outcome = canvas
+        .save_layer_filtered(
+            Layer::opacity(1.0),
+            None,
+            &ImageFilter::Matrix {
+                transform: Transform2D::from(Affine2::from_translation(Vec2::new(8.0, 0.0))),
+            },
+        )
+        .map(|_| ());
+    assert!(
+        matches!(outcome, Err(Error::Unsupported(_))),
+        "a matrix should point the caller at `Layer::with_matrix`, got {outcome:?}"
+    );
+}
+
+#[test]
 fn a_backdrop_takes_any_image_filter_and_refuses_the_one_that_moves_it() {
     // `Layer::backdrop_blur` is a sigma, because a layer is `Copy` and a filter
     // is not. That made a blur the only backdrop this renderer could apply,
