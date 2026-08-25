@@ -576,22 +576,32 @@ where
     // Registered before anything is drawn and before the sheet, so the index
     // the scenes name is the one it gets. Idempotent, so a list of scenes
     // costs one program rather than one per scene.
-    if scene.uses_effect() {
-        // Both, always, and in this order: a scene names a program by the index
-        // it was given, so registering conditionally would make that index
-        // depend on which scene ran first. Registration is idempotent, so the
-        // cost is one link each per context rather than one per scene.
-        for (expected, program) in [
-            (0, crate::fixture::effect()),
-            (1, crate::fixture::two_image_effect()),
-            (2, crate::fixture::image_effect()),
-        ] {
-            let id = ctx.register_program(&program)?;
-            if id != expected {
-                return Err(impeller_hal::Error::Unsupported(
-                    "a fixture program was not registered at the index scenes name it by",
-                ));
-            }
+    // All of them, always, and in this order. A scene names a program by the
+    // index it was given, so registering only the ones a scene appears to want
+    // would make that index depend on which scene ran first.
+    //
+    // Unconditional rather than gated on whether the scene uses one, which it
+    // was until a derivation deciding that got it wrong for the fourth time. A
+    // group whose *backdrop* is a program has nothing inside it naming one, so
+    // the gate said no and the programs went unregistered -- and the catalog
+    // passed anyway, another scene having registered them first, which made the
+    // failure an ordering one that a catalog cannot show and a single scene
+    // always does.
+    //
+    // The gate was never worth it. Registering is storing the SPIR-V payload
+    // against an index; pipelines are built lazily and keyed by it, so what a
+    // scene that uses no program pays is three clones of a byte vector, once
+    // per context. That is cheaper than a derivation which has to be right.
+    for (expected, program) in [
+        (0, crate::fixture::effect()),
+        (1, crate::fixture::two_image_effect()),
+        (2, crate::fixture::image_effect()),
+    ] {
+        let id = ctx.register_program(&program)?;
+        if id != expected {
+            return Err(impeller_hal::Error::Unsupported(
+                "a fixture program was not registered at the index scenes name it by",
+            ));
         }
     }
     let fixtures = Fixtures::<H>::prepare(ctx, scene)?;

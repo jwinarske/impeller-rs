@@ -217,6 +217,52 @@ fn the_catalog_matches_across_backends() {
 }
 
 #[test]
+fn a_scene_that_needs_a_fixture_renders_on_its_own() {
+    // A catalog hides an ordering bug by construction: every scene shares one
+    // context, so whatever the first scene set up is there for the rest. The
+    // fixture programs were registered by a derivation that decided which
+    // scenes wanted them, that derivation missed a case, and the plates it
+    // missed drew correctly anyway -- another scene having registered them
+    // first. Alone they failed every time.
+    //
+    // So these render one scene per context. Not all of them, which would cost
+    // two hundred and forty-nine devices: one for each way a scene can depend
+    // on something the executor sets up, which is a program named by a fill, by
+    // an image filter, by a group's backdrop, and a texture read from the
+    // fixture sheet.
+    let wanted = [
+        "effect/can-render-runtime-effect",
+        "effect/can-render-runtime-effect-filter",
+        "effect/clipped-backdrop-filter-with-shader",
+        "atlas/draw-atlas-no-color",
+    ];
+    let mut checked = 0usize;
+    for scene in catalog() {
+        if !wanted.contains(&scene.name) {
+            continue;
+        }
+        let Ok(mut ctx) = Validated::new(DevicePreference::Auto) else {
+            eprintln!("skipping: no Vulkan device");
+            return;
+        };
+        if !scene.supported_by(ctx.capabilities()) {
+            continue;
+        }
+        render_scene::<VulkanHal>(&mut ctx, &scene)
+            .unwrap_or_else(|e| panic!("{} does not render on its own: {e}", scene.name));
+        checked += 1;
+    }
+    assert_eq!(
+        checked,
+        wanted.len(),
+        "{} of the {} scenes named here were not found or not runnable, so this \
+         checked less than it says",
+        wanted.len() - checked,
+        wanted.len()
+    );
+}
+
+#[test]
 fn catalog_names_say_which_file_they_came_from() {
     // The name is the only link back to the test each scene mirrors, so it
     // carries the topic its file is named for. A scene that does not is one

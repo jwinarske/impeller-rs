@@ -1012,64 +1012,6 @@ impl Node {
         }
     }
 
-    /// Whether an image filter runs a caller's program, at any depth.
-    fn filters_with_one(filter: &ImageFilter) -> bool {
-        match filter {
-            ImageFilter::Runtime { .. } => true,
-            ImageFilter::Compose { outer, inner } => {
-                Self::filters_with_one(outer) || Self::filters_with_one(inner)
-            }
-            ImageFilter::None
-            | ImageFilter::Blur { .. }
-            | ImageFilter::Matrix { .. }
-            | ImageFilter::Dilate { .. }
-            | ImageFilter::Erode { .. }
-            | ImageFilter::Color(_) => false,
-        }
-    }
-
-    /// Whether this subtree reads the fixture sheet.
-    ///
-    /// Exhaustive on purpose. The scene-level derivations used to walk items
-    /// alone, which was correct while every node was one; a node kind that
-    /// sampled a texture and was not an item would have been missed silently,
-    /// and the draw refused for naming a texture nobody supplied.
-    fn uses_effect(&self) -> bool {
-        // A program can arrive three ways and this used to look for one. As a
-        // fill it is the material; as an image filter it is a pass run over the
-        // finished draw, and the fill beside it may be a plain color. A scene
-        // taking the second route would have left the fixture programs
-        // unregistered and named an index nothing was registered at.
-        match self {
-            Self::Draw(item) => {
-                matches!(item.fill, Fill::RuntimeEffect { .. })
-                    || Self::filters_with_one(&item.image_filter)
-            }
-            Self::Mesh(mesh) => {
-                matches!(mesh.fill, Fill::RuntimeEffect { .. })
-                    || Self::filters_with_one(&mesh.image_filter)
-            }
-            Self::Atlas(_)
-            | Self::Shadow(_)
-            | Self::Glyphs(_)
-            | Self::Points(_)
-            | Self::NinePatch(_)
-            | Self::Paint(_) => false,
-            Self::Picture(picture) => picture.children.iter().any(Node::uses_effect),
-            // The backdrop as well as the children, and the omission is why
-            // this comment exists. A group whose *backdrop* is a program has
-            // nothing inside it that names one -- the group is often empty --
-            // so looking only at the children left the fixture programs
-            // unregistered. It passed anyway, because another scene in the same
-            // run had registered them and registration is idempotent, so the
-            // failure was an ordering one: those plates worked in a catalog and
-            // not on their own.
-            Self::Layer {
-                layer, children, ..
-            } => Self::filters_with_one(&layer.backdrop) || children.iter().any(Node::uses_effect),
-        }
-    }
-
     fn samples_fixture(&self) -> bool {
         let reads_sheet = |fill: &Fill| match fill {
             Fill::Image { .. } => true,
@@ -1596,11 +1538,6 @@ impl Scene {
     /// Whether any node in this scene reads the fixture glyph atlas.
     pub fn uses_glyphs(&self) -> bool {
         self.items.iter().any(Node::uses_glyphs)
-    }
-
-    /// Whether any item in this scene is drawn by the fixture program.
-    pub fn uses_effect(&self) -> bool {
-        self.items.iter().any(Node::uses_effect)
     }
 
     /// Whether a device can render this scene at all.
