@@ -2508,6 +2508,7 @@ fn mesh_of(positions: Vec<[f32; 2]>, fill: Fill) -> MeshSpec {
         blend: BlendMode::SrcOver,
         transform: Transform::default(),
         image_filter: ImageFilter::None,
+        mask_blur: 0.0,
     }
 }
 
@@ -2913,6 +2914,23 @@ fn vertices() -> Vec<Scene> {
                     Vec::new(),
                     sheet(SHEET, ALL, TileMode::Clamp, Sampling::Linear),
                 )
+            },
+        ),
+        mesh(
+            "vertices/vertices-geometry-with-mask-filter",
+            // Upstream's, and a regression test there rather than a feature
+            // one: a mesh under a mask filter used to draw nothing at all.
+            //
+            // The mesh carries no colors of its own, which is what makes the
+            // blur well defined and is easy to read past. A mask blur fills
+            // through blurred coverage, so the fill has to have a value out in
+            // the halo where the triangles are not -- a paint does, being a
+            // function of position, and per-vertex colors do not. A mesh
+            // carrying them is refused rather than extrapolated.
+            MeshSpec {
+                positions: vec![[18.0, 18.0], [110.0, 18.0], [18.0, 110.0]],
+                mask_blur: 7.0,
+                ..mesh_of(Vec::new(), Fill::Solid([0.95, 0.85, 0.4, 1.0]))
             },
         ),
     ]

@@ -76,8 +76,18 @@ no difficulty: half a pixel of width under one draws exactly as it should, and
 a test says so. What that scene wants is a stroke width of zero meaning the
 thinnest line a device can draw, which is what `dart:ui` documents and is not
 what it means here -- so it is a row of `docs/parity.md` rather than a gap in
-the catalog, and upstream's own handling of it is unsettled enough that copying
-it is not the obvious move.
+the catalog.
+
+This used to add that upstream's own handling was unsettled enough that copying
+it was not the obvious move. Read at tip of tree, that is not so, at least where
+upstream has decided: `line_geometry.cc` pixel-aligns a line whose width is
+zero, and `canvas.cc` says of the same case that it "draws a hairline that is
+always 1 pixel regardless of the transform". What is not settled is the rest --
+the general stroke path multiplies the width by a half with no special case, so
+a stroked circle at zero appears to produce nothing there either, which is what
+this scene draws. So the deviation stands for now and its description does not:
+it is one this project has decided against upstream's decided half, not a gap
+nobody upstream has filled.
 
 | File | Scenes there | Here | Blocked on |
 |---|---|---|---|
@@ -88,7 +98,7 @@ it is not the obvious move.
 | `aiks_dl_opacity_unittests.cc` | ~3 | 2 | subpass collapse |
 | `aiks_dl_blend_unittests.cc` | ~79 | 36 | framebuffer fetch, subpass collapse |
 | `aiks_dl_blur_unittests.cc` | ~59 | 34 | backdrop identity keys, for two of them; see below |
-| `aiks_dl_vertices_unittests.cc` | ~16 | 18 | mask filters on a mesh |
+| `aiks_dl_vertices_unittests.cc` | ~16 | 19 | nothing; see below |
 | `aiks_dl_atlas_unittests.cc` | ~15 | 9 | nothing named; see below |
 | `aiks_dl_shadow_unittests.cc` | ~30 | 12 | a convex-shadow optimization this renderer does not have |
 | `aiks_dl_primitive_shape_unittests.cc` | ~2 | 0 | one is a playground harness, one wants a stroke width of zero to mean a hairline |
@@ -96,7 +106,7 @@ it is not the obvious move.
 | `aiks_dl_runtime_effect_unittests.cc` | — | 5 | bounded by having two fixture programs rather than by the renderer |
 | `aiks_dl_unittests.cc` | ~39 | 10 | mostly internal optimizations; the picture cases are here now |
 
-The catalog holds two hundred and thirty-one scenes of roughly four hundred,
+The catalog holds two hundred and thirty-two scenes of roughly four hundred,
 and the proportion is less interesting than which ones: the arithmetic of drawing is largely covered, and
 what is missing is either a capability this renderer does not have or a thing
 the scene model cannot describe.
@@ -144,6 +154,21 @@ combination is the same rules whichever is being combined, so it now happens
 once, over color where the fill is constant and over coverage where it varies,
 and every style takes any fill. Eight scenes followed, five of them upstream's
 stroked gradient oval under each style.
+
+The vertices row said "mask filters on a mesh", and that was true: a mask blur
+over one was refused outright. The reason given was that a mesh carries a color
+per vertex and so varies by construction, and it does not have to -- built from
+positions alone it is filled by the paint, exactly as a path covering the same
+area is. Upstream's own scene for this passes no vertex colors at all.
+
+What the refusal was protecting is real and is narrower than it was written.
+A mask blur fills through blurred coverage, so the fill must have a value
+everywhere that coverage reaches, halo included. A paint has one, being a
+function of position. Per-vertex colors are defined on the triangles and nowhere
+else, so the halo has nothing to take its color from, and that case is still
+refused rather than extrapolated -- the message now says so instead of saying
+meshes. A mesh the paint fills now blurs, and is required to come out identical
+to the same square drawn as a path.
 
 Fifteen of the gradient file's forty are still not mirrored, and none is
 blocked either.

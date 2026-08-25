@@ -165,6 +165,12 @@ pub struct MeshSpec {
     pub transform: Transform,
     /// Filter what the mesh drew. See [`Item::image_filter`].
     pub image_filter: ImageFilter,
+    /// Blur the mesh's coverage before filling it. Zero for none.
+    ///
+    /// Only where the mesh carries no per-vertex colors: with them there is no
+    /// color for the halo outside the triangles, and the draw is refused. See
+    /// `Canvas::draw_vertices`.
+    pub mask_blur: MaskBlur,
 }
 
 /// A color over everything the clip admits -- `drawPaint` and `drawColor`.

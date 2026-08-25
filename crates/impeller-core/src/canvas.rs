@@ -396,6 +396,10 @@ impl Morphology {
 #[derive(Clone, Copy)]
 enum Masked<'a> {
     Path(&'a Path),
+    /// A mesh carrying no per-vertex colors, so the paint supplies the color
+    /// the way it does for a path. One that carries them is refused before it
+    /// reaches here: see `draw_vertices`.
+    Mesh(&'a Vertices),
     Glyphs {
         glyphs: &'a [PositionedGlyph],
         atlas: &'a Atlas,
@@ -1916,6 +1920,7 @@ impl Canvas {
     fn draw_mask_content(&mut self, content: Masked<'_>, paint: &Paint) -> Result<&mut Self> {
         match content {
             Masked::Path(path) => self.draw_path(path, paint),
+            Masked::Mesh(mesh) => self.draw_vertices(mesh, paint),
             Masked::Glyphs {
                 glyphs,
                 atlas,
@@ -1928,6 +1933,15 @@ impl Canvas {
     fn mask_bounds(&self, content: Masked<'_>, paint: &Paint) -> Rect {
         match content {
             Masked::Path(path) => self.filter_bounds(path, paint),
+            Masked::Mesh(mesh) => {
+                let (mut min, mut max) =
+                    (Vec2::splat(f32::INFINITY), Vec2::splat(f32::NEG_INFINITY));
+                for position in mesh.positions() {
+                    min = min.min(*position);
+                    max = max.max(*position);
+                }
+                Rect::new(min.x, min.y, max.x, max.y)
+            }
             Masked::Glyphs { glyphs, .. } => {
                 let (mut min, mut max) =
                     (Vec2::splat(f32::INFINITY), Vec2::splat(f32::NEG_INFINITY));
@@ -1955,8 +1969,12 @@ impl Canvas {
     /// color by its own nature rather than by anything to do with blurring, so
     /// a gradient over one is refused here exactly as it is refused when
     /// nothing is blurred at all.
-    fn draw_masked_through_coverage(&mut self, path: &Path, paint: &Paint) -> Result<&mut Self> {
-        let bounds = self.mask_bounds(Masked::Path(path), paint);
+    fn draw_masked_through_coverage(
+        &mut self,
+        content: Masked<'_>,
+        paint: &Paint,
+    ) -> Result<&mut Self> {
+        let bounds = self.mask_bounds(content, paint);
         let held = bounds.outset(blur_reach(paint.mask_blur));
         // White, because what is wanted from the shape here is its coverage
         // rather than its color: the fill supplies the color and this supplies
@@ -1979,7 +1997,7 @@ impl Canvas {
                     .with_blur(paint.mask_blur)
                     .with_blend(BlendMode::DstIn);
                 self.save_layer_bounds(mask, held);
-                let inner = self.draw_path(path, &coverage).err();
+                let inner = self.draw_mask_content(content, &coverage).err();
                 self.restore();
                 return inner;
             }
@@ -1989,7 +2007,7 @@ impl Canvas {
             // that wants it.
             self.save_layer_bounds(Layer::opacity(1.0).with_blend(BlendMode::DstIn), held);
             let inner = self.draw_mask_styles(
-                Masked::Path(path),
+                content,
                 &coverage,
                 paint.mask_blur,
                 paint.mask_blur_style,
@@ -2007,8 +2025,8 @@ impl Canvas {
 
     fn draw_masked(&mut self, content: Masked<'_>, paint: &Paint) -> Result<&mut Self> {
         if !matches!(paint.shader, Shader::Solid(_)) {
-            if let Masked::Path(path) = content {
-                return self.draw_masked_through_coverage(path, paint);
+            if !matches!(content, Masked::Glyphs { .. }) {
+                return self.draw_masked_through_coverage(content, paint);
             }
             // A glyph run, and it is the only thing left here. A run tints one
             // color by its own nature rather than by anything to do with
@@ -2565,13 +2583,26 @@ impl Canvas {
             return self.draw_vertices_filtered(mesh, paint);
         }
         if paint.mask_blur > 0.0 {
-            // Refused rather than dropped, and rather than approximated. A mask
-            // blur blurs coverage and then fills, which is the same picture as
-            // blurring the result only where the fill does not vary -- and a
-            // mesh carries a color per vertex, so it varies by construction.
-            // `draw_masked` refuses a gradient for exactly this reason.
+            // A mask blur blurs coverage and then fills through it, so the fill
+            // has to have a value everywhere the blurred coverage reaches --
+            // including outside the shape, where the halo is. A paint has one
+            // there, whether it is a color or a gradient, because a paint is a
+            // function of position. Per-vertex colors do not: they are defined
+            // on the mesh's own triangles and nowhere else, and the halo has
+            // nothing to take its color from.
+            //
+            // So the refusal is about where the color comes from rather than
+            // about meshes. A mesh built from positions alone is filled by the
+            // paint exactly as a path is, and takes the same route.
+            if mesh.colors().is_empty() {
+                return self.draw_masked(Masked::Mesh(mesh), paint);
+            }
+            // Refused rather than dropped, and rather than approximated:
+            // extrapolating vertex colors into the halo would be inventing a
+            // picture, which is the substitution this renderer refuses.
             return Err(Error::Unsupported(
-                "a mask blur takes a solid color; draw the mesh into a blurred layer instead",
+                "a mask blur over a mesh with per-vertex colors has no color for \
+                 its halo; draw the mesh into a blurred layer instead",
             ));
         }
 

@@ -9952,6 +9952,71 @@ fn an_image_filter_applies_to_a_mesh_as_it_does_to_a_shape() {
     );
 }
 
+/// The same square, as a mesh carrying no colors of its own.
+fn uncolored_square_mesh() -> Vertices {
+    Vertices::indexed(
+        VertexMode::Triangles,
+        vec![
+            Vec2::new(34.0, 34.0),
+            Vec2::new(94.0, 34.0),
+            Vec2::new(94.0, 94.0),
+            Vec2::new(34.0, 94.0),
+        ],
+        vec![],
+        vec![0, 1, 2, 0, 2, 3],
+    )
+    .expect("mesh")
+}
+
+#[test]
+fn a_mask_blur_over_a_mesh_the_paint_fills_matches_the_same_shape_as_a_path() {
+    // A mesh was refused a mask blur outright, on the reasoning that a mesh
+    // carries a color per vertex and so varies by construction. It need not:
+    // built from positions alone it is filled by the paint, exactly as a path
+    // covering the same area is -- and the paint has a value everywhere,
+    // including out in the halo, which is the whole of what the refusal was
+    // protecting against.
+    //
+    // So the two have to agree. Not approximately: the same square, the same
+    // sigma, one drawn as a path and one as two triangles, is the same picture,
+    // and anything else means the mesh took a different route rather than the
+    // same one.
+    let Some(mut ctx) = context() else { return };
+
+    let paint = || Paint::fill(Color::srgb(1.0, 1.0, 1.0, 1.0)).with_mask_blur(6.0);
+
+    let mut as_mesh = Canvas::new(SIZE);
+    as_mesh.clear(Color::BLACK);
+    as_mesh
+        .draw_vertices(&uncolored_square_mesh(), &paint())
+        .expect("a mesh the paint fills takes a mask blur");
+    let mesh_pixels = render(&mut ctx, as_mesh);
+
+    let mut as_path = Canvas::new(SIZE);
+    as_path.clear(Color::BLACK);
+    as_path
+        .draw_rect(Rect::new(34.0, 34.0, 94.0, 94.0), &paint())
+        .expect("path");
+    let path_pixels = render(&mut ctx, as_path);
+
+    // Inside, on the edge, and out in the halo.
+    for (x, y) in [(64u32, 64u32), (64, 34), (64, 28), (34, 34)] {
+        let (mesh, path) = (pixel(&mesh_pixels, x, y), pixel(&path_pixels, x, y));
+        assert_eq!(
+            mesh, path,
+            "({x}, {y}): the mesh and the path should be the same picture"
+        );
+    }
+
+    // And the blur happened at all, which the comparison alone cannot say:
+    // two unblurred squares would agree just as exactly.
+    let halo = pixel(&mesh_pixels, 64, 28);
+    assert!(
+        halo[0] > 4 && halo[0] < 240,
+        "nothing reached past the mesh, so nothing was blurred: {halo:?}"
+    );
+}
+
 #[test]
 fn a_mask_blur_on_a_mesh_is_refused_rather_than_dropped() {
     // A mask blur blurs coverage and then fills, which is the same picture as
