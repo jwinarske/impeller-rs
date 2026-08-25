@@ -54,6 +54,14 @@ const WARMUP: usize = 5;
 /// times this actually measures.
 const FRAMES: usize = 200;
 
+/// The percentile below is only a percentile if there are samples enough for it.
+///
+/// At the compiler rather than in a test, because it is a statement about a
+/// constant: `ceil(0.99 * n)` is `n` for every `n` under a hundred, so a p99
+/// taken from fewer would be the maximum under another name and no run would
+/// say so.
+const _: () = assert!(FRAMES >= 100);
+
 /// How a frame's shapes are drawn, which is the whole question.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum Path {
@@ -420,10 +428,6 @@ mod tests {
             percentile(&run, 0.99),
             Duration::from_millis(1),
             "one stalled frame in {FRAMES} reached the ninety-ninth percentile"
-        );
-        assert!(
-            FRAMES >= 100,
-            "a ninety-ninth percentile of {FRAMES} samples is the maximum"
         );
     }
 
