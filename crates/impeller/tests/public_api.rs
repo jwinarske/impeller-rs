@@ -11319,10 +11319,18 @@ fn every_draw_that_takes_a_paint_obeys_the_transform_and_the_clip() {
         let mut canvas = Canvas::new(SIZE);
         canvas.clear(Color::BLACK);
         let _ = canvas.clip_rect(Rect::new(56.0, 0.0, 128.0, 128.0));
+        // A stroke, and that is the whole of what makes this probe the same
+        // question as the draws below. An antialiased *fill* takes the analytic
+        // route -- a distance field at one sample -- so it never opens a
+        // multisampled pass and never meets the defect. The first version of
+        // this probe filled a rectangle, came back clean on the driver that
+        // fails, and reported that the driver was fine. A stroke is
+        // tessellated, which is what asks for the samples.
         canvas
-            .draw_rect(
-                Rect::new(16.0, 48.0, 112.0, 80.0),
-                &Paint::fill(Color::srgb(1.0, 1.0, 1.0, 1.0)).with_anti_alias(true),
+            .draw_line(
+                Vec2::new(40.0, 64.0),
+                Vec2::new(88.0, 64.0),
+                &Paint::stroke(Color::srgb(1.0, 1.0, 1.0, 1.0), 40.0),
             )
             .expect("probe");
         let pixels = render(&mut ctx, canvas);
