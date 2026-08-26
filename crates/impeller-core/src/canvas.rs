@@ -2704,8 +2704,16 @@ impl Canvas {
         // of the sides rather than a ratio.
         let falloff = |v: f32| (-(v * s_inv * 0.5).powi(2)).exp();
         let delta = 1.25 * sigma * (falloff(size.x) - falloff(size.y));
+        // Whichever axis is longer is the one shortened, which is a deliberate
+        // departure from upstream and the only one in this expression.
+        // Upstream writes `rSize += NegPos(delta)`, which is
+        // `{min(delta, 0), max(delta, 0)}` -- so it shortens x when x is the
+        // long axis and *lengthens* y when y is, leaving the same rectangle
+        // blurred to two different widths depending on which way it is turned.
+        // Its own comment says "pull in long end", which is what this does in
+        // both orientations. See `non-parity.md`.
         size.x += delta.min(0.0);
-        size.y += delta.max(0.0);
+        size.y += (-delta).min(0.0);
 
         let adjust = size * 0.5 - Vec2::splat(r1);
         // Normalizes the fade, so the middle of a shape large against its blur

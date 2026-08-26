@@ -14345,3 +14345,60 @@ fn an_evaluated_blur_and_an_assembled_one_agree_only_to_the_approximation() {
          nothing"
     );
 }
+
+/// A blurred rectangle is the same shape whichever way it is turned.
+///
+/// The approximation shortens the longer axis by an amount that falls away as
+/// either side grows past the deviation -- a rectangle much longer than it is
+/// wide otherwise blurs to something the axis-wise expression makes too
+/// eccentric. That correction is the one place the two axes are treated
+/// separately, so it is the one place they can be treated *differently*.
+///
+/// A wide rectangle and its transpose are one shape reflected in the diagonal,
+/// so their blurs must be too. Upstream's form fails this by twenty-four
+/// levels: it writes `rSize += {min(delta, 0), max(delta, 0)}`, which shortens
+/// the long axis when that is x and lengthens it when that is y, so the same
+/// rectangle comes out 98.8 texels long one way round and 101.2 the other.
+/// This renderer shortens whichever axis is the longer, which is what
+/// upstream's own comment says it intends, and that difference is what this
+/// test is for. The sampled route passes it either way, which is how the
+/// asymmetry was traced to the approximation rather than to the rasterizer.
+#[test]
+fn a_blurred_rectangle_is_the_same_turned_either_way() {
+    let Some(mut ctx) = context() else {
+        return;
+    };
+    let paint = Paint::fill(Color::WHITE).with_mask_blur(5.0);
+
+    let mut wide = Canvas::new(SIZE);
+    wide.clear(Color::BLACK);
+    wide.draw_rrect(Rect::new(14.0, 54.0, 114.0, 74.0), 4.0, &paint)
+        .expect("wide");
+    let wide = render(&mut ctx, wide);
+
+    let mut tall = Canvas::new(SIZE);
+    tall.clear(Color::BLACK);
+    tall.draw_rrect(Rect::new(54.0, 14.0, 74.0, 114.0), 4.0, &paint)
+        .expect("tall");
+    let tall = render(&mut ctx, tall);
+
+    // What is at (x, y) in one is at (y, x) in the other, the surface being
+    // square.
+    let mut worst = 0u8;
+    for y in 0..SIZE.height {
+        for x in 0..SIZE.width {
+            let a = pixel(&wide, x, y);
+            let b = pixel(&tall, y, x);
+            for channel in 0..4 {
+                worst = worst.max(a[channel].abs_diff(b[channel]));
+            }
+        }
+    }
+    // A level either side, for the rasterizer rather than the arithmetic: the
+    // two shapes land on different texels of the same grid.
+    assert!(
+        worst <= 1,
+        "the wide rectangle and its transpose differ by {worst} levels, so the \
+         long-axis correction is not symmetric in the axes"
+    );
+}

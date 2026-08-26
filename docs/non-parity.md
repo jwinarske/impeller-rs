@@ -257,7 +257,45 @@ rather than left to be discovered.
 The pictures agree either way, which is why [`parity.md`](parity.md) lists
 `maskFilter` and `drawShadow` as built. This is a difference in what they cost.
 
-## 8. Operations that are absent
+## 8. A blurred rectangle is symmetric here; upstream's is not
+
+**What differs.** One term, in the analytic blurred rounded rectangle. The
+approximation shortens the longer axis by an amount that falls away as either
+side grows past the deviation — a rectangle much longer than it is wide
+otherwise blurs to something the axis-wise expression makes too eccentric.
+Upstream writes that as
+
+```c++
+double delta = 1.25 * sigma * (eccentricV.x - eccentricV.y);
+rSize += NegPos(delta);            // NegPos(v) = {min(v, 0), max(v, 0)}
+```
+
+which shortens x when x is the long axis and *lengthens* y when y is. This
+renderer shortens whichever axis is longer: `{min(delta, 0), min(-delta, 0)}`.
+
+**Why.** Upstream's own comment on that line reads "Pull in long end (make less
+eccentric)", which is what it does in one orientation and the opposite of what
+it does in the other. The consequence is visible: at a deviation of five, a
+100×20 rectangle blurs as though it were 98.8 long and a 20×100 one as though
+it were 101.2 — the same shape, turned, coming out two and a half texels
+different. `a_blurred_rectangle_is_the_same_turned_either_way` fails by
+twenty-four levels against upstream's form and passes against this one. The
+sampled route passes either way, which is what placed the asymmetry in the
+approximation rather than in the rasterizer.
+
+Deviating rather than matching, because a blur whose width depends on which way
+the rectangle is turned is a defect rather than a convention, and because
+matching it would mean keeping a test that asserts the wrong thing. Worth
+reporting upstream.
+
+**Impact.** None on agreement with the sampled blur, which is the check that
+matters for the approximation as a whole: the seven shapes in
+`an_analytic_blurred_rectangle_agrees_with_the_blur_it_replaces` come to 13,
+22, 17, 16, 18, 18 and 9 levels either way. The error was symmetric about the
+sampled result — one orientation short, the other long — and is now the same
+shortening in both.
+
+## 9. Operations that are absent
 
 These are listed in [`parity.md`](parity.md) with their reasoning and are
 summarized here only so that this file is the one place to look.
@@ -276,7 +314,7 @@ summarized here only so that this file is the one place to look.
   *Impact:* the geometry is re-walked rather than the draws being replayed,
   which costs recording time on a repeated sub-picture.
 
-## 9. One thing that looks like a difference and is not
+## 10. One thing that looks like a difference and is not
 
 Worth stating because a reviewer raised it as a hole. **The advanced blend modes
 are defined on `[0, 1]` here and clip in `set_lum`,** which looks like an
