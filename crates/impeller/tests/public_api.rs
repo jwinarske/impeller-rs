@@ -13777,3 +13777,86 @@ fn a_shear_is_no_obstacle_to_a_thin_stroke_and_zero_still_means_none() {
          rather than an inability to draw something thin"
     );
 }
+
+/// The two spellings of one layer must draw the same picture.
+///
+/// `save_layer` sizes its target to the surface and `save_layer_bounds` sizes
+/// it to a rectangle the caller names, so the same content goes through two
+/// differently shaped targets and must come out identical. Today that is a
+/// statement about the bounded path being an optimization rather than a second
+/// rendering; it is written now because it is the guard for deriving the bound
+/// instead of being handed it, and the failure it exists to catch is silent.
+///
+/// A gradient inside the layer is the point rather than decoration. A radial
+/// gradient's center is carried **in clip space**, so it is stated relative to
+/// the target the draw was recorded against. Anything that changes a layer's
+/// target without carrying that field through leaves the shape where it was
+/// and slides the color across it -- which no assertion about a target's size
+/// would notice.
+#[test]
+fn a_layer_draws_the_same_picture_whether_or_not_its_bounds_were_named() {
+    let Some(mut ctx) = context() else {
+        return;
+    };
+
+    // Tight to the content, which is what a derived bound would compute. The
+    // blur's own reach is added by the renderer, not by the caller.
+    let held = Rect::new(24.0, 24.0, 104.0, 104.0);
+    let content = |canvas: &mut Canvas| {
+        canvas
+            .draw_circle(
+                Vec2::new(64.0, 64.0),
+                40.0,
+                &Paint::default().with_shader(Shader::RadialGradient {
+                    center: Vec2::new(52.0, 58.0),
+                    radius: 44.0,
+                    stops: vec![
+                        GradientStop {
+                            offset: 0.0,
+                            color: Color::srgb(1.0, 0.9, 0.2, 1.0),
+                        },
+                        GradientStop {
+                            offset: 1.0,
+                            color: Color::srgb(0.1, 0.2, 0.9, 1.0),
+                        },
+                    ],
+                    tile: TileMode::Clamp,
+                }),
+            )
+            .expect("a gradient inside the layer");
+    };
+
+    let mut unbounded = Canvas::new(SIZE);
+    unbounded.clear(Color::srgb(0.1, 0.1, 0.1, 1.0));
+    unbounded.save_layer(Layer::opacity(0.7).with_blur(6.0));
+    content(&mut unbounded);
+    unbounded.restore();
+    let loose = render(&mut ctx, unbounded);
+
+    let mut bounded = Canvas::new(SIZE);
+    bounded.clear(Color::srgb(0.1, 0.1, 0.1, 1.0));
+    bounded.save_layer_bounds(Layer::opacity(0.7).with_blur(6.0), held);
+    content(&mut bounded);
+    bounded.restore();
+    let tight = render(&mut ctx, bounded);
+
+    // Every pixel, not a sample of them: a gradient displaced by a few texels
+    // agrees over most of the frame and disagrees in a band.
+    // One level, not zero, and the distinction is the whole assertion. The two
+    // targets have different origins, so the blur's taps land on different
+    // texel centers and round to different sides of a level -- which is a
+    // rounding difference and shows up as a spray of plus-or-minus one across
+    // the softened region. A gradient carried into a differently-shaped target
+    // without its clip-space center coming along does not look like that: the
+    // shape stays where it is and the color slides across it, which is tens of
+    // levels over a band. `max_delta` separates the two, and nothing about a
+    // target's size does.
+    let max = (0..loose.len())
+        .map(|i| loose[i].abs_diff(tight[i]))
+        .max()
+        .unwrap_or(0);
+    assert!(
+        max <= 1,
+        "the two spellings differ by {max} levels, which is more than rounding"
+    );
+}
