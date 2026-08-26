@@ -14022,3 +14022,107 @@ fn a_layer_multiplied_into_the_frame_zeroes_what_it_did_not_draw() {
         );
     }
 }
+
+/// The analytic blurred rounded rectangle must agree with the blur it replaces.
+///
+/// `draw_rrect` on a solid fill with a mask blur now evaluates the blur in the
+/// fragment stage instead of drawing the shape into a layer and running a
+/// separable Gaussian over it. The same shape stated as a path still takes the
+/// general route, so the two are the same picture by two entirely different
+/// mechanisms -- which is the only check available here, and a better one than
+/// my eyesight.
+///
+/// The tolerance is loose on purpose and is the honest part of this test. The
+/// analytic route is an *approximation* of a Gaussian convolved with a rounded
+/// rectangle -- there is no closed form -- so it does not converge on the
+/// sampled one. What it must not do is disagree in a way that reads as a
+/// different shape, which is what a per-channel bound over the whole frame
+/// catches.
+#[test]
+fn an_analytic_blurred_rectangle_agrees_with_the_blur_it_replaces() {
+    let Some(mut ctx) = context() else {
+        return;
+    };
+    for (radius, sigma) in [(16.0, 4.0), (16.0, 8.0), (0.0, 6.0), (40.0, 5.0)] {
+        let rect = Rect::new(34.0, 30.0, 94.0, 98.0);
+        let paint = Paint::fill(Color::WHITE).with_mask_blur(sigma);
+
+        let mut analytic = Canvas::new(SIZE);
+        analytic.clear(Color::BLACK);
+        analytic.draw_rrect(rect, radius, &paint).expect("analytic");
+        let one = render(&mut ctx, analytic);
+
+        let mut general = Canvas::new(SIZE);
+        general.clear(Color::BLACK);
+        general
+            .draw_path(&rect.to_rounded_path(radius), &paint)
+            .expect("general");
+        let two = render(&mut ctx, general);
+
+        let worst = one
+            .iter()
+            .zip(&two)
+            .map(|(a, b)| a.abs_diff(*b))
+            .max()
+            .unwrap_or(0);
+        let mean = one
+            .iter()
+            .zip(&two)
+            .map(|(a, b)| a.abs_diff(*b) as u64)
+            .sum::<u64>() as f64
+            / one.len() as f64;
+
+        // A shape in the wrong place, at the wrong size, or with the wrong
+        // falloff does not land here: it disagrees over a whole region, so the
+        // mean goes with the worst. Measured at 13 to 22 worst and 1.1 to 2.9
+        // mean over these four; the bounds are set above that and well under
+        // what a misplaced shape gives.
+        assert!(
+            worst <= 32,
+            "radius {radius} sigma {sigma}: the two routes differ by {worst} levels"
+        );
+        assert!(
+            mean <= 6.0,
+            "radius {radius} sigma {sigma}: the two routes differ by {mean:.2} on average"
+        );
+
+        // And the two really are different routes. If the analytic one had
+        // refused, both would be the general one and would agree exactly --
+        // which is the way this test could pass while checking nothing.
+        assert!(
+            worst > 0,
+            "radius {radius} sigma {sigma}: the routes agree exactly, so the \
+             analytic one was not taken"
+        );
+    }
+}
+
+/// The analytic route costs one pass where the blur it replaces costs three.
+///
+/// The whole reason for it. A mask blur through the general route draws the
+/// shape into a layer and runs a separable Gaussian over it: a pass for the
+/// content and one per axis. Evaluating the blur in the fragment stage leaves
+/// the draw in the pass already open.
+#[test]
+fn an_analytic_blurred_rectangle_costs_no_passes() {
+    let paint = Paint::fill(Color::WHITE).with_mask_blur(6.0);
+    let rect = Rect::new(34.0, 30.0, 94.0, 98.0);
+
+    let mut analytic = Canvas::new(SIZE);
+    analytic.draw_rrect(rect, 16.0, &paint).expect("analytic");
+    assert_eq!(
+        analytic.finish().passes.len(),
+        1,
+        "a blurred rounded rectangle should not have opened a layer"
+    );
+
+    // The same shape as a path, which the analytic route cannot claim.
+    let mut general = Canvas::new(SIZE);
+    general
+        .draw_path(&rect.to_rounded_path(16.0), &paint)
+        .expect("general");
+    assert!(
+        general.finish().passes.len() > 1,
+        "the general route should still be drawing into a layer"
+    );
+}

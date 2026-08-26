@@ -286,8 +286,42 @@ float rounded_rect_distance(vec2 point, vec2 half_size, float radius) {
     return ((min(max(q.x, q.y), 0.0) + length(max(q, vec2(0.0)))) - radius);
 }
 
-vec4 rounded_rect_coverage(vec3 clip_2) {
+float erf7_(float value) {
+    float x_1 = (value * 1.1283792);
+    float xx = (x_1 * x_1);
+    float series = (x_1 + ((0.24295 + ((0.03395 + (0.0104 * xx)) * xx)) * (x_1 * xx)));
+    return (series / sqrt((1.0 + (series * series))));
+}
+
+float power_distance(vec2 point_1, float exponent, float exponent_inv) {
+    float xp = pow(point_1.x, exponent);
+    float yp = pow(point_1.y, exponent);
+    return pow((xp + yp), exponent_inv);
+}
+
+vec4 rrect_blur_coverage(vec3 clip_2) {
     vec2 _e1 = to_gradient_space(clip_2);
+    vec4 _e4 = _group_1_binding_0_fs.geometry;
+    vec2 adjust = _e4.xy;
+    float s_inv = _group_1_binding_0_fs.geometry.z;
+    float min_edge = _group_1_binding_0_fs.geometry.w;
+    float scale = _group_1_binding_0_fs.offsets.x;
+    float r1_ = _group_1_binding_0_fs.params.z;
+    float exponent_1 = _group_1_binding_0_fs.params.w;
+    vec2 centered = abs(_e1);
+    vec2 adjusted = (centered - adjust);
+    float _e33 = power_distance(max(adjusted, vec2(0.0)), exponent_1, (1.0 / exponent_1));
+    float inside_2 = min(max(adjusted.x, adjusted.y), 0.0);
+    float distance_2 = ((_e33 + inside_2) - r1_);
+    float _e43 = erf7_((s_inv * (min_edge + distance_2)));
+    float _e45 = erf7_((s_inv * distance_2));
+    float coverage = (scale * (_e43 - _e45));
+    vec4 _e51 = _group_1_binding_0_fs.stops[0];
+    return (_e51 * clamp(coverage, 0.0, 1.0));
+}
+
+vec4 rounded_rect_coverage(vec3 clip_3) {
+    vec2 _e1 = to_gradient_space(clip_3);
     vec4 _e4 = _group_1_binding_0_fs.geometry;
     vec2 half_size_1 = _e4.zw;
     float _e9 = _group_1_binding_0_fs.params.z;
@@ -304,9 +338,9 @@ vec4 rounded_rect_coverage(vec3 clip_2) {
     return vec4((tint_3.xyz * alpha_1), alpha_1);
 }
 
-vec4 ellipse_coverage(vec3 clip_3) {
+vec4 ellipse_coverage(vec3 clip_4) {
     float stroke = 0.0;
-    vec2 _e1 = to_gradient_space(clip_3);
+    vec2 _e1 = to_gradient_space(clip_4);
     vec4 _e4 = _group_1_binding_0_fs.geometry;
     vec2 axes = max(_e4.zw, vec2(1e-6));
     float implicit = (length((_e1 / axes)) - 1.0);
@@ -330,11 +364,11 @@ vec4 ellipse_coverage(vec3 clip_3) {
     return vec4((tint_4.xyz * alpha_2), alpha_2);
 }
 
-vec4 blur_along_axis(vec3 clip_4) {
+vec4 blur_along_axis(vec3 clip_5) {
     vec4 total_1 = vec4(0.0);
     float weight_sum = 0.0;
     float i_2 = 0.0;
-    vec2 _e1 = to_gradient_space(clip_4);
+    vec2 _e1 = to_gradient_space(clip_5);
     vec4 _e4 = _group_1_binding_0_fs.geometry;
     vec2 step_ = _e4.zw;
     float _e9 = _group_1_binding_0_fs.params.z;
@@ -374,10 +408,10 @@ vec4 sample_or_nothing(vec2 uv_3) {
     return _e15;
 }
 
-vec4 morphology_along_axis(vec3 clip_5) {
+vec4 morphology_along_axis(vec3 clip_6) {
     vec4 best = vec4(0.0);
     float i_3 = 1.0;
-    vec2 _e1 = to_gradient_space(clip_5);
+    vec2 _e1 = to_gradient_space(clip_6);
     vec4 _e4 = _group_1_binding_0_fs.geometry;
     vec2 step_1 = _e4.zw;
     float taps_1 = _group_1_binding_0_fs.params.z;
@@ -679,9 +713,9 @@ vec4 blend_tint(int mode_2, vec4 src, vec4 dst) {
 }
 
 float ordered_dither(vec2 frag) {
-    uint x_1 = (uint(frag.x) % 8u);
-    uint y = (uint(frag.y) ^ x_1);
-    uint m_2 = (((((((y & 1u) << 5u) | ((x_1 & 1u) << 4u)) | ((y & 2u) << 2u)) | ((x_1 & 2u) << 1u)) | ((y & 4u) >> 1u)) | ((x_1 & 4u) >> 2u));
+    uint x_2 = (uint(frag.x) % 8u);
+    uint y = (uint(frag.y) ^ x_2);
+    uint m_2 = (((((((y & 1u) << 5u) | ((x_2 & 1u) << 4u)) | ((y & 2u) << 2u)) | ((x_2 & 2u) << 1u)) | ((y & 4u) >> 1u)) | ((x_2 & 4u) >> 2u));
     return ((float(m_2) * 0.015625) - 0.4921875);
 }
 
@@ -785,37 +819,41 @@ vec4 shade(VertexOutput in_1) {
         vec4 _e192 = sample_image(in_1.clip);
         return _e192;
     }
-    if (((kind_2 > 7.5) && (kind_2 < 8.5))) {
-        vec4 _e199 = ellipse_coverage(in_1.clip);
+    if (((kind_2 > 11.5) && (kind_2 < 12.5))) {
+        vec4 _e199 = rrect_blur_coverage(in_1.clip);
         return _e199;
     }
-    if (((kind_2 > 6.5) && (kind_2 < 7.5))) {
-        vec4 _e206 = rounded_rect_coverage(in_1.clip);
+    if (((kind_2 > 7.5) && (kind_2 < 8.5))) {
+        vec4 _e206 = ellipse_coverage(in_1.clip);
         return _e206;
     }
-    if (((kind_2 > 5.5) && (kind_2 < 6.5))) {
-        vec4 _e213 = blur_along_axis(in_1.clip);
+    if (((kind_2 > 6.5) && (kind_2 < 7.5))) {
+        vec4 _e213 = rounded_rect_coverage(in_1.clip);
         return _e213;
     }
-    if (((kind_2 > 10.5) && (kind_2 < 11.5))) {
-        vec4 _e220 = morphology_along_axis(in_1.clip);
+    if (((kind_2 > 5.5) && (kind_2 < 6.5))) {
+        vec4 _e220 = blur_along_axis(in_1.clip);
         return _e220;
     }
-    if (((kind_2 > 9.5) && (kind_2 < 10.5))) {
-        vec4 _e227 = sample_mesh(in_1.uv);
+    if (((kind_2 > 10.5) && (kind_2 < 11.5))) {
+        vec4 _e227 = morphology_along_axis(in_1.clip);
         return _e227;
     }
+    if (((kind_2 > 9.5) && (kind_2 < 10.5))) {
+        vec4 _e234 = sample_mesh(in_1.uv);
+        return _e234;
+    }
     if (((kind_2 > 4.5) && (kind_2 < 5.5))) {
-        vec4 _e237 = textureLod(_group_0_binding_0_fs, vec2(in_1.uv), 0.0);
-        float coverage = _e237.x;
+        vec4 _e244 = textureLod(_group_0_binding_0_fs, vec2(in_1.uv), 0.0);
+        float coverage_1 = _e244.x;
         vec4 tint_5 = _group_1_binding_0_fs.stops[0];
-        float alpha_5 = (tint_5.w * coverage);
+        float alpha_5 = (tint_5.w * coverage_1);
         return vec4((tint_5.xyz * alpha_5), alpha_5);
     }
-    vec4 _e248 = color_2;
-    float _e251 = color_2.w;
-    float _e254 = color_2.w;
-    return vec4((_e248.xyz * _e251), _e254);
+    vec4 _e255 = color_2;
+    float _e258 = color_2.w;
+    float _e261 = color_2.w;
+    return vec4((_e255.xyz * _e258), _e261);
 }
 
 void main() {

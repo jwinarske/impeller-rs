@@ -81,6 +81,19 @@ float rounded_rect_distance(vec2 point, vec2 half_size, float radius) {
     return ((min(max(q.x, q.y), 0.0) + length(max(q, vec2(0.0)))) - radius);
 }
 
+float erf7_(float value) {
+    float x_1 = (value * 1.1283792);
+    float xx = (x_1 * x_1);
+    float series = (x_1 + ((0.24295 + ((0.03395 + (0.0104 * xx)) * xx)) * (x_1 * xx)));
+    return (series / sqrt((1.0 + (series * series))));
+}
+
+float power_distance(vec2 point_1, float exponent, float exponent_inv) {
+    float xp = pow(point_1.x, exponent);
+    float yp = pow(point_1.y, exponent);
+    return pow((xp + yp), exponent_inv);
+}
+
 vec3 linear_to_srgb(vec3 c) {
     vec3 m = abs(c);
     vec3 low_2 = (m * 12.92);
@@ -300,9 +313,9 @@ vec4 blend_tint(int mode_2, vec4 src, vec4 dst) {
 }
 
 float ordered_dither(vec2 frag) {
-    uint x_1 = (uint(frag.x) % 8u);
-    uint y = (uint(frag.y) ^ x_1);
-    uint m_2 = (((((((y & 1u) << 5u) | ((x_1 & 1u) << 4u)) | ((y & 2u) << 2u)) | ((x_1 & 2u) << 1u)) | ((y & 4u) >> 1u)) | ((x_1 & 4u) >> 2u));
+    uint x_2 = (uint(frag.x) % 8u);
+    uint y = (uint(frag.y) ^ x_2);
+    uint m_2 = (((((((y & 1u) << 5u) | ((x_2 & 1u) << 4u)) | ((y & 2u) << 2u)) | ((x_2 & 2u) << 1u)) | ((y & 4u) >> 1u)) | ((x_2 & 4u) >> 2u));
     return ((float(m_2) * 0.015625) - 0.4921875);
 }
 

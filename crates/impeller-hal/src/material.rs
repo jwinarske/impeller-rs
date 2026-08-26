@@ -143,6 +143,7 @@ pub mod kind {
     pub const CONICAL: f32 = 9.0;
     pub const MESH: f32 = 10.0;
     pub const MORPHOLOGY: f32 = 11.0;
+    pub const ROUNDED_RECT_BLUR: f32 = 12.0;
 }
 
 /// How many textures one runtime program may sample.
@@ -774,6 +775,47 @@ pub enum Material {
         /// where a stroked outline gets its vertex count and its joins.
         stroke: f32,
     },
+    /// A *blurred* rounded rectangle evaluated per fragment, with no blur pass.
+    ///
+    /// The sibling of [`Self::RoundedRect`], and the reason it is worth having
+    /// is that the general route costs three passes per shape -- one for the
+    /// content and two for a separable Gaussian -- where this costs one draw in
+    /// the pass already being recorded. On a Raspberry Pi 5 three shadows that
+    /// way are 7.8 ms of a 26.8 ms frame and nine of its fourteen passes.
+    ///
+    /// The method is Raph Levien's "Blurred rounded rectangles", which is what
+    /// upstream's `SolidRRectBlurContents` evaluates too: the exact convolution
+    /// of a Gaussian with a rounded rectangle has no closed form, and this
+    /// approximates it as a product of two error functions along an axis,
+    /// corrected for the corners by measuring distance with an exponent other
+    /// than two. Every field here is a number the CPU precomputed for that
+    /// expression rather than anything a caller stated -- see
+    /// `Canvas::rrect_blur_material`, which is the only place they are derived.
+    ///
+    /// Only where every corner shares one circular radius, which is upstream's
+    /// condition too. Anything else takes the general route.
+    RoundedRectBlur {
+        color: [f32; 4],
+        to_local: ToLocal,
+        /// Half the rectangle, less `r1`, in the shape's own space.
+        adjust: [f32; 2],
+        /// The corner radius the approximation uses, which is not the caller's:
+        /// it grows with the deviation, because a blurred corner is rounder
+        /// than a sharp one.
+        r1: f32,
+        /// The exponent the corner distance is measured with. Two is a circle;
+        /// this is larger, which is what makes the blurred corner's profile
+        /// match a Gaussian's rather than a circle's.
+        exponent: f32,
+        /// One over the deviation, which is what the error function takes.
+        s_inv: f32,
+        /// The shorter side, which bounds how far the fade can reach before the
+        /// two edges of the shape meet.
+        min_edge: f32,
+        /// Normalizes the fade so that the middle of a large shape reaches full
+        /// coverage.
+        scale: f32,
+    },
     /// An ellipse evaluated per fragment.
     ///
     /// Its own variant rather than a rounded rectangle with a large radius,
@@ -909,6 +951,9 @@ impl Material {
             // A blur of nothing is nothing, but the pass still has to run: what
             // it samples is not knowable from here.
             Self::Blur { .. } | Self::Morphology { .. } => false,
+            // No `half_size` to test: a blurred rectangle with no area still
+            // draws, because the blur carries color past where the shape is.
+            Self::RoundedRectBlur { color, .. } => color[3] <= 0.0,
             Self::RoundedRect {
                 color, half_size, ..
             }
@@ -955,7 +1000,10 @@ impl Material {
             | Self::RadialGradient { ramp, .. }
             | Self::SweepGradient { ramp, .. }
             | Self::ConicalGradient { ramp, .. } => *ramp,
-            Self::Solid(_) | Self::RoundedRect { .. } | Self::Ellipse { .. } => None,
+            Self::Solid(_)
+            | Self::RoundedRect { .. }
+            | Self::RoundedRectBlur { .. }
+            | Self::Ellipse { .. } => None,
             // Whatever a caller named, and `None` where they named nothing --
             // in which case the placeholder is bound and a program that
             // samples anyway reads opaque white.
@@ -976,6 +1024,7 @@ impl Material {
             | Self::Blur { .. }
             | Self::Morphology { .. }
             | Self::RoundedRect { .. }
+            | Self::RoundedRectBlur { .. }
             | Self::Ellipse { .. }
             | Self::Runtime { .. } => &[],
             Self::LinearGradient { stops, .. }
@@ -1050,6 +1099,38 @@ impl Material {
             out[layout::PARAMS + 1] = kind::ROUNDED_RECT;
             out[layout::PARAMS + 2] = *radius;
             out[layout::PARAMS + 3] = *stroke;
+            return out;
+        }
+
+        if let Self::RoundedRectBlur {
+            color,
+            to_local,
+            adjust,
+            r1,
+            exponent,
+            s_inv,
+            min_edge,
+            scale,
+        } = self
+        {
+            out[layout::STOPS..layout::STOPS + 4].copy_from_slice(color);
+            out[layout::TO_LOCAL..layout::TO_LOCAL + 12].copy_from_slice(to_local);
+            // The first two floats of `GEOMETRY` are unclaimed for every kind
+            // that carries a mapping, which this does, so the two that follow
+            // are what a rounded rectangle would have used for its half size --
+            // and it needs none, because `adjust` already has the shape in it.
+            out[layout::GEOMETRY] = adjust[0];
+            out[layout::GEOMETRY + 1] = adjust[1];
+            out[layout::GEOMETRY + 2] = *s_inv;
+            out[layout::GEOMETRY + 3] = *min_edge;
+            // `OFFSETS` holds stop positions for a gradient and nothing for
+            // anything else, which is what makes it the seventh float this
+            // needs and the only kind here that borrows it.
+            out[layout::OFFSETS] = *scale;
+            out[layout::PARAMS] = 1.0;
+            out[layout::PARAMS + 1] = kind::ROUNDED_RECT_BLUR;
+            out[layout::PARAMS + 2] = *r1;
+            out[layout::PARAMS + 3] = *exponent;
             return out;
         }
 
@@ -1160,6 +1241,7 @@ impl Material {
             | Self::Blur { .. }
             | Self::Morphology { .. }
             | Self::RoundedRect { .. }
+            | Self::RoundedRectBlur { .. }
             | Self::Ellipse { .. }
             | Self::Runtime { .. } => {
                 unreachable!("handled above")

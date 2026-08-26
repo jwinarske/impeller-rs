@@ -2480,6 +2480,13 @@ impl Canvas {
         if rect.is_empty() {
             return Ok(self);
         }
+        // Before the sharp field, because that one refuses a mask blur and this
+        // is what answers it: the blur is folded into the expression rather
+        // than run as passes around the draw.
+        if let Some(material) = self.analytic_rrect_blur(rect, radius, paint) {
+            let pad = Self::pad_for_sigma(paint.mask_blur);
+            return self.draw_analytic(rect.outset(pad), material, paint);
+        }
         if let Some(material) = self.analytic_rrect(rect, radius, paint) {
             return self.draw_analytic(rect, material, paint);
         }
@@ -2519,6 +2526,154 @@ impl Canvas {
         }
         let path = rect.to_rounded_path_with_radii(radii);
         self.draw_path(&path, paint)
+    }
+
+    /// How far past the shape a blurred rounded rectangle has to draw.
+    ///
+    /// Wider than `blur_reach`, and deliberately: that is where a *sampled*
+    /// Gaussian's kernel is truncated, and this expression has no kernel to
+    /// truncate. It is evaluated everywhere and falls off smoothly, so what
+    /// bounds it is where the falloff stops being visible rather than where the
+    /// taps stop. Upstream's `PadForSigma`, whose comment records that three
+    /// deviations was tried and left a cutoff on large blurs.
+    fn pad_for_sigma(sigma: f32) -> f32 {
+        sigma * (sigma / 47.6 + 2.5).min(3.5)
+    }
+
+    /// Draw a blurred rounded rectangle without a blur pass, if this one can be.
+    ///
+    /// The route upstream takes for the same shape, and the reason it is worth
+    /// taking is that the general one costs three passes per shape where this
+    /// costs one draw in the pass already open.
+    ///
+    /// `analytic_stroke` cannot answer this one, and the difference is the
+    /// point: it refuses a mask blur outright, because a sharp distance field
+    /// on an oversized quad cannot be put inside a layer and blurred. That is
+    /// exactly the refusal this route lifts, by folding the blur into the field
+    /// rather than wrapping the draw in one. Its other refusals do carry over
+    /// and are restated here.
+    fn analytic_rrect_blur(&mut self, rect: Rect, radius: f32, paint: &Paint) -> Option<Material> {
+        if !paint.is_visible() || self.clip.is_some_and(Scissor::is_empty) {
+            return None;
+        }
+        // This emits a fragment across the whole padded quad, which is much
+        // larger than the shape, so a mode that touches the destination where
+        // the source is transparent would erase what is behind it in the gap.
+        if !paint.blend.respects_coverage() {
+            return None;
+        }
+        // An image filter wants a layer around the draw, and a quad larger than
+        // its shape is the wrong thing to put in one.
+        if !paint.image_filter.is_identity() {
+            return None;
+        }
+        // A fill only. A blurred *stroke* is the blur of a band rather than of
+        // the shape: a different picture, and not one this expression states.
+        // A dash is refused with it, since there is no stroke to dash.
+        if !matches!(paint.style, Style::Fill) {
+            return None;
+        }
+        // The blurred coverage itself. The other three styles are that
+        // combined with the sharp shape, which the general route assembles out
+        // of two draws and this cannot say in one.
+        if paint.mask_blur_style != MaskBlurStyle::Normal {
+            return None;
+        }
+        let Shader::Solid(color) = &paint.shader else {
+            return None;
+        };
+        if radius.is_nan() || radius < 0.0 {
+            return None;
+        }
+        // `is_finite` first, so a sigma that is not a number is refused rather
+        // than compared: every comparison against NaN is false, so a bare
+        // `<= 0.0` would let it through.
+        if !paint.mask_blur.is_finite() || paint.mask_blur <= 0.0 {
+            return None;
+        }
+        let radius = radius.min(rect.width() / 2.0).min(rect.height() / 2.0);
+        self.rrect_blur_material(rect, radius, paint.mask_blur, *color)
+    }
+
+    /// The material for a blurred rounded rectangle drawn without a blur pass.
+    ///
+    /// Raph Levien's approximation, transcribed from upstream's
+    /// `SolidRRectLikeBlurContents::PopulateFragContext`, which evaluates the
+    /// same method. Every line is arithmetic the shader would otherwise repeat
+    /// per fragment, and none of it is this renderer's invention -- the
+    /// constants are upstream's, and where one looks arbitrary it is because
+    /// it was fitted rather than derived.
+    ///
+    /// `rect` and `radius` are in the shape's own space, `sigma` in device
+    /// pixels, as everywhere else here.
+    fn rrect_blur_material(
+        &self,
+        rect: Rect,
+        radius: f32,
+        sigma: f32,
+        color: Color,
+    ) -> Option<Material> {
+        // Below one, the approximation is sharper than the pixel grid can show
+        // and the error function saturates; upstream floors it in the same
+        // place. The root of two is the conversion between the deviation this
+        // renderer states and the one the expression below is written in.
+        let sigma = (sigma * std::f32::consts::SQRT_2).max(1.0);
+        let mut size = Vec2::new(rect.width(), rect.height());
+        if !size.x.is_finite() || !size.y.is_finite() || !sigma.is_finite() {
+            return None;
+        }
+        if size.x <= 0.0 || size.y <= 0.0 {
+            return None;
+        }
+        let min_edge = size.x.min(size.y);
+        let r_max = 0.5 * min_edge;
+
+        // Two corner radii rather than the caller's one: a blurred corner is
+        // rounder than the shape's, and how much rounder depends on the
+        // deviation. Their ratio becomes the exponent, so a sharp corner under
+        // a wide blur is measured with a larger exponent than a round one.
+        let r0 = radius.hypot(sigma * 1.15).min(r_max);
+        let r1 = radius.hypot(sigma * 2.0).min(r_max);
+        let exponent = 2.0 * r1 / r0;
+        let s_inv = 1.0 / sigma;
+
+        // Pull the long end in. A rectangle much longer than it is wide blurs
+        // to something the axis-wise expression makes too eccentric, and this
+        // shortens the long axis by an amount that vanishes as either side
+        // grows past the deviation -- which is why it is a pair of Gaussians
+        // of the sides rather than a ratio.
+        let falloff = |v: f32| (-(v * s_inv * 0.5).powi(2)).exp();
+        let delta = 1.25 * sigma * (falloff(size.x) - falloff(size.y));
+        size.x += delta.min(0.0);
+        size.y += delta.max(0.0);
+
+        let adjust = size * 0.5 - Vec2::splat(r1);
+        // Normalizes the fade, so the middle of a shape large against its blur
+        // reaches full coverage rather than something near it.
+        let scale = 0.5 * erf7(s_inv * 0.5 * (size.x.max(size.y) - 0.5 * radius));
+
+        let center = Vec2::new(
+            (rect.left + rect.right) / 2.0,
+            (rect.top + rect.bottom) / 2.0,
+        );
+        let to_clip = self.target.projection() * self.transform;
+        let material = Material::RoundedRectBlur {
+            color: color.to_array(),
+            to_local: invert_to_local(to_clip * Affine2::from_translation(center)),
+            adjust: [adjust.x, adjust.y],
+            r1,
+            exponent,
+            s_inv,
+            min_edge,
+            scale,
+        };
+        // A field that is not a number puts NaN through every fragment, and a
+        // NaN coverage is a shape that vanishes or a frame that does. Upstream
+        // checks the same eight and declines the same way.
+        [adjust.x, adjust.y, r1, exponent, s_inv, min_edge, scale]
+            .iter()
+            .all(|v| v.is_finite())
+            .then_some(material)
     }
 
     /// A paint for the fragment-evaluated rounded rectangle, where one applies.
@@ -4466,6 +4621,19 @@ pub(crate) const BLUR_MAX_TAPS: f32 = 32.0;
 /// so that the rule deciding how far a blur reaches, the rule sizing a target
 /// to hold it, and the rule deciding whether it needs shrinking first cannot
 /// drift apart -- they are the same question asked by three callers.
+/// The error function, to about seven digits.
+///
+/// The same rational approximation the shader evaluates, and it has to be the
+/// same one: `scale` is computed here and the fade there, so two different
+/// approximations would normalize the shape against a curve it is not drawn
+/// with. Upstream keeps a copy on each side for the same reason.
+pub(crate) fn erf7(value: f32) -> f32 {
+    let x = value * std::f32::consts::FRAC_2_SQRT_PI;
+    let xx = x * x;
+    let series = x + (0.24295 + (0.03395 + 0.0104 * xx) * xx) * (x * xx);
+    series / (1.0 + series * series).sqrt()
+}
+
 pub(crate) fn blur_radius(sigma: f32) -> f32 {
     ((sigma - 0.5) * KERNEL_RADIUS_PER_SIGMA).max(0.0)
 }

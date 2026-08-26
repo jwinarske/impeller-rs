@@ -558,6 +558,74 @@ fn rounded_rect_distance(point: vec2<f32>, half_size: vec2<f32>, radius: f32) ->
     return min(max(q.x, q.y), 0.0) + length(max(q, vec2<f32>(0.0))) - radius;
 }
 
+/// The error function, to about seven digits, as Raph Levien's method uses it.
+///
+/// `erf` is not in WGSL and the exact function has no elementary form, so this
+/// is the rational approximation upstream's `computeErf7` uses -- an odd
+/// polynomial in `x` normalized by `sqrt(1 + x^2)`, which is odd, saturating at
+/// plus and minus one, and exact at zero, all of which the real `erf` is too.
+///
+/// The name is upstream's: seven terms, not seven digits.
+fn erf7(value: f32) -> f32 {
+    let two_over_sqrt_pi = 1.1283791670955126;
+    let x = value * two_over_sqrt_pi;
+    let xx = x * x;
+    let series = x + (0.24295 + (0.03395 + 0.0104 * xx) * xx) * (x * xx);
+    return series / sqrt(1.0 + series * series);
+}
+
+/// The length formula with an exponent other than two.
+///
+/// At two this is the distance to a circular corner. Larger, the level sets
+/// square off, which is what makes a blurred corner's profile match a
+/// Gaussian's -- a blurred corner is not a blurred circle.
+fn power_distance(point: vec2<f32>, exponent: f32, exponent_inv: f32) -> f32 {
+    let xp = pow(point.x, exponent);
+    let yp = pow(point.y, exponent);
+    return pow(xp + yp, exponent_inv);
+}
+
+/// A blurred rounded rectangle, evaluated rather than blurred.
+///
+/// The exact convolution of a Gaussian with a rounded rectangle has no closed
+/// form. This is Raph Levien's approximation, which upstream evaluates too: the
+/// blur along one axis is the difference of two error functions -- the shape's
+/// two edges seen through the Gaussian -- and the corners are folded in by
+/// measuring the distance to them with an exponent other than two.
+///
+/// Every constant it needs was computed on the CPU, in the shape's own space,
+/// which is why there is so little arithmetic here for what it draws. The one
+/// thing left is `exponent_inv`: a reciprocal costs less than the float it
+/// would take to carry, and the block is already borrowing a slot from the
+/// stop positions.
+fn rrect_blur_coverage(clip: vec3<f32>) -> vec4<f32> {
+    let point = to_gradient_space(clip);
+    let adjust = paint.geometry.xy;
+    let s_inv = paint.geometry.z;
+    let min_edge = paint.geometry.w;
+    let scale = paint.offsets[0];
+    let r1 = paint.params.z;
+    let exponent = paint.params.w;
+
+    // Folded into one quadrant: the shape is symmetric about both axes of its
+    // own space, and `to_local` already put its center at the origin.
+    let centered = abs(point);
+
+    // Distance to the rounded rectangle, with the corner measured by the
+    // power distance and the straight edges by the nearer one. Outside the
+    // corner's quadrant `adjusted` goes negative on an axis and that axis
+    // drops out, which is what makes one expression serve edges and corners.
+    let adjusted = centered - adjust;
+    let outside = power_distance(max(adjusted, vec2<f32>(0.0)), exponent, 1.0 / exponent);
+    let inside = min(max(adjusted.x, adjusted.y), 0.0);
+    let distance = outside + inside - r1;
+
+    // The Gaussian's integral between the two edges, which is the blur.
+    let coverage = scale * (erf7(s_inv * (min_edge + distance)) - erf7(s_inv * distance));
+
+    return paint.stops[0] * clamp(coverage, 0.0, 1.0);
+}
+
 /// A rounded rectangle evaluated here rather than built out of triangles.
 ///
 /// Two triangles cover it whatever the radius, where tessellating costs
@@ -1243,6 +1311,9 @@ fn shade(in: VertexOutput) -> vec4<f32> {
     // correct only because of the returns above them, which meant a kind added
     // later was claimed by all four: the conical gradient, kind nine, came out
     // as a rounded rectangle the first time it ran.
+    if (kind > 11.5 && kind < 12.5) {
+        return rrect_blur_coverage(in.clip);
+    }
     if (kind > 7.5 && kind < 8.5) {
         return ellipse_coverage(in.clip);
     }
