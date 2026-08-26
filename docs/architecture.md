@@ -1826,12 +1826,17 @@ every fragment walks, which is the cost specialization would remove.
   the whole surface, which is what a caller writes first and what the panel
   example writes today.
 
-  Two things this does not yet establish, both worth their own work. Whether
-  the time follows the area: a fill-bound tiler suggests it roughly should, and
-  nobody has measured the bounded frame to find out. And whether sizing an
-  unbounded layer to its content's coverage is what upstream does, which is a
-  parity question rather than an optimization — it wants reading upstream at
-  tip of tree, not reasoning from here.
+  Both of those were open when this was first written and are now answered.
+  The time follows the area, slightly better than proportionally: bounding that
+  one layer takes the frame from 66.5 ms to 26.6 ms through Vulkan and from
+  62.8 to 24.3 through GLES — a factor of 2.5 against the 2.3 the pass areas
+  predict — which is fifteen frames a second against thirty-eight. And sizing
+  an unbounded layer to its content *is* what upstream does: its display list
+  dispatcher hands `Canvas::SaveLayer` a bounds rect that is not optional, and
+  `ComputeSaveLayerCoverage` intersects that content coverage with the clip,
+  flooding only for content that is genuinely unbounded. So this is a parity
+  gap rather than an optimization, and it is recorded as one in
+  [`non-parity.md`](non-parity.md).
 
   One thing the figures above do not say, and the harness had to be changed to
   report: **the two paths do not cost the same number of draws.** Every
