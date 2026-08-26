@@ -103,11 +103,38 @@ pub struct Path {
     verbs: Vec<Verb>,
     points: Vec<Vec2>,
     fill_rule: FillRule,
+    /// The rounded rectangle this path was built from, if it was one.
+    ///
+    /// A path is a verb stream, and once a shape has been written into one
+    /// there is no way back: a rounded rectangle and a hand-drawn outline that
+    /// happens to match it are the same path. Some routes want the shape rather
+    /// than the outline -- the blurred rounded rectangle is evaluated in the
+    /// fragment stage and needs a rect and a radius, not eight cubics -- so
+    /// what built it is recorded here rather than reconstructed by inspection,
+    /// which is the version of this that misfires on a shape it merely
+    /// resembles.
+    ///
+    /// Upstream keeps the same thing on `DlPath`, which can still answer
+    /// whether it is a round rect after being consumed as a path.
+    ///
+    /// Set only by a builder that actually laid down that shape. It is part of
+    /// equality because two paths differing in it are two different claims
+    /// about the same outline, and nothing here compares whole paths anyway.
+    rounded_rect: Option<(Rect, f32)>,
 }
 
 impl Path {
     pub fn builder() -> PathBuilder {
         PathBuilder::new()
+    }
+
+    /// The rounded rectangle this was built from, if it was built from one.
+    ///
+    /// A radius of zero is a plain rectangle and is reported as such; `None`
+    /// means only that nothing recorded a shape, never that the outline is not
+    /// one.
+    pub fn as_rounded_rect(&self) -> Option<(Rect, f32)> {
+        self.rounded_rect
     }
 
     pub fn verbs(&self) -> &[Verb] {
@@ -285,6 +312,7 @@ pub struct PathBuilder {
     /// Where the current subpath started, for `close`.
     subpath_start: Option<Vec2>,
     current: Option<Vec2>,
+    rounded_rect: Option<(Rect, f32)>,
 }
 
 impl PathBuilder {
@@ -502,11 +530,32 @@ impl PathBuilder {
         }
     }
 
+    /// Record that what was laid down is this rounded rectangle.
+    ///
+    /// An assertion by the caller, not a check: nothing here reads the verbs
+    /// back to confirm it, because the only caller is the one that just wrote
+    /// them. A builder that marks a shape it did not draw gets that shape drawn
+    /// wherever a route prefers the shape to the outline -- so this is called
+    /// beside the drawing, never afterwards from somewhere that inferred it.
+    ///
+    /// A radius at or below zero is a plain rectangle and is recorded as such.
+    /// Anything not finite records nothing, since it describes no shape.
+    pub fn as_rounded_rect(&mut self, rect: Rect, radius: f32) -> &mut Self {
+        let finite = rect.min.x.is_finite()
+            && rect.min.y.is_finite()
+            && rect.max.x.is_finite()
+            && rect.max.y.is_finite()
+            && radius.is_finite();
+        self.rounded_rect = finite.then(|| (rect, radius.max(0.0)));
+        self
+    }
+
     pub fn build(self) -> Path {
         Path {
             verbs: self.verbs,
             points: self.points,
             fill_rule: self.fill_rule,
+            rounded_rect: self.rounded_rect,
         }
     }
 }

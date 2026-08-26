@@ -8129,8 +8129,10 @@ fn the_occluder_flag_is_accepted_and_changes_nothing() {
         "the occluder flag changed the picture, and upstream's does not"
     );
 
-    // A shadow is four passes: the mask blur's layer, its two blur passes, and
-    // the frame. It was five while the punch-out held one more layer open.
+    // A shadow over a rounded rectangle is one pass: the frame. It was four --
+    // the mask blur's layer, its two blur passes and the frame -- until the
+    // blur could be evaluated in the fragment stage, and five before that,
+    // while the punch-out held one more layer open.
     let mut canvas = Canvas::new(SIZE);
     canvas.clear(Color::BLACK);
     canvas
@@ -8143,8 +8145,8 @@ fn the_occluder_flag_is_accepted_and_changes_nothing() {
         .expect("shadow");
     assert_eq!(
         canvas.finish().passes.len(),
-        4,
-        "a shadow should cost four passes"
+        1,
+        "a shadow over a rounded rectangle should not open a layer"
     );
 
     // And the picture is still a shadow: dark below the card where it falls,
@@ -14052,10 +14054,16 @@ fn an_analytic_blurred_rectangle_agrees_with_the_blur_it_replaces() {
         analytic.draw_rrect(rect, radius, &paint).expect("analytic");
         let one = render(&mut ctx, analytic);
 
+        // The same outline built through the eight-radii spelling, which lays
+        // down identical geometry and records no shape -- so it still takes the
+        // general route and can serve as the reference. `to_rounded_path` no
+        // longer can: it marks what it built, which is the whole point, and a
+        // path that knows it is a rounded rectangle now takes the fast route
+        // too.
         let mut general = Canvas::new(SIZE);
         general.clear(Color::BLACK);
         general
-            .draw_path(&rect.to_rounded_path(radius), &paint)
+            .draw_path(&rect.to_rounded_path_with_radii([[radius; 2]; 4]), &paint)
             .expect("general");
         let two = render(&mut ctx, general);
 
@@ -14116,10 +14124,11 @@ fn an_analytic_blurred_rectangle_costs_no_passes() {
         "a blurred rounded rectangle should not have opened a layer"
     );
 
-    // The same shape as a path, which the analytic route cannot claim.
+    // The same outline with no shape recorded on it, which is what the general
+    // route still gets.
     let mut general = Canvas::new(SIZE);
     general
-        .draw_path(&rect.to_rounded_path(16.0), &paint)
+        .draw_path(&rect.to_rounded_path_with_radii([[16.0; 2]; 4]), &paint)
         .expect("general");
     assert!(
         general.finish().passes.len() > 1,

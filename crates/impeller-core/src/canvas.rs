@@ -16,7 +16,7 @@ use impeller_geometry::transform::{
     invert_to_local, preserves_axis_alignment, to_local_columns, transformed_bounds, unbounded,
     viewport_projection, Transform2D,
 };
-use impeller_geometry::{FillRule, Path, PathBuilder};
+use impeller_geometry::{FillRule, Path, PathBuilder, Rect as GeometryRect};
 use impeller_hal::{
     Batch, BlendMode, ClipState, ColorFilter, Error, Extent2D, Material, PassDescriptor,
     PassViewport, Result, Sampling, Scissor, Stop, TileMode, Vertex, MAX_STOPS, MORPHOLOGY_TAPS,
@@ -114,6 +114,17 @@ impl Rect {
         }
         let mut path = PathBuilder::new();
         self.add_rounded_contour(&mut path, radius);
+        // Recorded beside the drawing rather than inferred later, so a route
+        // that wants the shape rather than the outline can have it -- a mask
+        // blur on this is evaluated in the fragment stage and needs a rect and
+        // a radius, which eight cubics cannot give back.
+        path.as_rounded_rect(
+            GeometryRect::new(
+                Vec2::new(self.left, self.top),
+                Vec2::new(self.right, self.bottom),
+            ),
+            radius.min(self.width() / 2.0).min(self.height() / 2.0),
+        );
         path.build()
     }
 
@@ -1625,6 +1636,18 @@ impl Canvas {
         // drawn is whatever the mask blur produced.
         if !paint.image_filter.is_identity() {
             return self.draw_filtered(path, paint);
+        }
+        // A rounded rectangle that still knows it is one can have its mask blur
+        // evaluated rather than run as passes. This is where a shadow arrives:
+        // `draw_shadow` takes a path, as `dart:ui`'s `drawShadow` does, so
+        // without the shape travelling with the outline every shadow would take
+        // the general route however round it is.
+        if let Some((bounds, radius)) = path.as_rounded_rect() {
+            let rect = Rect::new(bounds.min.x, bounds.min.y, bounds.max.x, bounds.max.y);
+            if let Some(material) = self.analytic_rrect_blur(rect, radius, paint) {
+                let pad = Self::pad_for_sigma(paint.mask_blur);
+                return self.draw_analytic(rect.outset(pad), material, paint);
+            }
         }
         // A color filter is normally arithmetic in this renderer's own fragment
         // shader, which a runtime effect replaces outright -- there is nowhere
