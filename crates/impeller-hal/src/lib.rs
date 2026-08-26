@@ -309,6 +309,37 @@ pub struct PassDescriptor {
     /// Rendering is multisampled and resolved into the target, so the target
     /// itself stays single-sampled and directly readable.
     pub samples: u32,
+    /// Where this pass's clip space lands in the target, if not the whole of it.
+    ///
+    /// `None` maps clip space onto the target exactly, which is what every
+    /// pass wants whose geometry was recorded against the target it renders
+    /// into. A pass whose geometry was recorded against a *larger* space sets
+    /// this to crop instead of scale — see [`PassViewport`].
+    pub viewport: Option<PassViewport>,
+}
+
+/// A clip space larger than the target it lands in, and where it lands.
+///
+/// A layer records its draws before anything is known about how much of the
+/// target they will cover. The geometry and every material go into clip space
+/// as they are recorded — `docs/architecture.md` states that a recording is
+/// tessellated geometry rather than a command list — so by the time the extent
+/// could be narrowed, narrowing it would mean rewriting all of that.
+///
+/// This narrows the *target* instead and leaves the recording alone. The
+/// viewport keeps the extent the geometry was recorded against, and `offset`
+/// slides it so that the wanted sub-rectangle lands on the target. Clip space
+/// maps onto the viewport, not onto the target, so the picture is cropped
+/// rather than scaled and every recorded coordinate still means what it meant.
+///
+/// `offset` is normally negative: a target holding the region starting at
+/// device (x, y) of the recorded space offsets by (-x, -y).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct PassViewport {
+    /// Where the recorded space's origin sits, in target pixels.
+    pub offset: [f32; 2],
+    /// The extent the geometry was recorded against.
+    pub extent: Extent2D,
 }
 
 impl Default for PassDescriptor {
@@ -316,6 +347,7 @@ impl Default for PassDescriptor {
         Self {
             clear: None,
             samples: 1,
+            viewport: None,
         }
     }
 }
@@ -325,7 +357,14 @@ impl PassDescriptor {
         Self {
             clear: Some(color),
             samples: 1,
+            viewport: None,
         }
+    }
+
+    /// Land this pass's clip space on part of the target rather than all of it.
+    pub fn with_viewport(mut self, viewport: PassViewport) -> Self {
+        self.viewport = Some(viewport);
+        self
     }
 
     pub fn preserve() -> Self {

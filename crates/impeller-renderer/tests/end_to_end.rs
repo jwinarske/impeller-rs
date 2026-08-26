@@ -111,6 +111,7 @@ fn render_sized(
         impeller_hal::PassDescriptor {
             clear: Some([0.0, 0.0, 0.0, 1.0]),
             samples: 1,
+            viewport: None,
         },
     )
     .expect("draw");

@@ -1183,6 +1183,7 @@ impl Canvas {
             descriptor: PassDescriptor {
                 clear,
                 samples: self.pass_samples(),
+                viewport: None,
             },
             sources,
             extent: target.extent,
@@ -3505,6 +3506,7 @@ impl Canvas {
             descriptor: PassDescriptor {
                 clear: Some([0.0; 4]),
                 samples: self.pass_samples(),
+                viewport: None,
             },
             sources,
             extent: layer.extent,
@@ -3783,6 +3785,7 @@ impl Canvas {
                 // One sample: this reads a resolved image and writes another,
                 // so multisampling it would resolve twice for no difference.
                 samples: 1,
+                viewport: None,
             },
             sources,
             extent: target.extent,
@@ -4026,6 +4029,9 @@ impl Canvas {
             descriptor: PassDescriptor {
                 clear: self.background.map(|c| c.to_array()),
                 samples,
+                // The root pass renders into the caller's surface, which is the
+                // space its geometry was recorded against.
+                viewport: None,
             },
             sources: self.sources,
             extent: self.extent,

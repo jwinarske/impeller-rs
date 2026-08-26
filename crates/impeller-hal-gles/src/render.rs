@@ -315,7 +315,22 @@ impl GlesContext {
             } else {
                 None
             };
-            gl.viewport(0, 0, extent.width as i32, extent.height as i32);
+            // Where clip space lands in the target. Without a viewport of its
+            // own a pass covers the target exactly; a layer that narrowed its
+            // target after recording keeps the extent its geometry was
+            // recorded against and offsets it, which crops rather than scales.
+            // GL takes the offset as `GLint`, so a negative one needs nothing
+            // special.
+            let (v_off, v_size) = match pass.viewport {
+                Some(v) => (v.offset, v.extent),
+                None => ([0.0, 0.0], extent),
+            };
+            gl.viewport(
+                v_off[0] as i32,
+                v_off[1] as i32,
+                v_size.width as i32,
+                v_size.height as i32,
+            );
             gl.disable(glow::SCISSOR_TEST);
             gl.disable(glow::DEPTH_TEST);
             gl.disable(glow::CULL_FACE);

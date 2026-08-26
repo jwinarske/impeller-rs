@@ -435,6 +435,7 @@ fn a_multisampled_pass_that_preserves_is_refused_with_both_remedies_named() {
         PassDescriptor {
             clear: None,
             samples: 4,
+            viewport: None,
         },
     );
     let Err(impeller_hal::Error::Unsupported(message)) = outcome else {
@@ -452,6 +453,7 @@ fn a_multisampled_pass_that_preserves_is_refused_with_both_remedies_named() {
         PassDescriptor {
             clear: Some(BLACK),
             samples: 4,
+            viewport: None,
         },
     )
     .expect("clearing makes it drawable");
@@ -461,6 +463,7 @@ fn a_multisampled_pass_that_preserves_is_refused_with_both_remedies_named() {
         PassDescriptor {
             clear: None,
             samples: 1,
+            viewport: None,
         },
     )
     .expect("one sample makes it drawable");

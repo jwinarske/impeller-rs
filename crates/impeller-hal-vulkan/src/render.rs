@@ -11,7 +11,8 @@ use ash::vk;
 use gpu_allocator::vulkan::{Allocation, AllocationCreateDesc, AllocationScheme};
 use gpu_allocator::MemoryLocation;
 use impeller_hal::{
-    Batch, BlendMode, ClipRole, Error, PassDescriptor, Result, TextureDescriptor, TextureUsage,
+    Batch, BlendMode, ClipRole, Error, Extent2D, PassDescriptor, Result, TextureDescriptor,
+    TextureUsage,
 };
 use std::collections::HashMap;
 
@@ -127,7 +128,15 @@ impl VulkanContext {
     ) -> Result<()> {
         let mut batch = Batch::new();
         batch.push(vertices, indices, material, blend)?;
-        self.submit_batch(target, &batch, PassDescriptor { clear, samples: 1 })
+        self.submit_batch(
+            target,
+            &batch,
+            PassDescriptor {
+                clear,
+                samples: 1,
+                viewport: None,
+            },
+        )
     }
 
     /// Record and submit a whole batch as one render pass.
@@ -383,14 +392,7 @@ impl VulkanContext {
                 .render_area(area)
                 .clear_values(clear_values);
 
-            let viewport = vk::Viewport {
-                x: 0.0,
-                y: 0.0,
-                width: extent.width as f32,
-                height: extent.height as f32,
-                min_depth: 0.0,
-                max_depth: 1.0,
-            };
+            let viewport = pass_viewport(pass, extent);
 
             unsafe {
                 device.cmd_begin_render_pass(cmd, &begin, vk::SubpassContents::INLINE);
@@ -755,14 +757,7 @@ impl VulkanContext {
                 .framebuffer(framebuffer)
                 .render_area(area)
                 .clear_values(&clear_values);
-            let viewport = vk::Viewport {
-                x: 0.0,
-                y: 0.0,
-                width: extent.width as f32,
-                height: extent.height as f32,
-                min_depth: 0.0,
-                max_depth: 1.0,
-            };
+            let viewport = pass_viewport(pass, extent);
 
             device.cmd_begin_render_pass(cmd, &begin, vk::SubpassContents::INLINE);
             device.cmd_set_viewport(cmd, 0, &[viewport]);
@@ -893,6 +888,34 @@ impl VulkanContext {
 pub(crate) struct StagedBuffer {
     pub(crate) buffer: vk::Buffer,
     pub(crate) allocation: Allocation,
+}
+
+/// Where a pass's clip space lands in the target.
+///
+/// Without a viewport of its own a pass covers the target exactly, which is
+/// what every pass wants whose geometry was recorded against the target it
+/// renders into. A layer that narrowed its target after recording carries one,
+/// and it keeps the extent the geometry was recorded against so that clip
+/// space still maps to the same device pixels -- the offset slides those
+/// pixels so the wanted sub-rectangle lands on the smaller target, which crops
+/// rather than scales.
+///
+/// The offset is normally negative, which Vulkan allows: `viewportBoundsRange`
+/// is at least [-2 * maxViewportDimension, 2 * maxViewportDimension - 1], and
+/// an offset here never exceeds the size of the recorded space.
+fn pass_viewport(pass: PassDescriptor, extent: Extent2D) -> vk::Viewport {
+    let (offset, size) = match pass.viewport {
+        Some(v) => (v.offset, v.extent),
+        None => ([0.0, 0.0], extent),
+    };
+    vk::Viewport {
+        x: offset[0],
+        y: offset[1],
+        width: size.width as f32,
+        height: size.height as f32,
+        min_depth: 0.0,
+        max_depth: 1.0,
+    }
 }
 
 fn build_render_pass(device: &ash::Device, key: RenderPassKey) -> Result<vk::RenderPass> {
