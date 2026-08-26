@@ -1634,6 +1634,46 @@ this workspace holds the pixels against another implementation of the same
 translator, so codegen that changed in the same way on both targets passes all
 of them.
 
+**A blurred rounded rectangle is evaluated, not blurred.** The general route
+for a mask blur is to draw the shape into a layer and run a separable Gaussian
+over it: one pass for the content and two for the blur. For a shape with four
+equal circular corners — which covers a rectangle, whose corners are zero, and a
+circle, whose corners are half its side — the blur is instead computed in the
+fragment stage over one quad, in the pass already being recorded.
+
+The convolution of a Gaussian with a rounded rectangle has no closed form. What
+this evaluates is Raph Levien's approximation, which is what upstream's
+`SolidRRectBlurContents` evaluates too: the blur along an axis is the difference
+of two error functions — the shape's two edges seen through the Gaussian — and
+the corners are folded in by measuring their distance with an exponent other
+than two, so their profile is a Gaussian's rather than a circle's. The
+constants come from upstream and several were fitted rather than derived, which
+the comments say rather than inventing a reason.
+
+Being an approximation, it does not converge on the sampled blur: they agree to
+between 9 and 22 levels out of 255 across a sweep of radii, deviations and
+aspect ratios. That is checked against the general route rather than against a
+stored image, which is what makes it checkable at all here — upstream tuned its
+own second route by eye, and this tree has no golden apparatus by choice.
+
+The route is refused wherever it cannot state what was asked: a transform that
+scales the axes differently or carries perspective, since the expression holds
+one deviation in the shape's own space; a blend that does not respect coverage,
+since the quad is larger than the shape; a stroke, a non-solid shader, and an
+image filter. All four mask blur styles are served from it — `Normal` as the
+draw itself, the other three by combining that draw with the sharp shape — so
+`outer + inner == normal` holds on this route as it does on the sampled one.
+
+What it is worth, on a Raspberry Pi 5's V3D: a shadow over a rounded card costs
+about 0.8 ms as a draw against 2.6 ms as three passes, and the bench frame's
+three take it from fourteen passes to five. A shadow over a shape this cannot
+describe — an octagon, say — still costs the 1.9 ms difference, which is what a
+tessellated shadow mesh would address and why `non-parity.md` still carries one
+half of that entry.
+
+One departure from upstream sits inside it, in the correction that pulls in a
+long axis; see `non-parity.md`.
+
 **Specialization is not implemented.** The intent is one set of declarations in
 the WGSL source mapping to spec constants on Vulkan and bounded build-time macro
 permutations on GLES; there are no spec constants anywhere yet, and the fragment
