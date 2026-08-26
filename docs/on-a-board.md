@@ -129,21 +129,31 @@ starting that stage.
 A bench that dies instantly with `nohup: failed to run command './xtask'` is
 that, not the board.
 
-**Read `vcgencmd get_throttled` after the run, not only before.** A Pi 5 that
-has been benching for an hour sits near its soft temperature limit, and the
-same binary then measures a few percent slower than it did on a cool board --
-with the run's own spread still under a tenth of a millisecond, so nothing
-inside the numbers says anything is wrong. That is how a thermal difference
-gets read as a regression: two runs, each internally tight, disagreeing by four
-percent. `throttled=0x80000` is bit nineteen, "soft temperature limit has
-occurred", and it latches, so it answers the question after the fact.
+**The same binary does not measure the same from one hour to the next.** After
+an afternoon of runs, a binary that read 12.955 ms in the morning read 13.377 --
+three percent slower -- with each run's own spread under a tenth of a
+millisecond, so nothing inside the numbers said anything was wrong. That is how
+a drift gets read as a regression.
 
-The rule that follows: compare two builds in one sitting, alternating them, or
-let the board come back to idle temperature between them. Comparing today's run
-against a number from an hour ago is comparing two thermal states as much as
-two builds. A whole-frame figure seems less sensitive to this than the
-micro-benchmark paths -- 21.2 ms was unchanged across a four percent move in
-them -- but that is an observation rather than something to rely on.
+Temperature is the obvious suspect and is *not* established as the cause. The
+board was at 77 to 85 degrees during those runs against a fresh boot in the
+morning, which fits. But fitting a fan afterwards brought idle down to 67 and
+the same binary still read 13.379, so whatever this is, cooling did not undo
+it. `vcgencmd get_throttled` is still worth reading after a run rather than
+before -- `0x80000` is bit nineteen, "soft temperature limit has occurred", and
+it latches -- but a clean reading does not mean two runs an hour apart are
+comparable.
+
+The rule that follows does not depend on knowing the cause: **compare two
+builds in one sitting, alternating them.** A difference measured that way
+survives whatever this is; a number carried over from an hour ago does not. The
+three percent an uber-shader charges for one more material kind was measured by
+alternation and reproduces across sessions; the three percent between morning
+and evening is not a measurement of anything yet.
+
+A whole-frame figure seems less sensitive to the drift than the micro-benchmark
+paths -- 21.2 ms held across it -- but that is an observation rather than
+something to rely on.
 
 ## A second board, and what it says about reading a green run
 
