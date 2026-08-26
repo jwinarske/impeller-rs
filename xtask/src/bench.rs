@@ -24,7 +24,9 @@
 //! desktop discrete part; a run here measures whatever this machine is, which
 //! is why every result names its device.
 
-use impeller_core::{Canvas, Color, Paint, Recording, Rect};
+use impeller_core::{
+    Canvas, Color, GradientStop, Layer, Paint, Recording, Rect, Shader, TileMode, Vec2,
+};
 use impeller_hal::{Extent2D, Hal, HalContext, PixelFormat, TextureDescriptor};
 use impeller_hal_gles::{DisplayTarget, GlesContext, GlesHal};
 use impeller_hal_vulkan::{DevicePreference, VulkanContext, VulkanHal};
@@ -125,9 +127,127 @@ pub fn recording(path: Path) -> Recording {
     canvas.finish()
 }
 
+/// One configuration's result, as the event that reports it either way.
+fn outcome(what: &'static str, timed: Result<Timing, String>) -> Event {
+    match timed {
+        Ok(timing) => Event::Measured(timing),
+        Err(why) => Event::Failed { what, why },
+    }
+}
+
+/// How the full-frame row names itself.
+const FRAME: &str = "full frame, mixed content";
+
+/// What a whole frame of mixed content costs, which is a budget rather than a
+/// comparison.
+///
+/// The three routes above answer one narrow question and answer it well: the
+/// same shapes, twice, so the difference is the route. That is not a frame. It
+/// has one material, no layer, no blur and no gradient, so it says nothing
+/// about what an interface costs — and a renderer can be quick at a hundred
+/// and sixty identical rectangles and slow at everything a real frame is made
+/// of.
+///
+/// So this is the other kind: a ground that is a gradient, cards that carry
+/// shadows, and a blurred layer over the top, at the size a display actually
+/// is. Every one of those reaches machinery the comparison never touches — the
+/// ramp, the blur's passes, the layer's own target and its composite back.
+///
+/// Deliberately *not* the panel example's frame, which it otherwise resembles.
+/// That one turns antialiasing off on its ground because `execute_deferred`
+/// cannot submit a multisampled pass, which is a constraint of presenting to a
+/// display and not of drawing. A frame written to be timed should look like a
+/// frame, so this leaves it on.
+///
+/// Static, at one instant of that scene rather than a moving one: a benchmark
+/// that changed its own content between runs would report the content.
+fn full_frame() -> Recording {
+    let (w, h) = (EXTENT.width as f32, EXTENT.height as f32);
+    let mut canvas = Canvas::new(EXTENT);
+    canvas.clear(Color::srgb(0.05, 0.06, 0.09, 1.0));
+
+    // A wash behind everything. A gradient rather than a flat fill because it
+    // is the one thing here that tabulates a ramp.
+    canvas
+        .draw_rect(
+            Rect::new(0.0, 0.0, w, h),
+            &Paint::default().with_shader(Shader::LinearGradient {
+                start: Vec2::new(0.0, 0.0),
+                end: Vec2::new(w, h),
+                // Five, and the count is the point rather than the picture:
+                // at or below `MAX_STOPS` a gradient travels inside the
+                // material and tabulates nothing. Past it the recorder bakes a
+                // ramp and the shader samples it, which is the path a frame
+                // should be timed on and the one two stops would miss.
+                stops: (0..5)
+                    .map(|i| {
+                        let t = i as f32 / 4.0;
+                        GradientStop {
+                            offset: t,
+                            color: Color::srgb(0.08 + 0.14 * t, 0.10, 0.18 + 0.02 * t, 1.0),
+                        }
+                    })
+                    .collect(),
+                tile: TileMode::Clamp,
+            }),
+        )
+        .expect("the ground");
+
+    let center = Vec2::new(w * 0.5, h * 0.5);
+    let orbit = w.min(h) * 0.26;
+    let side = w.min(h) * 0.20;
+    let hues = [
+        Color::srgb(0.98, 0.42, 0.28, 1.0),
+        Color::srgb(0.36, 0.82, 0.62, 1.0),
+        Color::srgb(0.42, 0.58, 0.98, 1.0),
+    ];
+    for (i, hue) in hues.into_iter().enumerate() {
+        let phase = i as f32 * std::f32::consts::TAU / 3.0;
+        let at = Vec2::new(
+            center.x + orbit * phase.cos(),
+            center.y + orbit * phase.sin() * 0.55,
+        );
+        let card = Rect::new(
+            at.x - side * 0.5,
+            at.y - side * 0.5,
+            at.x + side * 0.5,
+            at.y + side * 0.5,
+        );
+        // Shadow first and card over it, which is the order every real caller
+        // uses and the one the occluder flag describes.
+        canvas
+            .draw_shadow(&card.to_rounded_path(side * 0.18), Color::BLACK, 8.0, false)
+            .expect("a shadow");
+        canvas
+            .draw_rrect(card, side * 0.18, &Paint::fill(hue))
+            .expect("a card");
+    }
+
+    // A blurred highlight, so the layer's own target and its composite back are
+    // in the number too.
+    canvas.save_layer(Layer::opacity(0.5).with_blur(24.0));
+    canvas
+        .draw_circle(
+            center,
+            w.min(h) * 0.10,
+            &Paint::fill(Color::srgb(1.0, 0.95, 0.80, 1.0)),
+        )
+        .expect("a highlight");
+    canvas.restore();
+
+    canvas.finish()
+}
+
 /// What a run of one configuration on one device came to.
 pub struct Timing {
-    pub path: Path,
+    /// What was timed, already spelled for the reader.
+    ///
+    /// A label rather than a [`Path`] for the reason the device is not here
+    /// either: not everything this times is one of the two routes. A whole
+    /// frame of mixed content is a budget rather than a comparison, and a
+    /// field that could only say which route it was would have to lie about
+    /// it.
+    pub what: &'static str,
     /// How many draws the frame came to.
     ///
     /// Reported because it is not the same between the two paths and the
@@ -200,10 +320,10 @@ fn percentile(sorted: &[Duration], fraction: f64) -> Duration {
 /// with an occasional frame a hundred times that when the queue backed up.
 fn time_frames<H: Hal>(
     ctx: &mut H::Context,
-    path: Path,
+    what: &'static str,
     recording: &Recording,
     finish: fn(&mut H::Context),
-) -> Option<Timing>
+) -> Result<Timing, String>
 where
     H::Context: HalContext<Hal = H>,
 {
@@ -212,18 +332,18 @@ where
             EXTENT,
             PixelFormat::Rgba8Unorm,
         ))
-        .ok()?;
+        .map_err(|e| format!("no target: {e}"))?;
 
-    let mut run = |count: usize| -> Option<Vec<Duration>> {
+    let mut run = |count: usize| -> Result<Vec<Duration>, String> {
         let mut samples = Vec::with_capacity(count);
         for _ in 0..count {
             let started = Instant::now();
             let outcome = impeller_core::execute::<H>(ctx, &mut target, recording, &[]);
             finish(ctx);
             samples.push(started.elapsed());
-            outcome.ok()?;
+            outcome.map_err(|e| e.to_string())?;
         }
-        Some(samples)
+        Ok(samples)
     };
 
     let outcome = run(WARMUP).and_then(|_| run(FRAMES));
@@ -231,8 +351,8 @@ where
 
     let mut samples = outcome?;
     samples.sort();
-    Some(Timing {
-        path,
+    Ok(Timing {
+        what,
         draws: recording.draw_count(),
         median: percentile(&samples, 0.5),
         p99: percentile(&samples, 0.99),
@@ -289,10 +409,16 @@ pub fn gather(skip: &[String], report: &mut dyn FnMut(Event)) {
             let recording = recording(path);
             // Nothing: the Vulkan submit waits on its own fence before it
             // returns, so the frame is already over when the clock stops.
-            if let Some(timing) = time_frames::<VulkanHal>(&mut ctx, path, &recording, |_| {}) {
-                report(Event::Measured(timing));
-            }
+            report(outcome(
+                path.name(),
+                time_frames::<VulkanHal>(&mut ctx, path.name(), &recording, |_| {}),
+            ));
         }
+        let frame = full_frame();
+        report(outcome(
+            FRAME,
+            time_frames::<VulkanHal>(&mut ctx, FRAME, &frame, |_| {}),
+        ));
     }
 
     if let Ok(mut ctx) = GlesContext::new(DisplayTarget::Surfaceless) {
@@ -304,13 +430,18 @@ pub fn gather(skip: &[String], report: &mut dyn FnMut(Event)) {
         report(Event::Device(device));
         for path in paths {
             let recording = recording(path);
-            if let Some(timing) = time_frames::<GlesHal>(&mut ctx, path, &recording, |ctx| {
+            let timed = time_frames::<GlesHal>(&mut ctx, path.name(), &recording, |ctx| {
                 // SAFETY: a context is current on this thread.
                 unsafe { glow::HasContext::finish(ctx.raw_gl()) }
-            }) {
-                report(Event::Measured(timing));
-            }
+            });
+            report(outcome(path.name(), timed));
         }
+        let frame = full_frame();
+        let timed = time_frames::<GlesHal>(&mut ctx, FRAME, &frame, |ctx| {
+            // SAFETY: a context is current on this thread.
+            unsafe { glow::HasContext::finish(ctx.raw_gl()) }
+        });
+        report(outcome(FRAME, timed));
     }
 }
 
@@ -356,7 +487,9 @@ const NOTHING: &str = "no device on this machine could render the frame\n";
 
 fn header() -> String {
     format!(
-        "{SHAPES} rounded rectangles at {}x{}, {FRAMES} frames after {WARMUP} warm-up\n",
+        "{SHAPES} rounded rectangles at {}x{}, then one frame of mixed \
+         content at the same size.\n{FRAMES} frames each after {WARMUP} \
+         warm-up\n",
         EXTENT.width, EXTENT.height
     )
 }
@@ -375,6 +508,19 @@ pub enum Event {
     Device(String),
     /// One configuration finished.
     Measured(Timing),
+    /// A configuration was attempted and could not be measured.
+    ///
+    /// Reported rather than dropped. `time_frames` used to answer `None` for
+    /// every reason it could fail, and the caller had nowhere to put that, so
+    /// a configuration the device refused simply did not appear -- and a row
+    /// that is absent reads exactly like a row nobody asked for.
+    ///
+    /// A row *was* missing while this was written, and the cause was an
+    /// unwritten call rather than a refusal. That is the argument rather than
+    /// against it: the two are indistinguishable in a report that can only
+    /// show what succeeded, and one of them was mistaken for the other for
+    /// twenty minutes.
+    Failed { what: &'static str, why: String },
     /// A device was opened and then not measured, because the caller asked for
     /// it to be left alone.
     ///
@@ -392,13 +538,14 @@ fn render(event: &Event) -> String {
     let timing = match event {
         Event::Device(device) => return format!("\n{device}\n"),
         Event::Skipped(device) => return format!("\n{device}\n  not measured, as asked\n"),
+        Event::Failed { what, why } => return format!("  {what:<24} not measured: {why}\n"),
         Event::Measured(timing) => timing,
     };
     let mut out = String::new();
     out.push_str(&format!(
         "  {:<24} {:>10} ({:>6.0} fps)   p99 {:>10}   fastest {:>10}   \
          slowest {:>10}   {:>4} draws{}\n",
-        timing.path.name(),
+        timing.what,
         millis(timing.median),
         timing.rate(),
         millis(timing.p99),
@@ -411,7 +558,16 @@ fn render(event: &Event) -> String {
 }
 
 fn epilogue() -> &'static str {
-    "\nMedians, with the frame ninety-nine hundredths came in under beside \n\
+    "\nThe first three lines of each device are one comparison: the same \n\
+     shapes drawn two ways, so the difference between them is the route and \n\
+     not the content. The last line is not part of it. That is a whole frame \n\
+     of mixed content -- a tabulated gradient behind, shadowed cards over it, \n\
+     a blurred layer on top -- and it is there because a renderer can be \n\
+     quick at a hundred and sixty identical rectangles and slow at \n\
+     everything an interface is made of. Read it against a frame budget; \n\
+     read the three above it against each other.\n\
+     \n\
+     Medians, with the frame ninety-nine hundredths came in under beside \n\
      them. Nothing here passes or fails: these are what this machine did, \n\
      and the balance between the two paths is hardware-dependent by design \n\
      -- see the distance-field section of docs/architecture.md.\n\
@@ -489,9 +645,9 @@ mod tests {
 
     /// A timing with unremarkable numbers, for the tests that are about the
     /// report rather than about what was measured.
-    fn a_timing(path: Path) -> Timing {
+    fn a_timing(what: &'static str) -> Timing {
         Timing {
-            path,
+            what,
             draws: SHAPES,
             median: Duration::from_micros(100),
             p99: Duration::from_micros(140),
@@ -528,7 +684,7 @@ mod tests {
 
         // And the number reaches the reader, because a comparison that hid it
         // would look like a measurement of shading alone.
-        let rendered = text(&[Event::Measured(a_timing(Path::Analytic))]);
+        let rendered = text(&[Event::Measured(a_timing(Path::Analytic.name()))]);
         assert!(rendered.contains("160 draws"), "{rendered}");
     }
 
@@ -613,8 +769,8 @@ mod tests {
     fn a_device_that_measures_nothing_is_still_named() {
         let rendered = text(&[
             Event::Device("vulkan:0 a".into()),
-            Event::Measured(a_timing(Path::Analytic)),
-            Event::Measured(a_timing(Path::TessellatedMultisampled)),
+            Event::Measured(a_timing(Path::Analytic.name())),
+            Event::Measured(a_timing(Path::TessellatedMultisampled.name())),
             // Opened, and then the run ended before a configuration finished.
             Event::Device("vulkan:1 b".into()),
         ]);
@@ -654,7 +810,7 @@ mod tests {
     fn a_skipped_device_is_named_rather_than_passed_over_quietly() {
         let rendered = text(&[
             Event::Device("vulkan:0 V3D 7.1.7.0".into()),
-            Event::Measured(a_timing(Path::Analytic)),
+            Event::Measured(a_timing(Path::Analytic.name())),
             Event::Skipped("vulkan:1 llvmpipe".into()),
         ]);
         assert!(rendered.contains("vulkan:1 llvmpipe"), "{rendered}");
@@ -676,10 +832,34 @@ mod tests {
         assert!(said.contains("draws"), "{said}");
     }
 
+    /// The frame reaches the machinery the three-route comparison never does.
+    ///
+    /// Without this the frame is a slower way to measure what is already
+    /// measured. Each assertion names one thing the comparison cannot reach:
+    /// a second pass is a layer, having its own target and a composite back;
+    /// a tabulated ramp is a gradient past `MAX_STOPS`, which is an upload and
+    /// a sampled texture rather than four colors riding inside a material.
+    #[test]
+    fn the_full_frame_reaches_a_layer_and_a_ramp() {
+        let frame = full_frame();
+        assert!(
+            frame.passes.len() > 1,
+            "no layer in the frame: {} pass(es)",
+            frame.passes.len()
+        );
+        assert!(
+            !frame.ramps.is_empty(),
+            "no tabulated gradient, so the ramp is untimed"
+        );
+        // And it is a frame rather than one shape: ground, three cards, three
+        // shadows and a highlight.
+        assert!(frame.draw_count() >= 5, "{} draws", frame.draw_count());
+    }
+
     #[test]
     fn a_wide_spread_is_reported_rather_than_hidden() {
         let timing = |fastest: u64, slowest: u64| Timing {
-            path: Path::Analytic,
+            what: "test",
             draws: SHAPES,
             median: Duration::from_micros((fastest + slowest) / 2),
             p99: Duration::from_micros(slowest),
