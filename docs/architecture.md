@@ -1677,7 +1677,16 @@ draw itself, the other three by combining that draw with the sharp shape — so
 
 What it is worth, on a Raspberry Pi 5's V3D: a shadow over a rounded card costs
 about 0.8 ms as a draw against 2.6 ms as three passes, and the bench frame's
-three take it from fourteen passes to five. A shadow over a shape this cannot
+three take it from fourteen passes to five.
+
+It does not stop being worth it at a wide deviation, which was worth checking
+rather than assuming: the quad grows with the square of the deviation and every
+fragment on it evaluates two error functions and two powers, where the sampled
+route downsamples and so grows more slowly. At a deviation of forty the
+evaluated route is still ahead — 24.78 ms against 28.25 for the same frame,
+twelve draws against twenty-seven — so there is no deviation in the usable range
+above which this should hand back to sampling, and nothing here needs a
+ceiling. A shadow over a shape this cannot
 describe — an octagon, say — still costs the 1.9 ms difference, which is what a
 tessellated shadow mesh would address and why `non-parity.md` still carries one
 half of that entry.
