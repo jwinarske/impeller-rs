@@ -1813,7 +1813,17 @@ every fragment walks, which is the cost specialization would remove.
   not draw count: twenty-one draws here against a hundred and sixty in the
   comparison, which costs 13 ms.
 
-  **It is one unbounded layer.** The recording is fourteen passes, and their
+  **It was one unbounded layer, and no longer is.** The figures above are what
+  the frame cost when `save_layer` gave every layer the whole surface. It now
+  takes the bound from the layer's own geometry at `restore`, which is what
+  upstream does, and the same frame costs **26.8 ms through Vulkan and 24.3
+  through GLES** — thirty-seven and forty-one frames a second against fifteen.
+  A caller who names the rectangle by hand gets 26.6 and 24.3, so the derived
+  bound is worth what the named one is. The paragraphs below are kept because
+  they are how the cost was found, and because the shape of the reasoning
+  outlives the number.
+
+  **It was one unbounded layer.** The recording is fourteen passes, and their
   sizes say where the work is. The three shadows take nine passes between them
   at 233×233 — each bounded to the shape that casts it. The blurred layer takes
   four: one at the full 1920×1080 and three at 960×540. The content of that
@@ -1826,7 +1836,8 @@ every fragment walks, which is the cost specialization would remove.
   the whole surface, which is what a caller writes first and what the panel
   example writes today.
 
-  Both of those were open when this was first written and are now answered.
+  Both of those were open when this was first written, are answered, and the
+  answer has since been built.
   The time follows the area, slightly better than proportionally: bounding that
   one layer takes the frame from 66.5 ms to 26.6 ms through Vulkan and from
   62.8 to 24.3 through GLES — a factor of 2.5 against the 2.3 the pass areas
@@ -1834,9 +1845,11 @@ every fragment walks, which is the cost specialization would remove.
   an unbounded layer to its content *is* what upstream does: its display list
   dispatcher hands `Canvas::SaveLayer` a bounds rect that is not optional, and
   `ComputeSaveLayerCoverage` intersects that content coverage with the clip,
-  flooding only for content that is genuinely unbounded. So this is a parity
-  gap rather than an optimization, and it is recorded as one in
-  [`non-parity.md`](non-parity.md).
+  flooding only for content that is genuinely unbounded. That was a parity gap
+  rather than an optimization, which is why it was closed rather than left as
+  advice to callers — a pass now carries a viewport so the narrowed target
+  crops the recorded clip space instead of the recording being rewritten to
+  suit it.
 
   One thing the figures above do not say, and the harness had to be changed to
   report: **the two paths do not cost the same number of draws.** Every

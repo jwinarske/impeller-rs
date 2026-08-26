@@ -216,37 +216,7 @@ sixteenth of the size, which is why it was worth having the reduction at all.
 The pictures agree: the reduction preserves light, checked at a deviation of
 twenty-four by the energy test, which takes this path.
 
-## 7. A layer with no bounds gets the surface; upstream gets the content
-
-**What differs.** `Canvas::save_layer` allocates a target the size of the
-surface. Upstream sizes it to what goes in it. Impeller's display list
-dispatcher hands `Canvas::SaveLayer` a bounds rect that is not optional
-(`dl_dispatcher.cc`), dropping it only when the content is genuinely unbounded
-*and* the caller named none — the `options.bounds_from_caller()` test is there
-precisely because bounds usually come from the builder rather than the caller.
-`ComputeSaveLayerCoverage` then transforms that content coverage and intersects
-it with the clip, allocating to the result. It floods to the whole clip only
-for content that is really unbounded: a `drawPaint`, a backdrop filter, or a
-color filter that modifies transparent black.
-
-**Why.** Not a decision — a gap. `save_layer_bounds` exists and does the right
-thing when a caller names the rectangle, so the machinery is present and it is
-the defaulting that is missing. Upstream can compute the bounds because a
-display list is recorded before it is dispatched, and the builder accumulates
-each op's bounds along the way; this canvas records into a pass whose extent is
-fixed when the layer opens, before anything has been drawn into it.
-
-**Impact.** Large, and measured rather than reasoned about. `cargo xtask bench`
-draws a frame whose only layer holds a circle 216 texels across. Unbounded, the
-layer takes one pass at 1920x1080 and three at 960x540 — 3.63 of the frame's
-6.19 megapixels of pass area. Bounded to its content it takes 298x298 and three
-at 149x149, which is 0.16. On a Raspberry Pi 5's V3D that is the difference
-between 66.5 ms and 26.6 ms a frame through Vulkan, and 62.8 ms against 24.3 ms
-through GLES — fifteen frames a second against thirty-eight, for one call
-spelled two ways. A caller who names bounds pays neither, which is the whole of
-the workaround and not a substitute for the fix.
-
-## 8. Operations that are absent
+## 7. Operations that are absent
 
 These are listed in [`parity.md`](parity.md) with their reasoning and are
 summarized here only so that this file is the one place to look.
@@ -265,7 +235,7 @@ summarized here only so that this file is the one place to look.
   *Impact:* the geometry is re-walked rather than the draws being replayed,
   which costs recording time on a repeated sub-picture.
 
-## 9. One thing that looks like a difference and is not
+## 8. One thing that looks like a difference and is not
 
 Worth stating because a reviewer raised it as a hole. **The advanced blend modes
 are defined on `[0, 1]` here and clip in `set_lum`,** which looks like an
