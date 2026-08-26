@@ -1813,6 +1813,15 @@ every fragment walks, which is the cost specialization would remove.
   not draw count: twenty-one draws here against a hundred and sixty in the
   comparison, which costs 13 ms.
 
+  **The number moved twice, and both times the reason was a pass that did not
+  have to exist.** Sizing the layer to its content took it to 26.8 ms; drawing
+  the three shadows analytically rather than blurring them took it to
+  **21.2 ms through Vulkan and 20.4 through GLES**, five passes rather than
+  fourteen. From 66.5, that is a factor of three on the same frame, and none of
+  it came from making anything faster — only from not doing work upstream does
+  not do either. The account below is what the first of those looked like when
+  it was found, kept because the shape of the reasoning outlives the number.
+
   **It was one unbounded layer, and no longer is.** The figures above are what
   the frame cost when `save_layer` gave every layer the whole surface. It now
   takes the bound from the layer's own geometry at `restore`, which is what

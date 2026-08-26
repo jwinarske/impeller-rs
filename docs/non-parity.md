@@ -216,40 +216,34 @@ sixteenth of the size, which is why it was worth having the reduction at all.
 The pictures agree: the reduction preserves light, checked at a deviation of
 twenty-four by the energy test, which takes this path.
 
-## 7. A blurred path is blurred; upstream tessellates a mesh instead
+## 7. A blurred path that is not a rounded rectangle is blurred
 
-**What differs.** Upstream has two ways of not running a blur pass, and this
-tree now has one of them.
+**What differs.** Upstream has two ways of not running a blur pass. One is
+built here and one is not.
 
 - **A rounded rectangle**, all four corners sharing one circular radius:
-  upstream's `AttemptDrawBlurredRRect` evaluates the blur in the fragment stage.
-  **Built.** `Canvas::draw_rrect` with a solid fill and a `Normal` mask blur
-  takes `Material::RoundedRectBlur`, which is Raph Levien's approximation — the
-  same method `SolidRRectBlurContents` evaluates.
-- **Any other shape**, which for `dart:ui` means most shadows: upstream's
-  `DrawPath` sends a filled, solid-colored, positively-blurred path to
-  `AttemptDrawBlurredPathSource`, which tessellates a **shadow mesh** whose
-  vertices carry the falloff. **Not built.** Here it draws the shape into a
-  layer and runs a separable Gaussian over it: one pass for the content and two
-  for the blur.
+  upstream's `AttemptDrawBlurredRRect` evaluates the blur in the fragment
+  stage. **Built.** `Material::RoundedRectBlur` is Raph Levien's
+  approximation, the method `SolidRRectBlurContents` evaluates, and a `Path`
+  carries the shape that built it so a shadow reaches it too — `draw_shadow`
+  takes a path, as `dart:ui` does, and upstream's `DlPath` answers the same
+  question for the same reason.
+- **Any other shape**: upstream's `DrawPath` sends a filled, solid-colored,
+  positively-blurred path to `AttemptDrawBlurredPathSource`, which tessellates
+  a **shadow mesh** whose vertices carry the falloff. **Not built.** Here it
+  draws the shape into a layer and runs a separable Gaussian over it: one pass
+  for the content and two for the blur.
 
-**Why the second one still matters most.** `Canvas::draw_shadow` takes a
-`Path`, as `dart:ui`'s `drawShadow` does, so a shadow reaches the general route
-however round its shape is — the analytic material cannot claim it, because by
-then the rounded rectangle is a path like any other and nothing records that it
-used to be one. Upstream avoids that by dispatching on the shape before it
-becomes a path: its `DlPath` can still say it is a round rect. Closing this
-means either the mesh, or teaching `Path` to remember what built it.
+**Impact, measured on a Raspberry Pi 5's V3D, release build.** The bench frame's
+three shadows fall on rounded cards, so they now take the analytic route. The
+frame costs **21.224 ms through Vulkan and 20.409 through GLES**, against
+26.757 and 24.318 when they were blurred, and 18.928 and 17.676 with them left
+out entirely. So three shadows cost 7.8 ms as passes and 2.3 ms as draws, and
+the frame is five passes rather than fourteen.
 
-**Impact, measured on a Raspberry Pi 5's V3D, release build.** The bench frame
-carries three shadows over rounded cards. They are paths, so they take the
-general route: with them the frame costs 26.757 ms through Vulkan and 24.318
-through GLES; without them 18.928 and 17.676. So the three cost 7.8 ms and
-6.6 ms — near thirty percent of a frame that is otherwise a gradient, three
-cards and a blurred layer — and they are nine of its fourteen passes. **The
-analytic material above does not reduce that**, and the frame is still fourteen
-passes: what it buys is any *rounded rectangle* drawn with a mask blur, which
-is a blurred card or a glow rather than a shadow.
+What is left is the shape this does not cover. A shadow under anything that is
+not a rounded rectangle — a rounded superellipse, a caller's outline, a glyph —
+still costs three passes, and the mesh is what upstream answers that with.
 
 The pictures agree either way, which is why [`parity.md`](parity.md) lists
 `maskFilter` and `drawShadow` as built. This is a difference in what they cost.
