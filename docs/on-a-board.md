@@ -152,14 +152,20 @@ hundred and eighty took the gap from 0.45 ms to 1.06 -- about two and a half
 microseconds per draw either way. So the two states differ in what a draw
 costs, not in a fixed charge per frame.
 
-Two candidates in `impeller-hal-vulkan`, neither yet tested. Every submission
-builds a materials buffer of `draws x stride`, allocates host-visible memory
-for it, copies into it and frees it afterwards -- forty kilobytes a frame for
-the analytic configuration against two hundred and fifty-six bytes for the
-tessellated one -- and `upload`'s own comment marks that path out: "Real
-per-frame geometry goes through a ring allocator instead; this path allocates
-per submission." The other is the descriptor rebind each draw makes to move the
-dynamic offset along that buffer. Both scale the way the gap does.
+One candidate is ruled out and it is the obvious one. Every submission
+allocates, fills and frees its buffers, and the analytic configuration's
+materials buffer is forty kilobytes against the tessellated one's two hundred
+and fifty-six — so host-visible bytes written looks like the culprit until the
+geometry is counted. The analytic frame carries 640 vertices and 960 indices;
+the tessellated frame carries 3840 and 10560. The *stable* configuration writes
+several times more host-visible memory per frame than the unstable one, so the
+quantity written is not what varies.
+
+What is left is per-draw work: a hundred and sixty descriptor rebinds, pipeline
+lookups and draw calls against one of each. Hashing is not enough to explain it
+— two `HashMap` lookups a draw at tens of nanoseconds against a gap of two and
+a half *micro*seconds a draw — which leaves the driver-side cost of recording
+and executing a draw, and that is past what this file can settle.
 
 That is where a diagnosis would start, and it is not one yet. Until then,
 establish a difference on the GLES row, where a three-run cluster is tight to a

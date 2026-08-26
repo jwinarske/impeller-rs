@@ -850,9 +850,13 @@ impl VulkanContext {
             .allocate(&AllocationCreateDesc {
                 name: "upload",
                 requirements,
-                // Host-visible so the write below needs no staging copy. Real
-                // per-frame geometry goes through a ring allocator instead;
-                // this path allocates per submission.
+                // Host-visible so the write below needs no staging copy.
+                //
+                // Every per-frame buffer comes through here -- vertices,
+                // indices and materials alike -- and each is allocated, filled
+                // and freed within the submission. This comment used to say
+                // that geometry went through a ring allocator instead. There
+                // is no ring allocator; there never was.
                 location: MemoryLocation::CpuToGpu,
                 linear: true,
                 allocation_scheme: AllocationScheme::GpuAllocatorManaged,

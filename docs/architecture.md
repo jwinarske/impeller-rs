@@ -1338,10 +1338,23 @@ dynamic rendering, timeline semaphores, and sync2 used when present. Features
 avoided for MoltenVK compatibility: geometry shaders, tessellation shaders,
 sparse residency, multi-draw-indirect-with-count — none are needed for 2D.
 
-Memory via `gpu-allocator`, with per-frame ring allocators for vertex, index,
-and uniform data. Long-lived resources are `Arc`-tracked and retired by the
-fence waiter. Pipelines are compiled at context creation from embedded SPIR-V,
-with the pipeline cache persisted to disk.
+Memory via `gpu-allocator`. Vertex, index and material buffers are created,
+filled and freed **per submission** — there are no ring allocators, though a
+comment in `upload` claimed there were until this was checked, and this
+paragraph claimed it too. Long-lived resources are `Arc`-tracked and retired by
+the fence waiter.
+
+Pipelines are compiled **lazily, on first use**, not at context creation: each
+submission walks its draws and ensures a pipeline for every distinct
+`(format, program, blend, samples, stencil, role)`, and they are kept in a
+`HashMap` for the life of the context. No `VkPipelineCache` is involved —
+`create_graphics_pipelines` is passed `vk::PipelineCache::null()` — so nothing
+is persisted to disk and a new process recompiles what it uses.
+
+All three of those were described here as the opposite before anybody read the
+code against them, which is worth leaving on the record: this file is the
+source of truth for design, and a design it describes but does not have is
+worse than no description, because it is the one a reader will not check.
 
 Extensions required on the Linux DRM path: `VK_EXT_external_memory_dma_buf`,
 `VK_KHR_external_memory_fd`, `VK_EXT_image_drm_format_modifier`, and
