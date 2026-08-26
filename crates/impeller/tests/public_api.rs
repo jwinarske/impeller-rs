@@ -14196,6 +14196,57 @@ fn an_analytic_blurred_rectangle_costs_no_passes() {
     );
 }
 
+/// The four mask blur styles partition each other on an evaluated blur, as
+/// they do on a sampled one.
+///
+/// `outer + inner == normal` is a stronger statement than any of the three
+/// makes alone, and it holds only while all of them are built the same way.
+/// For a while they were not: `Normal` on a shape that knows what it is was
+/// evaluated in the fragment stage while the other three were still assembled
+/// out of a sampled blur, and the identity held to about seventeen levels
+/// rather than one. This is the same check as
+/// `the_two_halves_of_a_blur_add_up_to_the_whole_of_it`, on the other route,
+/// and it is what says the seam is gone rather than merely narrower.
+#[test]
+fn the_two_halves_of_an_evaluated_blur_add_up_to_the_whole_of_it_too() {
+    let Some(mut ctx) = context() else {
+        return;
+    };
+    let draw = |ctx: &mut Context, style: MaskBlurStyle| {
+        let mut canvas = Canvas::new(SIZE);
+        canvas.clear(Color::linear(0.0, 0.0, 0.0, 1.0));
+        // Through the shape, so every style takes the evaluated blur.
+        canvas
+            .draw_rrect(
+                Rect::new(34.0, 34.0, 94.0, 94.0),
+                8.0,
+                &Paint::fill(Color::linear(1.0, 1.0, 1.0, 1.0))
+                    .with_mask_blur(6.0)
+                    .with_mask_blur_style(style),
+            )
+            .expect("mask blur");
+        render(ctx, canvas)
+    };
+    let normal = draw(&mut ctx, MaskBlurStyle::Normal);
+    let outer = draw(&mut ctx, MaskBlurStyle::Outer);
+    let inner = draw(&mut ctx, MaskBlurStyle::Inner);
+
+    // Color only. Every alpha here is opaque, so summing that channel would
+    // report 255 at every pixel whatever the blur did -- which is how a
+    // seventeen-level difference once read as a catastrophic one.
+    let worst = (0..normal.len())
+        .filter(|i| i % 4 != 3)
+        .map(|i| (outer[i] as i32 + inner[i] as i32 - normal[i] as i32).unsigned_abs())
+        .max()
+        .unwrap_or(0);
+
+    assert!(
+        worst <= 4,
+        "the inner and outer halves should reconstruct the whole evaluated \
+         blur; they differ by {worst}"
+    );
+}
+
 /// A blur that cannot be one deviation is left to the route that blurs in
 /// device space.
 ///
@@ -14283,69 +14334,6 @@ fn a_blur_under_perspective_is_not_evaluated_analytically() {
     );
 }
 
-/// On a shape whose blur is evaluated, the four mask blur styles no longer
-/// reconstruct each other exactly, and this says by how much.
-///
-/// `Normal` on a rounded rectangle, a rectangle or a circle is the analytic
-/// expression; `Outer`, `Inner` and `Solid` are still assembled out of a
-/// sampled blur and the sharp shape. Two mechanisms, so the identity that
-/// `outer + inner == normal` -- exact through the general route, and pinned
-/// there by `the_two_halves_of_a_blur_add_up_to_the_whole_of_it` -- holds here
-/// only to the width of the approximation.
-///
-/// Upstream does not have this seam: `AttemptDrawBlur` serves all four styles
-/// from the same evaluated blur, combining them with a clip or a second draw.
-/// Closing it here means doing the same, and until then the gap is bounded and
-/// visible rather than merely unmentioned. `non-parity.md` records it.
-///
-/// The bound is what was measured plus room, and the point is that it is a
-/// bound at all: if `Outer` or `Inner` started keeping the wrong part of the
-/// blur, the difference would be a fraction of the shape rather than a fifth
-/// of a level.
-#[test]
-fn an_evaluated_blur_and_an_assembled_one_agree_only_to_the_approximation() {
-    let Some(mut ctx) = context() else {
-        return;
-    };
-    let draw = |ctx: &mut Context, style: MaskBlurStyle| {
-        let mut canvas = Canvas::new(SIZE);
-        canvas.clear(Color::linear(0.0, 0.0, 0.0, 1.0));
-        canvas
-            .draw_rect(
-                Rect::new(34.0, 34.0, 94.0, 94.0),
-                &Paint::fill(Color::linear(1.0, 1.0, 1.0, 1.0))
-                    .with_mask_blur(6.0)
-                    .with_mask_blur_style(style),
-            )
-            .expect("mask blur");
-        render(ctx, canvas)
-    };
-    let normal = draw(&mut ctx, MaskBlurStyle::Normal);
-    let outer = draw(&mut ctx, MaskBlurStyle::Outer);
-    let inner = draw(&mut ctx, MaskBlurStyle::Inner);
-
-    // Color only. Every alpha here is opaque, so summing that channel would
-    // report 255 at every pixel whatever the blur did -- which is how this
-    // looked like a catastrophe for a few minutes.
-    let worst = (0..normal.len())
-        .filter(|i| i % 4 != 3)
-        .map(|i| (outer[i] as i32 + inner[i] as i32 - normal[i] as i32).unsigned_abs())
-        .max()
-        .unwrap_or(0);
-
-    assert!(
-        worst <= 24,
-        "the evaluated blur and the assembled one differ by {worst} levels, \
-         which is more than the approximation accounts for"
-    );
-    // And they really are two mechanisms: through one route this is exact.
-    assert!(
-        worst > 4,
-        "they agree to {worst}, so `Normal` was not evaluated and this checks \
-         nothing"
-    );
-}
-
 /// A blurred rectangle is the same shape whichever way it is turned.
 ///
 /// The approximation shortens the longer axis by an amount that falls away as
@@ -14411,10 +14399,13 @@ fn a_blurred_rectangle_is_the_same_turned_either_way() {
 /// composition — blur first, sharp shape over it with `SrcOver` or `DstOut` —
 /// so the two must agree to the width of the approximation and no more.
 ///
-/// `Inner` is not here because it is not converted: its blur is composited with
-/// `DstIn`, which needs coverage over the whole region rather than over a quad.
-/// `non-parity.md` records that, and `plan.md` says what converting it would
-/// take.
+/// `Inner` is here too, and it is the one that needed an argument rather than
+/// a substitution: its blur is composited with `DstIn`, which the analytic
+/// route refuses everywhere else because a quad is smaller than the region a
+/// layer composite covers. Inside this layer the only thing the blend can
+/// reach is the sharp shape drawn a moment earlier, which is a fill and so lies
+/// within the rectangle the quad is grown from -- so there is nothing outside
+/// the quad for it to have zeroed.
 #[test]
 fn an_evaluated_blur_serves_the_combining_styles_as_the_sampled_one_did() {
     let Some(mut ctx) = context() else {
@@ -14423,7 +14414,11 @@ fn an_evaluated_blur_serves_the_combining_styles_as_the_sampled_one_did() {
     let rect = Rect::new(34.0, 34.0, 94.0, 94.0);
     let radius = 8.0;
 
-    for style in [MaskBlurStyle::Solid, MaskBlurStyle::Outer] {
+    for style in [
+        MaskBlurStyle::Solid,
+        MaskBlurStyle::Outer,
+        MaskBlurStyle::Inner,
+    ] {
         let paint = Paint::fill(Color::srgb(0.9, 0.4, 0.2, 1.0))
             .with_mask_blur(6.0)
             .with_mask_blur_style(style);

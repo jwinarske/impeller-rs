@@ -2530,13 +2530,34 @@ impl Canvas {
             // blur on that side is what makes the rule act everywhere.
             MaskBlurStyle::Inner => {
                 let first = self.draw_mask_content(content, inner).err();
-                if first.is_none() {
-                    self.save_layer_bounds(blurred.with_blend(BlendMode::DstIn), bounds);
-                    let second = self.draw_mask_content(content, inner).err();
-                    self.restore();
-                    second
-                } else {
-                    first
+                if first.is_some() {
+                    return first;
+                }
+                // `DstIn` is the one blend the analytic route refuses
+                // everywhere else, because it changes the destination where the
+                // source drew nothing and a quad is smaller than the region a
+                // layer composite covers. That argument does not reach here,
+                // and the reason is specific rather than a relaxation: the only
+                // thing in this layer is the sharp shape drawn a line above,
+                // the shape is a fill and so lies within `rect`, and the quad
+                // is `rect` grown by the blur's reach. Everything the blend
+                // could have to zero is under the quad; outside it the layer is
+                // still transparent, where zeroing and leaving alone are the
+                // same. So the eligibility is asked about the blur -- with
+                // `SrcOver`, since that is what the question means -- and the
+                // blend is put on at the draw.
+                match self.analytic_style_blur(content, inner, sigma) {
+                    Some((rect, material, pad)) => {
+                        let composite = inner.clone().with_blend(BlendMode::DstIn);
+                        self.draw_analytic(rect.outset(pad), material, &composite)
+                            .err()
+                    }
+                    None => {
+                        self.save_layer_bounds(blurred.with_blend(BlendMode::DstIn), bounds);
+                        let second = self.draw_mask_content(content, inner).err();
+                        self.restore();
+                        second
+                    }
                 }
             }
             MaskBlurStyle::Normal => unreachable!("handled by the caller"),
