@@ -129,13 +129,27 @@ starting that stage.
 A bench that dies instantly with `nohup: failed to run command './xtask'` is
 that, not the board.
 
-**Measure through GLES on this board; the Vulkan path is bimodal.** Ten runs of
-one binary gave a GLES figure spread over 0.017 ms and a Vulkan figure that
-jumped between 13.35 and 13.82 — same process, same GPU, same run. Whatever
-this is belongs to the Vulkan side rather than to the board, since the two
-numbers come out of one invocation minutes apart and only one of them moves.
-Until it is understood, a difference worth reporting should be established on
-the GLES row, where a three-run cluster is tight to a couple of hundredths.
+**Measure through GLES on this board. One Vulkan configuration will not hold
+still, and it is the one worth measuring.** Ten runs of a binary gave a GLES
+distance-field figure spread over 0.017 ms and a Vulkan one that jumped between
+13.35 and 13.82 — same process, same GPU, printed minutes apart in the same
+run, and only one of them moving. So it is not heat, not the clock (V3D sat at
+960 MHz throughout) and not the board.
+
+Narrower than that: within one run the other two Vulkan configurations are
+steadier than the GLES row. Over six runs the tessellated single-sampled figure
+spread 0.008 ms and the four-sample one 0.05, while the distance field beside
+them spread 0.277. What separates that configuration is draw count — an
+analytic shape carries its geometry inside its material and cannot merge, so it
+is a hundred and sixty draws where the tessellated ones are a single merged
+draw. The variability is therefore in something the Vulkan backend does per
+draw rather than per frame, and it does it differently from one process to the
+next.
+
+That is an observation, not a diagnosis; nothing here has looked at the
+allocator or the descriptor path yet. Until something does, establish a
+difference on the GLES row, where a three-run cluster is tight to a couple of
+hundredths.
 
 **One run is not a measurement: the Vulkan figure lands in one of two speeds.**
 Five consecutive runs of one binary, on a cool fanned board minutes after a
