@@ -1796,6 +1796,43 @@ every fragment walks, which is the cost specialization would remove.
   multisampled alternative on all three. The absolute times differ, as they
   should — that is a different part.
 
+  ### What a whole frame costs, which the comparison above does not say
+
+  The three routes are one narrow question answered well. They are not a frame:
+  one material, no layer, no blur, no tabulated ramp. So `cargo xtask bench`
+  times a fourth thing per device — a ground that tabulates a ramp, three cards
+  carrying shadows, a blurred layer over them, at 1920×1080. On a Raspberry Pi
+  5's V3D, release build, two hundred frames:
+
+  | device | median | p99 | spread across 200 frames |
+  |---|---|---|---|
+  | V3D, Vulkan | 66.532 ms | 66.631 ms | 66.388–66.660 |
+  | V3D, GLES | 62.842 ms | 63.116 ms | 62.660–63.187 |
+
+  Fifteen frames a second, against a sixtieth of a second to draw one. It is
+  not draw count: twenty-one draws here against a hundred and sixty in the
+  comparison, which costs 13 ms.
+
+  **It is one unbounded layer.** The recording is fourteen passes, and their
+  sizes say where the work is. The three shadows take nine passes between them
+  at 233×233 — each bounded to the shape that casts it. The blurred layer takes
+  four: one at the full 1920×1080 and three at 960×540. The content of that
+  layer is a circle about 216 texels across, which is three percent of the
+  target it was given.
+
+  So the layer accounts for 3.63 of the frame's 6.19 megapixels of pass area,
+  and `Canvas::save_layer_bounds` shrinks it to 0.16 — a factor of twenty-three
+  — by sizing the target to what goes in it. `save_layer` with no bounds gets
+  the whole surface, which is what a caller writes first and what the panel
+  example writes today.
+
+  Two things this does not yet establish, both worth their own work. Whether
+  the time follows the area: a fill-bound tiler suggests it roughly should, and
+  nobody has measured the bounded frame to find out. And whether sizing an
+  unbounded layer to its content's coverage is what upstream does, which is a
+  parity question rather than an optimization — it wants reading upstream at
+  tip of tree, not reasoning from here.
+
   One thing the figures above do not say, and the harness had to be changed to
   report: **the two paths do not cost the same number of draws.** Every
   tessellated shape here carries one solid material, so a batch merges all
