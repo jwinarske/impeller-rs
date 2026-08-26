@@ -1370,19 +1370,36 @@ devices accept. This negotiation is a first-class code path, not an edge case.
 ### GLES (`impeller-hal-gles`)
 
 GLES 3.0 floor via `glow`, with contexts from EGL in all configurations.
-Commands are recorded into a vec and replayed as GL calls at submit, with a
-state cache to avoid redundant binds. Programs are linked at context creation
-from embedded GLSL ES 300 and cached via `GL_OES_get_program_binary` where
-available.
 
-`glFenceSync` and `glClientWaitSync` back `HalFence`;
-`EGL_ANDROID_native_fence_sync` exports sync fds for the DRM path. Uniform data
-lives in UBOs with std140 layouts generated alongside the shaders; there is no
-push-constant equivalent, so per-draw material data is written into one buffer
-per submission and bound a range at a time. MSAA uses multisampled renderbuffers with a blit resolve, and
-`GL_EXT_multisampled_render_to_texture` on tilers where present.
+A batch is walked at submit and its GL calls issued directly; nothing is
+recorded into a command list first. Redundant state is barely avoided — the
+stencil configuration is the one thing compared against the previous draw, and
+everything else is set unconditionally.
+
+The program is linked from embedded GLSL ES 300 on the **first submission**, not
+at context creation, and there is no program binary caching:
+`GL_OES_get_program_binary` is not used, so every process links afresh.
+
+**There is no GLES fence.** The HAL's associated type is
+`std::convert::Infallible`, so one cannot be constructed. `Capabilities` still
+reports `export_sync_file` and `import_sync_file` from the presence of
+`EGL_ANDROID_native_fence_sync`, which makes that capability unreachable rather
+than usable: a caller who checks it and then goes looking for a fence to export
+finds there is no way to obtain one. Worth fixing in one direction or the other
+— either the capability should be false or the fence should exist.
+
+Uniform data lives in UBOs with std140 layouts generated alongside the shaders;
+there is no push-constant equivalent, so per-draw material data is written into
+one buffer per submission and bound a range at a time. MSAA uses multisampled
+renderbuffers with a blit resolve. `GL_EXT_multisampled_render_to_texture` is
+not used on tilers or anywhere else.
 
 GLES 2.0 is permanently out of scope; the feature gap is too large.
+
+Of the nine claims this section used to make, six were false, one overstated
+and two true. They are corrected above, and the pattern is the same one the
+Vulkan section had: caching, deferral and extension use described as built
+because they were intended.
 
 ## Runtime effects
 
