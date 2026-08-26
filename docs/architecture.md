@@ -1651,13 +1651,19 @@ allocation path this used to claim as "supported and tested" alongside the
 other does not exist, here or anywhere else in the tree. A device without the
 modifier extension is refused.
 
-**GLES path — planned, not built.** The classic GBM route would put a
-`gbm_device` on the DRM fd behind an EGL display on the GBM platform, with a
-`gbm_surface` created against the negotiated modifier set; each frame would
-render, swap, lock the front buffer, import it, commit, and release the
-previous buffer on flip completion. None of that exists: there is no `gbm`
-dependency and no code for it. The paragraph is kept in the future tense
-because the design is still the intended one.
+**GLES path — planned, not built.** There is no `gbm` dependency and no code
+for it.
+
+The intended route is *not* the classic one this paragraph used to describe —
+a `gbm_surface` against the negotiated modifiers, `eglSwapBuffers`,
+`lock_front_buffer`. It is the other: allocate GBM buffer objects, import each
+as an `EGLImage`, render into it through an FBO, and commit it. That is the
+shape `DrmScanoutTarget` already has, differing from the Vulkan path only in
+who allocates — which is what the refusal it raises today already says, "use
+the GBM path". Allocation would come from `drmkit-gbm`, which has the device,
+modifier-aware buffers and dma-buf export already; the `EGLImage` import
+belongs to the GLES backend here, since a GBM wrapper should not have to learn
+about EGL.
 
 Pacing is flip-event driven with configurable acquire depth. Hotplug and
 modeset surface as a reconfigure error, and the target rebuilds its buffer ring
