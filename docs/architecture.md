@@ -67,7 +67,8 @@ at first, so it says which parts are drawings of intent rather than of code.
 │   ┌──────────────┬──────────────┬───────────────────────┐     │
 │   ▼              ▼              ▼                       ▼     │
 │ vk-swapchain   egl-window    drm-scanout (Vulkan)  drm-scanout│
-│ (WSI)          (WSI)         dma-buf export         (GLES/GBM)│
+│ (WSI)          (WSI)         dma-buf export    (planned:      │
+│                                                 GLES/GBM)     │
 │                              └───────── drm-rs ─────────┘     │
 └───────────────────────────────────────────────────────────────┘
 ```
@@ -156,10 +157,19 @@ its primary plane would accept.
 |            | WSI (windowed)      | DRM (direct scanout)                          |
 |------------|---------------------|-----------------------------------------------|
 | **Vulkan** | `VkSwapchainKHR`    | VkImage → dma-buf export → drm-rs FB → commit |
-| **GLES**   | EGL window surface  | EGL on GBM → gbm_surface → drm-rs FB → commit |
+| **GLES**   | EGL window surface  | *planned* — EGL on GBM → gbm_surface → drm-rs FB → commit |
 
-All four cells are Tier 1 on Linux. On non-Linux platforms only the WSI column
-applies. Future backends extend the rows, never the columns.
+Three of the four cells are built. **GLES to direct scanout is not**, and the
+document claimed all four were Tier 1 until the code was read against it. There
+is no `gbm` anywhere in the tree — no dependency, no code — so the GBM route
+that cell describes does not exist; and the route Vulkan uses is closed to GLES
+as well, because `Capabilities::render_formats` is where a backend lists what it
+can export by DRM fourcc and the GLES backend reports an empty vector, so the
+format negotiation has nothing to choose from. `DrmScanoutTarget::new` refuses
+with "use the GBM path", which is a message pointing at something unbuilt.
+
+On non-Linux platforms only the WSI column applies. Future backends extend the
+rows, never the columns.
 
 ## Rendering HAL
 
@@ -1603,11 +1613,13 @@ the signal semaphore as a sync_file, and issues a nonblocking commit. Where
 plus Vulkan dma-buf import. Both paths are supported and tested; capability
 detection picks between them.
 
-**GLES path**, the classic GBM route: a `gbm_device` on the DRM fd backs an EGL
-display on the GBM platform, with a `gbm_surface` created against the
-negotiated modifier set. Each frame renders, swaps, locks the front buffer,
-imports it (cached — GBM recycles a small ring internally), commits, and
-releases the previous buffer on flip completion.
+**GLES path — planned, not built.** The classic GBM route would put a
+`gbm_device` on the DRM fd behind an EGL display on the GBM platform, with a
+`gbm_surface` created against the negotiated modifier set; each frame would
+render, swap, lock the front buffer, import it, commit, and release the
+previous buffer on flip completion. None of that exists: there is no `gbm`
+dependency and no code for it. The paragraph is kept in the future tense
+because the design is still the intended one.
 
 Pacing is flip-event driven with configurable acquire depth. Hotplug and
 modeset surface as a reconfigure error, and the target rebuilds its buffer ring
@@ -2233,7 +2245,7 @@ backend:
 
 ```
 --features vulkan,drm        Vulkan rendering with KMS scanout
---features gles,drm          the classic embedded GBM path
+--features gles,drm          builds, but the GBM scanout path is not written yet
 --features vulkan,gles,drm   one binary that picks at runtime
 ```
 
@@ -2309,7 +2321,7 @@ project ships and what the OS provides:
 | Vulkan + WSI (Apple) | MoltenVK | **Bundled by us** |
 | **Vulkan + DRM** | Vulkan driver only — no userspace display library at all | OS / GPU vendor |
 | GLES + WSI | libEGL, libGLESv2 (dlopen'd) | OS / Mesa / vendor |
-| GLES + DRM | libEGL, libGLESv2, libgbm (dlopen'd) | OS / Mesa / vendor |
+| GLES + DRM *(planned)* | libEGL, libGLESv2, libgbm (dlopen'd) | OS / Mesa / vendor |
 
 **Vulkan + DRM is the purest cell in the matrix.** drm-rs speaks raw ioctls to
 the kernel with no libdrm, and Vulkan allocates scanout buffers itself, so
