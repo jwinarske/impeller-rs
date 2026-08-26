@@ -1691,6 +1691,19 @@ permutations on GLES; there are no spec constants anywhere yet, and the fragment
 stage dispatches on a material kind at runtime instead — a chain of comparisons
 every fragment walks, which is the cost specialization would remove.
 
+That cost has a number now, and it is not the comparisons. Adding the blurred
+rounded rectangle above — one dispatch arm and three functions, two of them
+carrying a `pow` and a `sqrt` — made the *distance field* path, which does not
+touch any of it, about three percent slower on a Raspberry Pi 5's V3D: 13.40 ms
+against 12.99, measured by alternating the two builds in one sitting so the
+board's temperature could not stand in for the difference. One extra bounded
+comparison does not cost that; a fragment program that needs more registers,
+and so runs at lower occupancy for every material, does.
+
+So the price of an uber-shader is paid by every draw whenever any material gets
+more expensive, and it is the argument for specialization stated in device time
+rather than in principle.
+
 ## Renderer internals
 
 - **Geometry** (`impeller-geometry`): lyon for general fills and strokes;
