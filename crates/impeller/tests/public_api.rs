@@ -13971,3 +13971,54 @@ fn a_filtered_layer_with_no_bounds_is_sized_by_what_the_filter_reaches() {
         "the two spellings of one blur disagree by {worst} levels"
     );
 }
+
+/// A layer multiplied into what is under it has to cover everything it might
+/// zero, not just what it drew.
+///
+/// `Modulate` multiplies the two sides, so where the layer drew nothing its
+/// source is transparent black and the product is zero: "the layer drew nothing
+/// here" and "leave this pixel alone" are different instructions. A layer sized
+/// to its content stops covering the rest, and the rest keeps whatever was
+/// under it -- which is the picture nobody debugs from, because the part that
+/// went wrong is the part where nothing was drawn.
+///
+/// This is the one entry in `BlendMode::is_destructive` that cannot be read off
+/// its name, so it is checked against a picture rather than argued for. The
+/// list matches upstream's `Entity::IsBlendModeDestructive`, and `DstIn` from
+/// the same list was caught by the suite at 252 levels when layers were first
+/// narrowed.
+#[test]
+fn a_layer_multiplied_into_the_frame_zeroes_what_it_did_not_draw() {
+    let Some(mut ctx) = context() else {
+        return;
+    };
+    let mut canvas = Canvas::new(SIZE);
+    // Opaque white, so anything left unmultiplied stays obvious.
+    canvas.clear(Color::WHITE);
+    canvas.save_layer(Layer::opacity(1.0).with_blend(BlendMode::Modulate));
+    canvas
+        .draw_rect(
+            Rect::new(48.0, 48.0, 80.0, 80.0),
+            &Paint::fill(Color::WHITE).with_anti_alias(false),
+        )
+        .expect("the layer's own content");
+    canvas.restore();
+    let pixels = render(&mut ctx, canvas);
+
+    // Inside the square both sides are white, so the product is white.
+    assert_eq!(
+        pixel(&pixels, 64, 64),
+        [255, 255, 255, 255],
+        "the layer's own content should have survived being multiplied by white"
+    );
+    // Outside it the layer is transparent black, and white times nothing is
+    // nothing. A layer narrowed to its content never reaches here and the
+    // background stays white.
+    for (x, y) in [(8, 8), (120, 8), (8, 120), (120, 120), (64, 16)] {
+        assert_eq!(
+            pixel(&pixels, x, y),
+            [0, 0, 0, 0],
+            "({x},{y}) was not multiplied, so the layer did not cover it"
+        );
+    }
+}
