@@ -623,6 +623,15 @@ fn rrect_blur_coverage(clip: vec3<f32>) -> vec4<f32> {
     // The Gaussian's integral between the two edges, which is the blur.
     let coverage = scale * (erf7(s_inv * (min_edge + distance)) - erf7(s_inv * distance));
 
+    // The clamp is a guard rather than part of the expression, and upstream
+    // does without it. In the domain the CPU side produces it cannot bite:
+    // `min_edge` is positive and `erf7` is monotonic, so the difference is
+    // never negative, and `scale` is half an `erf7` and so never above a half
+    // while the difference is never above two. It is here because this writes
+    // a premultiplied color, where a coverage above one would put color past
+    // alpha and show up as a bright fringe rather than as an obviously wrong
+    // picture. If it ever does bite, something on the CPU side is wrong and
+    // this hides it -- so it is worth removing to look, rather than trusting.
     return paint.stops[0] * clamp(coverage, 0.0, 1.0);
 }
 
