@@ -14078,8 +14078,24 @@ fn an_analytic_blurred_rectangle_agrees_with_the_blur_it_replaces() {
     let Some(mut ctx) = context() else {
         return;
     };
-    for (radius, sigma) in [(16.0, 4.0), (16.0, 8.0), (0.0, 6.0), (40.0, 5.0)] {
-        let rect = Rect::new(34.0, 30.0, 94.0, 98.0);
+    // The last three are eccentric on purpose. The transcription carries a
+    // correction that pulls in the longer axis -- a rectangle much longer than
+    // it is wide blurs to something the axis-wise expression makes too
+    // eccentric otherwise -- and it is the least self-evident arithmetic in
+    // the whole of it. A near-square sweep never reaches it: the correction is
+    // the difference of two Gaussians of the sides, which is zero when the
+    // sides agree.
+    for (radius, sigma, rect) in [
+        (16.0, 4.0, Rect::new(34.0, 30.0, 94.0, 98.0)),
+        (16.0, 8.0, Rect::new(34.0, 30.0, 94.0, 98.0)),
+        (0.0, 6.0, Rect::new(34.0, 30.0, 94.0, 98.0)),
+        (40.0, 5.0, Rect::new(34.0, 30.0, 94.0, 98.0)),
+        // Wide and short, short and wide, and one thin enough that the blur is
+        // wider than the shape.
+        (4.0, 5.0, Rect::new(14.0, 54.0, 114.0, 74.0)),
+        (4.0, 5.0, Rect::new(54.0, 14.0, 74.0, 114.0)),
+        (2.0, 7.0, Rect::new(20.0, 60.0, 108.0, 68.0)),
+    ] {
         let paint = Paint::fill(Color::WHITE).with_mask_blur(sigma);
 
         let mut analytic = Canvas::new(SIZE);
@@ -14121,8 +14137,11 @@ fn an_analytic_blurred_rectangle_agrees_with_the_blur_it_replaces() {
             .sum::<u64>() as f64
             / one.len() as f64;
 
-        // A shape in the wrong place, at the wrong size, or with the wrong
-        // falloff does not land here: it disagrees over a whole region, so the
+        // Measured: 13, 22, 17, 16 for the near-square four and 18, 18, 9 for
+        // the eccentric three, so the correction that pulls in a long axis is
+        // no worse than the rest of the approximation. A shape in the wrong
+        // place, at the wrong size, or with the wrong falloff does not land
+        // here: it disagrees over a whole region, so the
         // mean goes with the worst. Measured at 13 to 22 worst and 1.1 to 2.9
         // mean over these four; the bounds are set above that and well under
         // what a misplaced shape gives.
