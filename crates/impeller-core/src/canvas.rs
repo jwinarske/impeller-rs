@@ -2906,6 +2906,12 @@ impl Canvas {
             center.x + radius,
             center.y + radius,
         );
+        // A circle is a rounded rectangle whose corners are half its side, which
+        // is how the line below already treats it and how upstream states it:
+        // `DrawOval` on a square sends `RRectBlurShape(rect, width * 0.5)`.
+        if let Some((material, pad)) = self.analytic_rrect_blur(bounds, radius, paint) {
+            return self.draw_analytic(bounds.outset(pad), material, paint);
+        }
         if let Some(material) = self.analytic_rrect(bounds, radius, paint) {
             return self.draw_analytic(bounds, material, paint);
         }
@@ -4523,6 +4529,13 @@ fn circle_path(center: Vec2, radius: f32) -> Path {
     let r = radius;
     let k = KAPPA * r;
     let mut b = PathBuilder::new();
+    // Recorded for the same reason a rounded rectangle's is: a shadow arrives
+    // as a path, and a circle is the one oval the blurred-rectangle expression
+    // describes exactly -- corners of half the side, on a square.
+    b.as_rounded_rect(
+        GeometryRect::new(Vec2::new(cx - r, cy - r), Vec2::new(cx + r, cy + r)),
+        r,
+    );
     b.move_to(Vec2::new(cx + r, cy))
         .cubic_to(
             Vec2::new(cx + r, cy + k),

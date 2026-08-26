@@ -245,6 +245,15 @@ What is left is the shape this does not cover. A shadow under anything that is
 not a rounded rectangle — a rounded superellipse, a caller's outline, a glyph —
 still costs three passes, and the mesh is what upstream answers that with.
 
+**And a seam the other three mask blur styles sit on.** Only `Normal` is
+evaluated; `Outer`, `Inner` and `Solid` are still assembled out of a sampled
+blur and the sharp shape. Upstream has no such seam — `AttemptDrawBlur` serves
+all four from the same evaluated blur, combining them with a clip or a second
+draw. So `outer + inner == normal`, which is exact through the general route,
+holds to about seventeen levels on a shape whose `Normal` is evaluated. Bounded
+and pinned by `an_evaluated_blur_and_an_assembled_one_agree_only_to_the_approximation`
+rather than left to be discovered.
+
 The pictures agree either way, which is why [`parity.md`](parity.md) lists
 `maskFilter` and `drawShadow` as built. This is a difference in what they cost.
 

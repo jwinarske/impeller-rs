@@ -7999,10 +7999,16 @@ fn the_two_halves_of_a_blur_add_up_to_the_whole_of_it() {
         // Black, so what comes back at each pixel is the contribution itself:
         // source-over onto zero leaves the premultiplied color alone.
         canvas.clear(Color::linear(0.0, 0.0, 0.0, 1.0));
+        // Through the general route for all three styles, which is what this
+        // identity is about. `Normal` on a shape that knows what it is now
+        // evaluates its blur rather than sampling one, and the other two still
+        // sample -- so on such a shape the three no longer reconstruct each
+        // other to within a level or two. That difference is the approximation
+        // and is pinned separately; here the point is that the composition is
+        // exact, which needs all three built the same way.
         canvas
-            .draw_circle(
-                Vec2::new(64.0, 64.0),
-                34.0,
+            .draw_path(
+                &square_path(Rect::new(30.0, 30.0, 98.0, 98.0)),
                 &Paint::fill(Color::linear(1.0, 1.0, 1.0, 1.0))
                     .with_mask_blur(6.0)
                     .with_mask_blur_style(style),
@@ -14255,5 +14261,68 @@ fn a_blur_under_perspective_is_not_evaluated_analytically() {
         differing, 0,
         "{differing} channels differ, so the rectangle was evaluated analytically \
          under a perspective transform"
+    );
+}
+
+/// On a shape whose blur is evaluated, the four mask blur styles no longer
+/// reconstruct each other exactly, and this says by how much.
+///
+/// `Normal` on a rounded rectangle, a rectangle or a circle is the analytic
+/// expression; `Outer`, `Inner` and `Solid` are still assembled out of a
+/// sampled blur and the sharp shape. Two mechanisms, so the identity that
+/// `outer + inner == normal` -- exact through the general route, and pinned
+/// there by `the_two_halves_of_a_blur_add_up_to_the_whole_of_it` -- holds here
+/// only to the width of the approximation.
+///
+/// Upstream does not have this seam: `AttemptDrawBlur` serves all four styles
+/// from the same evaluated blur, combining them with a clip or a second draw.
+/// Closing it here means doing the same, and until then the gap is bounded and
+/// visible rather than merely unmentioned. `non-parity.md` records it.
+///
+/// The bound is what was measured plus room, and the point is that it is a
+/// bound at all: if `Outer` or `Inner` started keeping the wrong part of the
+/// blur, the difference would be a fraction of the shape rather than a fifth
+/// of a level.
+#[test]
+fn an_evaluated_blur_and_an_assembled_one_agree_only_to_the_approximation() {
+    let Some(mut ctx) = context() else {
+        return;
+    };
+    let draw = |ctx: &mut Context, style: MaskBlurStyle| {
+        let mut canvas = Canvas::new(SIZE);
+        canvas.clear(Color::linear(0.0, 0.0, 0.0, 1.0));
+        canvas
+            .draw_rect(
+                Rect::new(34.0, 34.0, 94.0, 94.0),
+                &Paint::fill(Color::linear(1.0, 1.0, 1.0, 1.0))
+                    .with_mask_blur(6.0)
+                    .with_mask_blur_style(style),
+            )
+            .expect("mask blur");
+        render(ctx, canvas)
+    };
+    let normal = draw(&mut ctx, MaskBlurStyle::Normal);
+    let outer = draw(&mut ctx, MaskBlurStyle::Outer);
+    let inner = draw(&mut ctx, MaskBlurStyle::Inner);
+
+    // Color only. Every alpha here is opaque, so summing that channel would
+    // report 255 at every pixel whatever the blur did -- which is how this
+    // looked like a catastrophe for a few minutes.
+    let worst = (0..normal.len())
+        .filter(|i| i % 4 != 3)
+        .map(|i| (outer[i] as i32 + inner[i] as i32 - normal[i] as i32).unsigned_abs())
+        .max()
+        .unwrap_or(0);
+
+    assert!(
+        worst <= 24,
+        "the evaluated blur and the assembled one differ by {worst} levels, \
+         which is more than the approximation accounts for"
+    );
+    // And they really are two mechanisms: through one route this is exact.
+    assert!(
+        worst > 4,
+        "they agree to {worst}, so `Normal` was not evaluated and this checks \
+         nothing"
     );
 }
