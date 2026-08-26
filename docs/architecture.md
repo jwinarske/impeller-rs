@@ -45,6 +45,24 @@ This is the design. Boxes marked *planned* are not built, and the section on
 what exists says so again in more detail — but a diagram is what a reader looks
 at first, so it says which parts are drawings of intent rather than of code.
 
+**That convention belongs on the prose too, and did not have it.** This file
+was audited against the code in August 2026 and fourteen of its claims were
+false. They were not scattered: every one described *machinery* — a cache, a
+thread, a fallback, a fenced sync path, an extension used "where available", an
+allocation deferred to a ring — written in the present tense because it was
+intended. What held up was everything else. The decisions and their reasoning
+were accurate wherever they were checked; so were the test-lane table and the
+crate table, both of which carry an explicit state column; so was the diagram
+above, which already marked as planned the three things the backend section
+claimed as built.
+
+So the rule for anything added here: **a claim about machinery carries its
+state, or it does not go in.** A design that is described but not built is
+worse than one that is not described, because it is the one a reader will not
+think to check — and the audit found one entry that had drifted the same
+morning, from a change made by the person writing about the drift. Care is not
+the mechanism that keeps this file true; the state markers are.
+
 ```
 ┌───────────────────────────────────────────────────────────────┐
 │  Public API (impeller-core)                                   │
