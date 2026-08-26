@@ -3547,18 +3547,10 @@ impl Canvas {
     fn narrowed(
         &self,
         batch: &Batch,
-        filtered: bool,
+        filter: Option<&ImageFilter>,
         paint: Layer,
         layer: Target,
     ) -> Option<Target> {
-        // An image filter given to the layer as a whole can move and spread
-        // what it is given by an amount this does not compute -- `Layer::reach`
-        // covers the blur and the morphology and knows nothing about a
-        // composition or a caller's program. Narrowing under one would cut
-        // whatever it reached for, so a filtered layer keeps its full target.
-        if filtered {
-            return None;
-        }
         // A layer composited with a mode that changes the destination where the
         // source drew nothing has to cover everything it might affect, not just
         // what it covered. `DstIn` is the one that shows it: narrowed to its
@@ -3575,12 +3567,29 @@ impl Canvas {
         // reason: the content is where the draws are, and how far the layer's
         // own blur carries them past that is this renderer's arithmetic.
         let reach = paint.reach();
-        let left = (content.left - reach.x).floor().max(layer.origin.x);
-        let top = (content.top - reach.y).floor().max(layer.origin.y);
-        let right = (content.right + reach.x)
-            .ceil()
-            .min(layer.origin.x + layer.extent.width as f32);
-        let bottom = (content.bottom + reach.y)
+        let (min, max) = (
+            Vec2::new(content.left - reach.x, content.top - reach.y),
+            Vec2::new(content.right + reach.x, content.bottom + reach.y),
+        );
+        // A filter given to the layer as a whole reaches past what it is
+        // handed, and by how much is the filter's own arithmetic rather than
+        // anything this can assume: a composition asks both halves, a matrix
+        // carrying content across the vanishing line widens to everything, and
+        // a color filter needs exactly what it was given. `covering` is the
+        // same question a draw carrying an image filter already asks before it
+        // opens its own layer.
+        //
+        // After the layer's own blur and morphology, because that is the order
+        // `finish_layer` applies them in: the filter sees what those produced.
+        let (min, max) = match filter {
+            Some(filter) => filter.covering(min, max),
+            None => (min, max),
+        };
+        let left = min.x.floor().max(layer.origin.x);
+        let top = min.y.floor().max(layer.origin.y);
+        let right = max.x.ceil().min(layer.origin.x + layer.extent.width as f32);
+        let bottom = max
+            .y
             .ceil()
             .min(layer.origin.y + layer.extent.height as f32);
         if !(right > left && bottom > top) {
@@ -3603,7 +3612,7 @@ impl Canvas {
         // needed: whether a whole-layer filter is in play, and the layer's own
         // blur and morphology, which decide how far past its content the pass
         // will draw.
-        let (filtered, paint) = (frame.filter.is_some(), frame.paint);
+        let (filter, paint) = (frame.filter.clone(), frame.paint);
         let mut batch = std::mem::replace(&mut self.batch, frame.batch);
         let sources = std::mem::replace(&mut self.sources, frame.sources);
 
@@ -3623,7 +3632,7 @@ impl Canvas {
         // center among them. The pass keeps the space it was recorded against
         // and carries a viewport that lands it on the narrowed target, which
         // crops instead of scaling. See `PassViewport`.
-        let layer = match self.narrowed(&batch, filtered, paint, opened) {
+        let layer = match self.narrowed(&batch, filter.as_ref(), paint, opened) {
             Some(narrowed) => {
                 let (dx, dy) = (
                     (narrowed.origin.x - opened.origin.x) as u32,

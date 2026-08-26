@@ -13885,3 +13885,89 @@ fn a_layer_draws_the_same_picture_whether_or_not_its_bounds_were_named() {
         "the two spellings differ by {max} levels, which is more than rounding"
     );
 }
+
+/// A layer with no bounds and a whole-layer filter is sized by what the filter
+/// reaches, not by what was drawn.
+///
+/// The layer's target is derived from its content at `restore`, and a filter
+/// given to the layer as a whole draws past that content by an amount only the
+/// filter knows -- three deviations, for a blur. Sizing to the content alone
+/// would cut the halo off square, and the cut lands where the content ends
+/// rather than at the target's edge, so it looks like a shadow with a straight
+/// side rather than like a clipped layer.
+///
+/// Two assertions, and they fail for opposite mistakes. The extent says the
+/// filter's reach was added: without it the target stops at the circle. The
+/// picture says the reach was not merely *allocated* but drawn, by comparing
+/// against the same blur spelled on the layer itself, which is a different
+/// route to the same image.
+#[test]
+fn a_filtered_layer_with_no_bounds_is_sized_by_what_the_filter_reaches() {
+    let Some(mut ctx) = context() else {
+        return;
+    };
+    let sigma = 8.0;
+    let at = Vec2::new(64.0, 64.0);
+    let radius = 20.0;
+
+    let mut filtered = Canvas::new(SIZE);
+    filtered.clear(Color::BLACK);
+    filtered
+        .save_layer_filtered(Layer::opacity(1.0), None, &ImageFilter::Blur { sigma })
+        .expect("a blur filters a group");
+    filtered
+        .draw_circle(at, radius, &Paint::fill(Color::WHITE))
+        .expect("content");
+    filtered.restore();
+    let recording = filtered.finish();
+    let extent = recording.passes[0].extent;
+
+    // How big the same layer is with no filter over it: the content's own
+    // bounds and nothing more. Measured rather than written down, because the
+    // reach is `ceil((sigma - 0.5) * sqrt(3))` -- upstream's
+    // `kKernelRadiusPerSigma` -- and a test that restated that arithmetic
+    // would pass while disagreeing with the renderer about it.
+    let mut plain = Canvas::new(SIZE);
+    plain.clear(Color::BLACK);
+    plain.save_layer(Layer::opacity(1.0));
+    plain
+        .draw_circle(at, radius, &Paint::fill(Color::WHITE))
+        .expect("content");
+    plain.restore();
+    let content_only = plain.finish().passes[0].extent;
+
+    assert!(
+        extent.width > content_only.width && extent.height > content_only.height,
+        "{extent:?} is no larger than the {content_only:?} the content alone needs, \
+         so the filter's reach was never added and its halo is cut"
+    );
+    // And still narrowed: a layer that took the whole frame would satisfy the
+    // line above without having derived anything.
+    assert!(
+        extent.width < SIZE.width && extent.height < SIZE.height,
+        "{extent:?} is the whole frame, so nothing was derived"
+    );
+
+    let through_filter = render_recording(&mut ctx, &recording);
+
+    // The same blur, asked for on the layer rather than as a filter over it.
+    let mut direct = Canvas::new(SIZE);
+    direct.clear(Color::BLACK);
+    direct.save_layer(Layer::opacity(1.0).with_blur(sigma));
+    direct
+        .draw_circle(at, radius, &Paint::fill(Color::WHITE))
+        .expect("content");
+    direct.restore();
+    let through_layer = render(&mut ctx, direct);
+
+    let worst = through_filter
+        .iter()
+        .zip(&through_layer)
+        .map(|(a, b)| a.abs_diff(*b))
+        .max()
+        .unwrap_or(0);
+    assert!(
+        worst <= 1,
+        "the two spellings of one blur disagree by {worst} levels"
+    );
+}
