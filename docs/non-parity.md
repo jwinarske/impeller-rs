@@ -216,7 +216,38 @@ sixteenth of the size, which is why it was worth having the reduction at all.
 The pictures agree: the reduction preserves light, checked at a deviation of
 twenty-four by the energy test, which takes this path.
 
-## 7. Operations that are absent
+## 7. A blurred shape is blurred; upstream has two ways of not blurring it
+
+**What differs.** A mask blur here draws the shape into a layer and runs a
+separable Gaussian over it: one pass for the content and two for the blur, per
+shape. Upstream reaches for a blur pass only when it has to. `AttemptDrawBlurredRRect`
+takes an analytic route when every corner shares one circular radius —
+`SolidRRectBlurContents`, a fragment shader that evaluates a blurred rounded
+rectangle directly — and falls back to `AttemptDrawBlurredPathSource`
+otherwise, which tessellates a *shadow mesh* whose vertices carry the falloff.
+Both are one draw in the pass already being recorded, and neither allocates a
+target.
+
+**Why.** Not a decision — the accelerated paths were never built. The general
+route is the correct one and is what makes every other case work: a gradient or
+an image blurs properly because the mask is blurred and the paint drawn through
+it. Upstream keeps that route too, for the same reason. What is missing is the
+special case in front of it.
+
+**Impact.** Measured on a Raspberry Pi 5's V3D, release build. The bench frame
+carries three shadows over rounded cards, each with a uniform circular radius —
+the case upstream draws analytically. With them the frame costs 26.757 ms
+through Vulkan and 24.318 through GLES; with them taken out, 18.928 and 17.676.
+So the three cost 7.8 ms and 6.6 ms, near thirty percent of a frame that is
+otherwise a gradient, three cards and a blurred layer. They are also nine of
+the frame's fourteen passes: without them it is five.
+
+The pictures agree, which is why [`parity.md`](parity.md) lists `maskFilter`
+and `drawShadow` as built. This is a difference in what they cost rather than
+in what they draw — the same shape of difference as the blur reduction above,
+and a much larger one.
+
+## 8. Operations that are absent
 
 These are listed in [`parity.md`](parity.md) with their reasoning and are
 summarized here only so that this file is the one place to look.
@@ -235,7 +266,7 @@ summarized here only so that this file is the one place to look.
   *Impact:* the geometry is re-walked rather than the draws being replayed,
   which costs recording time on a repeated sub-picture.
 
-## 8. One thing that looks like a difference and is not
+## 9. One thing that looks like a difference and is not
 
 Worth stating because a reviewer raised it as a hole. **The advanced blend modes
 are defined on `[0, 1]` here and clip in `set_lum`,** which looks like an
