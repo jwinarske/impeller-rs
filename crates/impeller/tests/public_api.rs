@@ -14170,3 +14170,90 @@ fn an_analytic_blurred_rectangle_costs_no_passes() {
         "the general route should still be drawing into a layer"
     );
 }
+
+/// A blur that cannot be one deviation is left to the route that blurs in
+/// device space.
+///
+/// The analytic expression carries a single deviation, measured in the shape's
+/// own space. Under a transform that scales the axes differently, the blur a
+/// caller asked for is wider along one device axis than the other, and there is
+/// nowhere in that expression to say so -- so it would draw a round blur where
+/// an oval one was asked for, at whichever scale it happened to pick.
+///
+/// It refuses instead, and the check is that the shape then draws exactly as
+/// the same outline does through the general route. Exactly, not nearly: both
+/// are the same mechanism once the analytic one has stepped aside, so any
+/// difference at all means it did not.
+#[test]
+fn a_blur_under_an_anisotropic_transform_is_not_evaluated_analytically() {
+    let Some(mut ctx) = context() else {
+        return;
+    };
+    let rect = Rect::new(20.0, 20.0, 50.0, 44.0);
+    let paint = Paint::fill(Color::WHITE).with_mask_blur(5.0);
+
+    let mut through_rect = Canvas::new(SIZE);
+    through_rect.clear(Color::BLACK);
+    through_rect.scale(2.0, 1.0);
+    through_rect.draw_rect(rect, &paint).expect("rect");
+    let one = render(&mut ctx, through_rect);
+
+    let mut through_path = Canvas::new(SIZE);
+    through_path.clear(Color::BLACK);
+    through_path.scale(2.0, 1.0);
+    through_path
+        .draw_path(&square_path(rect), &paint)
+        .expect("path");
+    let two = render(&mut ctx, through_path);
+
+    let differing = (0..one.len()).filter(|&i| one[i] != two[i]).count();
+    assert_eq!(
+        differing, 0,
+        "{differing} channels differ, so the rectangle was evaluated analytically \
+         under a transform that stretches one axis"
+    );
+}
+
+/// The same, for a transform this expression cannot follow at all.
+///
+/// A perspective transform does not have one scale: it has a different one at
+/// every point, so a deviation carried into the shape's space means a different
+/// width at each end of the shape. The general route blurs the finished image
+/// in device space and is unaffected.
+#[test]
+fn a_blur_under_perspective_is_not_evaluated_analytically() {
+    let Some(mut ctx) = context() else {
+        return;
+    };
+    let rect = Rect::new(30.0, 30.0, 90.0, 80.0);
+    let paint = Paint::fill(Color::WHITE).with_mask_blur(5.0);
+    // A mild perspective: enough to vary the scale across the shape, not enough
+    // to send anything near the vanishing line.
+    let perspective = [
+        1.0, 0.0, 0.0, 0.0015, //
+        0.0, 1.0, 0.0, 0.0, //
+        0.0, 0.0, 1.0, 0.0, //
+        0.0, 0.0, 0.0, 1.0,
+    ];
+
+    let mut through_rect = Canvas::new(SIZE);
+    through_rect.clear(Color::BLACK);
+    through_rect.concat_4x4(&perspective);
+    through_rect.draw_rect(rect, &paint).expect("rect");
+    let one = render(&mut ctx, through_rect);
+
+    let mut through_path = Canvas::new(SIZE);
+    through_path.clear(Color::BLACK);
+    through_path.concat_4x4(&perspective);
+    through_path
+        .draw_path(&square_path(rect), &paint)
+        .expect("path");
+    let two = render(&mut ctx, through_path);
+
+    let differing = (0..one.len()).filter(|&i| one[i] != two[i]).count();
+    assert_eq!(
+        differing, 0,
+        "{differing} channels differ, so the rectangle was evaluated analytically \
+         under a perspective transform"
+    );
+}
