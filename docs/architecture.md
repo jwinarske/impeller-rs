@@ -1654,16 +1654,27 @@ modifier extension is refused.
 **GLES path — planned, not built.** There is no `gbm` dependency and no code
 for it.
 
-The intended route is *not* the classic one this paragraph used to describe —
-a `gbm_surface` against the negotiated modifiers, `eglSwapBuffers`,
-`lock_front_buffer`. It is the other: allocate GBM buffer objects, import each
-as an `EGLImage`, render into it through an FBO, and commit it. That is the
-shape `DrmScanoutTarget` already has, differing from the Vulkan path only in
-who allocates — which is what the refusal it raises today already says, "use
-the GBM path". Allocation would come from `drmkit-gbm`, which has the device,
-modifier-aware buffers and dma-buf export already; the `EGLImage` import
-belongs to the GLES backend here, since a GBM wrapper should not have to learn
-about EGL.
+**Two routes, chosen by probe.** Buffer objects imported as `EGLImage`s and
+rendered into through an FBO is the one that fits: it is the shape
+`DrmScanoutTarget` already has, differing from the Vulkan path only in who
+allocates — which is what the refusal it raises today already says, "use the
+GBM path" — and it gives explicit control of buffer count and fencing.
+
+But rendering *into* an imported dma-buf is outside the letter of
+`EGL_EXT_image_dma_buf_import`, which is specified for texturing. It is
+universal on Mesa and inconsistent on vendor blobs, some of which expose only
+`glEGLImageTargetRenderbufferStorageOES`; a Mali r-series target with the ARM
+userspace driver is on this project's list. The classic `gbm_surface` route
+never raises the question, because the driver allocates buffers it knows it can
+render into.
+
+So both are wanted, and which one applies is a capability to establish rather
+than a driver name to match: import a small dma-buf, attach it to an FBO, and
+ask `glCheckFramebufferStatus` at context creation. Allocation and surfaces
+both come from `drmkit-gbm` — neither needs EGL, since a `gbm_surface` is
+created from a format, modifiers and flags, and only its raw pointer reaches
+`eglCreateWindowSurface`. The `EGLImage` import belongs to the GLES backend
+here.
 
 Pacing is flip-event driven with configurable acquire depth. Hotplug and
 modeset surface as a reconfigure error, and the target rebuilds its buffer ring
