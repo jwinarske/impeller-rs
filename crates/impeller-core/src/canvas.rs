@@ -2286,14 +2286,8 @@ impl Canvas {
         paint: &Paint,
     ) -> Result<&mut Self> {
         let bounds = self.mask_bounds(content, paint);
-        // Wide enough for whichever blur the styles below will draw. A
-        // sampled one stops at `blur_reach`; an evaluated one carries to
-        // `pad_for_sigma`, which is further, and a layer sized for the first
-        // cuts the second off square. Taking the larger of the two costs a
-        // larger transient on the shapes that do not need it and cannot cut
-        // the ones that do.
-        let held =
-            bounds.outset(blur_reach(paint.mask_blur).max(Self::pad_for_sigma(paint.mask_blur)));
+        // Wide enough for whichever blur this content's route will draw.
+        let held = bounds.outset(self.mask_blur_reach(content, paint));
         // White, because what is wanted from the shape here is its coverage
         // rather than its color: the fill supplies the color and this supplies
         // where it lands.
@@ -2402,14 +2396,8 @@ impl Canvas {
         // own. That combination is the same whether what is being combined is
         // color or coverage, so it lives in `draw_mask_styles` and both routes
         // through here call it.
-        // Wide enough for whichever blur the styles below will draw. A
-        // sampled one stops at `blur_reach`; an evaluated one carries to
-        // `pad_for_sigma`, which is further, and a layer sized for the first
-        // cuts the second off square. Taking the larger of the two costs a
-        // larger transient on the shapes that do not need it and cannot cut
-        // the ones that do.
-        let held =
-            bounds.outset(blur_reach(paint.mask_blur).max(Self::pad_for_sigma(paint.mask_blur)));
+        // Wide enough for whichever blur this content's route will draw.
+        let held = bounds.outset(self.mask_blur_reach(content, paint));
         self.save_layer_bounds(Layer::opacity(1.0).with_blend(paint.blend), held);
         let failure = self.draw_mask_styles(
             content,
@@ -2422,6 +2410,26 @@ impl Canvas {
         match failure {
             Some(e) => Err(e),
             None => Ok(self),
+        }
+    }
+
+    /// How far past its bounds a mask blur on this content will draw.
+    ///
+    /// The two routes reach different distances and the layer holding them has
+    /// to fit whichever is used: a sampled blur stops at `blur_reach`, about
+    /// 1.73 deviations, and an evaluated one carries to `pad_for_sigma`, about
+    /// 2.5. Sized for the first, an evaluated blur is cut off square; sized for
+    /// the second regardless, every *sampled* blur pays for a transient about
+    /// twice the area to hold a halo it will never draw.
+    ///
+    /// So it asks which route the content will take, rather than taking the
+    /// larger of the two and calling it safe.
+    fn mask_blur_reach(&mut self, content: Masked<'_>, paint: &Paint) -> f32 {
+        let sampled = blur_reach(paint.mask_blur);
+        let probe = paint.clone().with_mask_blur_style(MaskBlurStyle::Normal);
+        match self.analytic_style_blur(content, &probe, paint.mask_blur) {
+            Some((_, _, pad)) => sampled.max(pad),
+            None => sampled,
         }
     }
 

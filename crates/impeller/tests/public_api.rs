@@ -14474,3 +14474,50 @@ fn an_evaluated_blur_serves_the_combining_styles_as_the_sampled_one_did() {
         );
     }
 }
+
+/// A sampled mask blur does not pay for the halo an evaluated one would draw.
+///
+/// The layer holding a mask blur has to fit whichever route draws into it, and
+/// the two reach different distances: a sampled blur stops at `blur_reach`,
+/// about 1.73 deviations, and an evaluated one carries to `pad_for_sigma`,
+/// about 2.5. Sizing for the larger regardless is safe and wasteful -- every
+/// sampled blur then allocates about two-thirds again the area, on each of the
+/// passes it takes, to hold a halo it will never draw.
+///
+/// So the size follows the route, and this is what says so: the same shape and
+/// deviation through both, with the evaluated one wider.
+#[test]
+fn a_mask_blurs_layer_is_sized_for_the_route_that_draws_into_it() {
+    let rect = Rect::new(44.0, 44.0, 84.0, 84.0);
+    let paint = Paint::fill(Color::WHITE)
+        .with_mask_blur(10.0)
+        .with_mask_blur_style(MaskBlurStyle::Outer);
+
+    let mut evaluated = Canvas::new(SIZE);
+    evaluated.draw_rrect(rect, 6.0, &paint).expect("evaluated");
+    let evaluated = evaluated.finish();
+
+    // The same outline with no shape recorded on it, which still samples.
+    let mut sampled = Canvas::new(SIZE);
+    sampled
+        .draw_path(&square_path(rect), &paint)
+        .expect("sampled");
+    let sampled = sampled.finish();
+
+    let wide = evaluated.passes[0].extent;
+    let narrow = sampled.passes[0].extent;
+    assert!(
+        wide.width > narrow.width && wide.height > narrow.height,
+        "the evaluated route's layer is {wide:?} and the sampled route's is \
+         {narrow:?}; the first should be the wider, since its blur reaches \
+         further"
+    );
+    // And the narrow one is not merely smaller but small enough to be the
+    // sampled reach rather than the evaluated one: at a deviation of ten those
+    // are 74 and 96 across a forty-texel shape.
+    assert!(
+        narrow.width < 80,
+        "the sampled route's layer is {narrow:?}, which is the evaluated \
+         reach rather than its own"
+    );
+}
