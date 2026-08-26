@@ -738,22 +738,39 @@ to the clip that was in force when it opened, so content the clip excludes is
 discarded once instead of prevented from being drawn. That costs some work
 inside the layer and saves rebuilding a stencil clip in a second target.
 
-**A layer's target is the size of its bounds, where the caller states them.**
-`save_layer` with no bounds allocates a target the size of the frame, which is
-the only safe answer when nothing is known about what the layer covers: a layer
-is opened before its contents are recorded, so the recorder cannot measure them
-without deferring the allocation. `save_layer_bounds` takes the caller's promise
-instead, and a layer over a tenth of the frame then costs a tenth of the memory
-and a tenth of the fill. The promise is enforced rather than trusted — content
-outside the region is clipped by the target's own edges, so understating the
-bounds shows as drawing cut off rather than as reading past an allocation.
+**A layer's target is the size of what goes into it, stated or not.**
+`save_layer_bounds` takes the caller's promise, and a layer over a tenth of the
+frame costs a tenth of the memory and a tenth of the fill. The promise is
+enforced rather than trusted — content outside the region is clipped by the
+target's own edges, so understating the bounds shows as drawing cut off rather
+than as reading past an allocation.
+
+`save_layer` with no bounds gets the same treatment, derived instead of given.
+This paragraph used to say the frame-sized target was "the only safe answer
+when nothing is known about what the layer covers", because a layer is opened
+before its contents are recorded and the recorder cannot measure them without
+deferring the allocation. Deferring the allocation is what it now does: the
+bound is read off the layer's own geometry at `restore`, once the content is a
+fact rather than a prediction, and the pass carries a viewport so the narrowed
+target crops the clip space that was already recorded rather than the recording
+being rewritten to suit it. Sizing this way is also what upstream does; see
+`non-parity.md` for the entry that closed.
+
+Reading the vertices rather than accumulating per draw is what makes the
+unbounded cases free: anything covering the whole target — a `clear`, a fill
+the size of the frame — has a quad that says so, and comes out as the whole
+target without a special case. Two layers keep the full target deliberately:
+one composited with a destructive blend, which has to cover everything it might
+zero, and one whose whole-layer image filter reaches further than
+`ImageFilter::covering` can say.
 
 The bounds are stated in user space and taken to device pixels through the
 transform in force, rounded outward to whole pixels so a fractional edge never
 loses coverage, and narrowed to the enclosing target. Whole pixels because the
 composite samples the layer one texel to one pixel, which only stays exact on an
-integer offset. An empty region falls back to a full-size layer, since a
-smaller target would be a guess and guessing wrong loses drawing. Under a
+integer offset. An empty or unusable region falls back to the
+derived bound rather than to a full-size layer: what the content covers is not
+a guess, so there is nothing to guess wrong. Under a
 rotation the region becomes a quadrilateral and the target is the box around
 it, which covers more than was promised — the safe direction, a target being an
 allocation rather than a clip the caller can observe. That is the opposite of
