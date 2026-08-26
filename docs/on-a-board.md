@@ -95,6 +95,40 @@ rather than `vc4`. A suite that passes on the controller that works says nothing
 about the one beside it; `impeller-present-drm`'s crate documentation has the
 table of what each board actually does.
 
+## Benchmarking there, which has two rules of its own
+
+The suite above runs from a debug build and should. `cargo xtask bench` must
+not, and refuses to: cross-build it with `--release` and copy that binary.
+
+```sh
+cargo build -p xtask --release --target aarch64-unknown-linux-gnu
+scp target/aarch64-unknown-linux-gnu/release/xtask "$PI:/tmp/xtask"
+ssh "$PI" 'chmod +x /tmp/xtask && /tmp/xtask bench --skip llvmpipe'
+```
+
+The reason is not that debug is slower. The benchmark compares a path that
+submits a hundred and sixty draws against one that submits a single merged
+draw, so unoptimized per-draw cost lands on one side of the comparison and not
+the other. On this board that is the difference between a real number and a
+five percent regression that is not there — see the distance-field section of
+[`architecture.md`](architecture.md), which records how one was chased. The two
+binaries are easy to tell apart when you are not sure which got copied: the
+release one is about 1.7 MB and the debug one about 30 MB.
+
+`--skip llvmpipe` leaves the software rasterizer unstarted. Measuring on it
+holds all four of the Pi 5's cores flat out for minutes at 1920x1080, and the
+board locked up at that stage four times in a row, each time having come
+through V3D's configurations first — once leaving the DSI panel full white with
+the network gone, which looks more like a kernel or display hang than a supply
+that cannot hold up. Whether it is power or heat is not established: throttle
+flags read clean beforehand and two of the four were from a cold boot. The
+board's own GPU is the number worth having and it is measurable without ever
+starting that stage.
+
+`/tmp` is wiped on reboot, so a lockup costs the binary as well as the run.
+A bench that dies instantly with `nohup: failed to run command './xtask'` is
+that, not the board.
+
 ## A second board, and what it says about reading a green run
 
 A Radxa Zero 3 (RK3566, Mali-G52, Debian 12) is the other target here, and
