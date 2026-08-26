@@ -1575,10 +1575,18 @@ fn an_analytic_shape_lands_the_same_in_a_bounded_layer() {
 
     let (full, full_extent) = render_layered(false);
     let (bounded, bounded_extent) = render_layered(true);
-    assert_eq!(full_extent, extent, "an unbounded layer covers the frame");
+    // Both targets are smaller than the frame now -- one from the rectangle the
+    // caller named, one derived from the shapes themselves -- and they are
+    // different sizes at different origins, which is what makes the comparison
+    // below worth making. A shape whose material carried the wrong space would
+    // land somewhere else in one of them.
     assert!(
-        bounded_extent.width < extent.width,
-        "the bounded layer should have gotten a smaller target"
+        full_extent != bounded_extent,
+        "both layers got the same target ({full_extent:?}), so this compares nothing"
+    );
+    assert!(
+        full_extent.width < extent.width && bounded_extent.width < extent.width,
+        "a layer holding two small shapes should not have taken the whole frame"
     );
     let worst = full
         .iter()
@@ -6418,10 +6426,13 @@ fn fractional_bounds_are_rounded_outward() {
 }
 
 #[test]
-fn bounds_that_cannot_be_honored_fall_back_to_a_full_size_layer() {
+fn bounds_that_cannot_be_honored_still_produce_a_layer_that_holds_the_content() {
     // Every way of ending up without a usable region has to produce a working
-    // full-size layer rather than a smaller wrong one or a panic. A smaller
-    // target here would be a guess, and guessing wrong loses drawing.
+    // layer rather than a wrong one or a panic. The caller's rectangle is
+    // unusable in both cases below, so it is ignored -- but the layer is then
+    // sized from what was actually drawn into it, which is never a guess. What
+    // must not happen is a target too small for the content, which is drawing
+    // lost to arithmetic.
     fn layer_extent(open: impl FnOnce(&mut Canvas)) -> Extent2D {
         let mut canvas = Canvas::new(SIZE);
         open(&mut canvas);
@@ -6432,17 +6443,31 @@ fn bounds_that_cannot_be_honored_fall_back_to_a_full_size_layer() {
         canvas.finish().passes[0].extent
     }
 
+    // The content is a 64x64 rectangle at the origin, antialiased, so it
+    // reaches half a pixel past on each side and the layer holding it is one
+    // pixel larger. Anything smaller than the rectangle would have cut it.
+    let holds = |extent: Extent2D, what: &str| {
+        assert!(
+            extent.width >= 64 && extent.height >= 64,
+            "{what}: {extent:?} is too small to hold a 64x64 draw"
+        );
+        assert!(
+            extent.width <= SIZE.width && extent.height <= SIZE.height,
+            "{what}: {extent:?} is larger than the frame"
+        );
+    };
+
     // A region with no area, and one entirely outside the frame, both leave
-    // nothing to allocate.
+    // nothing the caller's rectangle can contribute.
     let empty = layer_extent(|canvas| {
         canvas.save_layer_bounds(Layer::default(), Rect::new(50.0, 50.0, 50.0, 50.0));
     });
-    assert_eq!(empty, SIZE, "empty bounds");
+    holds(empty, "empty bounds");
 
     let offscreen = layer_extent(|canvas| {
         canvas.save_layer_bounds(Layer::default(), Rect::new(400.0, 400.0, 500.0, 500.0));
     });
-    assert_eq!(offscreen, SIZE, "bounds outside the frame");
+    holds(offscreen, "bounds outside the frame");
 }
 
 /// Stops for the conical tests: red at the first circle, blue at the second.

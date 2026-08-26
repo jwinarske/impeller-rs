@@ -141,6 +141,34 @@ pub enum BlendMode {
 }
 
 impl BlendMode {
+    /// Whether this mode changes the destination where the source is absent.
+    ///
+    /// The modes for which "the source drew nothing here" is not the same as
+    /// "leave this pixel alone": `DstIn` zeroes what the source did not cover,
+    /// `Clear` zeroes everything, `Src` replaces it. A layer composited with
+    /// one of these has to cover everything it might affect rather than only
+    /// what it drew, so it is the test for whether a layer's target may be
+    /// narrowed to its content.
+    ///
+    /// The same nine upstream lists in `Entity::IsBlendModeDestructive`, and
+    /// the reason to match it exactly is that this decides a target's size:
+    /// a mode missing here is a layer that silently stops masking what it
+    /// used to.
+    pub fn is_destructive(self) -> bool {
+        matches!(
+            self,
+            Self::Clear
+                | Self::Src
+                | Self::SrcIn
+                | Self::DstIn
+                | Self::SrcOut
+                | Self::DstOut
+                | Self::DstATop
+                | Self::Xor
+                | Self::Modulate
+        )
+    }
+
     /// The modes every device can do, with no extension.
     pub const PORTER_DUFF: &'static [Self] = &[
         Self::Clear,

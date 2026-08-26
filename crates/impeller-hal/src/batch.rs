@@ -571,6 +571,20 @@ impl Batch {
 
 impl Batch {
     /// Shared vertex buffer, positions in clip space.
+    /// Move every scissor into a target whose origin moved by `(dx, dy)`.
+    ///
+    /// For a layer whose target was narrowed after its draws were recorded.
+    /// The geometry is left alone -- it is in clip space and the pass's
+    /// viewport is what places it -- but a scissor is in target pixels, so it
+    /// is the one recorded thing the move does reach.
+    pub fn rebase_scissors(&mut self, dx: u32, dy: u32, extent: crate::Extent2D) {
+        for draw in &mut self.draws {
+            if let Some(clip) = draw.clip {
+                draw.clip = Some(clip.shifted(dx, dy, extent));
+            }
+        }
+    }
+
     pub fn vertices(&self) -> &[Vertex] {
         &self.vertices
     }

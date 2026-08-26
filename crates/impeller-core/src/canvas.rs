@@ -18,8 +18,8 @@ use impeller_geometry::transform::{
 };
 use impeller_geometry::{FillRule, Path, PathBuilder};
 use impeller_hal::{
-    Batch, BlendMode, ClipState, ColorFilter, Error, Extent2D, Material, PassDescriptor, Result,
-    Sampling, Scissor, Stop, TileMode, Vertex, MAX_STOPS, MORPHOLOGY_TAPS,
+    Batch, BlendMode, ClipState, ColorFilter, Error, Extent2D, Material, PassDescriptor,
+    PassViewport, Result, Sampling, Scissor, Stop, TileMode, Vertex, MAX_STOPS, MORPHOLOGY_TAPS,
 };
 use impeller_renderer::{Paint as RenderPaint, Renderer, TOLERANCE};
 use impeller_text::{Atlas, PositionedGlyph};
@@ -3490,15 +3490,160 @@ impl Canvas {
     }
 
     /// Close a layer: file its pass, and composite it onto the parent.
+    /// The device-space rectangle a finished layer's draws actually cover.
+    ///
+    /// Read off the geometry rather than accumulated draw by draw, because the
+    /// geometry is what gets rasterized. Anything covering the whole target --
+    /// a `clear`, a fill the size of the frame -- has a quad that says so, so
+    /// the cases upstream has to name as "unbounded content" need no special
+    /// case here: their coverage comes out as the whole target and nothing is
+    /// narrowed.
+    ///
+    /// Vertices are homogeneous clip positions for `target`, so this is the
+    /// inverse of the projection they went through:
+    /// `viewport_projection` maps a device offset `d` to `2d/extent - 1` in x
+    /// and `1 - 2d/extent` in y.
+    ///
+    /// `None` where there is no geometry, and where any vertex sits at or past
+    /// the vanishing line -- the first has nothing to bound, and the second has
+    /// no finite bound to give.
+    fn covered(batch: &Batch, target: Target) -> Option<Rect> {
+        let (w, h) = (target.extent.width as f32, target.extent.height as f32);
+        let (mut left, mut top) = (f32::INFINITY, f32::INFINITY);
+        let (mut right, mut bottom) = (f32::NEG_INFINITY, f32::NEG_INFINITY);
+        for vertex in batch.vertices() {
+            let [x, y, w_clip] = vertex.position;
+            // The rasterizer divides by this, so a vertex on the vanishing line
+            // has no device position at all and one just past it has a position
+            // on the wrong side. Neither can be bounded, and the honest answer
+            // is to narrow nothing.
+            if !w_clip.is_finite() || w_clip.abs() <= 1e-6 || !x.is_finite() || !y.is_finite() {
+                return None;
+            }
+            let dx = (x / w_clip + 1.0) * 0.5 * w;
+            let dy = (1.0 - y / w_clip) * 0.5 * h;
+            left = left.min(dx);
+            right = right.max(dx);
+            top = top.min(dy);
+            bottom = bottom.max(dy);
+        }
+        if !(right > left && bottom > top) {
+            return None;
+        }
+        Some(Rect::new(
+            target.origin.x + left,
+            target.origin.y + top,
+            target.origin.x + right,
+            target.origin.y + bottom,
+        ))
+    }
+
+    /// The target a layer's content would fit in, if it is worth narrowing to.
+    ///
+    /// `None` keeps the target the layer was opened with, which is the whole
+    /// parent. That is the answer whenever the content covers it anyway, and
+    /// whenever the arithmetic cannot be trusted to cover everything the pass
+    /// will draw.
+    fn narrowed(
+        &self,
+        batch: &Batch,
+        filtered: bool,
+        paint: Layer,
+        layer: Target,
+    ) -> Option<Target> {
+        // An image filter given to the layer as a whole can move and spread
+        // what it is given by an amount this does not compute -- `Layer::reach`
+        // covers the blur and the morphology and knows nothing about a
+        // composition or a caller's program. Narrowing under one would cut
+        // whatever it reached for, so a filtered layer keeps its full target.
+        if filtered {
+            return None;
+        }
+        // A layer composited with a mode that changes the destination where the
+        // source drew nothing has to cover everything it might affect, not just
+        // what it covered. `DstIn` is the one that shows it: narrowed to its
+        // content, it stops taking the alpha out of everything outside that,
+        // and a mask leaves the rest of the picture opaque.
+        //
+        // The same condition upstream spells `flood_output_coverage` in
+        // `ComputeSaveLayerCoverage`, over the same nine modes.
+        if paint.blend.is_destructive() {
+            return None;
+        }
+        let content = Self::covered(batch, layer)?;
+        // The same expansion the caller-bounded path makes, and for the same
+        // reason: the content is where the draws are, and how far the layer's
+        // own blur carries them past that is this renderer's arithmetic.
+        let reach = paint.reach();
+        let left = (content.left - reach.x).floor().max(layer.origin.x);
+        let top = (content.top - reach.y).floor().max(layer.origin.y);
+        let right = (content.right + reach.x)
+            .ceil()
+            .min(layer.origin.x + layer.extent.width as f32);
+        let bottom = (content.bottom + reach.y)
+            .ceil()
+            .min(layer.origin.y + layer.extent.height as f32);
+        if !(right > left && bottom > top) {
+            return None;
+        }
+        let narrowed = Target {
+            origin: Vec2::new(left, top),
+            extent: Extent2D::new((right - left) as u32, (bottom - top) as u32),
+        };
+        // Nothing gained, and a viewport that offsets by zero into a target of
+        // the same size is a slower way to spell what it already was.
+        if narrowed.extent == layer.extent {
+            return None;
+        }
+        Some(narrowed)
+    }
+
     fn finish_layer(&mut self, frame: LayerFrame) {
-        let batch = std::mem::replace(&mut self.batch, frame.batch);
+        // Read before the frame is taken apart below, and only these two are
+        // needed: whether a whole-layer filter is in play, and the layer's own
+        // blur and morphology, which decide how far past its content the pass
+        // will draw.
+        let (filtered, paint) = (frame.filter.is_some(), frame.paint);
+        let mut batch = std::mem::replace(&mut self.batch, frame.batch);
         let sources = std::mem::replace(&mut self.sources, frame.sources);
 
         // A layer clears to transparent rather than to the frame's background:
         // it is composited over what is already there, so anywhere it drew
         // nothing must contribute nothing. Clearing to the background instead
         // would paint an opaque rectangle over the parent.
-        let layer = self.target;
+        let opened = self.target;
+        // What the layer's draws turned out to cover. A layer opened with no
+        // bounds was given the whole parent, because nothing was known then
+        // about where its content would land; now the content is recorded and
+        // its own geometry says. Narrowing here rather than at `save_layer` is
+        // what makes the derived bound possible at all.
+        //
+        // The geometry is *not* rewritten to suit the smaller target -- it is
+        // in clip space, and so are the materials, and a radial gradient's
+        // center among them. The pass keeps the space it was recorded against
+        // and carries a viewport that lands it on the narrowed target, which
+        // crops instead of scaling. See `PassViewport`.
+        let layer = match self.narrowed(&batch, filtered, paint, opened) {
+            Some(narrowed) => {
+                let (dx, dy) = (
+                    (narrowed.origin.x - opened.origin.x) as u32,
+                    (narrowed.origin.y - opened.origin.y) as u32,
+                );
+                // The one recorded thing the move reaches: a scissor is in
+                // target pixels where the geometry is in clip space.
+                batch.rebase_scissors(dx, dy, narrowed.extent);
+                narrowed
+            }
+            None => opened,
+        };
+        let viewport = (layer.extent != opened.extent).then(|| PassViewport {
+            offset: [
+                layer.origin.x - opened.origin.x,
+                layer.origin.y - opened.origin.y,
+            ]
+            .map(|v| -v),
+            extent: opened.extent,
+        });
         self.aim_at(frame.parent);
 
         self.finished.push(Pass {
@@ -3506,7 +3651,7 @@ impl Canvas {
             descriptor: PassDescriptor {
                 clear: Some([0.0; 4]),
                 samples: self.pass_samples(),
-                viewport: None,
+                viewport,
             },
             sources,
             extent: layer.extent,

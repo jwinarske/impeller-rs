@@ -126,6 +126,26 @@ impl Scissor {
     /// the HAL. Non-finite input collapses to nothing rather than saturating to
     /// the whole target, since a clip nobody can describe should not silently
     /// become the widest possible one.
+    /// The same region, in a target whose origin moved by `(dx, dy)`.
+    ///
+    /// For a pass whose target was narrowed after its draws were recorded: the
+    /// scissors are in the pixels of the space they were recorded against, and
+    /// the target now starts `(dx, dy)` into that space. Shifting and
+    /// re-clamping is exact -- a scissor is whole pixels either side of the
+    /// move -- and a region that falls entirely outside the new target becomes
+    /// empty rather than wrapping, which is what `saturating_sub` on the far
+    /// edges gives.
+    pub fn shifted(self, dx: u32, dy: u32, extent: Extent2D) -> Self {
+        let left = self.x.saturating_sub(dx).min(extent.width);
+        let top = self.y.saturating_sub(dy).min(extent.height);
+        let right = (self.x + self.width).saturating_sub(dx).min(extent.width);
+        let bottom = (self.y + self.height).saturating_sub(dy).min(extent.height);
+        if right <= left || bottom <= top {
+            return Self::EMPTY;
+        }
+        Self::new(left, top, right - left, bottom - top)
+    }
+
     pub fn from_device_bounds(min: [f32; 2], max: [f32; 2], extent: Extent2D) -> Self {
         if !min.iter().chain(&max).all(|v| v.is_finite()) {
             return Self::EMPTY;
