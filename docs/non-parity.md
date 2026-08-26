@@ -216,36 +216,43 @@ sixteenth of the size, which is why it was worth having the reduction at all.
 The pictures agree: the reduction preserves light, checked at a deviation of
 twenty-four by the energy test, which takes this path.
 
-## 7. A blurred shape is blurred; upstream has two ways of not blurring it
+## 7. A blurred path is blurred; upstream tessellates a mesh instead
 
-**What differs.** A mask blur here draws the shape into a layer and runs a
-separable Gaussian over it: one pass for the content and two for the blur, per
-shape. Upstream reaches for a blur pass only when it has to. `AttemptDrawBlurredRRect`
-takes an analytic route when every corner shares one circular radius —
-`SolidRRectBlurContents`, a fragment shader that evaluates a blurred rounded
-rectangle directly — and falls back to `AttemptDrawBlurredPathSource`
-otherwise, which tessellates a *shadow mesh* whose vertices carry the falloff.
-Both are one draw in the pass already being recorded, and neither allocates a
-target.
+**What differs.** Upstream has two ways of not running a blur pass, and this
+tree now has one of them.
 
-**Why.** Not a decision — the accelerated paths were never built. The general
-route is the correct one and is what makes every other case work: a gradient or
-an image blurs properly because the mask is blurred and the paint drawn through
-it. Upstream keeps that route too, for the same reason. What is missing is the
-special case in front of it.
+- **A rounded rectangle**, all four corners sharing one circular radius:
+  upstream's `AttemptDrawBlurredRRect` evaluates the blur in the fragment stage.
+  **Built.** `Canvas::draw_rrect` with a solid fill and a `Normal` mask blur
+  takes `Material::RoundedRectBlur`, which is Raph Levien's approximation — the
+  same method `SolidRRectBlurContents` evaluates.
+- **Any other shape**, which for `dart:ui` means most shadows: upstream's
+  `DrawPath` sends a filled, solid-colored, positively-blurred path to
+  `AttemptDrawBlurredPathSource`, which tessellates a **shadow mesh** whose
+  vertices carry the falloff. **Not built.** Here it draws the shape into a
+  layer and runs a separable Gaussian over it: one pass for the content and two
+  for the blur.
 
-**Impact.** Measured on a Raspberry Pi 5's V3D, release build. The bench frame
-carries three shadows over rounded cards, each with a uniform circular radius —
-the case upstream draws analytically. With them the frame costs 26.757 ms
-through Vulkan and 24.318 through GLES; with them taken out, 18.928 and 17.676.
-So the three cost 7.8 ms and 6.6 ms, near thirty percent of a frame that is
-otherwise a gradient, three cards and a blurred layer. They are also nine of
-the frame's fourteen passes: without them it is five.
+**Why the second one still matters most.** `Canvas::draw_shadow` takes a
+`Path`, as `dart:ui`'s `drawShadow` does, so a shadow reaches the general route
+however round its shape is — the analytic material cannot claim it, because by
+then the rounded rectangle is a path like any other and nothing records that it
+used to be one. Upstream avoids that by dispatching on the shape before it
+becomes a path: its `DlPath` can still say it is a round rect. Closing this
+means either the mesh, or teaching `Path` to remember what built it.
 
-The pictures agree, which is why [`parity.md`](parity.md) lists `maskFilter`
-and `drawShadow` as built. This is a difference in what they cost rather than
-in what they draw — the same shape of difference as the blur reduction above,
-and a much larger one.
+**Impact, measured on a Raspberry Pi 5's V3D, release build.** The bench frame
+carries three shadows over rounded cards. They are paths, so they take the
+general route: with them the frame costs 26.757 ms through Vulkan and 24.318
+through GLES; without them 18.928 and 17.676. So the three cost 7.8 ms and
+6.6 ms — near thirty percent of a frame that is otherwise a gradient, three
+cards and a blurred layer — and they are nine of its fourteen passes. **The
+analytic material above does not reduce that**, and the frame is still fourteen
+passes: what it buys is any *rounded rectangle* drawn with a mask blur, which
+is a blurred card or a glow rather than a shadow.
+
+The pictures agree either way, which is why [`parity.md`](parity.md) lists
+`maskFilter` and `drawShadow` as built. This is a difference in what they cost.
 
 ## 8. Operations that are absent
 
