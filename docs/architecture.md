@@ -1650,11 +1650,22 @@ than two, so their profile is a Gaussian's rather than a circle's. The
 constants come from upstream and several were fitted rather than derived, which
 the comments say rather than inventing a reason.
 
-Being an approximation, it does not converge on the sampled blur: they agree to
-between 9 and 22 levels out of 255 across a sweep of radii, deviations and
-aspect ratios. That is checked against the general route rather than against a
-stored image, which is what makes it checkable at all here — upstream tuned its
-own second route by eye, and this tree has no golden apparatus by choice.
+Being an approximation, it does not converge on the sampled blur, and how far
+apart they sit depends on the deviation. At deviations up to about eight they
+agree to between 9 and 22 levels out of 255 over a sweep of radii and aspect
+ratios. Past that they part, and the reason is the *sampled* route: it truncates
+its kernel at `blur_reach`, about 1.73 deviations, where this carries to roughly
+2.5. At a deviation of twenty the evaluated blur reaches 51 texels past the
+shape and the sampled one 34 — `ceil(19.5 · √3)` exactly — so the difference is
+a halo the older route cuts off, and of the two it is the evaluated one that is
+closer to a Gaussian. The mean difference climbs with it: 1.1 at a deviation of
+four, 7.6 at forty.
+
+That is all checked against the general route rather than against a stored
+image, which is what makes it checkable at all here — upstream tuned its own
+second route by eye, and this tree has no golden apparatus by choice. It also
+means the comparison bounds a difference rather than an error: past a moderate
+deviation neither side is the reference.
 
 The route is refused wherever it cannot state what was asked: a transform that
 scales the axes differently or carries perspective, since the expression holds
