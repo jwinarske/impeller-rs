@@ -1629,10 +1629,17 @@ modeset surface as a reconfigure error, and the target rebuilds its buffer ring
 against the new mode. Multi-display means one target per output, rendered
 independently; cloned versus extended policy belongs to the application.
 
-For panels mounted rotated, the KMS plane rotation property is used when the
-hardware supports the needed rotation for the chosen format and modifier;
-otherwise the renderer pre-rotates via a transform on the root canvas. The
-choice is capability-driven.
+**Rotated panels are not handled — planned.** The intent is to use the KMS
+plane rotation property where the hardware supports the needed rotation for the
+chosen format and modifier, and to pre-rotate via a transform on the root
+canvas otherwise, choosing on capability. None of it is written: the string
+`rotation` does not appear in the presentation crates at all, and there is no
+pre-rotation path either. A panel mounted rotated comes out rotated.
+
+Hotplug and modeset, in the paragraph above, *are* built — `OutputEvent::Reconfigured`
+and `DrmScanoutTarget::reconfigure` are real — which is why this one is worth
+naming separately rather than leaving the reader to assume the section is
+uniform.
 
 ## Threading
 
