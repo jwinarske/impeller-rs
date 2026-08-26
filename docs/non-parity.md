@@ -245,12 +245,16 @@ What is left is the shape this does not cover. A shadow under anything that is
 not a rounded rectangle — a rounded superellipse, a caller's outline, a glyph —
 still costs three passes, and the mesh is what upstream answers that with.
 
-**And a seam the other three mask blur styles sit on.** Only `Normal` is
-evaluated; `Outer`, `Inner` and `Solid` are still assembled out of a sampled
-blur and the sharp shape. Upstream has no such seam — `AttemptDrawBlur` serves
+**And a seam one mask blur style still sits on.** `Normal`, `Solid` and
+`Outer` take the evaluated blur; `Inner` does not. Its blurred half is
+composited with `DstIn`, which changes the destination where the source drew
+nothing and so needs coverage over the whole region rather than over the quad
+an evaluated blur draws on — the same rule that keeps a destructive blend off
+the analytic route everywhere else. `plan.md` records what converting it takes. Upstream has no such seam — `AttemptDrawBlur` serves
 all four from the same evaluated blur, combining them with a clip or a second
 draw. So `outer + inner == normal`, which is exact through the general route,
-holds to about seventeen levels on a shape whose `Normal` is evaluated. Bounded
+holds only to about the width of the approximation on a shape whose `Normal` is
+evaluated — `Inner` being the half still sampled. Bounded
 and pinned by `an_evaluated_blur_and_an_assembled_one_agree_only_to_the_approximation`
 rather than left to be discovered.
 

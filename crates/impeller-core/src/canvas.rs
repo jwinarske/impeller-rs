@@ -2286,7 +2286,14 @@ impl Canvas {
         paint: &Paint,
     ) -> Result<&mut Self> {
         let bounds = self.mask_bounds(content, paint);
-        let held = bounds.outset(blur_reach(paint.mask_blur));
+        // Wide enough for whichever blur the styles below will draw. A
+        // sampled one stops at `blur_reach`; an evaluated one carries to
+        // `pad_for_sigma`, which is further, and a layer sized for the first
+        // cuts the second off square. Taking the larger of the two costs a
+        // larger transient on the shapes that do not need it and cannot cut
+        // the ones that do.
+        let held =
+            bounds.outset(blur_reach(paint.mask_blur).max(Self::pad_for_sigma(paint.mask_blur)));
         // White, because what is wanted from the shape here is its coverage
         // rather than its color: the fill supplies the color and this supplies
         // where it lands.
@@ -2395,7 +2402,14 @@ impl Canvas {
         // own. That combination is the same whether what is being combined is
         // color or coverage, so it lives in `draw_mask_styles` and both routes
         // through here call it.
-        let held = bounds.outset(blur_reach(paint.mask_blur));
+        // Wide enough for whichever blur the styles below will draw. A
+        // sampled one stops at `blur_reach`; an evaluated one carries to
+        // `pad_for_sigma`, which is further, and a layer sized for the first
+        // cuts the second off square. Taking the larger of the two costs a
+        // larger transient on the shapes that do not need it and cannot cut
+        // the ones that do.
+        let held =
+            bounds.outset(blur_reach(paint.mask_blur).max(Self::pad_for_sigma(paint.mask_blur)));
         self.save_layer_bounds(Layer::opacity(1.0).with_blend(paint.blend), held);
         let failure = self.draw_mask_styles(
             content,
@@ -2409,6 +2423,42 @@ impl Canvas {
             Some(e) => Err(e),
             None => Ok(self),
         }
+    }
+
+    /// The evaluated blur for a style's blurred ingredient, where one applies.
+    ///
+    /// The styles other than `Normal` combine a blurred shape with its sharp
+    /// self, and the blurred half is the same thing `Normal` draws — so where
+    /// `Normal` would be evaluated rather than sampled, this half can be too.
+    /// `inner` is the paint with the blur already taken off, which is what the
+    /// styles draw with, so the deviation is handed back in.
+    ///
+    /// Returns the rectangle the draw covers as well as the material, because
+    /// the caller has to widen its layer to hold it: an evaluated blur reaches
+    /// `pad_for_sigma`, which is further than the `blur_reach` a sampled one is
+    /// truncated at, and a layer sized for the sampled reach cuts it.
+    fn analytic_style_blur(
+        &mut self,
+        content: Masked<'_>,
+        inner: &Paint,
+        sigma: f32,
+    ) -> Option<(Rect, Material, f32)> {
+        let Masked::Path(path) = content else {
+            return None;
+        };
+        let (bounds, radius) = path.as_rounded_rect()?;
+        let rect = Rect::new(bounds.min.x, bounds.min.y, bounds.max.x, bounds.max.y);
+        // Asked for as `Normal`, whatever style the caller wants: the blurred
+        // half *is* the normal blur, and the style is the rule for combining it
+        // with the sharp shape rather than a property of the blur. Left as the
+        // caller's, the eligibility check refuses it -- which is right when the
+        // question is "may this whole draw be one expression" and wrong here.
+        let asked = inner
+            .clone()
+            .with_mask_blur(sigma)
+            .with_mask_blur_style(MaskBlurStyle::Normal);
+        let (material, pad) = self.analytic_rrect_blur(rect, radius, &asked)?;
+        Some((rect, material, pad))
     }
 
     /// Combine a shape's blurred coverage with its sharp own, per style.
@@ -2451,9 +2501,22 @@ impl Canvas {
                     MaskBlurStyle::Solid => BlendMode::SrcOver,
                     _ => BlendMode::DstOut,
                 };
-                self.save_layer_bounds(blurred, bounds);
-                let first = self.draw_mask_content(content, inner).err();
-                self.restore();
+                // The blurred half, evaluated where it can be. These two
+                // styles draw it first with the layer's own blend, so nothing
+                // has to be relaxed to allow it -- unlike `Inner`, whose blur
+                // is composited with `DstIn` and needs coverage this cannot
+                // give from a quad.
+                let first = match self.analytic_style_blur(content, inner, sigma) {
+                    Some((rect, material, pad)) => {
+                        self.draw_analytic(rect.outset(pad), material, inner).err()
+                    }
+                    None => {
+                        self.save_layer_bounds(blurred, bounds);
+                        let failed = self.draw_mask_content(content, inner).err();
+                        self.restore();
+                        failed
+                    }
+                };
                 first.or_else(|| {
                     self.draw_mask_content(content, &inner.clone().with_blend(blend))
                         .err()

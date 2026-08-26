@@ -14402,3 +14402,64 @@ fn a_blurred_rectangle_is_the_same_turned_either_way() {
          long-axis correction is not symmetric in the axes"
     );
 }
+
+/// The styles that combine a blurred shape with a sharp one draw the same
+/// picture whichever way their blurred half was made.
+///
+/// `Solid` and `Outer` now take the evaluated blur for that half where the
+/// shape allows it, and the sampled one otherwise. Both are still the same
+/// composition — blur first, sharp shape over it with `SrcOver` or `DstOut` —
+/// so the two must agree to the width of the approximation and no more.
+///
+/// `Inner` is not here because it is not converted: its blur is composited with
+/// `DstIn`, which needs coverage over the whole region rather than over a quad.
+/// `non-parity.md` records that, and `plan.md` says what converting it would
+/// take.
+#[test]
+fn an_evaluated_blur_serves_the_combining_styles_as_the_sampled_one_did() {
+    let Some(mut ctx) = context() else {
+        return;
+    };
+    let rect = Rect::new(34.0, 34.0, 94.0, 94.0);
+    let radius = 8.0;
+
+    for style in [MaskBlurStyle::Solid, MaskBlurStyle::Outer] {
+        let paint = Paint::fill(Color::srgb(0.9, 0.4, 0.2, 1.0))
+            .with_mask_blur(6.0)
+            .with_mask_blur_style(style);
+
+        // Through the shape, whose blurred half is evaluated.
+        let mut evaluated = Canvas::new(SIZE);
+        evaluated.clear(Color::BLACK);
+        evaluated
+            .draw_rrect(rect, radius, &paint)
+            .expect("evaluated");
+        let one = render(&mut ctx, evaluated);
+
+        // Through an outline that records no shape, whose blurred half is
+        // sampled.
+        let mut sampled = Canvas::new(SIZE);
+        sampled.clear(Color::BLACK);
+        sampled
+            .draw_path(&rect.to_rounded_path_with_radii([[radius; 2]; 4]), &paint)
+            .expect("sampled");
+        let two = render(&mut ctx, sampled);
+
+        let worst = one
+            .iter()
+            .zip(&two)
+            .map(|(a, b)| a.abs_diff(*b))
+            .max()
+            .unwrap_or(0);
+        assert!(
+            worst <= 32,
+            "{style:?}: the evaluated and sampled halves differ by {worst} levels"
+        );
+        // And the two halves really were made differently: if the evaluated one
+        // had been refused, both would be the sampled composition and identical.
+        assert!(
+            worst > 0,
+            "{style:?}: identical, so the blurred half was not evaluated"
+        );
+    }
+}
