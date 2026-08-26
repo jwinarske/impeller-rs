@@ -23,6 +23,16 @@
 //! Not a comparison against the numbers above either. Those were taken on a
 //! desktop discrete part; a run here measures whatever this machine is, which
 //! is why every result names its device.
+//!
+//! And not a whole frame's work: every recording here is built once, before the
+//! clock starts, and only `execute` is timed. An application records a frame
+//! per frame, so whatever it costs to *build* a recording is invisible to every
+//! number this prints. Worth knowing the size of that blind spot rather than
+//! only that it exists -- on the machine this was written on, building the
+//! full frame takes 0.007 ms and building the hundred and sixty tessellated
+//! shapes 0.077 ms, against frame times of one to thirty. So it is under a
+//! percent here and would be a few on a slower processor, which is small
+//! enough to leave outside and too large to forget.
 
 use impeller_core::{
     Canvas, Color, GradientStop, Layer, Paint, Recording, Rect, Shader, TileMode, Vec2,
