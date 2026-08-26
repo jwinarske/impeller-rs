@@ -1611,9 +1611,10 @@ exported once at startup as dma-bufs, which drm-rs imports into framebuffers.
 All of that is setup, not per-frame. Each frame then acquires a ring slot whose
 previous flip has completed and whose GPU fence has retired, renders, exports
 the signal semaphore as a sync_file, and issues a nonblocking commit. Where
-`VK_EXT_image_drm_format_modifier` is absent, the fallback is GBM allocation
-plus Vulkan dma-buf import. Both paths are supported and tested; capability
-detection picks between them.
+`VK_EXT_image_drm_format_modifier` is absent there is *no* fallback: the GBM
+allocation path this used to claim as "supported and tested" alongside the
+other does not exist, here or anywhere else in the tree. A device without the
+modifier extension is refused.
 
 **GLES path — planned, not built.** The classic GBM route would put a
 `gbm_device` on the DRM fd behind an EGL display on the GBM platform, with a
@@ -1638,10 +1639,17 @@ choice is capability-driven.
 - `Context` is intended to be `Send + Sync` with thread-safe resource
   creation. Not yet met: creation takes `&mut self` today, see the HAL section.
 - `Canvas` recording is single-threaded per frame.
-- A background fence waiter retires GPU work and releases tracked resources,
-  handling Vulkan fences, `GLsync` objects, and sync_file fds uniformly.
-- DRM page-flip events arrive on drm-rs's event dispatch; the DRM target runs a
-  small event thread converting flip completions into frame-slot availability.
+- **No thread is spawned anywhere in this workspace.** Both of the items that
+  used to sit here described one, and neither exists:
+  - There is no background fence waiter. `HalContext::retire_fence` is a trait
+    method with an empty default body, so retiring is the caller's to do, and
+    there are no `GLsync` objects to handle uniformly with anything — the GLES
+    backend has no fence type at all.
+  - DRM page-flip completions are not delivered by an event thread. The target
+    drains whatever the kernel has queued on the caller's own thread and sleeps
+    five hundred microseconds between attempts until its deadline, because the
+    device fd is blocking and `receive_events` would otherwise ignore the
+    deadline entirely.
 
 ## Shader pipeline (`impeller-shaders`)
 
