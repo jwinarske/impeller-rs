@@ -1438,8 +1438,12 @@ impl Canvas {
         // content alone would cut the halo off square at the bound -- the
         // failure looking exactly like a shadow with a straight edge.
         //
-        // Three deviations, matching where the shader stops taking taps, so the
-        // target covers everything the blur will actually read.
+        // The kernel's own radius, `ceil((sigma - 0.5) * sqrt(3))`, which is
+        // where the shader stops taking taps -- so the target covers every
+        // texel the blur will actually read and no more. Nearer one and three
+        // quarter deviations than three: the truncation is upstream's
+        // `kKernelRadiusPerSigma`, and `blur_reach` is the one place it is
+        // stated.
         let (min, max) = (min - reach, max + reach);
         let parent = self.target;
         let left = min.x.floor().max(parent.origin.x);
@@ -2165,8 +2169,8 @@ impl Canvas {
     /// the right place for it, since it knows its own sigma.
     ///
     /// The stroke's own reach was untested for a while, because that blur
-    /// widening covers any stroke narrower than three deviations and every
-    /// test had one. It takes a wide stroke and a small blur to tell the two
+    /// widening covers any stroke whose half-width is under the blur's own
+    /// reach, and every test had one. It takes a wide stroke and a small blur to tell the two
     /// apart, and there is one now.
     fn filter_bounds(&self, path: &Path, paint: &Paint) -> Rect {
         let bounds = path.bounds();
@@ -4490,6 +4494,56 @@ mod tests {
 
     fn canvas() -> Canvas {
         Canvas::new(Extent2D::new(128, 128))
+    }
+
+    /// How far a blur reaches, which four comments in this tree got wrong.
+    ///
+    /// The kernel is truncated at `(sigma - 0.5) * sqrt(3)` -- upstream's
+    /// `kKernelRadiusPerSigma` -- and every layer sized to hold a blur asks
+    /// `blur_reach` for it. Nothing pinned the arithmetic, so the prose drifted
+    /// to "three deviations" in four places and stayed there: a test written
+    /// against that phrase expected 88 where the renderer gives 68, and the
+    /// phrase was wrong rather than the renderer.
+    ///
+    /// Pinned here because the number is not free to change. It decides how
+    /// wide a halo is, so moving it moves every blurred picture away from
+    /// upstream's -- and it decides a target's size, so getting it *smaller*
+    /// cuts the halo off square, which reads as a shadow with a straight edge
+    /// rather than as arithmetic.
+    #[test]
+    fn a_blur_reaches_the_radius_its_kernel_is_truncated_at() {
+        // Sqrt three per deviation, less the half pixel upstream subtracts, and
+        // rounded out to a whole texel because a target is whole texels.
+        assert_eq!(blur_reach(8.0), 13.0, "ceil(7.5 * sqrt(3))");
+        assert_eq!(blur_reach(2.0), 3.0, "ceil(1.5 * sqrt(3))");
+
+        // Not three deviations, which is what the prose used to say. Stated as
+        // its own assertion because the two agree closely enough at small sigma
+        // that a spot check would not tell them apart.
+        assert!(
+            blur_reach(50.0) < 3.0 * 50.0,
+            "the kernel is truncated nearer one and three quarter deviations \
+             than three"
+        );
+
+        // A sigma that describes no blur reaches nowhere, and a layer asking
+        // for one gets no widening rather than half a pixel of it.
+        assert_eq!(blur_reach(0.0), 0.0);
+        assert_eq!(blur_reach(0.5), 0.0, "the half pixel is subtracted first");
+        assert_eq!(blur_reach(-1.0), 0.0);
+
+        // And it never shrinks as the blur widens, which is what makes a target
+        // sized from it safe.
+        let mut previous = 0.0;
+        for tenth in 0..600 {
+            let reach = blur_reach(tenth as f32 / 10.0);
+            assert!(
+                reach >= previous,
+                "reach fell at sigma {}",
+                tenth as f32 / 10.0
+            );
+            previous = reach;
+        }
     }
 
     #[test]

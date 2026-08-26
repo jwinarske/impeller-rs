@@ -7689,8 +7689,8 @@ fn a_filtered_stroke_keeps_the_half_of_itself_that_lies_outside_the_path() {
     // The layer a filter draws into is bounded, and a stroke reaches half its
     // width past the path the bounds come from. That widening is easy to miss
     // and hard to catch: opening a bounded layer with a blur already widens
-    // the region by three deviations, which covers any stroke narrower than
-    // that. So this uses a wide stroke and a small blur, where the two
+    // the region by the blur's own reach, which covers any stroke whose
+    // half-width is under it. So this uses a wide stroke and a small blur, where the two
     // widenings are nothing like each other.
     //
     // A circle of radius twenty stroked forty wide covers everything within
@@ -13891,7 +13891,7 @@ fn a_layer_draws_the_same_picture_whether_or_not_its_bounds_were_named() {
 ///
 /// The layer's target is derived from its content at `restore`, and a filter
 /// given to the layer as a whole draws past that content by an amount only the
-/// filter knows -- three deviations, for a blur. Sizing to the content alone
+/// filter knows -- its kernel's radius, for a blur. Sizing to the content alone
 /// would cut the halo off square, and the cut lands where the content ends
 /// rather than at the target's edge, so it looks like a shadow with a straight
 /// side rather than like a clipped layer.
