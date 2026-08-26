@@ -318,6 +318,39 @@ fn millis(duration: Duration) -> String {
     format!("{:.3} ms", duration.as_secs_f64() * 1000.0)
 }
 
+/// Why an unoptimized build is refused rather than measured.
+///
+/// `cargo xtask bench` runs through an alias that does not pass `--release`,
+/// so for as long as this printed numbers it printed them for unoptimized
+/// code. That is not a smaller version of the right answer, it is a different
+/// one, and the difference falls almost entirely on one of the two paths being
+/// compared: the analytic route submits a hundred and sixty draws where the
+/// tessellated route submits one, so debug-build per-draw cost lands on the
+/// analytic side and nowhere else.
+///
+/// It went wrong exactly that way. A commit that added a public method nothing
+/// in the benchmark calls moved the analytic path from 13.16 ms to 13.82 ms on
+/// a Raspberry Pi 5 -- reproducibly, on both Vulkan and GLES, with the
+/// tessellated paths unmoved -- and deleting that uncalled method put it back.
+/// A function nobody calls cannot cost GPU time; what it can do is shift code
+/// layout in a build with no optimizer to absorb it. Built with `--release`
+/// the same commit measures level with the tessellated path, which is what
+/// this document's board figures say and what the design rests on.
+///
+/// `debug_assertions` is the test because the workspace builds under one
+/// profile: if this binary is unoptimized then so is the renderer it times.
+pub fn why_not_debug() -> &'static str {
+    "bench: this is an unoptimized build, and timing one is worse than not \n\
+     timing at all -- the cost falls on whichever path submits more draws, \n\
+     which is the comparison this is for.\n\
+     \n\
+     Run it optimized:\n\
+     \n\
+     \x20   cargo run --release --package xtask -- bench\n\
+     \n\
+     For a board, cross-build with --release and copy that binary across.\n"
+}
+
 /// What a run that measured nothing says.
 const NOTHING: &str = "no device on this machine could render the frame\n";
 
@@ -626,6 +659,21 @@ mod tests {
         ]);
         assert!(rendered.contains("vulkan:1 llvmpipe"), "{rendered}");
         assert!(rendered.contains("not measured"), "{rendered}");
+    }
+
+    /// The refusal names the command to run instead.
+    ///
+    /// A refusal that says only "no" costs the reader the twenty minutes it
+    /// took to work out what to do about it, and this one is reached by
+    /// someone who typed the documented invocation and got nothing.
+    #[test]
+    fn refusing_an_unoptimized_build_says_what_to_run_instead() {
+        let said = why_not_debug();
+        assert!(said.contains("--release"), "{said}");
+        assert!(said.contains("cargo run"), "{said}");
+        assert!(said.contains("bench"), "{said}");
+        // And why, because a reader who does not believe it will run it anyway.
+        assert!(said.contains("draws"), "{said}");
     }
 
     #[test]

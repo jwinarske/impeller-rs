@@ -94,6 +94,14 @@ fn main() {
             }
         }
         Some("bench") => {
+            // Before anything else: an unoptimized build is refused rather
+            // than measured. Six runs on a board went into chasing a five
+            // percent "regression" that was a debug build's code layout.
+            if cfg!(debug_assertions) {
+                eprint!("{}", bench::why_not_debug());
+                std::process::exit(2);
+            }
+
             // `--skip llvmpipe` leaves a software rasterizer unmeasured. On a
             // small board that stage runs every core flat out for minutes and
             // has locked one up; the board's own GPU is measurable without it.

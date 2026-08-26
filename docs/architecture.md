@@ -1769,6 +1769,25 @@ every fragment walks, which is the cost specialization would remove.
   reason to drop the other path: the tessellated one draws everything the field
   cannot, and one of the two devices measured says the field is not free.
 
+  **Built with `--release`, and it refuses to run otherwise.** The alias does
+  not pass it, so for as long as this printed numbers it printed them for
+  unoptimized code — and the error there is not a uniform slowdown that cancels
+  out of a ratio. The analytic route submits a hundred and sixty draws where
+  the tessellated route submits one, so debug-build per-draw cost lands on the
+  analytic side and nowhere else, which is exactly the comparison the table
+  above is.
+
+  It went wrong that way and was caught by the board. A commit adding a public
+  method the benchmark never calls moved the analytic path from 13.16 ms to
+  13.82 ms on a Pi 5 — reproducibly, on both Vulkan and GLES, with the
+  tessellated paths unmoved — and deleting that uncalled method put it back.
+  A function nobody calls cannot cost GPU time; what it can do is shift code
+  layout in a build with no optimizer to absorb it. That read as a five percent
+  regression in the field, and it was an artifact of how it was being measured.
+  Optimized, the same commit reproduces the rows above: 1.01× and 1.16× through
+  Vulkan, 0.99× and 1.17× through GLES. The debug figures had agreed with these
+  once, which is why nobody noticed, and agreeing by luck is not a measurement.
+
   `cargo xtask bench` is that measurement, and it is repeatable now rather than
   a number somebody once took. On the machine this was written on it reproduces
   the shape of the figures above: at equal sample count the field is
