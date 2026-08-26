@@ -1703,11 +1703,16 @@ every fragment walks, which is the cost specialization would remove.
 That cost has a number now, and it is not the comparisons. Adding the blurred
 rounded rectangle above — one dispatch arm and three functions, two of them
 carrying a `pow` and a `sqrt` — made the *distance field* path, which does not
-touch any of it, about three percent slower on a Raspberry Pi 5's V3D: 13.40 ms
-against 12.99, measured by alternating the two builds in one sitting so the
-board's temperature could not stand in for the difference. One extra bounded
-comparison does not cost that; a fragment program that needs more registers,
-and so runs at lower occupancy for every material, does.
+touch any of it, **about seven percent slower through GLES** on a Raspberry Pi
+5's V3D: 13.43 ms against 12.55, from three alternating pairs whose runs agree
+to two hundredths. Through Vulkan on the same board the same pair comes to
+about three percent, but that path is bimodal there — see
+[`on-a-board.md`](on-a-board.md) — so the GLES figure is the one to quote and
+the Vulkan one is a lower bound taken between matched clusters.
+
+One extra bounded comparison does not cost that. A fragment program that needs
+more registers, and so runs at lower occupancy for every material it might
+draw, does.
 
 So the price of an uber-shader is paid by every draw whenever any material gets
 more expensive, and it is the argument for specialization stated in device time

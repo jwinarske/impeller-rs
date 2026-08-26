@@ -129,7 +129,15 @@ starting that stage.
 A bench that dies instantly with `nohup: failed to run command './xtask'` is
 that, not the board.
 
-**One run is not a measurement: the same binary lands in one of two speeds.**
+**Measure through GLES on this board; the Vulkan path is bimodal.** Ten runs of
+one binary gave a GLES figure spread over 0.017 ms and a Vulkan figure that
+jumped between 13.35 and 13.82 — same process, same GPU, same run. Whatever
+this is belongs to the Vulkan side rather than to the board, since the two
+numbers come out of one invocation minutes apart and only one of them moves.
+Until it is understood, a difference worth reporting should be established on
+the GLES row, where a three-run cluster is tight to a couple of hundredths.
+
+**One run is not a measurement: the Vulkan figure lands in one of two speeds.**
 Five consecutive runs of one binary, on a cool fanned board minutes after a
 power cycle, came back 13.374, 13.820, 13.368, 13.809 and 13.805 ms. Not a
 spread — two clusters, 13.37 and 13.81, each internally tight to a few
