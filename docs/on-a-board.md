@@ -129,27 +129,34 @@ starting that stage.
 A bench that dies instantly with `nohup: failed to run command './xtask'` is
 that, not the board.
 
-**The same binary does not measure the same from one hour to the next.** After
-an afternoon of runs, a binary that read 12.955 ms in the morning read 13.377 --
-three percent slower -- with each run's own spread under a tenth of a
-millisecond, so nothing inside the numbers said anything was wrong. That is how
-a drift gets read as a regression.
+**One run is not a measurement: the same binary lands in one of two speeds.**
+Five consecutive runs of one binary, on a cool fanned board minutes after a
+power cycle, came back 13.374, 13.820, 13.368, 13.809 and 13.805 ms. Not a
+spread — two clusters, 13.37 and 13.81, each internally tight to a few
+hundredths, 0.44 ms apart. Which one a run gets appears to be settled when the
+process starts and holds for its whole two hundred frames, which is why every
+individual run looks impeccable: its own p99 sits within 0.06 ms of its median
+and says nothing.
 
-Temperature is the obvious suspect and is *not* established as the cause. The
-board was at 77 to 85 degrees during those runs against a fresh boot in the
-morning, which fits. But fitting a fan afterwards brought idle down to 67 and
-the same binary still read 13.379, so whatever this is, cooling did not undo
-it. `vcgencmd get_throttled` is still worth reading after a run rather than
-before -- `0x80000` is bit nineteen, "soft temperature limit has occurred", and
-it latches -- but a clean reading does not mean two runs an hour apart are
-comparable.
+Three percent is the gap, and it is the same size as differences worth
+reporting, so a one-run-each comparison can invent one or hide one.
 
-The rule that follows does not depend on knowing the cause: **compare two
-builds in one sitting, alternating them.** A difference measured that way
-survives whatever this is; a number carried over from an hour ago does not. The
-three percent an uber-shader charges for one more material kind was measured by
-alternation and reproduces across sessions; the three percent between morning
-and evening is not a measurement of anything yet.
+What it is not: heat, and not accumulated session state. It was read as heat
+first, because the afternoon's slow numbers followed hours of running at 77 to
+85 degrees. Then a fan brought idle to 67 and the number did not move; then a
+power cycle brought it to 61 on a fresh boot and it still did not. Two
+plausible mechanisms, tested, both wrong. `vcgencmd get_throttled` is still
+worth reading after a run and still latches, but a clean reading does not make
+two runs comparable.
+
+The rule that follows does not depend on knowing the cause: **alternate the two
+builds in one sitting and take at least three runs of each, then check the
+clusters do not overlap.** A difference established that way survives whatever
+this is. The three percent an uber-shader charges for one more material kind
+was measured so: three runs of each build, 13.376/13.419/13.385 against
+12.960/13.019/13.006, neither side straying into the other's band, and it
+reproduced in a later session. A single run either side would have proved
+nothing at that size.
 
 A whole-frame figure seems less sensitive to the drift than the micro-benchmark
 paths -- 21.2 ms held across it -- but that is an observation rather than
