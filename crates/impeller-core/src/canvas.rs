@@ -82,6 +82,18 @@ impl Rect {
             .line_to(Vec2::new(self.right, self.bottom))
             .line_to(Vec2::new(self.left, self.bottom))
             .close();
+        // A rectangle is a rounded one whose corners are not rounded, and
+        // recording it as such is what lets a blurred rectangle be evaluated
+        // rather than blurred. Not a special case in the expression that draws
+        // it: a corner radius of zero is where that approximation is at its
+        // most accurate, since there is no corner to approximate.
+        b.as_rounded_rect(
+            GeometryRect::new(
+                Vec2::new(self.left, self.top),
+                Vec2::new(self.right, self.bottom),
+            ),
+            0.0,
+        );
         b.build()
     }
 
@@ -1644,8 +1656,7 @@ impl Canvas {
         // the general route however round it is.
         if let Some((bounds, radius)) = path.as_rounded_rect() {
             let rect = Rect::new(bounds.min.x, bounds.min.y, bounds.max.x, bounds.max.y);
-            if let Some(material) = self.analytic_rrect_blur(rect, radius, paint) {
-                let pad = Self::pad_for_sigma(paint.mask_blur);
+            if let Some((material, pad)) = self.analytic_rrect_blur(rect, radius, paint) {
                 return self.draw_analytic(rect.outset(pad), material, paint);
             }
         }
@@ -2506,8 +2517,7 @@ impl Canvas {
         // Before the sharp field, because that one refuses a mask blur and this
         // is what answers it: the blur is folded into the expression rather
         // than run as passes around the draw.
-        if let Some(material) = self.analytic_rrect_blur(rect, radius, paint) {
-            let pad = Self::pad_for_sigma(paint.mask_blur);
+        if let Some((material, pad)) = self.analytic_rrect_blur(rect, radius, paint) {
             return self.draw_analytic(rect.outset(pad), material, paint);
         }
         if let Some(material) = self.analytic_rrect(rect, radius, paint) {
@@ -2575,7 +2585,14 @@ impl Canvas {
     /// exactly the refusal this route lifts, by folding the blur into the field
     /// rather than wrapping the draw in one. Its other refusals do carry over
     /// and are restated here.
-    fn analytic_rrect_blur(&mut self, rect: Rect, radius: f32, paint: &Paint) -> Option<Material> {
+    /// Returns the material and how far past the rectangle it must be drawn,
+    /// both in the shape's own space.
+    fn analytic_rrect_blur(
+        &mut self,
+        rect: Rect,
+        radius: f32,
+        paint: &Paint,
+    ) -> Option<(Material, f32)> {
         if !paint.is_visible() || self.clip.is_some_and(Scissor::is_empty) {
             return None;
         }
@@ -2614,8 +2631,28 @@ impl Canvas {
         if !paint.mask_blur.is_finite() || paint.mask_blur <= 0.0 {
             return None;
         }
+        // The deviation is in device pixels -- see `non-parity.md` on a shadow's
+        // elevation -- and everything below is in the shape's own space, so it
+        // has to be carried across. Getting this wrong is invisible at the
+        // identity and doubles the blur's tail on a canvas scaled by two.
+        let affine = self.transform.to_affine()?;
+        let sx = affine.matrix2.x_axis.length();
+        let sy = affine.matrix2.y_axis.length();
+        if !sx.is_finite() || !sy.is_finite() || sx <= 0.0 || sy <= 0.0 {
+            return None;
+        }
+        // One deviation cannot describe a blur that is wider along one axis
+        // than the other, and this expression carries exactly one. A transform
+        // that scales the axes differently goes to the general route, which
+        // blurs in device space and does not care.
+        if (sx - sy).abs() > 1e-3 * sx.max(sy) {
+            return None;
+        }
+        let sigma = paint.mask_blur / sx;
+
         let radius = radius.min(rect.width() / 2.0).min(rect.height() / 2.0);
-        self.rrect_blur_material(rect, radius, paint.mask_blur, *color)
+        let material = self.rrect_blur_material(rect, radius, sigma, *color)?;
+        Some((material, Self::pad_for_sigma(sigma)))
     }
 
     /// The material for a blurred rounded rectangle drawn without a blur pass.

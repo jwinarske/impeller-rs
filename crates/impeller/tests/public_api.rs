@@ -57,6 +57,23 @@ fn pixel(pixels: &[u8], x: u32, y: u32) -> [u8; 4] {
     [pixels[i], pixels[i + 1], pixels[i + 2], pixels[i + 3]]
 }
 
+/// A square as a path that does not know it is a rectangle.
+///
+/// `Rect::to_path` records the shape it laid down, so a blurred rectangle drawn
+/// through it is evaluated in the fragment stage rather than blurred. That is
+/// what upstream does and what the analytic tests check. A test about the
+/// *general* route needs an outline with no shape on it, which is what building
+/// the four lines by hand gives.
+fn square_path(rect: Rect) -> Path {
+    let mut b = PathBuilder::new();
+    b.move_to(Vec2::new(rect.left, rect.top))
+        .line_to(Vec2::new(rect.right, rect.top))
+        .line_to(Vec2::new(rect.right, rect.bottom))
+        .line_to(Vec2::new(rect.left, rect.bottom))
+        .close();
+    b.build()
+}
+
 /// Two colors, equal to within `within` on every channel.
 ///
 /// For a comparison against a value a *shader* computed rather than one the API
@@ -3254,8 +3271,14 @@ fn a_mask_blur_softens_a_shape_and_matches_a_blurred_layer() {
 
     let mut masked = Canvas::new(SIZE);
     masked.clear(Color::BLACK);
+    // Through the general route deliberately: the identity below is that
+    // route's justification, and a rectangle that knows it is one no longer
+    // takes it.
     masked
-        .draw_rect(shape, &Paint::fill(color).with_mask_blur(sigma))
+        .draw_path(
+            &square_path(shape),
+            &Paint::fill(color).with_mask_blur(sigma),
+        )
         .expect("mask blur");
     let masked = render(&mut ctx, masked);
 
@@ -10732,8 +10755,12 @@ fn a_mask_blur_over_a_mesh_the_paint_fills_matches_the_same_shape_as_a_path() {
 
     let mut as_path = Canvas::new(SIZE);
     as_path.clear(Color::BLACK);
+    // An outline with no shape recorded on it, so both sides take the general
+    // route -- which is what this compares. Through `draw_rect` the path would
+    // be evaluated analytically and the mesh would not, and the two would
+    // differ for that reason rather than for the one under test.
     as_path
-        .draw_rect(Rect::new(34.0, 34.0, 94.0, 94.0), &paint())
+        .draw_path(&square_path(Rect::new(34.0, 34.0, 94.0, 94.0)), &paint())
         .expect("path");
     let path_pixels = render(&mut ctx, as_path);
 
@@ -14060,11 +14087,19 @@ fn an_analytic_blurred_rectangle_agrees_with_the_blur_it_replaces() {
         // longer can: it marks what it built, which is the whole point, and a
         // path that knows it is a rounded rectangle now takes the fast route
         // too.
+        // At a radius above zero the eight-radii spelling lays down identical
+        // geometry and records no shape, so it still takes the general route.
+        // At zero it collapses to `to_path`, which *does* record one now that a
+        // rectangle is a rounded one with square corners -- so the reference
+        // there is the outline built by hand.
+        let reference = if radius > 0.0 {
+            rect.to_rounded_path_with_radii([[radius; 2]; 4])
+        } else {
+            square_path(rect)
+        };
         let mut general = Canvas::new(SIZE);
         general.clear(Color::BLACK);
-        general
-            .draw_path(&rect.to_rounded_path_with_radii([[radius; 2]; 4]), &paint)
-            .expect("general");
+        general.draw_path(&reference, &paint).expect("general");
         let two = render(&mut ctx, general);
 
         let worst = one
