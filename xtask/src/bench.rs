@@ -249,7 +249,26 @@ where
 /// result rather than no result at all. Collecting everything and formatting at
 /// the end lost three runs on a board that left the network mid-run, each of
 /// which had measured several configurations and printed none of them.
-pub fn gather(report: &mut dyn FnMut(Event)) {
+/// Whether `device` is one the caller asked to leave alone.
+///
+/// A substring rather than an exact name because a device names itself at
+/// length and differently on every driver -- `vulkan:1 llvmpipe (LLVM 22.1.8,
+/// 256 bits)` here and a different parenthesis on the next machine -- so a
+/// caller who has to reproduce one exactly will get it wrong and be told
+/// nothing. Case-insensitive for the same reason.
+fn skipped(device: &str, skip: &[String]) -> bool {
+    let device = device.to_lowercase();
+    skip.iter().any(|s| device.contains(&s.to_lowercase()))
+}
+
+/// `skip` names devices to open and then leave alone, matched as
+/// case-insensitive substrings of the device name. It exists because a device
+/// can be measurable and still not safe to measure: a software rasterizer at
+/// this size holds every core of a small board flat out for minutes, and a
+/// Raspberry Pi 5 locked up at that stage of the run four times in a row,
+/// having come through the hardware stages before it each time. Skipping it
+/// leaves the board's own GPU measurable, which is the number worth having.
+pub fn gather(skip: &[String], report: &mut dyn FnMut(Event)) {
     let paths = [
         Path::Analytic,
         Path::TessellatedMultisampled,
@@ -260,10 +279,12 @@ pub fn gather(report: &mut dyn FnMut(Event)) {
         let Ok(mut ctx) = VulkanContext::new(DevicePreference::Index(index)) else {
             break;
         };
-        report(Event::Device(format!(
-            "vulkan:{index} {}",
-            ctx.capabilities().device_name
-        )));
+        let device = format!("vulkan:{index} {}", ctx.capabilities().device_name);
+        if skipped(&device, skip) {
+            report(Event::Skipped(device));
+            continue;
+        }
+        report(Event::Device(device));
         for path in paths {
             let recording = recording(path);
             // Nothing: the Vulkan submit waits on its own fence before it
@@ -275,10 +296,12 @@ pub fn gather(report: &mut dyn FnMut(Event)) {
     }
 
     if let Ok(mut ctx) = GlesContext::new(DisplayTarget::Surfaceless) {
-        report(Event::Device(format!(
-            "gles {}",
-            ctx.capabilities().device_name
-        )));
+        let device = format!("gles {}", ctx.capabilities().device_name);
+        if skipped(&device, skip) {
+            report(Event::Skipped(device));
+            return;
+        }
+        report(Event::Device(device));
         for path in paths {
             let recording = recording(path);
             if let Some(timing) = time_frames::<GlesHal>(&mut ctx, path, &recording, |ctx| {
@@ -319,6 +342,13 @@ pub enum Event {
     Device(String),
     /// One configuration finished.
     Measured(Timing),
+    /// A device was opened and then not measured, because the caller asked for
+    /// it to be left alone.
+    ///
+    /// Reported rather than passed over quietly. A run that measured two
+    /// devices where the reader expected three, and said nothing about the
+    /// third, is a run whose coverage cannot be read off its own output.
+    Skipped(String),
 }
 
 /// One event's contribution to the report.
@@ -328,6 +358,7 @@ pub enum Event {
 fn render(event: &Event) -> String {
     let timing = match event {
         Event::Device(device) => return format!("\n{device}\n"),
+        Event::Skipped(device) => return format!("\n{device}\n  not measured, as asked\n"),
         Event::Measured(timing) => timing,
     };
     let mut out = String::new();
@@ -393,13 +424,13 @@ pub fn text(events: &[Event]) -> String {
 /// killed before anything finishes still says what it was attempting -- and
 /// every line is flushed, because a buffer that is never drained is the same
 /// as not having printed at all.
-pub fn stream(out: &mut impl Write) -> io::Result<()> {
+pub fn stream(skip: &[String], out: &mut impl Write) -> io::Result<()> {
     write!(out, "{}", header())?;
     out.flush()?;
 
     let mut measured = 0usize;
     let mut failed = None;
-    gather(&mut |event| {
+    gather(skip, &mut |event| {
         if failed.is_some() {
             return;
         }
@@ -561,6 +592,40 @@ mod tests {
         );
         assert_eq!(rendered.matches("vulkan:0 a").count(), 1, "{rendered}");
         assert_eq!(rendered.lines().filter(|l| l.starts_with("  ")).count(), 2);
+    }
+
+    /// A device is matched by any part of the name it gives itself.
+    ///
+    /// The name carries a driver version and a vector width, neither of which
+    /// a caller can be expected to type, so matching the whole of it would
+    /// make the option unusable and silently measure the device anyway.
+    #[test]
+    fn a_device_is_skipped_on_any_part_of_the_name_it_gives_itself() {
+        let name = "vulkan:1 llvmpipe (LLVM 22.1.8, 256 bits)";
+        assert!(skipped(name, &["llvmpipe".into()]));
+        assert!(
+            skipped(name, &["LLVMpipe".into()]),
+            "case should not matter"
+        );
+        assert!(skipped(name, &["vulkan:1".into()]));
+        assert!(!skipped(name, &["v3d".into()]));
+        assert!(!skipped(name, &[]), "nothing named, nothing skipped");
+
+        // And the hardware device beside it is not caught by the same pattern,
+        // which is the whole point of asking for one.
+        assert!(!skipped("vulkan:0 V3D 7.1.7.0", &["llvmpipe".into()]));
+    }
+
+    /// A device left unmeasured says so where its results would have been.
+    #[test]
+    fn a_skipped_device_is_named_rather_than_passed_over_quietly() {
+        let rendered = text(&[
+            Event::Device("vulkan:0 V3D 7.1.7.0".into()),
+            Event::Measured(a_timing(Path::Analytic)),
+            Event::Skipped("vulkan:1 llvmpipe".into()),
+        ]);
+        assert!(rendered.contains("vulkan:1 llvmpipe"), "{rendered}");
+        assert!(rendered.contains("not measured"), "{rendered}");
     }
 
     #[test]

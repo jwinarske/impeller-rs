@@ -94,11 +94,32 @@ fn main() {
             }
         }
         Some("bench") => {
+            // `--skip llvmpipe` leaves a software rasterizer unmeasured. On a
+            // small board that stage runs every core flat out for minutes and
+            // has locked one up; the board's own GPU is measurable without it.
+            let mut skip = Vec::new();
+            let mut rest = rest.iter();
+            while let Some(arg) = rest.next() {
+                match arg.as_str() {
+                    "--skip" => match rest.next() {
+                        Some(pattern) => skip.push(pattern.clone()),
+                        None => {
+                            eprintln!("bench: --skip wants a device name to match");
+                            std::process::exit(2);
+                        }
+                    },
+                    other => {
+                        eprintln!("bench: unknown argument {other}");
+                        std::process::exit(2);
+                    }
+                }
+            }
+
             // Straight to the handle rather than through `print!`, because the
             // point of streaming is that each line has left this process by the
             // time the next configuration starts.
             let mut out = std::io::stdout().lock();
-            if let Err(e) = bench::stream(&mut out) {
+            if let Err(e) = bench::stream(&skip, &mut out) {
                 eprintln!("bench: {e}");
                 std::process::exit(1);
             }
