@@ -94,9 +94,18 @@ fn capability_flags_match_the_extensions_actually_present() {
         caps.dma_buf.export,
         ctx.has_egl_extension("EGL_MESA_image_dma_buf_export")
     );
-    assert_eq!(
-        caps.sync.export_sync_file,
-        ctx.has_egl_extension("EGL_ANDROID_native_fence_sync")
+    // Not the same shape as the two above, and the difference is the point. A
+    // dma-buf flag may follow its extension because this backend can act on
+    // the extension once the driver offers it. Sync cannot: `Hal::Fence` here
+    // is `std::convert::Infallible`, so no fence exists to export whatever EGL
+    // says. This used to assert the flag followed `EGL_ANDROID_native_fence_sync`,
+    // which held the promise open on every driver that has it.
+    //
+    // When a fence is implemented this becomes the extension check again and
+    // this comment goes with it.
+    assert!(
+        !caps.sync.export_sync_file && !caps.sync.import_sync_file,
+        "sync is advertised while no fence can be constructed to satisfy it"
     );
 
     eprintln!(

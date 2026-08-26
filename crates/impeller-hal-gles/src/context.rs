@@ -642,7 +642,18 @@ fn detect_capabilities(
         modifiers: egl_extensions.contains(ext::DMA_BUF_MODIFIERS),
     };
 
-    let fence = egl_extensions.contains(ext::NATIVE_FENCE_SYNC);
+    // Detected and reported as unsupported, which is not the same as not
+    // looking. This backend has no fence at all -- its `Hal::Fence` is
+    // `std::convert::Infallible`, so one cannot be constructed -- and a
+    // capability is a promise a caller branches on rather than a note about
+    // the driver. Reporting the extension's presence promised an export that
+    // nothing could ever be exported from: a caller checking the capability
+    // and then looking for a fence to export finds no way to obtain one.
+    //
+    // When a fence exists, this becomes `egl_extensions.contains(...)` again
+    // and the test in this file that pins it should be deleted with it.
+    let _has_native_fence_sync = egl_extensions.contains(ext::NATIVE_FENCE_SYNC);
+    let fence = false;
     Capabilities {
         // No advanced blending: the extension GLES exposes for it requires the
         // fragment shader to declare `blend_support_all_equations`, and the
