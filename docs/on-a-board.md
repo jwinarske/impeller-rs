@@ -129,6 +129,22 @@ starting that stage.
 A bench that dies instantly with `nohup: failed to run command './xtask'` is
 that, not the board.
 
+**Read `vcgencmd get_throttled` after the run, not only before.** A Pi 5 that
+has been benching for an hour sits near its soft temperature limit, and the
+same binary then measures a few percent slower than it did on a cool board --
+with the run's own spread still under a tenth of a millisecond, so nothing
+inside the numbers says anything is wrong. That is how a thermal difference
+gets read as a regression: two runs, each internally tight, disagreeing by four
+percent. `throttled=0x80000` is bit nineteen, "soft temperature limit has
+occurred", and it latches, so it answers the question after the fact.
+
+The rule that follows: compare two builds in one sitting, alternating them, or
+let the board come back to idle temperature between them. Comparing today's run
+against a number from an hour ago is comparing two thermal states as much as
+two builds. A whole-frame figure seems less sensitive to this than the
+micro-benchmark paths -- 21.2 ms was unchanged across a four percent move in
+them -- but that is an observation rather than something to rely on.
+
 ## A second board, and what it says about reading a green run
 
 A Radxa Zero 3 (RK3566, Mali-G52, Debian 12) is the other target here, and
