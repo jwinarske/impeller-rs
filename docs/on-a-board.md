@@ -146,10 +146,24 @@ draw. The variability is therefore in something the Vulkan backend does per
 draw rather than per frame, and it does it differently from one process to the
 next.
 
-That is an observation, not a diagnosis; nothing here has looked at the
-allocator or the descriptor path yet. Until something does, establish a
-difference on the GLES row, where a three-run cluster is tight to a couple of
-hundredths.
+It scales with the draws, which is the next thing that was worth measuring
+rather than assuming. Tripling the shape count from a hundred and sixty to four
+hundred and eighty took the gap from 0.45 ms to 1.06 -- about two and a half
+microseconds per draw either way. So the two states differ in what a draw
+costs, not in a fixed charge per frame.
+
+Two candidates in `impeller-hal-vulkan`, neither yet tested. Every submission
+builds a materials buffer of `draws x stride`, allocates host-visible memory
+for it, copies into it and frees it afterwards -- forty kilobytes a frame for
+the analytic configuration against two hundred and fifty-six bytes for the
+tessellated one -- and `upload`'s own comment marks that path out: "Real
+per-frame geometry goes through a ring allocator instead; this path allocates
+per submission." The other is the descriptor rebind each draw makes to move the
+dynamic offset along that buffer. Both scale the way the gap does.
+
+That is where a diagnosis would start, and it is not one yet. Until then,
+establish a difference on the GLES row, where a three-run cluster is tight to a
+couple of hundredths.
 
 **One run is not a measurement: the Vulkan figure lands in one of two speeds.**
 Five consecutive runs of one binary, on a cool fanned board minutes after a
