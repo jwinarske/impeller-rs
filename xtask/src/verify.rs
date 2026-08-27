@@ -425,9 +425,27 @@ fn normalize_validation(message: &str) -> String {
 
 pub fn text(outcome: &Outcome) -> String {
     let mut out = String::new();
+    // The caveat rides on the count line, not only under it. This repository's
+    // rule for reading a gate is to read the test count rather than the exit
+    // code, and a reader following that rule stops at the first line -- so a
+    // first line that reads clean while a paragraph four lines down says the
+    // number is short puts the correction where the rule sends nobody. It has
+    // already caught someone out that way once.
     out.push_str(&format!(
-        "{} passed, {} failed\n",
-        outcome.passed, outcome.failed
+        "{} passed, {} failed{}\n",
+        outcome.passed,
+        outcome.failed,
+        if outcome.lost > 0 {
+            // Both numbers, because the dangerous one is the zero: a lost
+            // binary takes its failures with it as surely as its passes.
+            format!(
+                " -- BOTH SHORT, {} binar{} unread",
+                outcome.lost,
+                if outcome.lost == 1 { "y" } else { "ies" }
+            )
+        } else {
+            String::new()
+        }
     ));
     if !outcome.coverage.is_empty() {
         out.push_str("what the suite says it covered:\n");
@@ -690,6 +708,37 @@ test result: ok. ?? passed; 0 failed; 0 ignored; 0 measured; 0 filtered out;
             outcome.lost, 1,
             "a count that is not a number must not read as zero passes"
         );
+    }
+
+    /// The count line says it is short, rather than only the paragraph below.
+    ///
+    /// Mutate away the suffix and this fails while the three tests above still
+    /// pass, which is the point: they check that the loss is *reported*, and
+    /// this checks that it is reported where the reader is told to look.
+    #[test]
+    fn the_count_line_itself_says_when_it_is_short() {
+        let text = "\
+     Running tests/one.rs (target/debug/deps/one)
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out;
+     Running tests/two.rs (target/debug/deps/two)
+";
+        let rendered = text_of(&parse(text, false));
+        let first = rendered.lines().next().expect("a summary line");
+        assert!(
+            first.contains("4 passed") && first.contains("SHORT"),
+            "the first line must carry it: {first:?}"
+        );
+        assert!(first.contains('1'), "and say how many binaries: {first:?}");
+
+        // And a clean run's first line stays clean, so the marker means
+        // something when it does appear.
+        let whole = "\
+     Running tests/one.rs (target/debug/deps/one)
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out;
+";
+        let rendered = text_of(&parse(whole, false));
+        let first = rendered.lines().next().expect("a summary line");
+        assert_eq!(first, "4 passed, 0 failed", "{first:?}");
     }
 
     #[test]

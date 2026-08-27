@@ -178,16 +178,29 @@ backend, so what was needed was a pipeline cache that can hold more than one
 program, not a compiler. `docs/architecture.md` has both designs.
 
 `drawRSuperellipse` and `clipRSuperellipse` were once described here as shapes
-with rules attached, cheap once somebody needed them. That was wrong, and the
-correction is worth more than the row. Flutter's rounded superellipse is not a
-closed form: each corner is built from a superellipse arc joined to a circular
-one, and the superellipse's degree comes from an eleven-entry lookup table
-interpolated on the ratio of side to radius, extrapolated beyond it. Matching
-that shape means transcribing a fitted table from another project, and nothing
-in this repository could check the transcription — there is no reference here
-to compare against. Drawing *a* rounded superellipse under that name instead
-would be the substitution this renderer refuses everywhere else. So it stays
-absent, and the reason is a decision rather than a gap in the work.
+with rules attached, cheap once somebody needed them. That was wrong. The
+correction that replaced it was also wrong, in the other direction, and this is
+the second correction.
+
+The shape is as described: not a closed form, each corner a superellipse arc
+joined to a circular one, the superellipse's degree read from an eleven-entry
+table interpolated on the ratio of side to radius and extrapolated past it.
+What was wrong is what followed — that nothing here could check a transcription
+because there is no reference to compare against.
+
+There is one, and it is upstream's own. `round_superellipse_unittests.cc` pins
+the boundary with twenty-nine points across five configurations, each asserted
+inside the shape and outside it two hundredths of a unit further out, and each
+labeled with the part of the curve it sits on: where the superellipse starts,
+where it meets the circular arc, the middle of that arc. Thirty-two further
+assertions cover the degenerate corners. The table itself is twenty-two
+numbers and eight constants, not a body of work.
+
+Transcribe the points along with the table and they check it: a wrong degree or
+a misplaced join moves the joint points off the boundary, and moving them by
+more than two hundredths is what the assertions catch. So the reason this row
+is empty is now that the work has not been done, which is a smaller and more
+honest claim than the one it replaces.
 
 `drawVertices` and `drawAtlas` were partial for the same reason and stopped
 being so together, which is what the shared mechanism predicted. Both hand the
