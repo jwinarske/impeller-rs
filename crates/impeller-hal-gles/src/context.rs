@@ -685,9 +685,16 @@ fn detect_capabilities(
         // checks `can_allocate_scanout()` first, which passes here, and then
         // negotiates against this list -- so the error a caller sees is "no
         // shared format and modifier, render side: <nothing>" rather than
-        // anything about GLES. Filling it in means asking EGL which fourccs
-        // and modifiers it will export, through
-        // `eglQueryDmaBufFormatsEXT` and `eglQueryDmaBufModifiersEXT`.
+        // anything about GLES.
+        //
+        // Filling it in honestly is not the fix, though, and that was measured
+        // rather than argued. Exporting a plain renderable texture on a Pi 5
+        // gives `AB24` with `BROADCOM_UIF`, while the board's two display
+        // controllers take `LINEAR` only (rp1-dsi) and `VC4_T_TILED` or
+        // `LINEAR` (vc4). A truthful list of what this backend exports would
+        // negotiate against those and still find nothing, because GL has no
+        // way to *ask* for a layout when it allocates a texture. That is what
+        // GBM is for, and `docs/architecture.md` has the numbers.
         render_formats: Vec::new(),
         // Recognized from the renderer string, because GLES offers nothing
         // better: there is no device-type query, and the string is what every

@@ -219,12 +219,33 @@ returns as a hardcoded empty vector, with no comment, in a struct literal where
 every neighboring field carries one. The caller sees "no shared format and
 modifier, render side: nothing", which says nothing about GLES.
 
-So the blocker measured here is an unfilled list rather than a missing
-capability, and the GBM dependency may not be on the critical path for Mesa
-drivers at all. That is a narrower claim than it sounds: reporting the
-extensions is not proof that an export of a renderable, scanout-modifier buffer
-succeeds end to end, which nothing here has tried. It is enough to say the
-question is open where the document said it was settled.
+That much is a correction to the mechanism. It is *not* a reprieve for the
+route, and the paragraph that first replaced this one said it might be — that
+the blocker was an unfilled list and the GBM dependency might not be on the
+critical path. Measuring it on the board it was reasoning about says otherwise.
+
+Exporting a plain renderable texture through `EGL_MESA_image_dma_buf_export`
+on a Pi 5 yields `AB24` in one plane with modifier `0x0700000000000006`, which
+is `BROADCOM_UIF`. The board's display controllers advertise, per their planes'
+`IN_FORMATS`:
+
+| controller | what it will scan out |
+|---|---|
+| `drm-rp1-dsi` | `LINEAR` only, for all seven of its formats |
+| `vc4` | `BROADCOM_VC4_T_TILED` or `LINEAR` |
+
+**The intersection with UIF is empty on both.** So a truthful `render_formats`,
+filled from what this backend actually exports, would negotiate against those
+lists and still find nothing — and the reason is not a missing list but that GL
+has no way to ask for a layout when it allocates a texture. It renders into
+what the driver chose, and on V3D the driver chooses the tiling its own
+sampler wants rather than the one a display can read.
+
+That is the argument for GBM, and it is now a measurement rather than a
+convention: `gbm_bo_create_with_modifiers` takes the display's list and
+allocates inside it, which is the step GL has no spelling for. The same
+measurement bounds the claim — one SoC, two controllers — but it is the class
+of hardware the lane exists for.
 
 On non-Linux platforms only the WSI column applies. Future backends extend the
 rows, never the columns.
