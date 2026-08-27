@@ -3506,12 +3506,41 @@ fn a_group_can_be_filtered_by_a_composition_in_either_order() {
     // rectangle to itself, so it *is* -- and that is not a filter doing
     // nothing but the arithmetic being right. Asserting both differ from the
     // plain group is what the first version of this did, and it is false.
+    //
+    // Stated as magnitudes rather than as equality, because equality is not
+    // true on real hardware. This asserted `plain == opened` and held on
+    // lavapipe and failed on a Raspberry Pi's V3D, where two hundred and
+    // forty-six boundary pixels come back at 248 to 252 instead of 255 -- a
+    // worst channel error of seven, from where the morphology's resampling
+    // lands between texels. Seven is not the claim being made here. The claim
+    // is that one order is the identity and the other is not, and the gap
+    // between "off by seven" and "off by two hundred and fifty-five" is what
+    // says so on any device.
     let plain = shot(&mut ctx, None);
-    assert_ne!(plain, closed, "closing should have bridged the gap");
-    assert_eq!(
-        plain, opened,
+    let worst = |a: &[u8], b: &[u8]| -> u8 {
+        a.iter()
+            .zip(b.iter())
+            .map(|(x, y)| x.abs_diff(*y))
+            .max()
+            .unwrap_or(0)
+    };
+    let bridged = plain
+        .chunks_exact(4)
+        .zip(closed.chunks_exact(4))
+        .filter(|(a, b)| worst(a, b) >= 128)
+        .count();
+    assert!(
+        bridged >= 200,
+        "closing should have bridged the gap between the rectangles, which is \
+         about two hundred and fifty pixels going from background to shape: \
+         {bridged} pixels changed by half or more"
+    );
+    let slack = worst(&plain, &opened);
+    assert!(
+        slack <= 16,
         "opening a pair of rectangles by a rectangle returns them unchanged, so \
-         this order should give the group back as it was"
+         this order should give the group back as it was, up to where the \
+         resampling lands: worst channel differs by {slack}"
     );
     // The gap itself, named rather than left to the pixel count.
     let between = |p: &[u8]| pixel(p, 64, 64)[0];
