@@ -70,6 +70,17 @@ crate table, both of which carry an explicit state column; so was the diagram
 above, which already marked as planned the three things the backend section
 claimed as built.
 
+And so was [`parity.md`](parity.md), which is the strongest case for the rule.
+Every row there names its evidence, and a test checks that the evidence *exists*
+— a scene by name, or a test by its definition rather than by the text
+appearing somewhere, which is how three rows citing a local variable inside an
+unrelated test were caught. Spot-checking what the evidence proves rather than
+that it exists held up too: the nine-patch row claims corners kept and edges
+stretched, and its test samples just past where a corner should end, because a
+stretched corner would still be its own colour anywhere inside itself. The
+difference between that file and this one is not care. It is that one of them
+is checked by something that runs.
+
 So the rule for anything added here: **a claim about machinery carries its
 state, or it does not go in.** A design that is described but not built is
 worse than one that is not described, because it is the one a reader will not
