@@ -1,0 +1,27 @@
+# A Raspberry Pi 5, Mesa V3D 7.1.7.0, release build, fan fitted, idle at 57 C,
+# `vcgencmd get_throttled` clean before and after.
+#
+#   cargo xtask bench --skip llvmpipe --check tests/bench-baselines/raspberry-pi-5-v3d.txt
+#
+# `--skip llvmpipe` because measuring the software rasterizer locks this board
+# up; see docs/on-a-board.md.
+#
+# Checked against a fresh run on the board it came from: all eight rows within
+# two tenths of a percent, which is what says this board can gate at all.
+#
+# Updating this is a reviewed event, like the shader snapshots: re-record with
+# --record, and the diff is the claim that every row moved for a reason. The
+# GLES rows repeat to about a tenth of a percent and mean what they say. The
+# Vulkan distance-field row lands in one of two states three percent apart from
+# one process to the next, so it was recorded in whichever it got and the
+# default tolerance covers the other.
+#
+# device	configuration	median in milliseconds
+vulkan:0 V3D 7.1.7.0	distance field, 1 sample	13.363
+vulkan:0 V3D 7.1.7.0	tessellated, 4 samples	15.976
+vulkan:0 V3D 7.1.7.0	tessellated, 1 sample	13.661
+vulkan:0 V3D 7.1.7.0	full frame, mixed content	21.199
+gles V3D 7.1.7.0	distance field, 1 sample	13.442
+gles V3D 7.1.7.0	tessellated, 4 samples	15.971
+gles V3D 7.1.7.0	tessellated, 1 sample	13.530
+gles V3D 7.1.7.0	full frame, mixed content	20.397
