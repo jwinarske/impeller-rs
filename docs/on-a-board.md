@@ -174,14 +174,45 @@ came out fast and one that came out slow. Same memory type, same offset, same
 size, different speed.
 
 So: not the quantity written, not where it was written, not the hashing. What
-remains is the driver's own cost of recording and executing a draw, varying
-from one process to the next in a way nothing this side of the API can see.
-Settling it wants `perf` on the board or V3D driver instrumentation, and until
-someone does that the workaround stands: quote the GLES row.
+remains is the driver's own cost of a draw — and which half of that, recording
+or executing, turns out to be answerable without `perf`, which is not installed
+here anyway. Timing the two phases separately inside the backend, around the
+`vkCmd*` loop and around the submit-and-wait, separates them cleanly. Over
+thirty-one runs, per frame at a hundred and sixty draws:
 
-That is where a diagnosis would start, and it is not one yet. Until then,
-establish a difference on the GLES row, where a three-run cluster is tight to a
-couple of hundredths.
+| | recording | submit and wait | frame |
+|---|---|---|---|
+| fast, 26 runs | 0.66 ms | 12.66 ms | 13.36 ms |
+| slow, 5 runs | 1.01 ms | 12.70 ms | 13.81 ms |
+
+**The gap is in recording commands, not in running them.** Recording separates
+the two states by 57 percent; submit-and-wait, which contains all of the GPU's
+work, differs by 0.3 and accounts for a twelfth of the gap. Every slow frame
+had a slow recording phase and no fast frame did — the correlation is exact
+across all thirty-one. The extra 0.35 ms over a hundred and sixty draws is 2.2
+microseconds each, which is the same per-draw figure the shape-count sweep
+above arrived at from the outside.
+
+The GLES device is the control and reads zero on both counters, since they
+count only what the Vulkan backend does.
+
+Two more per-process candidates are ruled out, both of them things fixed when a
+process starts. Pinned to one core with `taskset -c 2`, one run in ten still
+came out slow; with address-space randomization off under `setarch -R`, two in
+ten did. So it is neither which core the recording runs on nor where the
+driver's code and buffers land in the address space.
+
+What is left is narrow: something the V3D driver decides once per process that
+changes how expensive it is to *write* a command, with the commands themselves
+costing the same to execute. A memory type for the command pool that is
+uncached on one path and cached on the other would have exactly this shape, and
+that is invisible from this side of the API — settling it wants Mesa
+instrumentation. But the search space is now half its size, and the GPU, the
+scheduler and the board's thermals are all out of it.
+
+That is a diagnosis of where, not yet of what. Until it is both, establish a
+difference on the GLES row, where a three-run cluster is tight to a couple of
+hundredths.
 
 **One run is not a measurement: the Vulkan figure lands in one of two speeds.**
 Five consecutive runs of one binary, on a cool fanned board minutes after a
