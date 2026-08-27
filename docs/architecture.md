@@ -1455,7 +1455,10 @@ Uniform data lives in UBOs with std140 layouts generated alongside the shaders;
 there is no push-constant equivalent, so per-draw material data is written into
 one buffer per submission and bound a range at a time. MSAA uses multisampled
 renderbuffers with a blit resolve. `GL_EXT_multisampled_render_to_texture` is
-not used on tilers or anywhere else.
+not used on tilers or anywhere else — `has_gl_extension` exists so that
+something can act on an extension one day, and its own comment names that one
+as "the first that *will*", which is a clearer statement of the position than
+this file managed.
 
 GLES 2.0 is permanently out of scope; the feature gap is too large.
 
