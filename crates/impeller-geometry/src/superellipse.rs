@@ -354,7 +354,7 @@ struct SuperellipseConics {
 /// side-to-radius ratio from 2 to 12 and measuring both against
 /// [`RoundSuperellipse::contains`] says the consistent reading is worse
 /// everywhere: its worst is 0.056 against 0.046, and past a ratio of 5 it sits
-/// at 0.017 to 0.036 where this sits at 0.003 to 0.020. The fitted factors
+/// at 0.017 to 0.036 where this sits at 0.003 to 0.023. The fitted factors
 /// evidently absorb the formula they were searched against, so "fixing" the
 /// formula without refitting the table makes the shape worse.
 ///
