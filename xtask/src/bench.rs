@@ -14,11 +14,29 @@
 //!
 //! # What it is not
 //!
-//! Not a regression gate. It prints numbers and returns success whatever they
-//! say, because a threshold nobody has calibrated on a machine nobody has
-//! characterized is a build failure waiting to happen on a busy laptop. The
-//! test-lane table records regression gating as belonging to nightly runs on
-//! quiet runners, and that is still where it belongs.
+//! Not a regression gate *by default*, and the distinction is the whole of the
+//! design. A plain run prints numbers and returns success whatever they say,
+//! because a threshold nobody has calibrated on a machine nobody has
+//! characterized is a build failure waiting to happen on a busy laptop.
+//!
+//! `--record <path>` writes what a run measured, keyed by device and
+//! configuration; `--check <path>` measures again and compares, reporting every
+//! row and exiting non-zero if any is slower than `--tolerance` (five percent
+//! by default) or if either side has a row the other lacks. Both are opt-in, so
+//! the objection above still holds for every run that did not ask for one.
+//!
+//! The default tolerance is measured rather than chosen. On a Raspberry Pi 5's
+//! V3D the GLES rows repeat to about a tenth of a percent, but the Vulkan
+//! distance-field row lands in one of two states three percent apart from one
+//! process to the next -- `docs/on-a-board.md` has the numbers -- so anything
+//! tighter would gate on which state a run happened to get. A check restricted
+//! to stable rows should pass something far smaller.
+//!
+//! This does not make a busy machine a quiet one. Checking an unchanged build
+//! against its own baseline on the workstation this was written on reported
+//! three of eight rows regressed, one of them by twelve percent. The test-lane
+//! table still records gating as belonging to nightly runs on quiet runners;
+//! what has changed is that the machinery now exists for one.
 //!
 //! Not a comparison against the numbers above either. Those were taken on a
 //! desktop discrete part; a run here measures whatever this machine is, which
@@ -623,18 +641,37 @@ pub fn text(events: &[Event]) -> String {
 /// killed before anything finishes still says what it was attempting -- and
 /// every line is flushed, because a buffer that is never drained is the same
 /// as not having printed at all.
-pub fn stream(skip: &[String], out: &mut impl Write) -> io::Result<()> {
+/// Measure everything, write the report, and hand back what was measured.
+///
+/// The rows come back so a caller can record or check them. The report is
+/// written either way -- a comparison is something done *with* the numbers,
+/// never instead of printing them.
+pub fn stream_collecting(
+    skip: &[String],
+    out: &mut impl Write,
+) -> io::Result<Vec<(String, String, f64)>> {
     write!(out, "{}", header())?;
     out.flush()?;
 
+    let mut rows: Vec<(String, String, f64)> = Vec::new();
+    let mut device = String::new();
     let mut measured = 0usize;
     let mut failed = None;
     gather(skip, &mut |event| {
         if failed.is_some() {
             return;
         }
-        if matches!(event, Event::Measured(_)) {
-            measured += 1;
+        match &event {
+            Event::Device(name) => device.clone_from(name),
+            Event::Measured(timing) => {
+                measured += 1;
+                rows.push((
+                    device.clone(),
+                    timing.what.to_string(),
+                    timing.median.as_secs_f64() * 1000.0,
+                ));
+            }
+            _ => {}
         }
         let line = render(&event);
         if let Err(e) = write!(out, "{line}").and_then(|()| out.flush()) {
@@ -646,7 +683,140 @@ pub fn stream(skip: &[String], out: &mut impl Write) -> io::Result<()> {
     }
 
     write!(out, "{}", if measured == 0 { NOTHING } else { epilogue() })?;
-    out.flush()
+    out.flush()?;
+    Ok(rows)
+}
+
+/// A recorded run, to compare a later one against.
+///
+/// Keyed by device *and* configuration, because a baseline from one device says
+/// nothing about another: the whole point of the report naming its device is
+/// that these numbers are not portable. A file recorded on a Pi and checked on
+/// a workstation compares nothing, and this says so rather than passing.
+///
+/// Stored as text, one row per line, because a baseline that cannot be read in
+/// a diff is a baseline nobody will question when it changes.
+pub struct Baseline {
+    rows: Vec<(String, String, f64)>,
+}
+
+impl Baseline {
+    /// `device<TAB>what<TAB>median_ms`, and lines that are not that are an
+    /// error rather than a skip -- a baseline half-read would gate on half the
+    /// configurations and say nothing about the rest.
+    pub fn parse(text: &str) -> Result<Self, String> {
+        let mut rows = Vec::new();
+        for (number, line) in text.lines().enumerate() {
+            let line = line.trim_end();
+            if line.is_empty() || line.starts_with('#') {
+                continue;
+            }
+            let mut parts = line.split('\t');
+            let (Some(device), Some(what), Some(ms), None) =
+                (parts.next(), parts.next(), parts.next(), parts.next())
+            else {
+                return Err(format!(
+                    "line {}: expected three tab-separated fields",
+                    number + 1
+                ));
+            };
+            let ms: f64 = ms.trim().parse().map_err(|_| {
+                format!(
+                    "line {}: {ms:?} is not a number of milliseconds",
+                    number + 1
+                )
+            })?;
+            rows.push((device.to_string(), what.to_string(), ms));
+        }
+        Ok(Self { rows })
+    }
+
+    pub fn render(&self) -> String {
+        let mut out = String::from(
+            "# cargo xtask bench --record\n\
+             # device\tconfiguration\tmedian in milliseconds\n",
+        );
+        for (device, what, ms) in &self.rows {
+            out.push_str(&format!("{device}\t{what}\t{ms:.3}\n"));
+        }
+        out
+    }
+
+    pub fn from_run(rows: &[(String, String, f64)]) -> Self {
+        Self {
+            rows: rows.to_vec(),
+        }
+    }
+
+    fn find(&self, device: &str, what: &str) -> Option<f64> {
+        self.rows
+            .iter()
+            .find(|(d, w, _)| d == device && w == what)
+            .map(|(_, _, ms)| *ms)
+    }
+}
+
+/// What a comparison found, per row and in total.
+pub struct Comparison {
+    pub lines: Vec<String>,
+    pub regressed: usize,
+    /// Rows on one side and not the other. Counted rather than ignored: a
+    /// baseline recorded on a machine with two devices and checked on one with
+    /// one has not been satisfied, it has been half-read.
+    pub unmatched: usize,
+}
+
+/// Compare a run against a baseline, tolerating `tolerance` as a fraction.
+///
+/// The tolerance is a fraction rather than a fixed number of milliseconds
+/// because these span one millisecond to thirty depending on the device, and a
+/// budget that means something on one would be noise or a hair trigger on the
+/// other.
+pub fn compare(baseline: &Baseline, run: &[(String, String, f64)], tolerance: f64) -> Comparison {
+    let mut lines = Vec::new();
+    let mut regressed = 0;
+    let mut unmatched = 0;
+
+    for (device, what, now) in run {
+        match baseline.find(device, what) {
+            Some(then) => {
+                let delta = (now - then) / then;
+                let over = delta > tolerance;
+                if over {
+                    regressed += 1;
+                }
+                lines.push(format!(
+                    "  {:<26} {:>9.3} was {:>9.3}  {:+6.1}%{}",
+                    what,
+                    now,
+                    then,
+                    delta * 100.0,
+                    if over { "   REGRESSED" } else { "" }
+                ));
+            }
+            None => {
+                unmatched += 1;
+                lines.push(format!(
+                    "  {what:<26} {now:>9.3}  no baseline for this configuration on {device}"
+                ));
+            }
+        }
+    }
+    for (device, what, then) in &baseline.rows {
+        if !run.iter().any(|(d, w, _)| d == device && w == what) {
+            unmatched += 1;
+            lines.push(format!(
+                "  {what:<26} {:>9}  was {then:>9.3} in the baseline for {device}, \
+                 not measured now",
+                "-"
+            ));
+        }
+    }
+    Comparison {
+        lines,
+        regressed,
+        unmatched,
+    }
 }
 
 #[cfg(test)]
@@ -864,6 +1034,67 @@ mod tests {
         // And it is a frame rather than one shape: ground, three cards, three
         // shadows and a highlight.
         assert!(frame.draw_count() >= 5, "{} draws", frame.draw_count());
+    }
+
+    fn rows(v: &[(&str, &str, f64)]) -> Vec<(String, String, f64)> {
+        v.iter()
+            .map(|(d, w, m)| (d.to_string(), w.to_string(), *m))
+            .collect()
+    }
+
+    /// A baseline survives being written and read back.
+    #[test]
+    fn a_baseline_round_trips_through_its_own_format() {
+        let original = rows(&[
+            ("vulkan:0 V3D 7.1.7.0", "distance field, 1 sample", 13.376),
+            ("gles V3D 7.1.7.0", "full frame, mixed content", 21.209),
+        ]);
+        let text = Baseline::from_run(&original).render();
+        let read = Baseline::parse(&text).expect("its own output should parse");
+        let found = compare(&read, &original, 0.0);
+        assert_eq!(found.regressed, 0, "{:?}", found.lines);
+        assert_eq!(found.unmatched, 0, "{:?}", found.lines);
+    }
+
+    /// A line that is not three fields stops the read rather than being
+    /// skipped: a baseline half-understood gates on some configurations and
+    /// silently ignores the others.
+    #[test]
+    fn a_malformed_baseline_is_refused_rather_than_partly_read() {
+        assert!(Baseline::parse("device\tconfiguration").is_err());
+        assert!(Baseline::parse("device\tconfiguration\tnot-a-number").is_err());
+        // Comments and blank lines are not malformed.
+        let ok = Baseline::parse("# a note\n\ndev\twhat\t1.5\n").expect("should parse");
+        assert_eq!(ok.find("dev", "what"), Some(1.5));
+    }
+
+    /// The device is part of the key, so a baseline from another machine does
+    /// not quietly pass.
+    #[test]
+    fn a_baseline_from_another_device_matches_nothing() {
+        let recorded = Baseline::from_run(&rows(&[("pi", "distance field", 13.0)]));
+        let found = compare(
+            &recorded,
+            &rows(&[("workstation", "distance field", 0.9)]),
+            0.05,
+        );
+        assert_eq!(found.regressed, 0, "a different device is not a regression");
+        assert_eq!(
+            found.unmatched, 2,
+            "both rows are unmatched: {:?}",
+            found.lines
+        );
+    }
+
+    /// Slower past the tolerance fails; slower within it, and faster, do not.
+    #[test]
+    fn only_a_regression_past_the_tolerance_counts() {
+        let recorded = Baseline::from_run(&rows(&[("d", "w", 10.0)]));
+        let at = |now: f64| compare(&recorded, &rows(&[("d", "w", now)]), 0.05).regressed;
+        assert_eq!(at(10.4), 0, "four percent slower is inside five");
+        assert_eq!(at(10.6), 1, "six percent slower is not");
+        assert_eq!(at(5.0), 0, "faster is never a regression");
+        assert_eq!(at(10.5), 0, "exactly the tolerance is inside it");
     }
 
     #[test]

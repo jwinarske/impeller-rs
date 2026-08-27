@@ -106,30 +106,105 @@ fn main() {
             // small board that stage runs every core flat out for minutes and
             // has locked one up; the board's own GPU is measurable without it.
             let mut skip = Vec::new();
+            let mut record: Option<String> = None;
+            let mut check: Option<String> = None;
+            // Five percent, and the number is measured rather than picked. On
+            // a Pi 5's V3D the GLES rows repeat to about a tenth of a percent,
+            // but the Vulkan distance-field row lands in one of two states
+            // three percent apart from one process to the next -- see
+            // `docs/on-a-board.md`. A tolerance under that gates on which
+            // state the run happened to get. Anyone checking only stable rows
+            // should pass something far tighter.
+            let mut tolerance = 5.0_f64;
             let mut rest = rest.iter();
             while let Some(arg) = rest.next() {
+                let mut wants = |what: &str| match rest.next() {
+                    Some(v) => v.clone(),
+                    None => {
+                        eprintln!("bench: {arg} wants {what}");
+                        std::process::exit(2);
+                    }
+                };
                 match arg.as_str() {
-                    "--skip" => match rest.next() {
-                        Some(pattern) => skip.push(pattern.clone()),
-                        None => {
-                            eprintln!("bench: --skip wants a device name to match");
-                            std::process::exit(2);
+                    "--skip" => skip.push(wants("a device name to match")),
+                    "--record" => record = Some(wants("a path to write")),
+                    "--check" => check = Some(wants("a path to read")),
+                    "--tolerance" => {
+                        let v = wants("a percentage");
+                        match v.parse::<f64>() {
+                            Ok(p) if p >= 0.0 => tolerance = p,
+                            _ => {
+                                eprintln!("bench: --tolerance wants a percentage, got {v:?}");
+                                std::process::exit(2);
+                            }
                         }
-                    },
+                    }
                     other => {
                         eprintln!("bench: unknown argument {other}");
                         std::process::exit(2);
                     }
                 }
             }
+            if record.is_some() && check.is_some() {
+                eprintln!("bench: --record and --check ask for opposite things");
+                std::process::exit(2);
+            }
 
             // Straight to the handle rather than through `print!`, because the
             // point of streaming is that each line has left this process by the
             // time the next configuration starts.
             let mut out = std::io::stdout().lock();
-            if let Err(e) = bench::stream(&skip, &mut out) {
-                eprintln!("bench: {e}");
-                std::process::exit(1);
+            let rows = match bench::stream_collecting(&skip, &mut out) {
+                Ok(rows) => rows,
+                Err(e) => {
+                    eprintln!("bench: {e}");
+                    std::process::exit(1);
+                }
+            };
+
+            if let Some(path) = record {
+                let text = bench::Baseline::from_run(&rows).render();
+                if let Err(e) = std::fs::write(&path, text) {
+                    eprintln!("bench: writing {path}: {e}");
+                    std::process::exit(1);
+                }
+                eprintln!("recorded {} rows to {path}", rows.len());
+            }
+
+            // Opt-in, and that is the whole reason this is a flag. A bench
+            // that gated by default would fail a build on a busy laptop, which
+            // is the objection the module documentation raises against gating
+            // and which still stands for every run that did not ask.
+            if let Some(path) = check {
+                let text = match std::fs::read_to_string(&path) {
+                    Ok(text) => text,
+                    Err(e) => {
+                        eprintln!("bench: reading {path}: {e}");
+                        std::process::exit(1);
+                    }
+                };
+                let baseline = match bench::Baseline::parse(&text) {
+                    Ok(b) => b,
+                    Err(e) => {
+                        eprintln!("bench: {path}: {e}");
+                        std::process::exit(1);
+                    }
+                };
+                let found = bench::compare(&baseline, &rows, tolerance / 100.0);
+                eprintln!("\nagainst {path}, tolerating {tolerance:.1}%");
+                for line in &found.lines {
+                    eprintln!("{line}");
+                }
+                if found.unmatched > 0 {
+                    eprintln!(
+                        "{} row(s) on one side only, which is not a pass",
+                        found.unmatched
+                    );
+                }
+                if found.regressed > 0 || found.unmatched > 0 {
+                    std::process::exit(1);
+                }
+                eprintln!("no configuration regressed");
             }
         }
         Some("drm") => {
