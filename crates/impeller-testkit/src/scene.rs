@@ -2607,6 +2607,59 @@ pub fn corpus() -> Vec<Scene> {
                 ),
             ],
         ),
+        // Flutter's rounded superellipse, which is a different curve from the
+        // rounded rectangles above and takes the same four numbers. Two
+        // shapes, chosen so that between them they reach both halves of the
+        // fitted table rather than only the common one.
+        //
+        // The first is wide and shallow: its two octants come out at ratios of
+        // 5.2 and 2.2, so one is extrapolated past the table's last row and
+        // the other is interpolated inside it, in a single shape. The second
+        // asks for a radius larger than the box, which is clamped per axis and
+        // is where a shape whose corners overrun would otherwise cross itself.
+        Scene::new(
+            "round-superellipse",
+            vec![
+                Item::fill(
+                    Shape::RoundSuperellipse {
+                        min: [12.0, 16.0],
+                        max: [116.0, 60.0],
+                        radii: [[20.0, 20.0]; 4],
+                    },
+                    RED,
+                ),
+                Item::fill(
+                    Shape::RoundSuperellipse {
+                        min: [12.0, 72.0],
+                        max: [116.0, 116.0],
+                        radii: [[400.0, 400.0]; 4],
+                    },
+                    BLUE,
+                ),
+            ],
+        ),
+        // Stroked, because the outline is conics and cubics rather than the
+        // arcs the rounded rectangle uses, and a stroker meets them at
+        // different tangents. A join that was slightly wrong shows as a kink
+        // where the superellipse arc hands over to the circular one.
+        Scene::new(
+            "round-superellipse-stroked",
+            vec![Item::stroke(
+                Shape::RoundSuperellipse {
+                    min: [20.0, 20.0],
+                    max: [108.0, 108.0],
+                    radii: [[34.0, 34.0]; 4],
+                },
+                StrokeSpec {
+                    width: 9.0,
+                    cap: LineCap::Butt,
+                    join: LineJoin::Round,
+                    miter_limit: 4.0,
+                    dash: None,
+                },
+                GREEN,
+            )],
+        ),
         // Multisampled, so the executor asks for antialiasing and the public
         // call takes its analytic path -- which the corpus would otherwise
         // never reach, since every other scene here hands over a path.

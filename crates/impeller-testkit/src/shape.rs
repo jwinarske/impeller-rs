@@ -60,6 +60,23 @@ pub enum Shape {
         /// rather than an outline that crosses itself.
         radius: f32,
     },
+    /// Flutter's rounded superellipse -- `dart:ui`'s `drawRSuperellipse`.
+    ///
+    /// Here as its own variant rather than as a flag on `RoundedRect` because
+    /// the two are different curves that happen to take the same numbers, and
+    /// a scene comparing them has to be able to ask for each by name.
+    RoundSuperellipse {
+        min: [f32; 2],
+        max: [f32; 2],
+        /// Four corners, each an x and a y radius, in upstream's order:
+        /// top-left, top-right, bottom-left, bottom-right.
+        ///
+        /// Four rather than one because this shape's corners are routinely
+        /// unequal in the pictures worth drawing -- a squircle with one radius
+        /// is the easy case, and the code that splits a side between two
+        /// different corners is only reached when they differ.
+        radii: [[f32; 2]; 4],
+    },
     /// The ring between two rounded rectangles -- `dart:ui`'s `drawDRRect`.
     ///
     /// Two contours in one path under the even-odd rule, which is the whole of
@@ -178,6 +195,22 @@ impl Shape {
             }
             Self::RoundedRect { min, max, radius } => {
                 rounded_contour(&mut b, *min, *max, *radius);
+            }
+            Self::RoundSuperellipse { min, max, radii } => {
+                use impeller_geometry::superellipse::{CornerRadii, RoundSuperellipse};
+                RoundSuperellipse::new(
+                    impeller_geometry::path::Rect::new(
+                        Vec2::new(min[0], min[1]),
+                        Vec2::new(max[0], max[1]),
+                    ),
+                    CornerRadii {
+                        top_left: Vec2::new(radii[0][0], radii[0][1]),
+                        top_right: Vec2::new(radii[1][0], radii[1][1]),
+                        bottom_left: Vec2::new(radii[2][0], radii[2][1]),
+                        bottom_right: Vec2::new(radii[3][0], radii[3][1]),
+                    },
+                )
+                .add_to(&mut b);
             }
             Self::DiffRoundedRect {
                 outer,

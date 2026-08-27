@@ -552,25 +552,35 @@ impl RoundSuperellipse {
     /// corner the other way round, and a path has to stay in one direction.
     pub fn to_path(&self) -> Path {
         let mut builder = PathBuilder::new();
+        self.add_to(&mut builder);
+        builder.build()
+    }
+
+    /// Append the outline to a builder that may already hold contours.
+    ///
+    /// Separate from [`RoundSuperellipse::to_path`] so a caller assembling
+    /// several shapes into one path -- a ring between two of these, a scene
+    /// that draws one under an even-odd rule -- does not have to build a path
+    /// and take it apart again.
+    pub fn add_to(&self, builder: &mut PathBuilder) {
         let tr = &self.top_right;
         let start = tr.offset + tr.signed_scale * (tr.top.offset + Vec2::new(0.0, tr.top.se_a));
         builder.move_to(start);
 
         if self.all_corners_same {
-            self.add_quadrant(&mut builder, tr, false, Vec2::new(1.0, 1.0));
-            self.add_quadrant(&mut builder, tr, true, Vec2::new(1.0, -1.0));
-            self.add_quadrant(&mut builder, tr, false, Vec2::new(-1.0, -1.0));
-            self.add_quadrant(&mut builder, tr, true, Vec2::new(-1.0, 1.0));
+            self.add_quadrant(builder, tr, false, Vec2::new(1.0, 1.0));
+            self.add_quadrant(builder, tr, true, Vec2::new(1.0, -1.0));
+            self.add_quadrant(builder, tr, false, Vec2::new(-1.0, -1.0));
+            self.add_quadrant(builder, tr, true, Vec2::new(-1.0, 1.0));
         } else {
-            self.add_quadrant(&mut builder, &self.top_right, false, Vec2::ONE);
-            self.add_quadrant(&mut builder, &self.bottom_right, true, Vec2::ONE);
-            self.add_quadrant(&mut builder, &self.bottom_left, false, Vec2::ONE);
-            self.add_quadrant(&mut builder, &self.top_left, true, Vec2::ONE);
+            self.add_quadrant(builder, &self.top_right, false, Vec2::ONE);
+            self.add_quadrant(builder, &self.bottom_right, true, Vec2::ONE);
+            self.add_quadrant(builder, &self.bottom_left, false, Vec2::ONE);
+            self.add_quadrant(builder, &self.top_left, true, Vec2::ONE);
         }
 
         builder.line_to(start);
         builder.close();
-        builder.build()
     }
 
     fn add_quadrant(

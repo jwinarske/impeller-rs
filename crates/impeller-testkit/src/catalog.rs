@@ -48,6 +48,8 @@ const BLACK: [f32; 4] = [0.0, 0.0, 0.0, 1.0];
 const RED: [f32; 4] = [1.0, 0.0, 0.0, 1.0];
 const GREEN: [f32; 4] = [0.0, 1.0, 0.0, 1.0];
 const BLUE: [f32; 4] = [0.2, 0.4, 1.0, 1.0];
+/// The same blue at half alpha, for the plate whose stroke overlaps itself.
+const BLUE_HALF: [f32; 4] = [0.2, 0.4, 1.0, 0.5];
 const YELLOW: [f32; 4] = [1.0, 0.9, 0.1, 1.0];
 /// The ground every plate clears to.
 ///
@@ -120,9 +122,158 @@ fn plate(name: &'static str, items: Vec<Item>) -> Scene {
         .with_samples(4)
 }
 
+/// The three boxes upstream draws in every rounded-superellipse plate.
+///
+/// A square, a tall one and a wide one, at a quarter of upstream's
+/// coordinates. Between them a corner is built from the shorter side in one
+/// shape and the longer in another, which are different branches of the
+/// normalize-and-scale the asymmetric case goes through.
+fn rse_boxes(y: f32, radius: f32) -> Vec<Shape> {
+    vec![
+        Shape::RoundSuperellipse {
+            min: [12.5, y],
+            max: [37.5, y + 25.0],
+            radii: [[radius, radius]; 4],
+        },
+        Shape::RoundSuperellipse {
+            min: [50.0, y],
+            max: [65.0, y + 35.0],
+            radii: [[radius, radius]; 4],
+        },
+        Shape::RoundSuperellipse {
+            min: [77.5, y],
+            max: [112.5, y + 15.0],
+            radii: [[radius, radius]; 4],
+        },
+    ]
+}
+
+/// The same three boxes at the plate's usual height, wrapped one way or another.
+fn rse_trio(radius: f32, wrap: impl Fn(Shape) -> Item) -> Vec<Item> {
+    rse_boxes(12.5, radius).into_iter().map(wrap).collect()
+}
+
+fn rse_stroke(width: f32) -> StrokeSpec {
+    StrokeSpec {
+        width,
+        cap: LineCap::Butt,
+        join: LineJoin::Round,
+        miter_limit: 4.0,
+        dash: None,
+    }
+}
+
 /// `aiks_dl_basic_unittests.cc` -- shapes, strokes and arcs.
 fn basic() -> Vec<Scene> {
     vec![
+        // The seven rounded-superellipse plates. Upstream lays these out
+        // across a canvas about five hundred wide; every coordinate here is a
+        // quarter of theirs, which leaves each shape the same shape -- the
+        // curve depends on the ratio of side to radius, and scaling both
+        // leaves it alone.
+        //
+        // Three boxes recur across them and are worth naming once: a square,
+        // a tall one and a wide one, so that a corner built from the shorter
+        // side and one built from the longer are both drawn every time.
+        plate(
+            "basic/can-render-filled-round-superellipses",
+            rse_trio(5.0, |shape| Item::fill(shape, BLUE)),
+        ),
+        // Four corners, all different, which is the only configuration that
+        // reaches the code splitting a side between two unequal corners.
+        plate(
+            "basic/can-render-asymmetric-round-superellipses",
+            vec![
+                Item::fill(
+                    Shape::RoundSuperellipse {
+                        min: [6.0, 6.0],
+                        max: [61.0, 61.0],
+                        radii: [[7.5, 30.0], [25.0, 5.0], [22.5, 2.5], [5.0, 25.0]],
+                    },
+                    BLUE,
+                ),
+                Item::fill(
+                    Shape::RoundSuperellipse {
+                        min: [69.0, 6.0],
+                        max: [124.0, 61.0],
+                        radii: [[30.0, 5.0], [5.0, 30.0], [5.0, 30.0], [30.0, 5.0]],
+                    },
+                    RED,
+                ),
+                Item::fill(
+                    Shape::RoundSuperellipse {
+                        min: [6.0, 69.0],
+                        max: [56.0, 119.0],
+                        radii: [[30.0, 30.0], [5.0, 5.0], [5.0, 5.0], [5.0, 5.0]],
+                    },
+                    GREEN,
+                ),
+                Item::fill(
+                    Shape::RoundSuperellipse {
+                        min: [69.0, 69.0],
+                        max: [119.0, 119.0],
+                        radii: [[30.0, 30.0], [5.0, 5.0], [5.0, 5.0], [30.0, 30.0]],
+                    },
+                    BLUE,
+                ),
+            ],
+        ),
+        plate(
+            "basic/can-render-stroked-round-superellipses",
+            rse_trio(5.0, |shape| Item::stroke(shape, rse_stroke(1.25), BLUE)),
+        ),
+        // A radius small enough to sit near the threshold below which a corner
+        // is treated as square, which is the branch nothing else here takes.
+        plate(
+            "basic/can-render-small-radius-round-superellipses",
+            rse_trio(0.5, |shape| Item::fill(shape, BLUE)),
+        ),
+        // A stroke wider than twice the radius, so the inner offset of the
+        // corner turns itself inside out if the join is wrong. Half
+        // transparent, as upstream has it, so the overlap shows.
+        plate(
+            "basic/can-render-thick-stroked-round-superellipses",
+            rse_trio(7.5, |shape| {
+                Item::stroke(shape, rse_stroke(10.0), BLUE_HALF)
+            }),
+        ),
+        // Three radii against the same three boxes: the ratio of side to
+        // radius runs from about twenty down to two, which is the whole span
+        // the fitted table covers plus the extrapolation past it.
+        plate(
+            "basic/can-render-round-superellipse-grid",
+            [2.5f32, 7.5, 12.5]
+                .iter()
+                .enumerate()
+                .flat_map(|(row, radius)| {
+                    let y = 3.0 + row as f32 * 42.5;
+                    rse_boxes(y, *radius)
+                        .into_iter()
+                        .map(|shape| Item::fill(shape, BLUE))
+                        .collect::<Vec<_>>()
+                })
+                .collect(),
+        ),
+        // Rotated and unevenly scaled, so the curve is sampled off its own
+        // axes. A shape flattened before the transform rather than after it
+        // shows here as flats along the corner.
+        plate(
+            "basic/can-render-transformed-round-superellipse",
+            vec![Item::fill(
+                Shape::RoundSuperellipse {
+                    min: [-17.5, -7.5],
+                    max: [17.5, 7.5],
+                    radii: [[5.0, 5.0]; 4],
+                },
+                BLUE,
+            )
+            .with_transform(Transform {
+                scale: [1.5, 0.8],
+                rotate: std::f32::consts::FRAC_PI_4,
+                translate: [64.0, 64.0],
+                ..Transform::default()
+            })],
+        ),
         plate(
             "basic/can-render-colored-rect",
             vec![Item::fill(

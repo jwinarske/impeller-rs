@@ -134,7 +134,7 @@ column is right and the obvious way to check it is wrong.
 
 | File | Scenes there | Here | Blocked on |
 |---|---|---|---|
-| `aiks_dl_basic_unittests.cc` | ~85 | 46 | superellipses, subpass optimizations; see below |
+| `aiks_dl_basic_unittests.cc` | ~85 | 53 | subpass optimizations; see below |
 | `aiks_dl_path_unittests.cc` | ~30 | 21 | nothing; see below |
 | `aiks_dl_gradient_unittests.cc` | ~40 | 31 | nothing; see below |
 | `aiks_dl_clip_unittests.cc` | ~5 | 7 | nothing; this file is covered |
@@ -149,7 +149,7 @@ column is right and the obvious way to check it is wrong.
 | `aiks_dl_runtime_effect_unittests.cc` | — | 12 | nothing; see below |
 | `aiks_dl_unittests.cc` | ~36 | 15 | subpass collapse, for five of them; see below |
 
-The catalog holds two hundred and fifty-nine scenes of roughly four hundred,
+The catalog holds two hundred and sixty-six scenes of roughly four hundred,
 and the proportion is less interesting than which ones: the arithmetic of drawing is largely covered, and
 what is missing is either a capability this renderer does not have or a thing
 the scene model cannot describe.
@@ -387,8 +387,10 @@ apart. Small either way, and now small about something.
 It was recorded as a non-parity entry and then, a commit later, built instead --
 which is what the entry had said should happen to it, having named the limit as
 a generalization nobody had written rather than a decision anybody took. So the
-five scenes are no longer blocked, and this row is short by superellipses,
-subpass optimizations and forty ordinary pictures nobody has written.
+five scenes are no longer blocked. The superellipses have since been built
+too, which is the second entry in this column to have gone that way, so the row
+is now short by subpass optimizations and forty ordinary pictures nobody has
+written.
 
 The blend row named two obstacles and both are real, for three of that file's
 twenty-one tests: two need framebuffer fetch by name, and one is the subpass
@@ -590,13 +592,14 @@ from a blend mode had existed for days. Thirty-four blend scenes came across as
 soon as somebody checked the claim instead of repeating it, which is the
 argument for writing an inventory down rather than carrying it in one's head.
 
-**A capability deliberately declined.** Round superellipses. Flutter's version
-is not a closed form — each corner joins a superellipse arc to a circular one,
-and the superellipse's degree comes from an eleven-entry lookup table
-interpolated on the ratio of side to radius. Matching it means transcribing a
-fitted table that nothing here could check, and drawing a different curve under
-the same name would be worse than not drawing it. `docs/parity.md` has the
-longer version.
+**A capability that was declined and then built.** Round superellipses. This
+column carried them as a decision: that matching Flutter's curve means
+transcribing a fitted table nothing here could check, so drawing a different
+curve under the same name would be worse than drawing none. The premise was
+wrong -- upstream publishes points on the boundary, which is exactly the
+reference the entry said did not exist -- and the shape is now built and its
+seven plates are here. `docs/parity.md` has what checks the transcription, and
+`docs/non-parity.md` has the one upstream artifact it carries.
 
 **Things that are deliberately out of scope.** Text, which needs shaping and
 font parsing that `docs/architecture.md` places outside this project. And the
