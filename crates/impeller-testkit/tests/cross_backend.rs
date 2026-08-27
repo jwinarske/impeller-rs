@@ -499,3 +499,95 @@ fn check_anchor<H: Hal>(
         "{backend}: a background stated as {ground:?} came back {outside:?}, wanted {want:?}"
     );
 }
+
+/// `execute_deferred` renders a frame with layers on both backends.
+///
+/// The public entry point a display path uses, and until now it had no test at
+/// all -- only an example and one caller inside `impeller-present-drm`. It is
+/// the shape a page flip needs: submit the root without waiting, hand back the
+/// fence the flip is gated on, and hand back the layer targets the submission
+/// is still sampling.
+///
+/// Both backends, which is new. GLES returned `Unsupported` here until it had a
+/// fence, so this path existed on exactly one backend while reading in the
+/// public API as though it existed on both.
+///
+/// The scene has a layer on purpose. Without one the transient set is empty and
+/// the interesting half of the contract -- that the targets stay alive as long
+/// as the fence does, because the root pass is sampling them -- is not
+/// exercised at all.
+#[test]
+fn a_deferred_frame_with_layers_renders_on_every_backend() {
+    use impeller_core::execute_deferred;
+    use impeller_hal::{Extent2D, HalFence, PixelFormat, TextureDescriptor};
+    use std::time::Duration;
+
+    let Some(scene) = corpus().into_iter().find(Scene::has_bounded_layer) else {
+        panic!("the corpus should carry a scene with a layer");
+    };
+    let recording = impeller_testkit::record_scene(&scene).expect("record");
+
+    fn run<H: Hal>(ctx: &mut H::Context, recording: &impeller_core::Recording) -> Vec<u8>
+    where
+        H::Context: HalContext<Hal = H>,
+    {
+        let mut surface = ctx
+            .create_texture(&TextureDescriptor::offscreen(
+                Extent2D::new(128, 128),
+                PixelFormat::Rgba8Unorm,
+            ))
+            .expect("surface");
+        let (fence, transient) =
+            execute_deferred::<H>(ctx, &mut surface, recording, &[]).expect("deferred frame");
+
+        // The fence is the whole reason this entry point exists: a caller
+        // gates a page flip on it rather than blocking. Waiting here is what a
+        // test can do instead.
+        assert!(
+            fence.wait(Duration::from_secs(5)).expect("wait"),
+            "the frame did not finish within five seconds"
+        );
+        transient.destroy(ctx);
+        ctx.retire_fence(fence);
+
+        let pixels = ctx.read_texture(&mut surface).expect("read");
+        ctx.destroy_texture(surface);
+        pixels
+    }
+
+    let mut rendered = Vec::new();
+    if let Ok(mut vulkan) = Validated::new(DevicePreference::Auto) {
+        rendered.push(("vulkan", run::<VulkanHal>(&mut vulkan, &recording)));
+    }
+    if let Ok(mut gles) = GlesValidated::new(DisplayTarget::Surfaceless) {
+        rendered.push(("gles", run::<GlesHal>(&mut gles, &recording)));
+    }
+    if rendered.is_empty() {
+        eprintln!("skipping: no backend available");
+        return;
+    }
+
+    // Something was drawn, on each. A deferred submission that silently did
+    // nothing would still hand back a fence and signal it.
+    for (name, pixels) in &rendered {
+        assert!(
+            pixels.chunks_exact(4).any(|p| p[..3] != [0, 0, 0]),
+            "{name} produced an empty frame"
+        );
+    }
+
+    // And the two agree, which is what says the deferred path renders the same
+    // frame as the waiting one rather than merely rendering something.
+    if let [(_, a), (_, b)] = &rendered[..] {
+        let worst = a
+            .iter()
+            .zip(b.iter())
+            .map(|(x, y)| x.abs_diff(*y))
+            .max()
+            .unwrap_or(0);
+        assert!(
+            worst <= 8,
+            "the two backends' deferred frames differ by {worst}"
+        );
+    }
+}
