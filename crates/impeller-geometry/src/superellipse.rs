@@ -339,25 +339,32 @@ struct SuperellipseConics {
 
 /// The conic weights and the split point for a superellipse arc of degree `n`.
 ///
-/// Transcribed exactly, including a formula that looks wrong and is not, or at
-/// least is not wrong anywhere this can measure. `sqrt(n)` and `xJOverA`
-/// multiply only the right-hand term of each interpolation, so a degree
-/// landing exactly on a table row gets the raw factor while one a hair above
-/// it gets the factor scaled. Upstream's own comment says the table holds
-/// normalized weights and that `weight1 = factor1 * sqrt(n)`, which the code
-/// only does when `frac` is 1.
+/// Transcribed exactly, including a formula that looks wrong, is wrong, and
+/// still produces the better outline.
 ///
-/// I read that as a bug and implemented the consistent version, and measuring
-/// it against [`RoundSuperellipse::contains`] said otherwise: over three
-/// shapes and 360 rays the worst disagreement roughly doubled, from 0.006 to
-/// 0.012 on a square and from 0.025 to 0.045 on a rectangle. So the scaling
-/// belongs there.
+/// `sqrt(n)` and `xJOverA` multiply only the right-hand term of each
+/// interpolation, so the weight climbs across each interval and then drops
+/// back to the raw table value at the next whole degree. It is a sawtooth:
+/// `weight1` is 1.359 just below `n = 3` and 0.790 at it, a forty percent step
+/// repeated at all twelve of the table's boundaries. Upstream's own comment
+/// says the table holds normalized weights and that `weight1 = factor1 *
+/// sqrt(n)`, which the code does only when `frac` reaches 1.
 ///
-/// What the measurement does *not* cover is the middle of the table. Every
-/// shape checked here has a side-to-radius ratio past 5, which clamps `n` to
-/// the last row and pins `frac` at 1 -- the one place the two readings agree
-/// about what the formula means. A shape with `n` between rows would tell them
-/// apart and nothing here is one, so this is transcribed rather than endorsed.
+/// I read that as a bug and implemented the consistent reading. Sweeping the
+/// side-to-radius ratio from 2 to 12 and measuring both against
+/// [`RoundSuperellipse::contains`] says the consistent reading is worse
+/// everywhere: its worst is 0.056 against 0.046, and past a ratio of 5 it sits
+/// at 0.017 to 0.036 where this sits at 0.003 to 0.020. The fitted factors
+/// evidently absorb the formula they were searched against, so "fixing" the
+/// formula without refitting the table makes the shape worse.
+///
+/// The sawtooth is still visible in the output, and is recorded in
+/// `docs/non-parity.md` as an upstream artifact carried deliberately. Across
+/// the crossing at `n = 3`, a ratio of 2.700 lands 0.005 from the true curve
+/// and 2.705 lands 0.042 -- a ninefold jump for two tenths of a percent of
+/// corner radius, where the shape itself is continuous. Matching it is
+/// parity; smoothing it here would put this renderer's squircle somewhere
+/// Flutter's is not.
 fn superellipse_conic_factors(n: f32, xj_over_a: f32) -> (f32, f32, f32) {
     const STEP: f32 = 1.0;
     const MIN_N: f32 = 2.0;

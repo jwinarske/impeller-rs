@@ -298,7 +298,39 @@ summarized here only so that this file is the one place to look.
   *Impact:* the geometry is re-walked rather than the draws being replayed,
   which costs recording time on a repeated sub-picture.
 
-## 10. One thing that looks like a difference and is not
+## 10. An upstream artifact carried on purpose
+
+**The squircle's outline snaps at twelve corner radii, and it does here too.**
+
+`draw_rsuperellipse` approximates each superellipse arc with two conics, and
+the conic weights come from a fitted table interpolated on the curve's degree.
+Upstream's interpolation multiplies `sqrt(n)` into only the right-hand term, so
+the weight climbs across each interval and drops back at the next whole degree
+-- a sawtooth with a forty percent step, twelve times over the table's range.
+
+It shows. Sweeping the ratio of side to corner radius and measuring the drawn
+outline against the analytic curve, a ratio of 2.700 lands within 0.005 of the
+true shape and 2.705 lands 0.042 away. Two tenths of a percent of corner
+radius, a ninefold change in how faithful the outline is, at a place where the
+shape itself is perfectly continuous. A control animating its corner radius
+crosses several of these.
+
+The obvious repair -- applying the factor to the whole interpolation, which is
+what upstream's own comment describes -- was implemented here and measured, and
+it is worse everywhere: 0.056 at its worst against 0.046, and two to five times
+the error past a ratio of five. The table was fitted against the formula as
+written, so correcting the formula without refitting the table moves the shape
+further from the curve it is approximating rather than closer.
+
+So this is carried rather than fixed. Smoothing it would put this renderer's
+squircle where Flutter's is not, which is the substitution refused everywhere
+else here; refitting the table would be inventing a shape rather than matching
+one. *Impact:* none against upstream, which is the point -- the outline is
+wrong in exactly the way Flutter's is. It is written down because the next
+person to measure this shape will find the jump and reasonably think it is a
+local mistake.
+
+## 11. One thing that looks like a difference and is not
 
 Worth stating because a reviewer raised it as a hole. **The advanced blend modes
 are defined on `[0, 1]` here and clip in `set_lum`,** which looks like an
