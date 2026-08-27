@@ -22,6 +22,7 @@ pub mod dash;
 pub mod flatten;
 pub mod path;
 pub mod stroke;
+pub mod superellipse;
 pub mod tessellate;
 pub mod transform;
 

@@ -14521,3 +14521,127 @@ fn a_mask_blurs_layer_is_sized_for_the_route_that_draws_into_it() {
          reach rather than its own"
     );
 }
+
+/// A squircle leaves the flat side earlier than a circular corner does.
+///
+/// This is the shape's whole visual point and the check that fails if
+/// `draw_rsuperellipse` were quietly forwarding to `draw_rrect_with_radii`:
+/// both are drawn with the same bounds and the same corner radius, and
+/// sampled where the two differ.
+///
+/// Which way they differ was worth measuring rather than assuming. A circular
+/// corner runs along the side and then turns; a superellipse starts bending
+/// away sooner and more gently, so near the start of the corner it is the
+/// *tighter* of the two. Over that corner, eighteen pixel centers fall inside
+/// the circular rounded rectangle and outside the superellipse, and none the
+/// other way round. The probe sits in the middle of that band.
+#[test]
+fn a_rounded_superellipse_leaves_the_side_earlier_than_a_circular_corner() {
+    let Some(mut ctx) = context() else { return };
+
+    // A corner radius of 40 on a 120-wide box, so the corner is a large
+    // fraction of the side and the two curves are far apart.
+    let bounds = Rect::new(4.0, 4.0, 124.0, 124.0);
+    let radii: RoundingRadii = [[40.0, 40.0]; 4];
+
+    let mut render = |squircle: bool| {
+        let mut canvas = Canvas::new(SIZE);
+        canvas.clear(Color::BLACK);
+        let paint = Paint::fill(Color::WHITE).with_anti_alias(false);
+        if squircle {
+            canvas
+                .draw_rsuperellipse(bounds, radii, &paint)
+                .expect("squircle");
+        } else {
+            canvas
+                .draw_rrect_with_radii(bounds, radii, &paint)
+                .expect("rounded rect");
+        }
+        let mut surface = ctx
+            .create_surface(SIZE, PixelFormat::Rgba8Unorm)
+            .expect("surface");
+        ctx.draw(&mut surface, &canvas.finish()).expect("draw");
+        let pixels = ctx.read(&mut surface).expect("read");
+        ctx.destroy_surface(surface);
+        pixels
+    };
+
+    let squircle = render(true);
+    let rounded = render(false);
+
+    // Where they differ, and its mirror across the diagonal -- the shape is
+    // symmetric, so a transposed corner would pass one and fail the other.
+    for (x, y) in [(4u32, 40u32), (40, 4)] {
+        assert_eq!(
+            pixel(&rounded, x, y),
+            [255, 255, 255, 255],
+            "the circular corner covers ({x}, {y})"
+        );
+        assert_eq!(
+            pixel(&squircle, x, y),
+            [0, 0, 0, 255],
+            "the superellipse has already left the side at ({x}, {y})"
+        );
+    }
+
+    // Both are still the same shape in the large: the middle of a side is
+    // flat on each, and the corner point belongs to neither.
+    for shape in [&squircle, &rounded] {
+        assert_eq!(pixel(shape, 64, 6), [255, 255, 255, 255], "mid side");
+        assert_eq!(pixel(shape, 64, 64), [255, 255, 255, 255], "middle");
+        assert_eq!(pixel(shape, 5, 5), [0, 0, 0, 255], "the corner point");
+    }
+}
+
+/// Clipping to a squircle removes what falls outside it.
+///
+/// Paired with the draw test on purpose: the clip takes the same path, so a
+/// clip that silently used the bounding rectangle instead would still pass
+/// every test about the drawn shape.
+#[test]
+fn a_superellipse_clip_removes_what_falls_outside_the_curve() {
+    let Some(mut ctx) = context() else { return };
+
+    let bounds = Rect::new(4.0, 4.0, 124.0, 124.0);
+    let radii: RoundingRadii = [[40.0, 40.0]; 4];
+
+    let mut canvas = Canvas::new(SIZE);
+    canvas.clear(Color::BLACK);
+    canvas.save();
+    canvas
+        .clip_rsuperellipse(bounds, radii)
+        .expect("clip to the squircle");
+    canvas
+        .draw_rect(
+            Rect::new(0.0, 0.0, 128.0, 128.0),
+            &Paint::fill(Color::WHITE).with_anti_alias(false),
+        )
+        .expect("fill through the clip");
+    canvas.restore();
+
+    let mut surface = ctx
+        .create_surface(SIZE, PixelFormat::Rgba8Unorm)
+        .expect("surface");
+    ctx.draw(&mut surface, &canvas.finish()).expect("draw");
+    let pixels = ctx.read(&mut surface).expect("read");
+    ctx.destroy_surface(surface);
+
+    assert_eq!(pixel(&pixels, 64, 64), [255, 255, 255, 255], "the middle");
+    assert_eq!(
+        pixel(&pixels, 20, 20),
+        [255, 255, 255, 255],
+        "inside the superellipse corner"
+    );
+    assert_eq!(
+        pixel(&pixels, 5, 5),
+        [0, 0, 0, 255],
+        "the corner point is outside the shape and must be clipped away"
+    );
+    // The clip is the curve and not the bounding box: this is inside the box
+    // and outside the shape.
+    assert_eq!(
+        pixel(&pixels, 4, 40),
+        [0, 0, 0, 255],
+        "a clip to the bounding rectangle would leave this lit"
+    );
+}

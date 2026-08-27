@@ -88,12 +88,12 @@ reason.
 | `drawPoints`, `drawRawPoints` | yes | `draw_points`, in all three modes. A point is a segment of no length, so the cap is the whole shape | `a_point_is_drawn_as_the_cap_it_would_have_had` |
 | `drawDRRect` | yes | `draw_drrect`: two contours filled even-odd, which is what makes the inner one a hole. `draw_drrect_with_radii` takes eight numbers per rectangle, as `drawRRect` does | `the_ring_between_two_rounded_rectangles_is_hollow` |
 | `drawShadow` | yes | `draw_shadow`: offset, blur and alpha all from the elevation, under one light | `a_shadow_falls_below_what_casts_it_and_widens_with_elevation` |
-| `drawRSuperellipse` | no | | |
+| `drawRSuperellipse` | yes | `draw_rsuperellipse`, tessellated: each corner is a superellipse arc, a circular arc across the diagonal and a second superellipse arc, with the degree read from a fitted table on the ratio of side to radius | `a_rounded_superellipse_leaves_the_side_earlier_than_a_circular_corner`, `a_square_superellipse_has_upstreams_boundary` |
 | `drawPicture` | yes | `draw_recording`, which composes a finished recording into this one. Tessellated rather than replayed -- see below for what that costs | `a_recording_drawn_into_another_keeps_its_own_layers_and_ramps` |
 | `clipRect` | yes | `clip_rect`, and `clip_out_rect` for `ClipOp.difference` | `a_difference_clip_removes_the_rectangle_and_nothing_else` |
 | `clipPath` | yes | `clip_path` | `clip-varies-between-draws`, `shape-clipped-fill` |
 | `clipRRect` | via | `clip_path` of `Rect::to_rounded_path`, or of `to_rounded_path_with_radii` where the corners differ | |
-| `clipRSuperellipse` | no | | |
+| `clipRSuperellipse` | yes | `clip_rsuperellipse`, of the same outline `draw_rsuperellipse` draws | `a_superellipse_clip_removes_what_falls_outside_the_curve` |
 | `save`, `restore` | yes | `save`, `restore` | `translucent-stack` |
 | `saveLayer` | yes | `save_layer`, `save_layer_bounds`, and `save_layer_filtered` for a group filtered as a whole. A `Layer`'s own fields carry a blur, a morphology, a matrix and a color filter in one fixed order; the call takes an `ImageFilter`, which adds a caller's program and a composition in either order | `layer-group-opacity`, `layer-bounded`, `a_group_can_be_filtered_by_a_composition_in_either_order` |
 | `pushBackdropFilter` | yes | `save_layer_backdrop` takes any image filter but a matrix, which is refused rather than approximated because it moves the image instead of recomputing it in place; `Layer::with_backdrop_blur` is the blur, which a `Copy` layer can hold. Bounds are the filtered region here rather than an optimization | `layer-backdrop-blurred`, `a_backdrop_takes_any_image_filter_and_refuses_the_one_that_moves_it` |
@@ -138,9 +138,10 @@ above it or not at all:
 
 ## Where that leaves it
 
-Of forty-eight rows across `Canvas` and `Paint`: forty exist, five are
-expressible by a caller who assembles them, two are absent, and one is out of
-scope. Counting them is the least interesting thing
+Of forty-eight rows across `Canvas` and `Paint`: forty-two exist, five are
+expressible by a caller who assembles them, and one is out of scope. Nothing
+in this table is absent now, which was not true this morning. Counting them is
+the least interesting thing
 about the table -- the absences are not equal, and a reader deciding whether
 this renderer is usable should look at which ones rather than how many.
 
@@ -177,30 +178,35 @@ the work: Flutter compiles these ahead of time and ships one payload per
 backend, so what was needed was a pipeline cache that can hold more than one
 program, not a compiler. `docs/architecture.md` has both designs.
 
-`drawRSuperellipse` and `clipRSuperellipse` were once described here as shapes
-with rules attached, cheap once somebody needed them. That was wrong. The
-correction that replaced it was also wrong, in the other direction, and this is
-the second correction.
+`drawRSuperellipse` and `clipRSuperellipse` were described here twice as
+absent, and the second reason was the interesting one: that matching the shape
+means transcribing a fitted table from another project, and nothing here could
+check the transcription because there is no reference to compare against.
 
-The shape is as described: not a closed form, each corner a superellipse arc
-joined to a circular one, the superellipse's degree read from an eleven-entry
-table interpolated on the ratio of side to radius and extrapolated past it.
-What was wrong is what followed — that nothing here could check a transcription
-because there is no reference to compare against.
+That was wrong, and finding out cost one search. Upstream's
+`round_superellipse_unittests.cc` pins the boundary with twenty-nine points
+across five configurations, each asserted inside the shape and outside it two
+hundredths of a unit further out, and each labeled with the part of the curve
+it sits on: where the superellipse starts, where it meets the circular arc, the
+middle of that arc. Those points are transcribed into
+`impeller-geometry/src/superellipse.rs` beside the table they check.
 
-There is one, and it is upstream's own. `round_superellipse_unittests.cc` pins
-the boundary with twenty-nine points across five configurations, each asserted
-inside the shape and outside it two hundredths of a unit further out, and each
-labeled with the part of the curve it sits on: where the superellipse starts,
-where it meets the circular arc, the middle of that arc. Thirty-two further
-assertions cover the degenerate corners. The table itself is twenty-two
-numbers and eight constants, not a body of work.
+**What they check, measured rather than asserted.** Perturbing the corner
+construction is caught at a couple of percent — a gap factor moved from 0.2929
+to 0.30 fails four of the seven. A table row in the interpolated zone is caught
+at about three percent. The two extrapolation slopes are much weaker: the
+degree's slope survives a two and a half percent change and fails at nine, and
+`k_xJ`'s survives being doubled and fails only near four times. That is a
+property of the shape rather than of the check — past a side-to-radius ratio of
+five the corner is small and the degree is high, so the outline is close to a
+rounded rectangle and barely moves when either is wrong. The middle of the
+table is pinned; the far end is not, and no shape upstream publishes points for
+would pin it.
 
-Transcribe the points along with the table and they check it: a wrong degree or
-a misplaced join moves the joint points off the boundary, and moving them by
-more than two hundredths is what the assertions catch. So the reason this row
-is empty is now that the work has not been done, which is a smaller and more
-honest claim than the one it replaces.
+The outline is checked separately and against the containment rule, which is
+the same shape by an independent route — a superellipse equation and a circle
+on one side, four conics and two cubics per quadrant on the other. They agree
+to within 0.025 of a unit on shapes a hundred units across.
 
 `drawVertices` and `drawAtlas` were partial for the same reason and stopped
 being so together, which is what the shared mechanism predicted. Both hand the

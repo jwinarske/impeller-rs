@@ -291,13 +291,6 @@ shortening in both.
 These are listed in [`parity.md`](parity.md) with their reasoning and are
 summarized here only so that this file is the one place to look.
 
-- **`drawRSuperellipse` and `clipRSuperellipse`.** Flutter's rounded
-  superellipse is not a closed form — each corner joins a superellipse arc to a
-  circular one and the degree comes from an eleven-entry fitted table
-  interpolated on the ratio of side to radius. This entry used to add that
-  nothing here could check a transcription of it; that was not true, and
-  `docs/parity.md` has what upstream ships to check one against. Not built.
-  *Impact:* a caller who needs Flutter's squircle cannot get it.
 - **Text shaping and font parsing.** Out of scope by design; `draw_glyphs` takes
   a positioned run and an atlas. *Impact:* a caller brings their own shaper.
 - **`drawPicture` is tessellated rather than replayed.** `draw_recording`

@@ -292,6 +292,30 @@ fn uniform_circular_radius(radii: RoundingRadii) -> Option<f32> {
 /// without reordering them. The tracing order is the contour's business.
 pub type RoundingRadii = [[f32; 2]; 4];
 
+/// The outline of a rounded superellipse in `rect` with the given radii.
+///
+/// Here rather than on `Rect` beside `to_rounded_path_with_radii`, because a
+/// superellipse is not a rounded rectangle with a different corner and putting
+/// it there would suggest the two are interchangeable. They take the same four
+/// numbers and draw measurably different shapes.
+fn rsuperellipse_path(rect: Rect, radii: RoundingRadii) -> Path {
+    use impeller_geometry::superellipse::{CornerRadii, RoundSuperellipse};
+    let bounds = GeometryRect::new(
+        Vec2::new(rect.left, rect.top),
+        Vec2::new(rect.right, rect.bottom),
+    );
+    RoundSuperellipse::new(
+        bounds,
+        CornerRadii {
+            top_left: Vec2::new(radii[0][0], radii[0][1]),
+            top_right: Vec2::new(radii[1][0], radii[1][1]),
+            bottom_left: Vec2::new(radii[2][0], radii[2][1]),
+            bottom_right: Vec2::new(radii[3][0], radii[3][1]),
+        },
+    )
+    .to_path()
+}
+
 /// Where a pass's texture slot gets its content.
 ///
 /// A recording is produced without touching a device, so it can name neither a
@@ -2651,6 +2675,39 @@ impl Canvas {
         }
         let path = rect.to_rounded_path_with_radii(radii);
         self.draw_path(&path, paint)
+    }
+
+    /// Draw Flutter's rounded superellipse -- the iOS-style squircle.
+    ///
+    /// `dart:ui`'s `drawRSuperellipse`. The corners are not arcs of one curve:
+    /// each is a superellipse arc, a circular arc across the diagonal, and a
+    /// second superellipse arc, with the superellipse's degree read from a
+    /// fitted table on the ratio of side to radius. See
+    /// [`impeller_geometry::superellipse`] for what that means and for what
+    /// checks the transcription of the table.
+    ///
+    /// Tessellated rather than evaluated in the fragment stage. A rounded
+    /// rectangle of a single radius takes the analytic route because there is
+    /// a closed form to evaluate; this shape has none, which is the same
+    /// reason it took so long to arrive.
+    pub fn draw_rsuperellipse(
+        &mut self,
+        rect: Rect,
+        radii: RoundingRadii,
+        paint: &Paint,
+    ) -> Result<&mut Self> {
+        if rect.is_empty() {
+            return Ok(self);
+        }
+        self.draw_path(&rsuperellipse_path(rect, radii), paint)
+    }
+
+    /// Clip to Flutter's rounded superellipse.
+    ///
+    /// `dart:ui`'s `clipRSuperellipse`, and the same shape
+    /// [`Canvas::draw_rsuperellipse`] draws.
+    pub fn clip_rsuperellipse(&mut self, rect: Rect, radii: RoundingRadii) -> Result<&mut Self> {
+        self.clip_path(&rsuperellipse_path(rect, radii))
     }
 
     /// How far past the shape a blurred rounded rectangle has to draw.
