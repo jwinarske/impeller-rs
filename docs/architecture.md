@@ -47,7 +47,12 @@ at first, so it says which parts are drawings of intent rather than of code.
 
 **That convention belongs on the prose too, and did not have it.** This file
 was audited against the code in August 2026 and fourteen of its claims were
-false. They were not scattered: every one described *machinery* — a cache, a
+false. What the audit covered, so the word carries its weight: every claim
+about machinery in the backend, presentation, threading, shader-pipeline,
+runtime-effect, crate-layout, testing and C API sections, checked against the
+implementation one at a time; and a sample of the rendering HAL's, which is the
+longest section and almost entirely design reasoning rather than description.
+Its remaining claims are unverified. They were not scattered: every one described *machinery* — a cache, a
 thread, a fallback, a fenced sync path, an extension used "where available", an
 allocation deferred to a ring — written in the present tense because it was
 intended. What held up was everything else. The decisions and their reasoning
