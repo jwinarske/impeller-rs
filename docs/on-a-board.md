@@ -101,10 +101,19 @@ The suite above runs from a debug build and should. `cargo xtask bench` must
 not, and refuses to: cross-build it with `--release` and copy that binary.
 
 ```sh
+# with $S and the two CARGO_TARGET_* exports above already set
 cargo build -p xtask --release --target aarch64-unknown-linux-gnu
 scp target/aarch64-unknown-linux-gnu/release/xtask "$PI:/tmp/xtask"
 ssh "$PI" 'chmod +x /tmp/xtask && /tmp/xtask bench --skip llvmpipe'
 ```
+
+The comment is there because this block looks self-contained and is not. Run it
+in a fresh shell and the link fails four times over, each time differently and
+each time in a way that reads as a broken cross toolchain: `incompatible with
+elf64-x86-64` while the host linker is still being used, then `cannot find -ldl`,
+then `cannot find -lgcc_s`, then `cannot find Scrt1.o`. Every one of those is
+answered by the paragraph under the export block above, which is worth reading
+before improvising a fix for any of them.
 
 The reason is not that debug is slower. The benchmark compares a path that
 submits a hundred and sixty draws against one that submits a single merged
