@@ -591,3 +591,56 @@ fn a_deferred_frame_with_layers_renders_on_every_backend() {
         );
     }
 }
+
+/// `render_offscreen` gives what the explicit path gives.
+///
+/// The one function the facade exports that nothing in this tree calls. Its
+/// three siblings are reached constantly -- `execute` directly, `execute_layers`
+/// through both submitting paths and the swapchain, `render_offscreen_into`
+/// through every corpus and catalog scene the testkit renders -- so a change
+/// that broke any of them fails somewhere immediately. This one is a
+/// convenience wrapper whose only body is a call to `render_offscreen_into`
+/// with a format filled in, and nothing anywhere establishes that it still
+/// does that.
+///
+/// Its documentation says it is "what a comparison run wants", which is a claim
+/// about the pixels rather than about the call, so that is what this checks:
+/// the same recording through the convenience path and through the explicit
+/// one, on whatever backends are here.
+#[test]
+fn the_offscreen_convenience_path_matches_the_explicit_one() {
+    use impeller_core::{render_offscreen, render_offscreen_into};
+    use impeller_hal::PixelFormat;
+
+    let Some(scene) = corpus().into_iter().find(Scene::has_bounded_layer) else {
+        panic!("the corpus should carry a scene with a layer");
+    };
+    let recording = impeller_testkit::record_scene(&scene).expect("record");
+
+    fn run<H: Hal>(ctx: &mut H::Context, recording: &impeller_core::Recording) -> (Vec<u8>, Vec<u8>)
+    where
+        H::Context: HalContext<Hal = H>,
+    {
+        let convenient = render_offscreen::<H>(ctx, recording, &[]).expect("render_offscreen");
+        let explicit = render_offscreen_into::<H>(ctx, recording, &[], PixelFormat::Rgba8Unorm)
+            .expect("render_offscreen_into");
+        (convenient, explicit)
+    }
+
+    let mut checked = 0;
+    if let Ok(mut vulkan) = Validated::new(DevicePreference::Auto) {
+        let (a, b) = run::<VulkanHal>(&mut vulkan, &recording);
+        assert!(!a.is_empty(), "vulkan: the offscreen path produced nothing");
+        assert_eq!(a, b, "vulkan: the two offscreen paths disagree");
+        checked += 1;
+    }
+    if let Ok(mut gles) = GlesValidated::new(DisplayTarget::Surfaceless) {
+        let (a, b) = run::<GlesHal>(&mut gles, &recording);
+        assert!(!a.is_empty(), "gles: the offscreen path produced nothing");
+        assert_eq!(a, b, "gles: the two offscreen paths disagree");
+        checked += 1;
+    }
+    if checked == 0 {
+        eprintln!("skipping: no backend available");
+    }
+}
