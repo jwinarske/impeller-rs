@@ -164,8 +164,20 @@ quantity written is not what varies.
 What is left is per-draw work: a hundred and sixty descriptor rebinds, pipeline
 lookups and draw calls against one of each. Hashing is not enough to explain it
 — two `HashMap` lookups a draw at tens of nanoseconds against a gap of two and
-a half *micro*seconds a draw — which leaves the driver-side cost of recording
-and executing a draw, and that is past what this file can settle.
+a half *micro*seconds a draw.
+
+Memory placement is not it either, which was the next guess and is now ruled
+out. Printing what `gpu-allocator` chose for a submission's first host-visible
+buffer gave the same answer in every run — `DEVICE_LOCAL | HOST_VISIBLE |
+HOST_COHERENT`, offset 8294656, size 23040, byte for byte — across runs that
+came out fast and one that came out slow. Same memory type, same offset, same
+size, different speed.
+
+So: not the quantity written, not where it was written, not the hashing. What
+remains is the driver's own cost of recording and executing a draw, varying
+from one process to the next in a way nothing this side of the API can see.
+Settling it wants `perf` on the board or V3D driver instrumentation, and until
+someone does that the workaround stands: quote the GLES row.
 
 That is where a diagnosis would start, and it is not one yet. Until then,
 establish a difference on the GLES row, where a three-run cluster is tight to a
