@@ -205,11 +205,26 @@ its primary plane would accept.
 Three of the four cells are built. **GLES to direct scanout is not**, and the
 document claimed all four were Tier 1 until the code was read against it. There
 is no `gbm` anywhere in the tree — no dependency, no code — so the GBM route
-that cell describes does not exist; and the route Vulkan uses is closed to GLES
-as well, because `Capabilities::render_formats` is where a backend lists what it
-can export by DRM fourcc and the GLES backend reports an empty vector, so the
-format negotiation has nothing to choose from. `DrmScanoutTarget::new` refuses
-with "use the GBM path", which is a message pointing at something unbuilt.
+that cell describes does not exist.
+
+What is *not* established is that the route Vulkan uses is closed to GLES. This
+paragraph used to say it was, and that `DrmScanoutTarget::new` refuses with "use
+the GBM path". That refusal fires on `can_allocate_scanout()`, which is
+`export && modifiers` — and on a Raspberry Pi 5's V3D the GLES backend reports
+both, from `EGL_MESA_image_dma_buf_export` and
+`EGL_EXT_image_dma_buf_import_modifiers`, so the check passes and that message
+is never reached. What fails instead is the format negotiation immediately
+after it, against `Capabilities::render_formats` — which the GLES backend
+returns as a hardcoded empty vector, with no comment, in a struct literal where
+every neighboring field carries one. The caller sees "no shared format and
+modifier, render side: nothing", which says nothing about GLES.
+
+So the blocker measured here is an unfilled list rather than a missing
+capability, and the GBM dependency may not be on the critical path for Mesa
+drivers at all. That is a narrower claim than it sounds: reporting the
+extensions is not proof that an export of a renderable, scanout-modifier buffer
+succeeds end to end, which nothing here has tried. It is enough to say the
+question is open where the document said it was settled.
 
 On non-Linux platforms only the WSI column applies. Future backends extend the
 rows, never the columns.

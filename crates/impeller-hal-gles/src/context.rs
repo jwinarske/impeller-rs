@@ -675,6 +675,19 @@ fn detect_capabilities(
         // half-float one is the weaker of the two and is enough for this.
         float_render_targets: gl_extensions.contains("GL_EXT_color_buffer_float")
             || gl_extensions.contains("GL_EXT_color_buffer_half_float"),
+        // Empty, and the only field here that is empty without a reason
+        // beside it. It is not a statement that this backend cannot export a
+        // scanout buffer -- `dma_buf` above says it can, wherever the three
+        // EGL extensions are present, and on a Raspberry Pi's V3D all three
+        // are. It is a list nobody has filled in.
+        //
+        // What that costs is a misleading failure. `DrmScanoutTarget::new`
+        // checks `can_allocate_scanout()` first, which passes here, and then
+        // negotiates against this list -- so the error a caller sees is "no
+        // shared format and modifier, render side: <nothing>" rather than
+        // anything about GLES. Filling it in means asking EGL which fourccs
+        // and modifiers it will export, through
+        // `eglQueryDmaBufFormatsEXT` and `eglQueryDmaBufModifiersEXT`.
         render_formats: Vec::new(),
         // Recognized from the renderer string, because GLES offers nothing
         // better: there is no device-type query, and the string is what every
