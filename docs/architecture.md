@@ -2898,6 +2898,12 @@ Rendering under VKMS uses lavapipe or llvmpipe since VKMS is display-only. That
 is exactly the split render/display topology of ARM SoCs, so CI incidentally
 exercises the cross-device dma-buf path on every merge.
 
+That claim has since been checked against the topology rather than the stand-in.
+On a Raspberry Pi 5 -- `vc4` and `drm-rp1-dsi` for display, `v3d` as a separate
+render node -- all five tests pass, along with the twenty scanout and unit tests
+beside them. So the VKMS lane is standing in for something that works, which is
+what makes finishing it worth doing rather than a hope.
+
 VKMS proves protocol, not hardware quirks — IOMMU faults, AFBC corner cases,
 scaler limits. That is what the board rack exists for. VKMS green with hardware
 red is an expected and useful signal, never argued away.

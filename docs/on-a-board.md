@@ -362,6 +362,21 @@ the wrong answer to: four samples cost 1.17× on V3D against 1.78× on a desktop
 GPU, which closes the margin the architecture had been reasoning about.
 `docs/architecture.md` carries the measurement.
 
+**The KMS lane runs on a real display controller, not only on VKMS.** All
+twenty-five tests in `impeller-present-drm` pass on the Pi 5 -- eleven unit,
+nine scanout, and the five that take DRM master and commit a frame. The board
+has two display controllers, `vc4` driving HDMI and `drm-rp1-dsi` driving the
+panel, and a separate `v3d` render node, which is the split render/display
+topology `architecture.md` says VKMS stands in for. It is now checked against
+the thing itself rather than only against the stand-in.
+
+They need no display server running to get master, and there is none on this
+board. Note that `cargo test --workspace` does *not* build them -- the crate is
+reached through the facade's `drm` feature -- so a cross-compiled suite has to
+ask for `-p impeller-present-drm` by name or silently leave all twenty-five
+behind. Mine did, on the first run: the total was 809 where it should have been
+834.
+
 ## What no machine here checks
 
 `cargo xtask gate` prints what the suite says it covered, under the totals, and
@@ -380,7 +395,7 @@ none in CI.
 The scene counts say it again from the other side. Twenty of the catalog's
 plates and six of the corpus's need the extension on *both* sides of a
 comparison, and no pair here has it: the catalog compares two hundred and
-thirty-nine of two hundred and fifty-nine, the corpus fifty-one of fifty-seven,
+forty-six of two hundred and sixty-six, the corpus fifty-three of fifty-nine,
 and those are ceilings rather than shortfalls. A third real GPU would move them;
 nothing else on this bench will.
 
