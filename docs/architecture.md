@@ -77,7 +77,7 @@ appearing somewhere, which is how three rows citing a local variable inside an
 unrelated test were caught. Spot-checking what the evidence proves rather than
 that it exists held up too: the nine-patch row claims corners kept and edges
 stretched, and its test samples just past where a corner should end, because a
-stretched corner would still be its own colour anywhere inside itself. The
+stretched corner would still be its own color anywhere inside itself. The
 difference between that file and this one is not care. It is that one of them
 is checked by something that runs.
 
