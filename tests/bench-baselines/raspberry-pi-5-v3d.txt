@@ -13,11 +13,14 @@
 # --record, and the diff is the claim that every row moved for a reason. The
 # GLES rows repeat to about a tenth of a percent and mean what they say. The
 # Vulkan distance-field row lands in one of two states three percent apart from
-# one process to the next, so it was recorded in whichever it got and the
-# default tolerance covers the other.
+# one process to the next -- the gap is the cost of recording its hundred and
+# sixty draws, not of running them -- so it was recorded in whichever it got
+# and carries a fourth field, its own tolerance, to cover the other. That is
+# the only row here that has one, and adding a second is the kind of thing the
+# review above is for.
 #
-# device	configuration	median in milliseconds
-vulkan:0 V3D 7.1.7.0	distance field, 1 sample	13.363
+# device	configuration	median in milliseconds	[tolerance %]
+vulkan:0 V3D 7.1.7.0	distance field, 1 sample	13.363	5.0
 vulkan:0 V3D 7.1.7.0	tessellated, 4 samples	15.976
 vulkan:0 V3D 7.1.7.0	tessellated, 1 sample	13.661
 vulkan:0 V3D 7.1.7.0	full frame, mixed content	21.199

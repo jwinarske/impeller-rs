@@ -21,16 +21,23 @@
 //!
 //! `--record <path>` writes what a run measured, keyed by device and
 //! configuration; `--check <path>` measures again and compares, reporting every
-//! row and exiting non-zero if any is slower than `--tolerance` (five percent
-//! by default) or if either side has a row the other lacks. Both are opt-in, so
+//! row and exiting non-zero if any is slower than `--tolerance` (one percent by
+//! default) or if either side has a row the other lacks. Both are opt-in, so
 //! the objection above still holds for every run that did not ask for one.
 //!
-//! The default tolerance is measured rather than chosen. On a Raspberry Pi 5's
-//! V3D the GLES rows repeat to about a tenth of a percent, but the Vulkan
-//! distance-field row lands in one of two states three percent apart from one
-//! process to the next -- `docs/on-a-board.md` has the numbers -- so anything
-//! tighter would gate on which state a run happened to get. A check restricted
-//! to stable rows should pass something far smaller.
+//! The default tolerance is measured rather than chosen, and so is the reason
+//! it is not one number for every row. On a Raspberry Pi 5's V3D, seven of the
+//! eight rows repeat to within three tenths of a percent across thirty-one
+//! runs. The eighth -- the Vulkan distance-field figure -- lands in one of two
+//! states three percent apart from one process to the next, because recording
+//! a command costs differently in each; `docs/on-a-board.md` has the numbers.
+//!
+//! A single tolerance has to be as loose as the worst row it covers, so that
+//! one row set the bar for all eight and a three percent regression on any of
+//! the other seven passed unremarked. A baseline row may therefore carry its
+//! own tolerance as an optional fourth field, which puts the slack on the row
+//! that needs it, next to the measurement that justifies it, and lets the
+//! default be tight enough to mean something.
 //!
 //! This does not make a busy machine a quiet one. Checking an unchanged build
 //! against its own baseline on the workstation this was written on reported
@@ -697,12 +704,30 @@ pub fn stream_collecting(
 /// Stored as text, one row per line, because a baseline that cannot be read in
 /// a diff is a baseline nobody will question when it changes.
 pub struct Baseline {
-    rows: Vec<(String, String, f64)>,
+    rows: Vec<Row>,
+}
+
+/// One recorded configuration, and how much it is allowed to drift.
+///
+/// `slack` is a per-row override in fractional terms, and it exists because a
+/// single tolerance has to be as loose as the *worst* row it covers. On a
+/// Raspberry Pi 5 that is one row out of eight -- the Vulkan distance-field
+/// figure, which lands in one of two states three percent apart -- while the
+/// other seven repeat to within three tenths of a percent. Covering all eight
+/// with one number meant a three percent regression on any of the seven passed
+/// unremarked. A row that needs slack now says so itself, and says it next to
+/// the measurement that justifies it.
+struct Row {
+    device: String,
+    what: String,
+    ms: f64,
+    slack: Option<f64>,
 }
 
 impl Baseline {
-    /// `device<TAB>what<TAB>median_ms`, and lines that are not that are an
-    /// error rather than a skip -- a baseline half-read would gate on half the
+    /// `device<TAB>what<TAB>median_ms` with an optional fourth field, a
+    /// per-row tolerance in percent. Lines that are neither are an error
+    /// rather than a skip -- a baseline half-read would gate on half the
     /// configurations and say nothing about the rest.
     pub fn parse(text: &str) -> Result<Self, String> {
         let mut rows = Vec::new();
@@ -712,11 +737,15 @@ impl Baseline {
                 continue;
             }
             let mut parts = line.split('\t');
-            let (Some(device), Some(what), Some(ms), None) =
-                (parts.next(), parts.next(), parts.next(), parts.next())
-            else {
+            let (Some(device), Some(what), Some(ms), slack, None) = (
+                parts.next(),
+                parts.next(),
+                parts.next(),
+                parts.next(),
+                parts.next(),
+            ) else {
                 return Err(format!(
-                    "line {}: expected three tab-separated fields",
+                    "line {}: expected three tab-separated fields, or four with a tolerance",
                     number + 1
                 ));
             };
@@ -726,7 +755,30 @@ impl Baseline {
                     number + 1
                 )
             })?;
-            rows.push((device.to_string(), what.to_string(), ms));
+            let slack = match slack {
+                None => None,
+                Some(text) => {
+                    let percent: f64 = text.trim().parse().map_err(|_| {
+                        format!(
+                            "line {}: {text:?} is not a tolerance in percent",
+                            number + 1
+                        )
+                    })?;
+                    if !(percent.is_finite() && percent >= 0.0) {
+                        return Err(format!(
+                            "line {}: a tolerance of {percent} is not a fraction of a measurement",
+                            number + 1
+                        ));
+                    }
+                    Some(percent / 100.0)
+                }
+            };
+            rows.push(Row {
+                device: device.to_string(),
+                what: what.to_string(),
+                ms,
+                slack,
+            });
         }
         Ok(Self { rows })
     }
@@ -734,25 +786,54 @@ impl Baseline {
     pub fn render(&self) -> String {
         let mut out = String::from(
             "# cargo xtask bench --record\n\
-             # device\tconfiguration\tmedian in milliseconds\n",
+             # device\tconfiguration\tmedian in milliseconds\t[tolerance %]\n",
         );
-        for (device, what, ms) in &self.rows {
-            out.push_str(&format!("{device}\t{what}\t{ms:.3}\n"));
+        for row in &self.rows {
+            out.push_str(&format!("{}\t{}\t{:.3}", row.device, row.what, row.ms));
+            if let Some(slack) = row.slack {
+                out.push_str(&format!("\t{:.1}", slack * 100.0));
+            }
+            out.push('\n');
         }
         out
     }
 
     pub fn from_run(rows: &[(String, String, f64)]) -> Self {
         Self {
-            rows: rows.to_vec(),
+            rows: rows
+                .iter()
+                .map(|(device, what, ms)| Row {
+                    device: device.clone(),
+                    what: what.clone(),
+                    ms: *ms,
+                    slack: None,
+                })
+                .collect(),
         }
     }
 
-    fn find(&self, device: &str, what: &str) -> Option<f64> {
+    /// Carry each row's tolerance over from an earlier baseline.
+    ///
+    /// `--record` overwrites a file that a person edited: the per-row slack is
+    /// a judgment about how repeatable a configuration is, not a measurement,
+    /// and re-recording must not silently drop it. Dropping it would tighten
+    /// the gate on exactly the row known to be unrepeatable, so the next run
+    /// would fail for the reason the annotation existed to excuse.
+    pub fn keeping_slack_from(mut self, previous: &Baseline) -> Self {
+        for row in &mut self.rows {
+            row.slack = previous
+                .rows
+                .iter()
+                .find(|p| p.device == row.device && p.what == row.what)
+                .and_then(|p| p.slack);
+        }
+        self
+    }
+
+    fn find(&self, device: &str, what: &str) -> Option<&Row> {
         self.rows
             .iter()
-            .find(|(d, w, _)| d == device && w == what)
-            .map(|(_, _, ms)| *ms)
+            .find(|r| r.device == device && r.what == what)
     }
 }
 
@@ -779,18 +860,26 @@ pub fn compare(baseline: &Baseline, run: &[(String, String, f64)], tolerance: f6
 
     for (device, what, now) in run {
         match baseline.find(device, what) {
-            Some(then) => {
+            Some(row) => {
+                let then = row.ms;
+                let allowed = row.slack.unwrap_or(tolerance);
                 let delta = (now - then) / then;
-                let over = delta > tolerance;
+                let over = delta > allowed;
                 if over {
                     regressed += 1;
                 }
                 lines.push(format!(
-                    "  {:<26} {:>9.3} was {:>9.3}  {:+6.1}%{}",
+                    "  {:<26} {:>9.3} was {:>9.3}  {:+6.1}%{}{}",
                     what,
                     now,
                     then,
                     delta * 100.0,
+                    // Only where it differs from the default, so a reader sees
+                    // at a glance which rows are being held to a looser bar.
+                    match row.slack {
+                        Some(s) => format!("  (tolerating {:.1}%)", s * 100.0),
+                        None => String::new(),
+                    },
                     if over { "   REGRESSED" } else { "" }
                 ));
             }
@@ -802,7 +891,8 @@ pub fn compare(baseline: &Baseline, run: &[(String, String, f64)], tolerance: f6
             }
         }
     }
-    for (device, what, then) in &baseline.rows {
+    for row in &baseline.rows {
+        let (device, what, then) = (&row.device, &row.what, row.ms);
         if !run.iter().any(|(d, w, _)| d == device && w == what) {
             unmatched += 1;
             lines.push(format!(
@@ -1036,6 +1126,77 @@ mod tests {
         assert!(frame.draw_count() >= 5, "{} draws", frame.draw_count());
     }
 
+    /// A row's own tolerance is what gates it, not the default.
+    ///
+    /// The mutation that must break this: delete the `slack.unwrap_or` in
+    /// `compare` and both halves fail at once -- the marked row starts failing
+    /// on drift it is known to have, and the unmarked one stops failing on
+    /// drift it does not.
+    #[test]
+    fn a_row_carrying_a_tolerance_is_held_to_that_one() {
+        let baseline = Baseline::parse(
+            "dev\tbimodal\t10.0\t5.0\n\
+             dev\tsteady\t10.0\n",
+        )
+        .expect("should parse");
+
+        // Three percent: inside the marked row's five, outside the default one.
+        let found = compare(
+            &baseline,
+            &rows(&[("dev", "bimodal", 10.3), ("dev", "steady", 10.3)]),
+            0.01,
+        );
+        assert_eq!(found.regressed, 1, "{}", found.lines.join("\n"));
+        assert!(
+            found
+                .lines
+                .iter()
+                .any(|l| l.contains("steady") && l.contains("REGRESSED")),
+            "the unmarked row is the one that should fail: {}",
+            found.lines.join("\n")
+        );
+
+        // And the marked row is not exempt, only looser: six percent fails it.
+        let found = compare(&baseline, &rows(&[("dev", "bimodal", 10.6)]), 0.01);
+        assert_eq!(found.regressed, 1, "{}", found.lines.join("\n"));
+    }
+
+    /// A tolerance survives the re-record that overwrites the file.
+    ///
+    /// This is the failure the annotation would otherwise cause: `--record`
+    /// writes fresh numbers over a file a person edited, and if the slack went
+    /// with them the next check would gate the one row known to be
+    /// unrepeatable at the tight default and fail for the reason the
+    /// annotation existed to prevent.
+    #[test]
+    fn re_recording_keeps_the_tolerances_it_overwrites() {
+        let previous =
+            Baseline::parse("dev\tbimodal\t10.0\t5.0\ndev\tsteady\t10.0\n").expect("should parse");
+        let text = Baseline::from_run(&rows(&[("dev", "bimodal", 11.0), ("dev", "steady", 11.0)]))
+            .keeping_slack_from(&previous)
+            .render();
+
+        assert!(text.contains("bimodal\t11.000\t5.0"), "{text}");
+        assert!(text.contains("steady\t11.000\n"), "{text}");
+
+        // And it round-trips, so the next re-record keeps it too.
+        let read = Baseline::parse(&text).expect("its own output should parse");
+        let found = compare(&read, &rows(&[("dev", "bimodal", 11.3)]), 0.01);
+        assert_eq!(found.regressed, 0, "{}", found.lines.join("\n"));
+    }
+
+    /// A fourth field that is not a tolerance is an error, not a shrug.
+    #[test]
+    fn a_tolerance_that_is_not_one_is_refused() {
+        assert!(Baseline::parse("d\tw\t1.0\tloose").is_err());
+        assert!(Baseline::parse("d\tw\t1.0\t-2.0").is_err());
+        assert!(Baseline::parse("d\tw\t1.0\t2.0\textra").is_err());
+        assert!(
+            Baseline::parse("d\tw\t1.0\t0").is_ok(),
+            "zero slack is a choice"
+        );
+    }
+
     fn rows(v: &[(&str, &str, f64)]) -> Vec<(String, String, f64)> {
         v.iter()
             .map(|(d, w, m)| (d.to_string(), w.to_string(), *m))
@@ -1056,16 +1217,16 @@ mod tests {
         assert_eq!(found.unmatched, 0, "{:?}", found.lines);
     }
 
-    /// A line that is not three fields stops the read rather than being
-    /// skipped: a baseline half-understood gates on some configurations and
-    /// silently ignores the others.
+    /// A line that is neither three fields nor four stops the read rather
+    /// than being skipped: a baseline half-understood gates on some
+    /// configurations and silently ignores the others.
     #[test]
     fn a_malformed_baseline_is_refused_rather_than_partly_read() {
         assert!(Baseline::parse("device\tconfiguration").is_err());
         assert!(Baseline::parse("device\tconfiguration\tnot-a-number").is_err());
         // Comments and blank lines are not malformed.
         let ok = Baseline::parse("# a note\n\ndev\twhat\t1.5\n").expect("should parse");
-        assert_eq!(ok.find("dev", "what"), Some(1.5));
+        assert_eq!(ok.find("dev", "what").map(|r| r.ms), Some(1.5));
     }
 
     /// The device is part of the key, so a baseline from another machine does

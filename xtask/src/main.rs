@@ -108,14 +108,19 @@ fn main() {
             let mut skip = Vec::new();
             let mut record: Option<String> = None;
             let mut check: Option<String> = None;
-            // Five percent, and the number is measured rather than picked. On
-            // a Pi 5's V3D the GLES rows repeat to about a tenth of a percent,
-            // but the Vulkan distance-field row lands in one of two states
-            // three percent apart from one process to the next -- see
-            // `docs/on-a-board.md`. A tolerance under that gates on which
-            // state the run happened to get. Anyone checking only stable rows
-            // should pass something far tighter.
-            let mut tolerance = 5.0_f64;
+            // One percent, and the number is measured rather than picked. On
+            // a Pi 5's V3D, seven of the eight rows repeat to within three
+            // tenths of a percent across thirty-one runs, so one percent is
+            // several times the worst drift actually seen on a quiet board.
+            //
+            // It used to be five, because the eighth row -- the Vulkan
+            // distance-field figure -- lands in one of two states three
+            // percent apart from one process to the next, and one tolerance
+            // has to be as loose as the worst row it covers. That row now
+            // carries its own tolerance in the baseline file, which is where
+            // the measurement justifying it also lives, so the default no
+            // longer has to cover it. See `docs/on-a-board.md`.
+            let mut tolerance = 1.0_f64;
             let mut rest = rest.iter();
             while let Some(arg) = rest.next() {
                 let mut wants = |what: &str| match rest.next() {
@@ -163,7 +168,21 @@ fn main() {
             };
 
             if let Some(path) = record {
-                let text = bench::Baseline::from_run(&rows).render();
+                // Read before writing: the file being overwritten may carry
+                // per-row tolerances, which are a judgment rather than a
+                // measurement and are not re-derivable from this run.
+                let recorded = bench::Baseline::from_run(&rows);
+                let recorded = match std::fs::read_to_string(&path) {
+                    Ok(text) => match bench::Baseline::parse(&text) {
+                        Ok(previous) => recorded.keeping_slack_from(&previous),
+                        Err(e) => {
+                            eprintln!("bench: {path} is there but does not parse: {e}");
+                            std::process::exit(1);
+                        }
+                    },
+                    Err(_) => recorded,
+                };
+                let text = recorded.render();
                 if let Err(e) = std::fs::write(&path, text) {
                     eprintln!("bench: writing {path}: {e}");
                     std::process::exit(1);
