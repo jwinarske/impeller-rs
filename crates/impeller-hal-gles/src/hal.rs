@@ -18,7 +18,7 @@ impl Hal for GlesHal {
     /// deferred submission is not implemented here, so the default returns
     /// unsupported and this is never produced. Naming an uninhabited type is
     /// more honest than naming one that could be built but never signals.
-    type Fence = std::convert::Infallible;
+    type Fence = crate::fence::GlesFence;
 
     const NAME: &'static str = "gles";
 }
@@ -69,6 +69,27 @@ impl HalContext for GlesContext {
         textures: &[&GlesTexture],
     ) -> Result<()> {
         GlesContext::submit_batch_textured(self, target, batch, pass, textures)
+    }
+
+    /// Submit without waiting, handing back the fence the work signals.
+    ///
+    /// The rendering is the same call the waiting form makes; what differs is
+    /// what happens after it. A native fence is placed in the command stream
+    /// and then the stream is flushed, in that order and both of them
+    /// necessary: `eglCreateSync` marks a point in the stream rather than
+    /// submitting it, so a fence created and never flushed is one the driver
+    /// has not been told about and which therefore never signals. That failure
+    /// looks like a hang at the far end of a page flip rather than an error
+    /// here.
+    fn submit_batch_deferred_textured(
+        &mut self,
+        target: &mut GlesTexture,
+        batch: &Batch,
+        pass: PassDescriptor,
+        textures: &[&GlesTexture],
+    ) -> Result<crate::fence::GlesFence> {
+        GlesContext::submit_batch_textured(self, target, batch, pass, textures)?;
+        GlesContext::fence_after_submission(self)
     }
 
     fn read_texture(&mut self, texture: &mut GlesTexture) -> Result<Vec<u8>> {

@@ -94,18 +94,21 @@ fn capability_flags_match_the_extensions_actually_present() {
         caps.dma_buf.export,
         ctx.has_egl_extension("EGL_MESA_image_dma_buf_export")
     );
-    // Not the same shape as the two above, and the difference is the point. A
-    // dma-buf flag may follow its extension because this backend can act on
-    // the extension once the driver offers it. Sync cannot: `Hal::Fence` here
-    // is `std::convert::Infallible`, so no fence exists to export whatever EGL
-    // says. This used to assert the flag followed `EGL_ANDROID_native_fence_sync`,
-    // which held the promise open on every driver that has it.
-    //
-    // When a fence is implemented this becomes the extension check again and
-    // this comment goes with it.
+    // Export follows its extension, now that there is a fence to export. It
+    // did not for a while: `Hal::Fence` was `std::convert::Infallible`, so the
+    // flag promised a caller something it could obtain nothing to perform, and
+    // this assertion was inverted to pin it false until the fence existed.
+    assert_eq!(
+        caps.sync.export_sync_file,
+        ctx.has_egl_extension("EGL_ANDROID_native_fence_sync")
+    );
+    // Import does not follow anything, because it is not implemented: a sync
+    // built *from* a descriptor needs a constructor taking one, and there is
+    // none. This is the same shape as the assertion above used to be, and it
+    // should become the extension check when that constructor exists.
     assert!(
-        !caps.sync.export_sync_file && !caps.sync.import_sync_file,
-        "sync is advertised while no fence can be constructed to satisfy it"
+        !caps.sync.import_sync_file,
+        "importing a sync_file is advertised while nothing can consume one"
     );
 
     eprintln!(
@@ -150,4 +153,75 @@ fn contexts_can_be_created_and_dropped_repeatedly() {
             .unwrap_or_else(|e| panic!("cycle {i}: {e}"));
         assert!(!ctx.capabilities().device_name.is_empty());
     }
+}
+
+/// A deferred submission hands back a fence that signals, and exports.
+///
+/// The three things `HalFence` promises, against real work rather than against
+/// an empty stream: an unsignaled fence eventually signals, a wait reports
+/// which of the two happened, and where the driver has the native extension
+/// the fence dups out to a descriptor something outside this process could be
+/// given.
+///
+/// The point of drawing first is that a fence on an empty command stream is
+/// signaled immediately on most drivers and would pass this while proving
+/// nothing about ordering.
+#[test]
+fn a_deferred_submission_hands_back_a_fence_that_signals() {
+    use impeller_hal::{HalContext, HalFence, PassDescriptor, PixelFormat, TextureDescriptor};
+    use impeller_hal_gles::{DisplayTarget, GlesContext};
+
+    let Ok(mut ctx) = GlesContext::new(DisplayTarget::Surfaceless) else {
+        eprintln!("skipping: no GLES context");
+        return;
+    };
+    let caps = ctx.capabilities().clone();
+    let mut target = ctx
+        .create_texture(&TextureDescriptor::offscreen(
+            impeller_hal::Extent2D::new(256, 256),
+            PixelFormat::Rgba8Unorm,
+        ))
+        .expect("target");
+
+    let batch = impeller_hal::Batch::default();
+    let fence = match ctx.submit_batch_deferred_textured(
+        &mut target,
+        &batch,
+        PassDescriptor::clear([0.2, 0.4, 1.0, 1.0]),
+        &[],
+    ) {
+        Ok(f) => f,
+        Err(e) => panic!("deferred submission should be available now: {e}"),
+    };
+
+    // Signals within a second. A clear of a small target is microseconds of
+    // work, so a second is a hang rather than a slow machine.
+    assert!(
+        fence.wait(std::time::Duration::from_secs(1)).expect("wait"),
+        "the fence did not signal within a second"
+    );
+    assert!(
+        fence.is_signaled().expect("is_signaled"),
+        "a fence that satisfied a wait must report itself signaled"
+    );
+
+    // And the export, where the driver offers it. Checked against the
+    // capability rather than assumed, which is the contract `HalFence`
+    // documents: a caller branches on `export_sync_file` first.
+    #[cfg(unix)]
+    {
+        let exported = fence.export_sync_file();
+        if caps.sync.export_sync_file {
+            let fd = exported.expect("the capability says this exports");
+            use std::os::fd::AsRawFd;
+            assert!(fd.as_raw_fd() >= 0, "a descriptor should be valid");
+        } else {
+            assert!(
+                exported.is_err(),
+                "a fence must refuse to export where the capability says it cannot"
+            );
+        }
+    }
+
+    ctx.destroy_texture(target);
 }

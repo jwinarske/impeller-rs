@@ -44,7 +44,9 @@ pub enum DisplayTarget {
 /// A GLES context and what it can do.
 pub struct GlesContext {
     gl: glow::Context,
-    egl: Egl,
+    /// Shared rather than owned, because a fence outlives the call that made
+    /// it and needs the same instance to wait on and destroy its sync object.
+    egl: std::sync::Arc<Egl>,
     display: khronos_egl::Display,
     context: khronos_egl::Context,
     /// Kept because a presentation target needs it to create a surface: a
@@ -226,7 +228,7 @@ impl GlesContext {
 
         Ok(Self {
             gl,
-            egl,
+            egl: std::sync::Arc::new(egl),
             display,
             context,
             config,
@@ -642,18 +644,17 @@ fn detect_capabilities(
         modifiers: egl_extensions.contains(ext::DMA_BUF_MODIFIERS),
     };
 
-    // Detected and reported as unsupported, which is not the same as not
-    // looking. This backend has no fence at all -- its `Hal::Fence` is
-    // `std::convert::Infallible`, so one cannot be constructed -- and a
-    // capability is a promise a caller branches on rather than a note about
-    // the driver. Reporting the extension's presence promised an export that
-    // nothing could ever be exported from: a caller checking the capability
-    // and then looking for a fence to export finds no way to obtain one.
+    // Follows the extension again, which it did not for a while and should
+    // not have: there was no fence to export, `Hal::Fence` being
+    // `std::convert::Infallible`, so reporting the extension promised a caller
+    // an export it could obtain nothing to perform. Reporting false was the
+    // honest reading of a backend that could not produce a fence at all.
     //
-    // When a fence exists, this becomes `egl_extensions.contains(...)` again
-    // and the test in this file that pins it should be deleted with it.
-    let _has_native_fence_sync = egl_extensions.contains(ext::NATIVE_FENCE_SYNC);
-    let fence = false;
+    // Now it can. `export_sync_file` follows `EGL_ANDROID_native_fence_sync`
+    // because that is the sync type that dups out to a `sync_file`; a plain
+    // `EGL_KHR_fence_sync` object serves both waits and cannot leave the
+    // process, which is no use to an atomic commit.
+    let fence = egl_extensions.contains(ext::NATIVE_FENCE_SYNC);
     Capabilities {
         // No advanced blending: the extension GLES exposes for it requires the
         // fragment shader to declare `blend_support_all_equations`, and the
@@ -668,7 +669,14 @@ fn detect_capabilities(
         dma_buf,
         sync: SyncSupport {
             export_sync_file: fence,
-            import_sync_file: fence,
+            // Not the same answer, and deliberately. Export is implemented:
+            // `GlesFence` creates a native fence and dups it out. Import is
+            // not -- it needs a sync built *from* a descriptor, through the
+            // `EGL_SYNC_NATIVE_FENCE_FD_ANDROID` attribute, and there is no
+            // constructor here that takes one. Reporting it from the extension
+            // would promise a wait nothing can be handed to, which is the
+            // exact mistake this pair carried before either half worked.
+            import_sync_file: false,
         },
         // Core ES 3.0 can sample a half-float texture and cannot render into
         // one; either extension adds the second. Named separately because the
@@ -706,5 +714,22 @@ fn detect_capabilities(
             .any(|name| renderer.to_ascii_lowercase().contains(name)),
         device_name: renderer,
         driver_name: version,
+    }
+}
+
+impl GlesContext {
+    /// Place a fence in the command stream and flush, so it can signal.
+    ///
+    /// Exportable where the driver offers `EGL_ANDROID_native_fence_sync`, and
+    /// a plain sync object otherwise -- which still serves both waits and
+    /// refuses the export, rather than refusing the whole submission. A
+    /// display path checks `SyncSupport::export_sync_file` before asking.
+    pub fn fence_after_submission(&mut self) -> Result<crate::fence::GlesFence> {
+        let exportable = self.capabilities.sync.export_sync_file;
+        let fence = crate::fence::GlesFence::create(self.egl.clone(), self.display, exportable)?;
+        // After the sync, never before: the flush is what hands the driver the
+        // stream the fence is sitting in.
+        unsafe { self.gl.flush() };
+        Ok(fence)
     }
 }

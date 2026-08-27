@@ -16,6 +16,7 @@
 
 pub mod context;
 pub mod debug;
+pub mod fence;
 pub mod hal;
 pub mod render;
 
