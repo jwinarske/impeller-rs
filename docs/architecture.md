@@ -48,11 +48,20 @@ at first, so it says which parts are drawings of intent rather than of code.
 **That convention belongs on the prose too, and did not have it.** This file
 was audited against the code in August 2026 and fourteen of its claims were
 false. What the audit covered, so the word carries its weight: every claim
-about machinery in the backend, presentation, threading, shader-pipeline,
-runtime-effect, crate-layout, testing and C API sections, checked against the
-implementation one at a time; and a sample of the rendering HAL's, which is the
-longest section and almost entirely design reasoning rather than description.
-Its remaining claims are unverified. They were not scattered: every one described *machinery* — a cache, a
+about machinery, in every section including the rendering HAL, checked against
+the implementation one at a time. What it did not cover is that section's
+reasoning — the passages arguing *why* a thing is done a particular way, which
+are not the kind of statement code can contradict.
+
+Of the machinery claims in the HAL, one was false: the layer target, which had
+drifted that morning from a change made while this note was being written.
+Every other one held — per-draw texture binding, blend factors in one shared
+table, tile modes in the shader with both backends' samplers fixed at
+clamp-to-edge, a literal zero written as every vertex's depth, upload as the
+tightly-packed inverse of readback, the stencil carrying a nesting depth rather
+than a mask, a backdrop cutting the pass, a morphology split across passes,
+batch merging with the never-merge path it names as its own check, and the mip
+chain with both backends filling it on write. They were not scattered: every one described *machinery* — a cache, a
 thread, a fallback, a fenced sync path, an extension used "where available", an
 allocation deferred to a ring — written in the present tense because it was
 intended. What held up was everything else. The decisions and their reasoning
