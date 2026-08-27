@@ -247,6 +247,20 @@ allocates inside it, which is the step GL has no spelling for. The same
 measurement bounds the claim — one SoC, two controllers — but it is the class
 of hardware the lane exists for.
 
+**And allocation is only half of it.** A scanout ring gates its page flip on a
+fence, so it goes through `execute_deferred`, which submits the root without
+waiting and hands back the fence to put in `IN_FENCE_FD`. The GLES backend
+implements no deferred submission at all — not a stub, no method — so that call
+returns `Unsupported` before any buffer question arises. Solving the modifier
+problem and leaving this would produce a lane that allocates correctly and
+cannot present.
+
+So the GLES scanout cell needs two independent things, and this document
+previously named one: buffers allocated to a layout the display accepts, and a
+fence to hand the commit. They are unrelated pieces of work — the fence is
+local to this backend and blocked on nothing, since the extensions above are
+all present.
+
 On non-Linux platforms only the WSI column applies. Future backends extend the
 rows, never the columns.
 
@@ -1497,6 +1511,12 @@ looking for a fence found no way to obtain one. A test asserted that the flag
 matched the extension, so the promise was pinned in place rather than caught.
 Both now say what the backend can do; the extension is still detected, and when
 a fence exists the capability follows it again.
+
+The hardware is not the obstacle. A Raspberry Pi 5's V3D reports
+`EGL_ANDROID_native_fence_sync`, `EGL_KHR_fence_sync`, `EGL_KHR_reusable_sync`
+and `EGL_KHR_wait_sync` — everything the three methods of `HalFence` need, with
+`eglClientWaitSyncKHR` for the two waits and `eglDupNativeFenceFDANDROID` for
+the export. What is missing is the implementation, not the extension.
 
 Uniform data lives in UBOs with std140 layouts generated alongside the shaders;
 there is no push-constant equivalent, so per-draw material data is written into
