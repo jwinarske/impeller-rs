@@ -747,6 +747,12 @@ pub struct LayerSpec {
     pub morphology: Option<MorphologySpec>,
     /// Recolor the finished group on its way back.
     pub color_filter: ColorFilter,
+    /// Share one captured backdrop with every layer naming the same key.
+    ///
+    /// `dart:ui`'s `backdropId`. See `Layer::backdrop_id` for what it means;
+    /// what it means for a plate is that two overlapping panels each filter
+    /// the ground rather than the second filtering the first.
+    pub backdrop_id: Option<i64>,
 }
 
 /// A dilation or an erosion of a finished group.
@@ -774,6 +780,7 @@ impl Default for LayerSpec {
             backdrop_blur: 0.0,
             morphology: None,
             color_filter: ColorFilter::None,
+            backdrop_id: None,
         }
     }
 }
@@ -820,6 +827,12 @@ impl LayerSpec {
 
     pub fn with_backdrop_blur(mut self, blur: f32) -> Self {
         self.backdrop_blur = blur;
+        self
+    }
+
+    /// Share this layer's captured backdrop with others naming the same key.
+    pub fn with_backdrop_id(mut self, id: i64) -> Self {
+        self.backdrop_id = Some(id);
         self
     }
 }

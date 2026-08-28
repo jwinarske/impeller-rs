@@ -634,6 +634,30 @@ pub struct Layer {
     /// composites the whole frame back. Both are meaningful and they are
     /// different pictures, so state the bounds when you mean a panel.
     pub backdrop_blur: f32,
+    /// Which captured backdrop this layer filters, if it shares one.
+    ///
+    /// `dart:ui`'s `pushBackdropFilter` takes a `backdropId` and says what it
+    /// means: "when the first backdrop filter with a given id is processed
+    /// during rasterization, the state of the backdrop is recorded and cached.
+    /// All subsequent backdrop filters with the same identifier will apply
+    /// their filter to the cached backdrop." So it is a different picture, not
+    /// only a faster one -- overlapping panels sharing an id each filter what
+    /// was behind all of them, rather than each filtering the one before it.
+    ///
+    /// That is the case it exists for. A list of frosted rows over one
+    /// background wants each row to show the background, and without the id
+    /// the second row shows the first row's blur blurred again. With it, the
+    /// capture happens once and each row filters it: the picture the caller
+    /// meant, and one pass cut instead of one per row.
+    ///
+    /// An id keys a captured image and nothing more. A layer naming one from
+    /// inside another layer still filters what the id captured rather than its
+    /// own target's content, which is upstream's reading and is the point of
+    /// the case it tests with each panel wrapped in a save layer of its own.
+    ///
+    /// `None` captures afresh, which is what every layer did before this
+    /// existed and is right whenever the backdrops genuinely differ.
+    pub backdrop_id: Option<i64>,
     /// Spread or shrink the group before compositing it. See [`Morphology`].
     ///
     /// On the group for the same reason [`Self::blur`] is: a maximum over a
@@ -665,6 +689,7 @@ impl Default for Layer {
             blend: BlendMode::SrcOver,
             matrix: None,
             backdrop_blur: 0.0,
+            backdrop_id: None,
             morphology: None,
             color_filter: ColorFilter::None,
         }
@@ -751,6 +776,22 @@ impl Layer {
         self
     }
 
+    /// Share one captured backdrop with every layer naming the same `id`.
+    ///
+    /// See [`Self::backdrop_id`] for what is shared and why it changes the
+    /// picture rather than only the cost. The id is the caller's, and means
+    /// nothing beyond identity: any two values that differ keep their
+    /// backdrops apart.
+    ///
+    /// The id outlives the target it captured. A layer naming one from inside
+    /// another layer is seeded with the captured image placed where that
+    /// layer's target sits within it, which is the same arithmetic a bounded
+    /// layer is already seeded by.
+    pub fn with_backdrop_id(mut self, id: i64) -> Self {
+        self.backdrop_id = Some(id);
+        self
+    }
+
     pub fn with_blur(mut self, sigma: f32) -> Self {
         // Clamped to upstream's `kMaxSigma`, and clamped *after* the check
         // rather than before it: `f32::min` returns the other operand when one
@@ -814,6 +855,50 @@ pub struct Canvas {
     /// Across the whole recording rather than per pass, so the same gradient
     /// drawn into a layer and again over it is baked once.
     ramps: Vec<Ramp>,
+    /// Backdrops captured once and filtered by every layer naming the same id.
+    ///
+    /// A `Canvas` records one frame and `finish` consumes it, so this lives
+    /// exactly as long as the ids are meaningful and there is nothing to
+    /// clear. Upstream's `Canvas` is reused across frames and empties its
+    /// `backdrop_data_` at the end of each one.
+    backdrops: std::collections::HashMap<i64, BackdropShare>,
+}
+
+/// One captured backdrop, and what has already been made of it.
+///
+/// The capture is a pass index, which is all a backdrop needs to be here: a
+/// pass is the unit a later pass samples, so sharing one is sharing the index
+/// rather than managing a texture. Upstream carries a `std::shared_ptr<Texture>`
+/// in the same slot, and a second one for the filtered result, because its
+/// filters produce snapshots rather than passes.
+struct BackdropShare {
+    /// The target the capture is an image of, which need not be the one a
+    /// later layer naming the id is drawn into.
+    ///
+    /// An id keys a captured image and nothing else, so a layer opened inside
+    /// some other layer still filters what the id captured. That is upstream's
+    /// reading and it is exercised there:
+    /// `CanRenderMultipleBackdropBlurWithSingleBackdropIdDifferentLayers` wraps
+    /// every panel but the first in a save layer of its own and expects all six
+    /// to show the same ground. Seeding needs no case for it -- a filtered pass
+    /// is drawn into a rectangle *of* its source, which is already how a
+    /// bounded layer is seeded from a full-target capture.
+    captured_from: Target,
+    /// The pass holding the backdrop as it was when the id was first used.
+    captured: usize,
+    /// Filters already run over `captured`, and where each landed.
+    ///
+    /// A filter is a function of its input, so the same filter over the same
+    /// capture is the same image and there is no reason to compute it twice.
+    /// This is upstream's `all_filters_equal` and `shared_filter_snapshot`,
+    /// with the restriction lifted: upstream shares one snapshot only when
+    /// *every* filter on the id is equal, which a list of rows that blur by
+    /// different amounts fails outright. Keyed per filter, two amounts share
+    /// what they have in common -- the capture -- and each still gets its own.
+    ///
+    /// A list rather than a map because a shared backdrop has a handful of
+    /// distinct filters at most, and `ImageFilter` holds a program's uniforms.
+    filtered: Vec<(ImageFilter, usize)>,
 }
 
 impl Canvas {
@@ -839,6 +924,7 @@ impl Canvas {
             anti_alias: false,
             samples: 4,
             ramps: Vec::new(),
+            backdrops: std::collections::HashMap::new(),
         }
     }
 
@@ -1184,13 +1270,11 @@ impl Canvas {
         let filtered = if asked.is_identity() {
             None
         } else {
-            let cut = self.cut_pass();
-            // Cut before the filter can refuse, and the frame pushed after
-            // either way: a layer that fails to filter its backdrop still has
-            // to be a layer, or the `restore` the caller has already written
-            // closes something else.
-            match self.filter_passes(cut, parent, &asked) {
-                Ok(index) => Some(index),
+            // The frame is pushed whether or not this succeeds: a layer that
+            // fails to filter its backdrop still has to be a layer, or the
+            // `restore` the caller has already written closes something else.
+            match self.backdrop_pass(layer.backdrop_id, parent, &asked) {
+                Ok(pending) => Some(pending),
                 Err(e) => {
                     self.push_layer_frame(layer, filter);
                     return Err(e);
@@ -1198,7 +1282,74 @@ impl Canvas {
             }
         };
         self.push_layer_frame(layer, filter);
-        Ok(filtered.map(|index| (index, parent)))
+        Ok(filtered)
+    }
+
+    /// The pass a backdrop-filtered layer starts from, and what it is an image
+    /// of.
+    ///
+    /// Without an id this is the whole of what a backdrop filter was: cut the
+    /// target's content out into a pass, and filter that. With one, both halves
+    /// are shared with whatever named the id before -- the capture always, so
+    /// that the second layer filters what was behind the first rather than the
+    /// first's own result, and the filtered pass as well when the filter
+    /// matches one already run over that capture.
+    ///
+    /// The second element is the target the pass covers, which is `parent` for
+    /// a fresh capture and whatever the id captured for a shared one. Seeding
+    /// needs it to place the image, and the two can differ; see
+    /// [`BackdropShare::captured_from`].
+    ///
+    /// The cut happens before the filter can refuse, which is the order the
+    /// no-id path always had. A refusal therefore leaves the capture recorded,
+    /// which is right: the backdrop was captured, and the next layer naming the
+    /// id should filter that same image whether or not this one could.
+    fn backdrop_pass(
+        &mut self,
+        id: Option<i64>,
+        parent: Target,
+        filter: &ImageFilter,
+    ) -> Result<(usize, Target)> {
+        let Some(id) = id else {
+            let cut = self.cut_pass();
+            return Ok((self.filter_passes(cut, parent, filter)?, parent));
+        };
+
+        // Read out by value first: what follows needs `&mut self`, and the
+        // three things wanted from the entry are all `Copy`.
+        let existing = self.backdrops.get(&id).map(|share| {
+            let already = share
+                .filtered
+                .iter()
+                .find(|(known, _)| known == filter)
+                .map(|(_, pass)| *pass);
+            (share.captured_from, share.captured, already)
+        });
+
+        let (over, captured) = match existing {
+            // A filter is a function of its input, so the same filter over the
+            // same capture is the same image and there is nothing to compute.
+            Some((from, _, Some(pass))) => return Ok((pass, from)),
+            Some((from, captured, None)) => (from, captured),
+            None => {
+                let cut = self.cut_pass();
+                self.backdrops.insert(
+                    id,
+                    BackdropShare {
+                        captured_from: parent,
+                        captured: cut,
+                        filtered: Vec::new(),
+                    },
+                );
+                (parent, cut)
+            }
+        };
+
+        let pass = self.filter_passes(captured, over, filter)?;
+        if let Some(share) = self.backdrops.get_mut(&id) {
+            share.filtered.push((filter.clone(), pass));
+        }
+        Ok((pass, over))
     }
 
     /// End the current target's pass here, and answer which pass now holds it.

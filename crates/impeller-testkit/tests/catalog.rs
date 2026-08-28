@@ -316,3 +316,82 @@ fn catalog_names_say_which_file_they_came_from() {
     names.dedup();
     assert_eq!(count, names.len(), "two catalog scenes share a name");
 }
+
+/// Strip every backdrop key from a scene's groups, in place.
+fn forget_backdrop_ids(nodes: &mut [impeller_testkit::Node]) {
+    for node in nodes {
+        if let impeller_testkit::Node::Layer {
+            layer, children, ..
+        } = node
+        {
+            layer.backdrop_id = None;
+            forget_backdrop_ids(children);
+        }
+    }
+}
+
+#[test]
+fn a_backdrop_key_plate_would_notice_if_the_key_stopped_working() {
+    // The failure this is here for has happened once already, in the plates
+    // right beside these: two backdrop-blur scenes rendered identically to
+    // themselves with the blur removed, so they asked for the filter and could
+    // not show it. A plate that cannot tell whether the thing it is named for
+    // happened is worse than no plate, because the catalog reports it as
+    // covered.
+    //
+    // Nothing else in the catalog can catch this. Cross-backend comparison
+    // says the two backends agree, and they would agree just as well on the
+    // wrong picture. So each keyed plate is rendered again with its keys taken
+    // away, and has to come out different: with them, every panel filters the
+    // capture taken before any of them drew; without, each captures afresh and
+    // the later ones filter what the earlier ones left behind.
+    let Ok(mut ctx) = Validated::new(DevicePreference::Auto) else {
+        eprintln!("skipping: no Vulkan device");
+        return;
+    };
+
+    // The single-panel plate is excluded by name rather than by accident. One
+    // layer naming a key has nothing to share with, so it is *supposed* to
+    // render the same either way -- and that is the thing it is in the catalog
+    // to show.
+    let alone = "blur/backdrop-blur-with-single-backdrop-id";
+    let mut checked = 0usize;
+    for scene in catalog() {
+        if !scene.name.contains("backdrop-id") || scene.name == alone {
+            continue;
+        }
+        if !scene.supported_by(ctx.capabilities()) {
+            eprintln!("skipping: {} is not supported here", scene.name);
+            continue;
+        }
+        let keyed = render::<VulkanHal>(&mut ctx, &scene);
+
+        let mut without = scene.clone();
+        forget_backdrop_ids(&mut without.items);
+        assert_ne!(
+            scene.items, without.items,
+            "{} was picked up by name but holds no backdrop key",
+            scene.name
+        );
+        let fresh = render::<VulkanHal>(&mut ctx, &without);
+
+        // The same budget the catalog's own comparison uses, read the other
+        // way round: a difference this small is what two rasterizers may
+        // legitimately disagree by, so anything at or under it is not evidence
+        // that the key did something.
+        assert!(
+            !accepts(
+                &compare(&keyed, &fresh).expect("the two renders are the same size"),
+                CATALOG
+            ),
+            "{} renders the same with its backdrop keys as without them, so it \
+             cannot show what it is named for",
+            scene.name
+        );
+        checked += 1;
+    }
+    assert_eq!(
+        checked, 3,
+        "three keyed plates share a capture between panels; this checked {checked}"
+    );
+}

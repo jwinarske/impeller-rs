@@ -14674,3 +14674,210 @@ fn a_superellipse_clip_removes_what_falls_outside_the_curve() {
         "a clip to the bounding rectangle would leave this lit"
     );
 }
+
+/// The halving color filter the two backdrop-id tests both filter through.
+///
+/// Chosen because it composes visibly with itself and exactly: applied twice a
+/// component is quartered, so the overlap of two layers says which image the
+/// second one filtered without any tolerance argument about blur radii.
+fn half_every_channel() -> ImageFilter {
+    ImageFilter::Color(ColorFilter::matrix([
+        0.5, 0.0, 0.0, 0.0, 0.0, //
+        0.0, 0.5, 0.0, 0.0, 0.0, //
+        0.0, 0.0, 0.5, 0.0, 0.0, //
+        0.0, 0.0, 0.0, 1.0, 0.0,
+    ]))
+}
+
+#[test]
+fn a_shared_backdrop_id_filters_what_was_behind_all_of_the_layers_naming_it() {
+    // `SceneBuilder.pushBackdropFilter` takes a `backdropId`, and `dart:ui`
+    // says what it buys: "when the first backdrop filter with a given id is
+    // processed during rasterization, the state of the backdrop is recorded
+    // and cached. All subsequent backdrop filters with the same identifier
+    // will apply their filter to the cached backdrop", and "if overlapping
+    // backdrop filters use the same backdropId, then each filter will apply to
+    // the backdrop before the overlapping filter components were rendered."
+    //
+    // So it is a different picture and not only a cheaper one, and the overlap
+    // is where the two differ: without the id the second layer filters the
+    // first layer's output, halving what was already halved.
+    let Some(mut ctx) = context() else { return };
+
+    let left = Rect::new(16.0, 16.0, 80.0, 112.0);
+    let right = Rect::new(48.0, 16.0, 112.0, 112.0);
+    let shot = |ctx: &mut Context, id: Option<i64>| {
+        let mut canvas = Canvas::new(SIZE);
+        canvas.clear(Color::WHITE);
+        for bounds in [left, right] {
+            let layer = match id {
+                Some(id) => Layer::opacity(1.0).with_backdrop_id(id),
+                None => Layer::opacity(1.0),
+            };
+            canvas
+                .save_layer_backdrop(layer, Some(bounds), &half_every_channel())
+                .expect("backdrop");
+            canvas.restore();
+        }
+        render(ctx, canvas)
+    };
+
+    let apart = shot(&mut ctx, None);
+    let shared = shot(&mut ctx, Some(7));
+
+    // Where only one layer reaches, the id changes nothing: there is nothing in
+    // front of the capture to have been filtered twice. This is the half of the
+    // check that says the sharing did not simply skip the second layer.
+    for (x, side) in [(32, "the left layer alone"), (96, "the right layer alone")] {
+        for (name, shot) in [("apart", &apart), ("shared", &shared)] {
+            let got = pixel(shot, x, 64);
+            assert!(
+                got[0].abs_diff(128) <= 2 && got[3] == 255,
+                "{side}, {name}: white halved once is about 128, got {got:?}"
+            );
+        }
+    }
+
+    // And in the overlap they part company.
+    let got = pixel(&apart, 64, 64);
+    assert!(
+        got[0].abs_diff(64) <= 2,
+        "without an id the second layer filters the first layer's result, so \
+         the overlap should be white quartered -- about 64, got {got:?}"
+    );
+    let got = pixel(&shared, 64, 64);
+    assert!(
+        got[0].abs_diff(128) <= 2,
+        "with a shared id both layers filter the capture taken before either \
+         drew, so the overlap should be white halved once -- about 128, got \
+         {got:?}"
+    );
+}
+
+#[test]
+fn a_shared_backdrop_id_captures_once_and_filters_once() {
+    // The other half of what the id is for, and the reason `dart:ui` calls it
+    // a "dramatic" improvement: a list of frosted rows over one background
+    // should cost one capture, not one per row.
+    //
+    // Both halves are counted here because they are separate savings. Sharing
+    // the capture removes a pass cut and the full-target redraw that follows
+    // it; sharing the filtered result removes the filter itself, which for a
+    // blur is where nearly all of the cost is.
+    let passes = |id: Option<i64>, rows: usize| {
+        let mut canvas = Canvas::new(SIZE);
+        canvas.clear(Color::WHITE);
+        for row in 0..rows {
+            let top = 8.0 + 24.0 * row as f32;
+            let layer = match id {
+                Some(id) => Layer::opacity(1.0).with_backdrop_id(id),
+                None => Layer::opacity(1.0),
+            };
+            canvas
+                .save_layer_backdrop(
+                    layer,
+                    Some(Rect::new(16.0, top, 112.0, top + 16.0)),
+                    &half_every_channel(),
+                )
+                .expect("backdrop");
+            canvas.restore();
+        }
+        canvas.finish().passes.len()
+    };
+
+    // One row costs the same either way -- the first use of an id is a capture
+    // and a filter like any other. That is what makes the slope below the
+    // measurement rather than the intercept.
+    assert_eq!(
+        passes(None, 1),
+        passes(Some(3), 1),
+        "the first layer to name an id has nothing to share with"
+    );
+
+    // So the measurement is the slope: what each row after the first adds. A
+    // bounded layer is a pass of its own whichever way, since it has its own
+    // target to composite back, and that one is the floor.
+    let apart = passes(None, 4) - passes(None, 1);
+    let shared = passes(Some(3), 4) - passes(Some(3), 1);
+    assert_eq!(
+        apart, 9,
+        "three more rows without an id should each cost three passes -- the cut \
+         that captures the backdrop, the filter over it, and the row's own \
+         layer"
+    );
+    assert_eq!(
+        shared, 3,
+        "three more rows sharing an id and a filter should each cost only their \
+         own layer: the capture is taken once and the filter is run over it \
+         once. Apart, the same three rows cost {apart} passes"
+    );
+}
+
+#[test]
+fn a_backdrop_id_reaches_into_a_layer_opened_after_it() {
+    // Upstream's `CanRenderMultipleBackdropBlurWithSingleBackdropIdDifferentLayers`
+    // wraps every panel but the first in a save layer of its own, names one id
+    // across all of them, and expects all six to show the same ground. So an id
+    // keys a captured image and not a surface: what a later layer filters is
+    // what the id captured, even though that layer draws into a target of its
+    // own that has nothing on it.
+    //
+    // This is the case a target-scoped id would have had to refuse, and
+    // refusing it would have put this renderer where upstream is not.
+    let Some(mut ctx) = context() else { return };
+
+    let panel = Rect::new(32.0, 32.0, 96.0, 96.0);
+    let shot = |ctx: &mut Context, id: Option<i64>| {
+        let mut canvas = Canvas::new(SIZE);
+        canvas.clear(Color::WHITE);
+        // The capture, taken while the frame is white and nothing else.
+        let first = match id {
+            Some(id) => Layer::opacity(1.0).with_backdrop_id(id),
+            None => Layer::opacity(1.0),
+        };
+        canvas
+            .save_layer_backdrop(first, Some(panel), &half_every_channel())
+            .expect("the capture");
+        canvas.restore();
+
+        // Now paint the whole frame black, and put the second panel inside a
+        // layer of its own. Its target starts empty, so a backdrop scoped to
+        // that target would filter nothing at all; one scoped to the id
+        // filters the white frame the first panel saw.
+        canvas
+            .draw_rect(
+                Rect::new(0.0, 0.0, 128.0, 128.0),
+                &Paint::fill(Color::BLACK).with_anti_alias(false),
+            )
+            .expect("ground");
+        canvas.save_layer(Layer::opacity(1.0));
+        let second = match id {
+            Some(id) => Layer::opacity(1.0).with_backdrop_id(id),
+            None => Layer::opacity(1.0),
+        };
+        canvas
+            .save_layer_backdrop(second, Some(panel), &half_every_channel())
+            .expect("the sharer");
+        canvas.restore();
+        canvas.restore();
+        render(ctx, canvas)
+    };
+
+    // Without the id the second panel captures afresh, and what is behind it by
+    // then is black: halved, still black.
+    let got = pixel(&shot(&mut ctx, None), 64, 64);
+    assert!(
+        got[0] <= 2,
+        "captured afresh, the second panel should have filtered the black \
+         ground, got {got:?}"
+    );
+
+    // With it, the second panel filters the white capture the first one took,
+    // through a layer whose own target held nothing.
+    let got = pixel(&shot(&mut ctx, Some(11)), 64, 64);
+    assert!(
+        got[0].abs_diff(128) <= 2,
+        "the id should have carried the white capture into the nested layer, \
+         which halves it to about 128, got {got:?}"
+    );
+}

@@ -140,7 +140,7 @@ column is right and the obvious way to check it is wrong.
 | `aiks_dl_clip_unittests.cc` | ~5 | 7 | nothing; this file is covered |
 | `aiks_dl_opacity_unittests.cc` | ~3 | 3 | nothing; this file is covered |
 | `aiks_dl_blend_unittests.cc` | ~79 | 39 | framebuffer fetch and subpass collapse, for three of them; see below |
-| `aiks_dl_blur_unittests.cc` | ~59 | 37 | backdrop identity keys, for two of them; see below |
+| `aiks_dl_blur_unittests.cc` | ~59 | 41 | nothing; see below |
 | `aiks_dl_vertices_unittests.cc` | ~16 | 19 | nothing; see below |
 | `aiks_dl_atlas_unittests.cc` | ~11 | 9 | nothing; see below |
 | `aiks_dl_shadow_unittests.cc` | ~30 | 13 | a convex-shadow optimization this renderer does not have; see below |
@@ -149,7 +149,7 @@ column is right and the obvious way to check it is wrong.
 | `aiks_dl_runtime_effect_unittests.cc` | — | 12 | nothing; see below |
 | `aiks_dl_unittests.cc` | ~36 | 15 | subpass collapse, for five of them; see below |
 
-The catalog holds two hundred and sixty-six scenes of roughly four hundred,
+The catalog holds two hundred and seventy scenes of roughly four hundred,
 and the proportion is less interesting than which ones: the arithmetic of drawing is largely covered, and
 what is missing is either a capability this renderer does not have or a thing
 the scene model cannot describe.
@@ -182,11 +182,13 @@ three gradient kinds that were missing the one the linear kind already had, and
 a gradient under a mask blur.
 
 The blur row was wrong in a more interesting way, and checking it changed the
-renderer rather than the document. It said "backdrop identity keys", which is
+renderer rather than the document. It said "backdrop identity keys", which was
 real -- upstream's `SaveLayer` takes a `backdrop_id` so several layers can share
-one snapshot of what is behind them, and this renderer's `Layer` has no such
-key. It governs two of the file's scenes. It was not what stopped the other
-twenty-one, and writing the scenes is what found the thing that was: a mask
+one capture of what is behind them, and this renderer's `Layer` had no such
+key. It was right about the obstacle and wrong about the size of it: it named
+two of the file's scenes and there are four, all of them now built along with
+the key itself, so the row says nothing. It was also not what stopped the other
+twenty-one, and writing those scenes is what found the thing that was: a mask
 blur here took a solid color for three of its four styles.
 
 The default style blurs coverage and fills through it, which works for any
@@ -412,7 +414,8 @@ software rasterizer beside it has the extension and renders every one of them.
 
 So that test now asks every Vulkan device on the machine, in the order the
 conformance suite already asks them, and says how many of the catalog it drew.
-It draws all two hundred and thirty-seven. The cross-backend comparison beside
+It draws all of them, and the number is left out here on purpose: it is the 
+size of the catalog, which is stated once above under a test that checks it. The cross-backend comparison beside
 it was already honest -- it reports its nineteen gaps by name -- and those stay
 gaps, because the GLES driver here lacks the extension too, so there is no pair
 to compare them on. Reported, not hidden, which was the whole difference.

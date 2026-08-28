@@ -815,6 +815,32 @@ a layer that renders identically with the filter on and off — which is how the
 first corpus scene for this was written, and what it now carries a comment
 about.
 
+**A backdrop key shares that price across the layers that name it.** `dart:ui`'s
+`pushBackdropFilter` takes a `backdropId`, and it is not an optimization flag:
+it says that the layers naming it filter *one* captured image, the one recorded
+the first time the id was used, rather than each capturing whatever is in front
+of it at the time. A list of frosted rows over one background is the case it
+exists for, and without it the second row filters the first row's blur.
+
+Sharing costs nothing to express here, because a capture is already a pass and a
+pass is already what a later pass samples. The key maps to the index of the pass
+the cut produced, so the second layer to name it skips the cut and the
+full-target redraw entirely; and it maps on to the filters already run over that
+capture, so a second layer asking for the same filter reuses that pass too. What
+each of the two saves is separate, and a plate that shares a capture between
+three panels at three different sigmas gets the first without the second.
+
+Upstream shares the filtered result only when *every* filter on the id is equal,
+which that plate would fail outright; keyed per filter, it shares what the two
+have in common. The capture is shared on the same terms either way.
+
+An id keys a captured image and not a surface. A layer naming one from inside
+another layer filters what the id captured rather than its own target's content,
+which follows from what `dart:ui` says and is the case upstream tests with each
+panel wrapped in a save layer of its own. Nothing has to be added for it: a
+filtered pass is seeded into a rectangle *of* its source, which is already the
+arithmetic a bounded layer is seeded by.
+
 Passes are stored in the order they finish and executed in that order, which is
 already correct rather than something to sort: a layer is filed when it is
 restored, necessarily before the draw that composites it. Each pass carries its

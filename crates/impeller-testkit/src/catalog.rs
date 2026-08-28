@@ -76,6 +76,7 @@ pub fn catalog() -> Vec<Scene> {
     scenes.extend(blur());
     scenes.extend(shadow());
     scenes.extend(blur_variants());
+    scenes.extend(backdrop_ids());
     scenes.extend(layers());
     scenes.extend(runtime_effect());
     scenes.extend(backdrops());
@@ -3630,9 +3631,9 @@ fn atlas_scenes() -> Vec<Scene> {
 ///
 /// The file is the largest of them and most of it turns on mask blur styles,
 /// which is what these four are. What is still missing from it needs blurs
-/// this renderer does not have -- an image filter on a backdrop identified by
-/// a key, a blur that survives a rotation and a clip together, and the
-/// tiny-mipmap cases.
+/// this renderer does not have -- a blur that survives a rotation and a clip
+/// together, and the tiny-mipmap cases. The backdrop-key cases were on that
+/// list until the key was built; they are `backdrop_ids` below.
 fn blur() -> Vec<Scene> {
     let styles = [
         ("blur/gaussian-blur-style-normal", MaskBlurStyle::Normal),
@@ -4187,10 +4188,10 @@ fn grouped(name: &'static str, layer: LayerSpec, bounds: Option<[f32; 4]>) -> Sc
 ///
 /// The file's mask-blur variants are the same shape drawn at each style
 /// against translucent and opaque colors, which is precisely what the styles
-/// were built for. What is still missing from it wants a mask blur over a
-/// gradient -- refused here, because blurring coverage and then filling is a
-/// different picture from blurring the result unless the fill is constant --
-/// or backdrop filters identified by a key across layers.
+/// were built for. What is still missing from it is unwritten rather than
+/// blocked: the two obstacles this used to name -- a mask blur over a gradient,
+/// and backdrop filters identified by a key -- have both since been built, and
+/// the file's row in the inventory now says nothing stops the rest.
 fn blur_variants() -> Vec<Scene> {
     let disc = |color: [f32; 4]| {
         Item::fill(
@@ -5157,6 +5158,107 @@ fn runtime_effect() -> Vec<Scene> {
                     uniforms: crate::fixture::tint_uniforms([0.2, 0.9, 0.5, 1.0]),
                 },
             ))],
+        ),
+    ]
+}
+
+/// `aiks_dl_blur_unittests.cc`'s four scenes that name a backdrop id.
+///
+/// A `backdropId` says that the layers naming it filter one captured image
+/// rather than each capturing afresh, so it is a different picture wherever
+/// they reach the same pixels -- without it the second panel filters the
+/// first's result. Upstream's panels are a hundred pixels apart at a sigma of
+/// thirty, which reach each other; a plate is a hundred and twenty-eight
+/// pixels across, so these overlap outright and the difference is at the
+/// panels' own centers rather than only in their halos.
+///
+/// The group replaces rather than composites, as upstream's save paint does
+/// and for the reason the other backdrop plates give: the group is empty, and
+/// a composited empty group is nothing at all.
+fn backdrop_ids() -> Vec<Scene> {
+    // Three panels rather than upstream's six. The scenes differ once there
+    // are two, and each further one costs a full-frame blur on every backend
+    // the catalog is compared across.
+    const PANELS: [[f32; 4]; 3] = [
+        [8.0, 40.0, 64.0, 88.0],
+        [36.0, 40.0, 92.0, 88.0],
+        [64.0, 40.0, 120.0, 88.0],
+    ];
+
+    let panel = |sigma: f32| LayerSpec {
+        backdrop: ImageFilter::Blur { sigma },
+        blend: BlendMode::Src,
+        backdrop_id: Some(1),
+        ..LayerSpec::default()
+    };
+    let plate = |name: &'static str, nodes: Vec<Node>| {
+        Scene::tree(name, [behind(), nodes].concat())
+            .with_background(DARK)
+            // Single-sampled, for the reason every backdrop plate is: a
+            // backdrop cuts the pass to read what it was writing, and a
+            // multisampled pass cannot be resumed.
+            .with_samples(1)
+    };
+    let over = |bounds: [f32; 4], layer: LayerSpec, children: Vec<Node>| Node::Layer {
+        layer: Box::new(layer),
+        bounds: Some(bounds),
+        transform: Transform::default(),
+        children,
+    };
+
+    vec![
+        // One panel, where the id has nothing to share with. Upstream tests it
+        // separately and it is worth keeping: naming an id must not change the
+        // picture when only one layer names it, and a capture recorded but
+        // never reused is the path most likely to go wrong quietly.
+        plate(
+            "blur/backdrop-blur-with-single-backdrop-id",
+            vec![over(PANELS[1], panel(6.0), Vec::new())],
+        ),
+        // Three overlapping panels at one sigma. This is the scene the shared
+        // filtered pass is for: one capture, one blur, three placements.
+        plate(
+            "blur/multiple-backdrop-blur-with-single-backdrop-id",
+            PANELS
+                .iter()
+                .map(|bounds| over(*bounds, panel(6.0), Vec::new()))
+                .collect(),
+        ),
+        // The same, at three sigmas. Upstream gives up its shared filtered
+        // snapshot entirely here, since it keeps one snapshot per id and only
+        // when every filter on the id is equal; the capture is still shared
+        // both there and here, and here each distinct sigma is computed once.
+        plate(
+            "blur/multiple-backdrop-blur-with-single-backdrop-id-and-distinct-filters",
+            PANELS
+                .iter()
+                .enumerate()
+                .map(|(i, bounds)| over(*bounds, panel(4.0 + 4.0 * i as f32), Vec::new()))
+                .collect(),
+        ),
+        // And each panel but the first inside a group of its own, which is the
+        // case that says an id keys a captured image rather than a surface: the
+        // inner layer's own target holds nothing, and what it filters is what
+        // the id captured before any of them drew.
+        plate(
+            "blur/multiple-backdrop-blur-with-single-backdrop-id-different-layers",
+            PANELS
+                .iter()
+                .enumerate()
+                .map(|(i, bounds)| {
+                    let inner = over(*bounds, panel(6.0), Vec::new());
+                    if i == 0 {
+                        inner
+                    } else {
+                        Node::Layer {
+                            layer: Box::new(LayerSpec::default()),
+                            bounds: None,
+                            transform: Transform::default(),
+                            children: vec![inner],
+                        }
+                    }
+                })
+                .collect(),
         ),
     ]
 }

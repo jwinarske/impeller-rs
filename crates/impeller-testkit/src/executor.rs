@@ -494,6 +494,7 @@ fn record_node(canvas: &mut Canvas, node: &Node, anti_alias: bool) -> Result<()>
                 // redraw.
                 matrix: layer.matrix.map(|m| m.to_projective()),
                 backdrop_blur: layer.backdrop_blur,
+                backdrop_id: layer.backdrop_id,
                 color_filter: layer.color_filter,
                 morphology: layer.morphology.map(|m| {
                     if m.dilate {

@@ -58,6 +58,13 @@ smaller triangle than P3's. Nothing between the paint and the target clamps, so
 those components reach a floating-point surface intact, through layers,
 gradients and filters.
 
+A layer says which backdrop it filters. `Layer::with_backdrop_id` is `dart:ui`'s
+`backdropId`: layers naming one filter the image captured the first time it was
+used rather than each capturing afresh, which is a different picture wherever
+they overlap and one capture instead of one per layer. `Layer` gains a public
+field for it, so a struct literal naming every field by hand needs the new one;
+`Layer::default` and the builders do not change.
+
 Presenting a wide gamut is not built and is not claimed. The swapchain and the
 scanout path are untouched, because the devices available for testing are a
 software rasterizer and a virtual display controller and a Display P3 surface
