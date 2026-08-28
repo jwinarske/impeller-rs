@@ -11,6 +11,9 @@ description = "DRM/KMS direct-scanout presentation target for impeller-rs."
 keywords = ["drm", "kms", "scanout", "embedded", "display"]
 categories = ["graphics", "embedded"]
 
+[lints]
+workspace = true
+
 [dependencies]
 drm = { version = "0.15.0", default-features = false }
 impeller-core = { workspace = true }

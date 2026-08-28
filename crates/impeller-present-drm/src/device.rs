@@ -216,8 +216,17 @@ pub fn parse_in_formats(blob: &[u8]) -> Vec<impeller_hal::FormatModifierSet> {
     if blob.len() < HEADER {
         return Vec::new();
     }
-    let u32_at = |at: usize| u32::from_ne_bytes(blob[at..at + 4].try_into().unwrap()) as usize;
-    let u64_at = |at: usize| u64::from_ne_bytes(blob[at..at + 8].try_into().unwrap());
+    // The slice is exactly the width of the array, which is what makes the
+    // conversion total; the length check above is what makes the slice exist.
+    let u32_at = |at: usize| {
+        u32::from_ne_bytes(
+            blob[at..at + 4]
+                .try_into()
+                .expect("four bytes is four bytes"),
+        ) as usize
+    };
+    let u64_at =
+        |at: usize| u64::from_ne_bytes(blob[at..at + 8].try_into().expect("eight bytes is eight"));
 
     if u32_at(0) != 1 {
         // Version one is the only one that has existed. A different one may

@@ -13,3 +13,6 @@ categories = ["graphics", "rendering::graphics-api"]
 
 [build-dependencies]
 naga = { workspace = true, features = ["wgsl-in", "spv-out", "glsl-out"] }
+
+[lints]
+workspace = true

@@ -11,6 +11,9 @@ description = "Path types, flattening, tessellation, stroking and dashing for im
 keywords = ["geometry", "path", "tessellation", "stroke", "2d"]
 categories = ["graphics", "rendering"]
 
+[lints]
+workspace = true
+
 [dependencies]
 glam = { workspace = true }
 lyon_tessellation = { workspace = true }

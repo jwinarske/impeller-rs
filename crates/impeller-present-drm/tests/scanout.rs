@@ -10,6 +10,11 @@
 //! What this cannot check is whether a real display controller accepts the
 //! buffers. That is what the VKMS lane and the board rack are for.
 
+// Reached from a helper rather than from a test body, so clippy's test-code
+// exemption does not see it. A failed assumption in a test should stop the
+// run; the workspace denies these because a *library* must not.
+#![allow(clippy::unwrap_used)]
+
 use impeller_hal::{
     Batch, BlendMode, Extent2D, FormatModifierSet, Fourcc, Material, Modifier, PassDescriptor,
     Result,

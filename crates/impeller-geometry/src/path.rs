@@ -123,6 +123,13 @@ pub struct Path {
     rounded_rect: Option<(Rect, f32)>,
 }
 
+/// The largest coordinate magnitude the tessellator will accept.
+///
+/// Two to the twenty-fourth, which is the largest integer an `f32` represents
+/// exactly. See [`Path::is_within_tessellation_range`] for why it is here and
+/// why this is the value.
+pub const MAX_COORDINATE: f32 = 16_777_216.0;
+
 impl Path {
     pub fn builder() -> PathBuilder {
         PathBuilder::new()
@@ -158,6 +165,33 @@ impl Path {
     /// draw, not abort the application holding it.
     pub fn is_finite(&self) -> bool {
         self.points.iter().all(|p| p.is_finite())
+    }
+
+    /// Whether every coordinate is small enough to tessellate.
+    ///
+    /// Finite is not the same as usable, and the gap between them is where the
+    /// tessellator's cost stops being bounded. `f32::MAX` is finite; so is
+    /// `1e15`, and a path with three verbs at that magnitude strokes to
+    /// thirty-one million vertices -- six hundred megabytes of position and
+    /// index from a cubic and a close. The fill route is safe from it because
+    /// this crate's own flattener caps at [`MAX_SEGMENTS`], but a stroke hands
+    /// its curves to lyon intact, deliberately and for the reason
+    /// `Tessellator::stroke` gives, and lyon subdivides by its own arithmetic
+    /// with no such cap. The output grows linearly in the coordinate, which
+    /// makes it a caller-controlled allocation with nothing at the top of it.
+    ///
+    /// [`MAX_COORDINATE`] is where that stops, and the limit is the same one
+    /// two different arguments arrive at. A float past two to the twenty-fourth
+    /// has an interval above one between it and its neighbor, so a coordinate
+    /// there cannot name a pixel and no picture depends on it. And measured, a
+    /// curve at that magnitude strokes to about twenty thousand vertices,
+    /// which is a shape rather than an allocation.
+    ///
+    /// [`MAX_SEGMENTS`]: crate::flatten::MAX_SEGMENTS
+    pub fn is_within_tessellation_range(&self) -> bool {
+        self.points
+            .iter()
+            .all(|p| p.x.abs() <= MAX_COORDINATE && p.y.abs() <= MAX_COORDINATE)
     }
 
     pub fn fill_rule(&self) -> FillRule {

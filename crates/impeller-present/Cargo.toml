@@ -11,6 +11,9 @@ description = "Presentation target trait and format negotiation for impeller-rs.
 keywords = ["presentation", "swapchain", "graphics", "display"]
 categories = ["graphics", "rendering"]
 
+[lints]
+workspace = true
+
 [dependencies]
 impeller-hal = { workspace = true }
 log = { workspace = true }

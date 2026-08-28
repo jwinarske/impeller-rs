@@ -1,3 +1,10 @@
+// A build script's failures are build failures, and a panic is how one is
+// reported: there is no caller to return an error to, and a shader that will
+// not translate must stop the build rather than produce a binary that cannot
+// draw. The workspace denies these because a *library* must not end its
+// caller's process; this is not one.
+#![allow(clippy::unwrap_used, clippy::panic, clippy::expect_used)]
+
 //! Translates the WGSL source tree into the targets each backend needs.
 //!
 //! One source, several targets: SPIR-V for Vulkan and GLSL ES for GLES today,

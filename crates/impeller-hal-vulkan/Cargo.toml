@@ -11,6 +11,9 @@ description = "Vulkan rendering backend for impeller-rs."
 keywords = ["vulkan", "backend", "graphics", "renderer", "hal"]
 categories = ["graphics", "rendering::graphics-api"]
 
+[lints]
+workspace = true
+
 [dependencies]
 ash = { workspace = true }
 gpu-allocator = { workspace = true }

@@ -11,6 +11,9 @@ description = "Shared test harness for impeller-rs: scene corpus and cross-backe
 keywords = ["testing", "graphics", "harness", "golden"]
 categories = ["development-tools::testing", "graphics"]
 
+[lints]
+workspace = true
+
 [dependencies]
 half.workspace = true
 glam = { workspace = true }

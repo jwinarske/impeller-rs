@@ -14,7 +14,7 @@
 //! sending a convex path through the general tessellator merely costs time.
 //! Convexity detection is conservative for exactly this reason.
 
-use crate::flatten::flatten;
+use crate::flatten::{flatten, DEFAULT_TOLERANCE};
 use crate::path::{polygon_convexity, Convexity, FillRule, Path, Verb};
 use crate::stroke::{LineCap, LineJoin, StrokeStyle};
 use glam::Vec2;
@@ -58,6 +58,29 @@ impl VertexBuffers {
     }
 }
 
+/// A tolerance lyon will accept, from whatever the caller had.
+///
+/// Two things are wrong with passing one straight through. A tolerance that is
+/// not a positive length is not a tolerance -- `0.0` trips an assertion inside
+/// lyon's flattener and takes the process down with it, which is the failure
+/// `Path::is_finite` exists to prevent by a different road. And an
+/// arbitrarily small one is a subdivision count with nothing at the top of it.
+///
+/// So a value that is not finite and positive falls back to the default, on
+/// the same reading this crate gives everywhere else: a number that is not a
+/// length describes no length. The floor is eight orders above the assertion
+/// lyon makes and four below the tightest tolerance this renderer produces --
+/// device tolerance divided by the transform's scale, so a quarter pixel under
+/// a two-hundred-and-fifty-times zoom is still two hundred and fifty times
+/// above it.
+fn usable_tolerance(tolerance: f32) -> f32 {
+    const FLOOR: f32 = 1e-6;
+    if !tolerance.is_finite() || tolerance <= 0.0 {
+        return DEFAULT_TOLERANCE;
+    }
+    tolerance.max(FLOOR)
+}
+
 /// Reusable tessellation scratch space.
 ///
 /// Holds the output buffers and lyon's internal state across calls so a steady
@@ -85,10 +108,11 @@ impl Tessellator {
         // on a non-finite coordinate rather than declining it. One guard at the
         // boundary covers all of them; a guard per shape covers the ones
         // somebody remembered.
-        if !path.is_finite() {
+        if !path.is_finite() || !path.is_within_tessellation_range() {
             self.buffers.clear();
             return &self.buffers;
         }
+        let tolerance = usable_tolerance(tolerance);
         self.buffers.clear();
 
         let polylines = flatten(path, tolerance);
@@ -123,10 +147,18 @@ impl Tessellator {
     pub fn stroke(&mut self, path: &Path, style: &StrokeStyle, tolerance: f32) -> &VertexBuffers {
         // As in `fill`: lyon asserts on a coordinate that is not a number, and
         // a stroke reaches it by a different road.
-        if !path.is_finite() {
+        //
+        // The range check matters more here than it does there. A fill is
+        // flattened by this crate, which caps its segment count; a stroke hands
+        // its curves to lyon, which does not, so the vertex count grows with
+        // the coordinate and nothing stops it -- measured, three verbs at a
+        // coordinate of `1e15` stroke to thirty-one million vertices. See
+        // `Path::is_within_tessellation_range`.
+        if !path.is_finite() || !path.is_within_tessellation_range() {
             self.buffers.clear();
             return &self.buffers;
         }
+        let tolerance = usable_tolerance(tolerance);
         use lyon_tessellation::{
             BuffersBuilder, LineCap as LyonCap, LineJoin as LyonJoin, StrokeOptions,
         };

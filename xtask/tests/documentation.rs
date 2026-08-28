@@ -17,6 +17,11 @@
 //! no test makes it. The mechanical part is still worth having: it is the part
 //! that rots on its own, without anybody touching the document.
 
+// Reached from a helper rather than from a test body, so clippy's test-code
+// exemption does not see it. A failed assumption in a test should stop the
+// run; the workspace denies these because a *library* must not.
+#![allow(clippy::panic)]
+
 use std::collections::BTreeSet;
 use std::path::PathBuf;
 

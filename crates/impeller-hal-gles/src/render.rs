@@ -816,8 +816,13 @@ impl MultisampleTarget {
     ///
     /// A context must be current and the objects must belong to it.
     unsafe fn destroy(&self, gl: &glow::Context) {
-        gl.delete_framebuffer(self.framebuffer);
-        gl.delete_renderbuffer(self.renderbuffer);
+        // SAFETY: the caller guarantees what the `# Safety` note on this
+        // function requires; every operation below needs exactly that and
+        // nothing more.
+        unsafe {
+            gl.delete_framebuffer(self.framebuffer);
+            gl.delete_renderbuffer(self.renderbuffer);
+        }
     }
 }
 
@@ -832,34 +837,39 @@ unsafe fn resolve_and_unbind(
     target: &GlesTexture,
     extent: Extent2D,
 ) {
-    // A blit is subject to the scissor test, so a clip left enabled from the
-    // last draw would resolve only the part of the frame that draw could touch
-    // and leave the rest of the target holding whatever it held before. Turning
-    // it off here rather than at the call site covers every path that resolves,
-    // including the early return for an empty batch.
-    gl.disable(glow::SCISSOR_TEST);
-    if let Some(ms) = multisample {
-        gl.bind_framebuffer(glow::READ_FRAMEBUFFER, Some(ms.framebuffer));
-        gl.bind_framebuffer(glow::DRAW_FRAMEBUFFER, target.framebuffer);
-        // NEAREST, not LINEAR: a blit whose read buffer is multisampled and
-        // whose draw buffer is not must use NEAREST, and the resolve itself is
-        // what averages the samples.
-        gl.blit_framebuffer(
-            0,
-            0,
-            extent.width as i32,
-            extent.height as i32,
-            0,
-            0,
-            extent.width as i32,
-            extent.height as i32,
-            glow::COLOR_BUFFER_BIT,
-            glow::NEAREST,
-        );
-        gl.bind_framebuffer(glow::READ_FRAMEBUFFER, None);
-        gl.bind_framebuffer(glow::DRAW_FRAMEBUFFER, None);
+    // SAFETY: the caller guarantees what the `# Safety` note on this
+    // function requires; every operation below needs exactly that and
+    // nothing more.
+    unsafe {
+        // A blit is subject to the scissor test, so a clip left enabled from the
+        // last draw would resolve only the part of the frame that draw could touch
+        // and leave the rest of the target holding whatever it held before. Turning
+        // it off here rather than at the call site covers every path that resolves,
+        // including the early return for an empty batch.
+        gl.disable(glow::SCISSOR_TEST);
+        if let Some(ms) = multisample {
+            gl.bind_framebuffer(glow::READ_FRAMEBUFFER, Some(ms.framebuffer));
+            gl.bind_framebuffer(glow::DRAW_FRAMEBUFFER, target.framebuffer);
+            // NEAREST, not LINEAR: a blit whose read buffer is multisampled and
+            // whose draw buffer is not must use NEAREST, and the resolve itself is
+            // what averages the samples.
+            gl.blit_framebuffer(
+                0,
+                0,
+                extent.width as i32,
+                extent.height as i32,
+                0,
+                0,
+                extent.width as i32,
+                extent.height as i32,
+                glow::COLOR_BUFFER_BIT,
+                glow::NEAREST,
+            );
+            gl.bind_framebuffer(glow::READ_FRAMEBUFFER, None);
+            gl.bind_framebuffer(glow::DRAW_FRAMEBUFFER, None);
+        }
+        gl.bind_framebuffer(glow::FRAMEBUFFER, None);
     }
-    gl.bind_framebuffer(glow::FRAMEBUFFER, None);
 }
 
 /// Allocate a stencil renderbuffer and attach it to the bound framebuffer.
@@ -876,52 +886,57 @@ unsafe fn attach_stencil(
     extent: Extent2D,
     samples: u32,
 ) -> Result<glow::Renderbuffer> {
-    let renderbuffer = gl
-        .create_renderbuffer()
-        .map_err(|e| gl_err("create_renderbuffer", &e))?;
-    gl.bind_renderbuffer(glow::RENDERBUFFER, Some(renderbuffer));
-    // The sample count must match the color attachment beside it, which is
-    // also what antialiases a clip edge: with a per-sample stencil, a boundary
-    // crossing a pixel admits some of its samples and not others.
-    if samples > 1 {
-        gl.renderbuffer_storage_multisample(
-            glow::RENDERBUFFER,
-            samples as i32,
-            glow::STENCIL_INDEX8,
-            extent.width as i32,
-            extent.height as i32,
-        );
-    } else {
-        gl.renderbuffer_storage(
-            glow::RENDERBUFFER,
-            glow::STENCIL_INDEX8,
-            extent.width as i32,
-            extent.height as i32,
-        );
-    }
-    gl.framebuffer_renderbuffer(
-        glow::FRAMEBUFFER,
-        glow::STENCIL_ATTACHMENT,
-        glow::RENDERBUFFER,
-        Some(renderbuffer),
-    );
-    gl.bind_renderbuffer(glow::RENDERBUFFER, None);
-
-    let status = gl.check_framebuffer_status(glow::FRAMEBUFFER);
-    if status != glow::FRAMEBUFFER_COMPLETE {
+    // SAFETY: the caller guarantees what the `# Safety` note on this
+    // function requires; every operation below needs exactly that and
+    // nothing more.
+    unsafe {
+        let renderbuffer = gl
+            .create_renderbuffer()
+            .map_err(|e| gl_err("create_renderbuffer", &e))?;
+        gl.bind_renderbuffer(glow::RENDERBUFFER, Some(renderbuffer));
+        // The sample count must match the color attachment beside it, which is
+        // also what antialiases a clip edge: with a per-sample stencil, a boundary
+        // crossing a pixel admits some of its samples and not others.
+        if samples > 1 {
+            gl.renderbuffer_storage_multisample(
+                glow::RENDERBUFFER,
+                samples as i32,
+                glow::STENCIL_INDEX8,
+                extent.width as i32,
+                extent.height as i32,
+            );
+        } else {
+            gl.renderbuffer_storage(
+                glow::RENDERBUFFER,
+                glow::STENCIL_INDEX8,
+                extent.width as i32,
+                extent.height as i32,
+            );
+        }
         gl.framebuffer_renderbuffer(
             glow::FRAMEBUFFER,
             glow::STENCIL_ATTACHMENT,
             glow::RENDERBUFFER,
-            None,
+            Some(renderbuffer),
         );
-        gl.delete_renderbuffer(renderbuffer);
-        return Err(Error::Backend {
-            backend: "gles",
-            detail: format!("framebuffer incomplete with a stencil attachment: {status:#x}"),
-        });
+        gl.bind_renderbuffer(glow::RENDERBUFFER, None);
+
+        let status = gl.check_framebuffer_status(glow::FRAMEBUFFER);
+        if status != glow::FRAMEBUFFER_COMPLETE {
+            gl.framebuffer_renderbuffer(
+                glow::FRAMEBUFFER,
+                glow::STENCIL_ATTACHMENT,
+                glow::RENDERBUFFER,
+                None,
+            );
+            gl.delete_renderbuffer(renderbuffer);
+            return Err(Error::Backend {
+                backend: "gles",
+                detail: format!("framebuffer incomplete with a stencil attachment: {status:#x}"),
+            });
+        }
+        Ok(renderbuffer)
     }
-    Ok(renderbuffer)
 }
 
 /// Detach and delete a stencil renderbuffer.
@@ -934,17 +949,22 @@ unsafe fn detach_stencil(
     framebuffer: glow::Framebuffer,
     renderbuffer: Option<glow::Renderbuffer>,
 ) {
-    let Some(renderbuffer) = renderbuffer else {
-        return;
-    };
-    gl.bind_framebuffer(glow::FRAMEBUFFER, Some(framebuffer));
-    gl.framebuffer_renderbuffer(
-        glow::FRAMEBUFFER,
-        glow::STENCIL_ATTACHMENT,
-        glow::RENDERBUFFER,
-        None,
-    );
-    gl.delete_renderbuffer(renderbuffer);
+    // SAFETY: the caller guarantees what the `# Safety` note on this
+    // function requires; every operation below needs exactly that and
+    // nothing more.
+    unsafe {
+        let Some(renderbuffer) = renderbuffer else {
+            return;
+        };
+        gl.bind_framebuffer(glow::FRAMEBUFFER, Some(framebuffer));
+        gl.framebuffer_renderbuffer(
+            glow::FRAMEBUFFER,
+            glow::STENCIL_ATTACHMENT,
+            glow::RENDERBUFFER,
+            None,
+        );
+        gl.delete_renderbuffer(renderbuffer);
+    }
 }
 
 /// Set the stencil test and write state one draw needs.
@@ -1340,10 +1360,15 @@ fn build_program(gl: &glow::Context, advanced_blend: bool) -> Result<SolidProgra
 ///
 /// A context must be current and the objects must belong to it.
 unsafe fn cleanup(gl: &glow::Context, program: glow::Program, shaders: &[glow::Shader]) {
-    for shader in shaders {
-        gl.delete_shader(*shader);
+    // SAFETY: the caller guarantees what the `# Safety` note on this
+    // function requires; every operation below needs exactly that and
+    // nothing more.
+    unsafe {
+        for shader in shaders {
+            gl.delete_shader(*shader);
+        }
+        gl.delete_program(program);
     }
-    gl.delete_program(program);
 }
 
 fn internal_format(format: PixelFormat) -> u32 {
@@ -1375,29 +1400,34 @@ unsafe fn attach_temporarily(
     gl: &glow::Context,
     texture: &GlesTexture,
 ) -> Result<glow::Framebuffer> {
-    let framebuffer = gl
-        .create_framebuffer()
-        .map_err(|e| gl_err("create_framebuffer", &e))?;
-    gl.bind_framebuffer(glow::FRAMEBUFFER, Some(framebuffer));
-    gl.framebuffer_texture_2d(
-        glow::FRAMEBUFFER,
-        glow::COLOR_ATTACHMENT0,
-        glow::TEXTURE_2D,
-        Some(texture.texture),
-        0,
-    );
-    let status = gl.check_framebuffer_status(glow::FRAMEBUFFER);
-    if status != glow::FRAMEBUFFER_COMPLETE {
-        gl.delete_framebuffer(framebuffer);
-        gl.bind_framebuffer(glow::FRAMEBUFFER, None);
-        return Err(Error::Backend {
-            backend: "gles",
-            detail: format!(
-                "reading back this format needs an attachment it cannot have: {status:#x}"
-            ),
-        });
+    // SAFETY: the caller guarantees what the `# Safety` note on this
+    // function requires; every operation below needs exactly that and
+    // nothing more.
+    unsafe {
+        let framebuffer = gl
+            .create_framebuffer()
+            .map_err(|e| gl_err("create_framebuffer", &e))?;
+        gl.bind_framebuffer(glow::FRAMEBUFFER, Some(framebuffer));
+        gl.framebuffer_texture_2d(
+            glow::FRAMEBUFFER,
+            glow::COLOR_ATTACHMENT0,
+            glow::TEXTURE_2D,
+            Some(texture.texture),
+            0,
+        );
+        let status = gl.check_framebuffer_status(glow::FRAMEBUFFER);
+        if status != glow::FRAMEBUFFER_COMPLETE {
+            gl.delete_framebuffer(framebuffer);
+            gl.bind_framebuffer(glow::FRAMEBUFFER, None);
+            return Err(Error::Backend {
+                backend: "gles",
+                detail: format!(
+                    "reading back this format needs an attachment it cannot have: {status:#x}"
+                ),
+            });
+        }
+        Ok(framebuffer)
     }
-    Ok(framebuffer)
 }
 
 fn transfer_format(format: PixelFormat) -> u32 {

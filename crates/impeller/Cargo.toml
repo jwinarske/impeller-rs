@@ -47,6 +47,9 @@ googletest = { workspace = true }
 # `cargo test`, which is the only kind that gets run.
 impeller = { path = ".", package = "impeller-rs", features = ["gles"] }
 
+[lints]
+workspace = true
+
 [dependencies]
 impeller-core = { workspace = true }
 impeller-hal = { workspace = true }

@@ -100,24 +100,29 @@ impl DebugLog {
 ///
 /// `gl` must be current on this thread.
 pub unsafe fn install(gl: &mut glow::Context, log: Arc<DebugLog>) -> bool {
-    use glow::HasContext as _;
+    // SAFETY: the caller guarantees what the `# Safety` note on this
+    // function requires; every operation below needs exactly that and
+    // nothing more.
+    unsafe {
+        use glow::HasContext as _;
 
-    // Synchronous, so the callback runs inside the call that caused the
-    // message. Without it the driver may batch, and a message that arrives
-    // later names no useful place.
-    gl.enable(glow::DEBUG_OUTPUT);
-    gl.enable(glow::DEBUG_OUTPUT_SYNCHRONOUS);
-    // Everything, then let the log filter. Asking the driver to drop
-    // categories here would mean deciding what matters before seeing it.
-    gl.debug_message_control(glow::DONT_CARE, glow::DONT_CARE, glow::DONT_CARE, &[], true);
-    gl.debug_message_callback(move |_source, _kind, id, severity, text| {
-        log.record(DebugMessage {
-            severity: DebugSeverity::from_gl(severity),
-            id,
-            message: text.to_string(),
+        // Synchronous, so the callback runs inside the call that caused the
+        // message. Without it the driver may batch, and a message that arrives
+        // later names no useful place.
+        gl.enable(glow::DEBUG_OUTPUT);
+        gl.enable(glow::DEBUG_OUTPUT_SYNCHRONOUS);
+        // Everything, then let the log filter. Asking the driver to drop
+        // categories here would mean deciding what matters before seeing it.
+        gl.debug_message_control(glow::DONT_CARE, glow::DONT_CARE, glow::DONT_CARE, &[], true);
+        gl.debug_message_callback(move |_source, _kind, id, severity, text| {
+            log.record(DebugMessage {
+                severity: DebugSeverity::from_gl(severity),
+                id,
+                message: text.to_string(),
+            });
         });
-    });
-    true
+        true
+    }
 }
 
 /// A context that asserts the driver reported nothing when it goes out of scope.

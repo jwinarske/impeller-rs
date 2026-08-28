@@ -259,7 +259,8 @@ impl VulkanContext {
             detail: format!("loader: {e}"),
         })?;
 
-        let app_name = CString::new("impeller-rs").unwrap();
+        let app_name =
+            CString::new("impeller-rs").expect("no interior NUL in an extension or layer name");
         let app_info = vk::ApplicationInfo::default()
             .application_name(&app_name)
             .engine_name(&app_name)
@@ -274,7 +275,8 @@ impl VulkanContext {
             && layer_available(&entry, VALIDATION_LAYER)
             && instance_extension_available(&entry, "VK_EXT_debug_utils");
 
-        let layer_name = CString::new(VALIDATION_LAYER).unwrap();
+        let layer_name =
+            CString::new(VALIDATION_LAYER).expect("no interior NUL in an extension or layer name");
         let layer_ptrs: Vec<*const c_char> = if want_validation {
             vec![layer_name.as_ptr()]
         } else {
@@ -287,17 +289,25 @@ impl VulkanContext {
         // and by then the device and every resource on it exist too.
         let mut instance_extensions: Vec<CString> = Vec::new();
         if want_validation {
-            instance_extensions.push(CString::new("VK_EXT_debug_utils").unwrap());
+            instance_extensions.push(
+                CString::new("VK_EXT_debug_utils")
+                    .expect("no interior NUL in an extension or layer name"),
+            );
             // Carries the request for synchronization validation below. Its
             // absence is not fatal: the chained struct is then ignored and what
             // is lost is the extra checking rather than the instance.
             if layer_extension_available(&entry, VALIDATION_LAYER, "VK_EXT_validation_features") {
-                instance_extensions.push(CString::new("VK_EXT_validation_features").unwrap());
+                instance_extensions.push(
+                    CString::new("VK_EXT_validation_features")
+                        .expect("no interior NUL in an extension or layer name"),
+                );
             }
         }
         for &name in surface_extensions() {
             if instance_extension_available(&entry, name) {
-                instance_extensions.push(CString::new(name).unwrap());
+                instance_extensions.push(
+                    CString::new(name).expect("no interior NUL in an extension or layer name"),
+                );
             }
         }
         let ext_ptrs: Vec<*const c_char> = instance_extensions.iter().map(|s| s.as_ptr()).collect();
@@ -412,7 +422,7 @@ impl VulkanContext {
 
         let enabled_cstrings: Vec<CString> = enabled
             .iter()
-            .map(|s| CString::new(s.as_str()).unwrap())
+            .map(|s| CString::new(s.as_str()).expect("no interior NUL in an extension name"))
             .collect();
         let enabled_ptrs: Vec<*const c_char> =
             enabled_cstrings.iter().map(|s| s.as_ptr()).collect();

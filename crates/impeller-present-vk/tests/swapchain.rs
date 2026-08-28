@@ -11,6 +11,11 @@
 //! Both are noted where the code handles them, and both are the parts a real
 //! window would have to confirm.
 
+// Reached from a helper rather than from a test body, so clippy's test-code
+// exemption does not see it. A failed assumption in a test should stop the
+// run; the workspace denies these because a *library* must not.
+#![allow(clippy::panic)]
+
 use impeller_hal::{Batch, BlendMode, Extent2D, Material, PassDescriptor, PixelFormat, Vertex};
 use impeller_hal_vulkan::{ContextConfig, DevicePreference, VulkanContext, VulkanHal};
 use impeller_present::PresentTarget;

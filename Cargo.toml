@@ -30,6 +30,27 @@ homepage = "https://github.com/jwinarske/impeller-rs"
 # toolchain, cmake, or pkg-config at build time -- that property is what keeps
 # cross-compilation to aarch64/riscv64 boards and containerized CI builds
 # trivial, and it is enforced by the bans in deny.toml.
+[workspace.lints.rust]
+# Every `unsafe` block says what makes it sound, and this makes the block the
+# unit that has to say it: inside an `unsafe fn`, an operation that needs
+# proving is otherwise covered by the function's signature and nothing writes
+# the proof down. Nine functions here are `unsafe`; two hundred blocks are.
+unsafe_op_in_unsafe_fn = "deny"
+
+[workspace.lints.clippy]
+# A library does not get to end its caller's process. The panic surface was
+# audited once and came back clean -- thirty-three sites in non-test code,
+# every one a local invariant of the shape "handled above" or "just created" --
+# and nothing kept it that way. These four keep it.
+#
+# `expect` is allowed and `unwrap` is not, which is the whole distinction: an
+# invariant that cannot be violated is worth stating, and stating it is what
+# `expect` is. A bare `unwrap` is the same claim with the reason left out.
+unwrap_used = "deny"
+panic = "deny"
+todo = "deny"
+unimplemented = "deny"
+
 [workspace.dependencies]
 # --- rendering ---
 ash = "0.38"

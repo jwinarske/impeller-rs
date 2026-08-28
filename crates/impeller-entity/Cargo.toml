@@ -11,6 +11,9 @@ description = "Entity and contents layer for impeller-rs: coverage computation f
 keywords = ["graphics", "renderer", "coverage", "culling"]
 categories = ["graphics"]
 
+[lints]
+workspace = true
+
 [dependencies]
 glam = { workspace = true }
 impeller-geometry = { workspace = true }

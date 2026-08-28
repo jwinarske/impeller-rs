@@ -10,6 +10,11 @@
 //! A scene symmetric top to bottom would satisfy that claim without meaning
 //! anything, so nothing drawn here is.
 
+// Reached from a helper rather than from a test body, so clippy's test-code
+// exemption does not see it. A failed assumption in a test should stop the
+// run; the workspace denies these because a *library* must not.
+#![allow(clippy::panic)]
+
 use impeller_hal::{Batch, BlendMode, Extent2D, Material, PassDescriptor, PixelFormat};
 use impeller_hal_gles::Validated as GlesValidated;
 use impeller_hal_gles::{DisplayTarget, GlesContext};

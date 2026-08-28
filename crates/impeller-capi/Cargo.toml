@@ -22,5 +22,8 @@ categories = ["external-ffi-bindings", "graphics"]
 name = "impeller"
 crate-type = ["cdylib", "staticlib"]
 
+[lints]
+workspace = true
+
 [dependencies]
 impeller-core = { workspace = true }

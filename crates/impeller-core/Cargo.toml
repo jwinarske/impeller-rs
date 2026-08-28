@@ -11,6 +11,9 @@ description = "Drawing API for impeller-rs: Canvas, Paint, Color, recording and 
 keywords = ["canvas", "renderer", "graphics", "2d", "paint"]
 categories = ["graphics", "rendering"]
 
+[lints]
+workspace = true
+
 [dependencies]
 half.workspace = true
 glam = { workspace = true }

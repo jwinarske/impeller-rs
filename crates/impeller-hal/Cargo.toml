@@ -11,5 +11,8 @@ description = "Rendering hardware abstraction layer for impeller-rs."
 keywords = ["hal", "graphics", "vulkan", "gles", "renderer"]
 categories = ["graphics", "rendering::graphics-api"]
 
+[lints]
+workspace = true
+
 [dependencies]
 thiserror = { workspace = true }

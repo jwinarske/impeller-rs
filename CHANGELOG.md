@@ -64,6 +64,19 @@ fifteen modes outright, so the same picture reaches both backends -- 29 of 29
 modes are checked against the compositing equations on GLES where 14 were.
 Nothing about the API changed; a caller that was refused is not.
 
+A path is bounded before it is tessellated. A coordinate past two to the
+twenty-fourth is refused rather than drawn, because past that a float cannot
+name a pixel and because a stroke at a larger one grows without bound -- three
+verbs at `1e15` used to stroke to thirty-one million vertices. A tolerance that
+is not a positive length falls back to the default rather than being passed to
+a dependency that asserts on it. `Path::is_within_tessellation_range` and
+`MAX_COORDINATE` are new and public.
+
+The workspace denies `unwrap`, `panic!`, `todo!` and `unimplemented!` in
+shipping code, and `unsafe_op_in_unsafe_fn` everywhere. Nothing in the public
+API changed; a handful of internal `unwrap`s became `expect`s that say what
+they are relying on.
+
 A stroked rectangle keeps its join. `draw_rect` and `draw_rrect` at a radius of
 zero handed a stroked shape to the fragment-evaluated route, whose stroke band
 rounds a vertex whatever the join says, so a rectangular border came out with

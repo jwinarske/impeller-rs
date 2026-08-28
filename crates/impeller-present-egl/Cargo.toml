@@ -11,6 +11,9 @@ description = "EGL window-surface presentation target for impeller-rs."
 keywords = ["egl", "presentation", "gles", "display"]
 categories = ["graphics", "rendering::graphics-api"]
 
+[lints]
+workspace = true
+
 [dependencies]
 glow = { workspace = true }
 khronos-egl = { workspace = true }

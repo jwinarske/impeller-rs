@@ -11,6 +11,9 @@ description = "Vulkan WSI swapchain presentation target for impeller-rs."
 keywords = ["vulkan", "wsi", "swapchain", "presentation"]
 categories = ["graphics", "rendering::graphics-api"]
 
+[lints]
+workspace = true
+
 [dependencies]
 ash = { workspace = true }
 impeller-core = { workspace = true }

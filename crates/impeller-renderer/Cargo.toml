@@ -11,6 +11,9 @@ description = "Render pass encoding for impeller-rs, generic over the rendering 
 keywords = ["renderer", "graphics", "render-pass", "2d"]
 categories = ["graphics", "rendering"]
 
+[lints]
+workspace = true
+
 [dependencies]
 glam = { workspace = true }
 impeller-geometry = { workspace = true }

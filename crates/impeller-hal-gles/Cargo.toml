@@ -11,6 +11,9 @@ description = "GLES 3.0 rendering backend for impeller-rs."
 keywords = ["gles", "opengl", "backend", "graphics", "hal"]
 categories = ["graphics", "rendering::graphics-api"]
 
+[lints]
+workspace = true
+
 [dependencies]
 half.workspace = true
 glow = { workspace = true }

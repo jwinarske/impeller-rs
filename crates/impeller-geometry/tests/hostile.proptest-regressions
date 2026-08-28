@@ -1,0 +1,11 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc d69ed8160f69825a1dcc028720080b912e3e76055358f0d7e09e1319520815de # shrinks to verbs = [Cubic(Vec2(0.0, 0.0), Vec2(0.0, 0.0), Vec2(0.0, 0.0))], rule = NonZero, style = StrokeStyle { width: 0.1, cap: Butt, join: Miter, miter_limit: 1.0 }, tolerance = 0.0
+cc 72388d37eda5d8bba1f7df4cb0bef4df5f1112a369bb788a9f08ed89dbc9f492 # shrinks to verbs = [Arc(Vec2(3.4028235e38, 0.0), Vec2(0.0, 0.0), 0.0, 1.1754944e-38)], rule = NonZero, tolerance = 0.01
+cc 3c54e435c143db1e2b0f0744efe57fdb780dca63b28ac696cc6ff097161801ed # shrinks to verbs = [Arc(Vec2(3.4028235e38, 0.0), Vec2(0.0, 0.0), 0.0, -943.1208)], rule = NonZero, style = StrokeStyle { width: 0.1, cap: Butt, join: Miter, miter_limit: 1.0 }, tolerance = 0.01
+cc eca34cb9522ff905ff4b53f2842775b83ad96b360a0d69930c21b0696a1630f7 # shrinks to verbs = [Line(Vec2(0.0, 3.4028235e38)), Quad(Vec2(0.0, 0.0), Vec2(0.0, -3.4028235e38))], rule = NonZero, style = StrokeStyle { width: 0.1, cap: Butt, join: Miter, miter_limit: 1.0 }, tolerance = 0.01
+cc 27163924ff585fc46ccbf3677b3828cf324eaf31042ae0f40c84a3930aea83b2 # shrinks to verbs = [Conic(Vec2(0.0, 0.0), Vec2(0.0, 0.0), 1.1754944e-38)], rule = NonZero, style = StrokeStyle { width: 0.1, cap: Butt, join: Miter, miter_limit: 1.0 }, tolerance = 0.0

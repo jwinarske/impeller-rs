@@ -10,3 +10,6 @@ homepage.workspace = true
 description = "Glyph atlas packing and placement for impeller-rs; bring your own rasterizer."
 keywords = ["glyph", "atlas", "text", "font", "2d"]
 categories = ["graphics", "rendering"]
+
+[lints]
+workspace = true

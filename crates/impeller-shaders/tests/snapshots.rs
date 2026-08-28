@@ -15,6 +15,11 @@
 //! event: the diff is the thing to look at. Set `IMPELLER_SHADER_SNAPSHOTS`
 //! to say where they are, which a cross-built binary on a board has to.
 
+// The comparison below runs from a helper rather than from the test body, so
+// clippy's test-code exemption does not reach it. A snapshot that does not
+// match is a failure and a panic is how a test reports one.
+#![allow(clippy::panic)]
+
 use std::path::PathBuf;
 
 /// Where the snapshots live, which is outside this crate on purpose.

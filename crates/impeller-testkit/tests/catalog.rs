@@ -14,6 +14,11 @@
 //! for. The corpus is where per-scene tolerances and a software reference
 //! live; this collection is broad rather than exact.
 
+// Reached from a helper rather than from a test body, so clippy's test-code
+// exemption does not see it. A failed assumption in a test should stop the
+// run; the workspace denies these because a *library* must not.
+#![allow(clippy::panic)]
+
 use impeller_hal::{Hal, HalContext};
 use impeller_hal_gles::Validated as GlesValidated;
 use impeller_hal_gles::{DisplayTarget, GlesHal};

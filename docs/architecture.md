@@ -897,6 +897,52 @@ samples a triangle covers there is a property of the rasterizer and not of
 either route. Where they differ and how many survives a second device; how much
 does not.
 
+**A path arrives from a caller and is bounded before it reaches lyon.** Two
+guards sit at `Tessellator::fill` and `Tessellator::stroke`, and both are there
+because generated input found what they now stop.
+
+The first was already there for non-finite coordinates, and its comment gives
+the reason the second one needs: lyon asserts rather than declining, and an
+assertion in a dependency takes the process down. The second is magnitude, and
+it is the one with the wider blast radius. `f32::MAX` is finite; so is `1e15`,
+and a path with three verbs at that magnitude *strokes to thirty-one million
+vertices* — six hundred and thirty megabytes of position and index, in a
+release build, from four lines a caller can write. The fill route was never
+exposed to it, because this project's own flattener caps at `MAX_SEGMENTS`; a
+stroke hands its curves to lyon intact, deliberately and for the reason
+`Tessellator::stroke` states, and lyon subdivides by its own arithmetic with no
+such cap. The output grows linearly in the coordinate and nothing sat at the
+top of it.
+
+`MAX_COORDINATE` is two to the twenty-fourth, and two arguments arrive at the
+same number. A float past it has an interval above one to its neighbor, so a
+coordinate there cannot name a pixel and no picture depends on one. And
+measured, a curve at that magnitude strokes to about twenty thousand vertices,
+which is a shape rather than an allocation.
+
+The third guard is the tolerance, which was passed through untouched. Zero
+trips an assertion inside lyon's flattener; a tolerance that is not a positive
+length is not a tolerance, and falls back to the default on the reading this
+project gives every other such number. Its floor is eight orders above lyon's
+assertion and four below the tightest value the renderer produces, which is the
+device tolerance divided by the transform's scale.
+
+None of the three was found by reading. `crates/impeller-geometry/tests/hostile.rs`
+generates paths out of NaN, both infinities, subnormals and the largest finite
+float, in structures no caller writes on purpose, and asserts the two things
+that must hold whatever goes in: it returns, and the indices it returns address
+real vertices. That second one is the one with teeth — an index past the end of
+a vertex buffer is not a wrong picture but a read the driver performs on this
+process's behalf. The three cases it shrank to are kept beside it as
+themselves, since a property that found a case should not make the next reader
+re-derive it.
+
+`cargo-fuzz` would have been the obvious tool and is the wrong one here: it
+needs a nightly toolchain and an LLVM runtime, where this workspace must
+compile from pure Rust with no C toolchain — a requirement `deny.toml` bans two
+crates to protect. `proptest` was already a dependency, shrinks a failure to
+its smallest form, and runs in the gate on every commit.
+
 **A backdrop filter cuts the pass rather than reading it.** Frosted glass asks
 for the one thing the rule above forbids: a layer whose starting content is the
 target it is about to draw into. So the pass stops. Everything drawn into that
