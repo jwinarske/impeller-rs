@@ -19,15 +19,19 @@
 //!
 //! # What it does not claim
 //!
-//! Device-independent is not the same as machine-independent, and only the
-//! first is established. A vertex count comes from a segment count, which
-//! comes from float arithmetic -- deterministic for the same operations under
-//! IEEE, and Rust does not contract multiplies and adds behind your back, so
-//! there is no reason to expect a different answer on aarch64. But no reason
-//! is not a measurement: CI checks this on x86 only, since the cross-compile
-//! jobs build without running, and the board runs have not been asked. If a
-//! row moves on a board and nowhere else, that is the thing to suspect, and it
-//! would be worth knowing rather than worth suppressing.
+//! Device-independent is established by construction. Machine-independent is
+//! not, and is a weaker claim than it sounds: a vertex count comes from a
+//! segment count, which comes from float arithmetic, and while Rust does not
+//! contract multiplies and adds behind your back there is no *guarantee* the
+//! answer is identical on another architecture.
+//!
+//! So it was measured rather than argued. This file's baseline was recorded on
+//! x86-64 and the same binary's table, cross-built for aarch64 and run on a
+//! Raspberry Pi 5, matched it byte for byte on 2026-08-28. One board and one
+//! date, which is not a proof and is a great deal better than a paragraph
+//! explaining why it ought to hold. If a row ever moves on a board and nowhere
+//! else, that is the thing to suspect -- and it is worth knowing rather than
+//! worth suppressing.
 //!
 //! # Why the corpus and not the catalog
 //!
@@ -137,7 +141,18 @@ fn render(costs: &[Cost]) -> String {
     out
 }
 
+/// Where the baseline is, which a board run has to be told.
+///
+/// `CARGO_MANIFEST_DIR` is baked in when the binary is compiled and names a
+/// path on the machine that compiled it. A cross-built test binary shipped to
+/// a board finds nothing there, which is the trap `docs/on-a-board.md` records
+/// for the shader snapshots -- and this would have been the third test that
+/// cannot run from a bare binary. `IMPELLER_COST_BASELINE` names the file
+/// instead, the way `IMPELLER_SHADER_SNAPSHOTS` names its directory.
 fn baseline_path() -> PathBuf {
+    if let Some(path) = std::env::var_os("IMPELLER_COST_BASELINE") {
+        return PathBuf::from(path);
+    }
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("tests")
         .join("cost-baseline.txt")

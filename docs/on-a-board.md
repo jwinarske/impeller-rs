@@ -89,6 +89,14 @@ which is baked in at compile time and names a path on the machine that did the
 compiling. Without it they are the only two tests here that cannot run from a
 bare binary, and a board run can never come out clean.
 
+`IMPELLER_COST_BASELINE`, naming a copy of
+`crates/impeller-testkit/tests/cost-baseline.txt`, for the same reason and with
+the same failure. The cost table is counted rather than measured, so a board is
+where the claim that it is device-independent gets tested against a different
+architecture instead of a different driver -- which is worth doing and cannot
+be done from a binary that looks for its baseline on the machine that compiled
+it. Recorded on x86-64, it matched byte for byte on the Pi 5.
+
 `IMPELLER_DRM_CARD` matters on a board with more than one display controller. A
 Pi 5 has two, and a test that opens the first `/dev/dri/cardN` gets `rp1-dsi`
 rather than `vc4`. A suite that passes on the controller that works says nothing
