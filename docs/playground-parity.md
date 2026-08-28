@@ -79,15 +79,23 @@ what it means here -- so it is a row of `docs/parity.md` rather than a gap in
 the catalog.
 
 This used to add that upstream's own handling was unsettled enough that copying
-it was not the obvious move. Read at tip of tree, that is not so, at least where
-upstream has decided: `line_geometry.cc` pixel-aligns a line whose width is
-zero, and `canvas.cc` says of the same case that it "draws a hairline that is
-always 1 pixel regardless of the transform". What is not settled is the rest --
-the general stroke path multiplies the width by a half with no special case, so
-a stroked circle at zero appears to produce nothing there either, which is what
-this scene draws. So the deviation stands for now and its description does not:
-it is one this project has decided against upstream's decided half, not a gap
-nobody upstream has filled.
+it was not the obvious move. Read at tip of tree, that is not so. Upstream's
+rule is one rule and it covers every stroked geometry -- line, circle, arc and
+path all widen to `max(width, kMinStrokeSize / max_basis)` and all dim by
+`clamp(2 * scaled_width, 0, 1)` -- with zero falling out of it as a full-opacity
+hairline, plus a half-pixel snap for an axis-aligned line under a
+translate-and-scale.
+
+Reading it that way found that this renderer had the *thin* half wrong and not
+only the zero. A sub-pixel stroke was drawn at the width it asked for, which
+against a four-sample grid meant a stroke of 0.18 device pixels and one of 0.3
+laid down identical ink and one of 0.15 laid down none. Upstream's widening and
+dimming are now here, copied constant for constant, which leaves the deviation
+where it always was and nowhere else: zero means no stroke, and a width
+approaching it now fades to nothing continuously rather than stopping at a
+quarter and dropping. That is a decision against upstream's decided position
+rather than a gap nobody upstream has filled, and it is the only part of the
+rule not taken.
 
 All fourteen of the rows below have now been read against the file they name, at
 tip of tree, and the results are set out after the table. Three named their obstacle correctly. Text, where nearly all forty of that

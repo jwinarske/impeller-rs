@@ -58,6 +58,15 @@ smaller triangle than P3's. Nothing between the paint and the target clamps, so
 those components reach a floating-point surface intact, through layers,
 gradients and filters.
 
+A stroke narrower than a device pixel draws differently. It is widened to one
+pixel and dimmed by `clamp(2 * scaled_width, 0, 1)`, which is upstream's
+arithmetic with upstream's constants, so a thin line fades with its width
+instead of quantizing against the sample grid -- before this a stroke of 0.18
+device pixels and one of 0.3 laid down the same ink and one of 0.15 laid down
+none. A width of zero still draws nothing, which is the one part of upstream's
+rule this renderer does not take and is `docs/parity.md`'s `strokeWidth` row.
+`Material::with_opacity` and `StrokeStyle::with_width` are new and public.
+
 A layer says which backdrop it filters. `Layer::with_backdrop_id` is `dart:ui`'s
 `backdropId`: layers naming one filter the image captured the first time it was
 used rather than each capturing afresh, which is a different picture wherever

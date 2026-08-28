@@ -13834,6 +13834,13 @@ fn a_mask_blur_over_a_gradient_matches_what_a_caller_would_assemble() {
 /// documents it as: here it means no line, deliberately, so that a caller
 /// animating a width down to nothing stops drawing rather than watching a
 /// shape refuse to disappear.
+///
+/// That reason is better than it was. A sub-pixel stroke now dims with its
+/// width rather than quantizing against the sample grid, so the animation this
+/// describes fades smoothly to nothing instead of holding at a quarter and
+/// dropping -- see `a_stroke_thinner_than_a_pixel_fades_instead_of_disappearing`.
+/// Upstream, which reads zero as a hairline, jumps back to full opacity at the
+/// end of that same animation.
 #[test]
 fn a_shear_is_no_obstacle_to_a_thin_stroke_and_zero_still_means_none() {
     let Some(mut ctx) = context() else { return };
@@ -14881,4 +14888,115 @@ fn a_backdrop_id_reaches_into_a_layer_opened_after_it() {
         "the id should have carried the white capture into the nested layer, \
          which halves it to about 128, got {got:?}"
     );
+}
+
+/// Total coverage of a white shape on black, in whole pixels.
+fn ink(pixels: &[u8]) -> f64 {
+    pixels.chunks(4).map(|p| p[0] as f64).sum::<f64>() / 255.0
+}
+
+#[test]
+fn a_stroke_thinner_than_a_pixel_fades_instead_of_disappearing() {
+    // Measured before this worked: a vertical stroke 112 pixels long drew the
+    // same amount of ink at a width of 0.18 as at 0.3, and none at all at 0.15.
+    // Multisampling is why -- at four samples a sub-pixel line has four
+    // coverages available to it and one of them is nothing, so how much of it
+    // survives depends on where it falls rather than how wide it is.
+    //
+    // Upstream widens the geometry to a whole device pixel and scales the alpha
+    // to pay for it: `ComputePixelHalfWidth` takes `max(width, 1 / max_basis)`
+    // and `ComputeStrokeAlphaCoverage` returns `clamp(scaled_width * 2, 0, 1)`.
+    // Both are copied rather than improved on, so the numbers below are
+    // upstream's arithmetic and not a local judgment about what looks right.
+    let Some(mut ctx) = context() else { return };
+
+    let line = |ctx: &mut Context, width: f32| {
+        let mut canvas = Canvas::new(SIZE);
+        canvas.clear(Color::BLACK);
+        let mut b = PathBuilder::new();
+        // Off the pixel grid on purpose. A line at a whole coordinate falls
+        // between two columns of samples and is the easiest case; the one that
+        // used to vanish did not.
+        b.move_to(Vec2::new(64.3, 8.0))
+            .line_to(Vec2::new(64.3, 120.0));
+        canvas
+            .draw_path(&b.build(), &Paint::stroke(Color::WHITE, width))
+            .expect("a thin stroke");
+        ink(&render(ctx, canvas))
+    };
+
+    // A whole pixel of width is the reference, and 112 pixels of length is what
+    // the path covers.
+    let whole = line(&mut ctx, 1.0);
+    assert!(
+        (whole - 112.0).abs() < 2.0,
+        "a stroke one pixel wide over 112 pixels should lay down about 112 \
+         pixels of ink, got {whole:.2}"
+    );
+
+    // Half a pixel is the width at which the doubling reaches one, so it draws
+    // as much ink as a whole pixel does. That is upstream's rule and it is the
+    // one place the picture is deliberately heavier than the area asked for.
+    let half = line(&mut ctx, 0.5);
+    assert!(
+        (half - whole).abs() < 3.0,
+        "at half a pixel the alpha scale reaches one, so the ink should match \
+         the whole-pixel case: {half:.2} against {whole:.2}"
+    );
+
+    // Below that it is linear in the width, twice over: half the width is half
+    // the alpha over the same one-pixel geometry.
+    for (width, factor) in [(0.25f32, 0.5), (0.125, 0.25), (0.0625, 0.125)] {
+        let got = line(&mut ctx, width);
+        let want = whole * factor;
+        assert!(
+            (got - want).abs() < 3.0,
+            "a stroke {width} pixels wide should lay down {factor} of the ink a \
+             whole pixel does -- about {want:.2}, got {got:.2}"
+        );
+    }
+
+    // The point of all of it: what used to vanish does not. Before this, 0.15
+    // drew nothing whatsoever.
+    assert!(
+        line(&mut ctx, 0.15) > 20.0,
+        "a stroke of 0.15 pixels should still be visible"
+    );
+}
+
+#[test]
+fn the_two_stroke_routes_thin_out_the_same_way() {
+    // A circle is drawn from a distance field and a path is tessellated, and
+    // the widening had to reach both or which route a shape took would become
+    // visible at exactly the widths hardest to look at. The analytic route did
+    // not have the defect -- it computes coverage rather than sampling it, so
+    // it faded smoothly all the way down -- and that is the reason to check it
+    // rather than the reason to skip it: it is the route where adopting
+    // upstream's rule *changed* a picture that was already continuous.
+    let Some(mut ctx) = context() else { return };
+
+    let circle = |ctx: &mut Context, width: f32| {
+        let mut canvas = Canvas::new(SIZE);
+        canvas.clear(Color::BLACK);
+        canvas
+            .draw_circle(
+                Vec2::new(64.0, 64.0),
+                40.0,
+                &Paint::stroke(Color::WHITE, width),
+            )
+            .expect("a thin circle");
+        ink(&render(ctx, canvas))
+    };
+
+    let whole = circle(&mut ctx, 1.0);
+    for (width, factor) in [(0.5f32, 1.0), (0.25, 0.5), (0.125, 0.25)] {
+        let got = circle(&mut ctx, width);
+        let want = whole * factor;
+        assert!(
+            (got - want).abs() < whole * 0.05,
+            "the analytic route should follow the same rule: a stroke {width} \
+             wide wants {factor} of the whole-pixel ink, about {want:.2}, got \
+             {got:.2}"
+        );
+    }
 }

@@ -793,6 +793,34 @@ fade it" rather than "fade each shape in it": two overlapping half-transparent
 shapes drawn directly show where they cross, and the same pair inside a
 half-transparent layer does not.
 
+**A stroke narrower than a pixel is widened, and dimmed to pay for it.** A
+stroke's width is a length in the space the shape is drawn in, and nothing stops
+a caller asking for one that maps to a fraction of a device pixel. There is no
+honest way to draw that: the tessellated route samples coverage from a
+multisample buffer, so at four samples a sub-pixel line has four coverages
+available to it and one of them is none — measured here, a stroke of 0.18 device
+pixels and one of 0.3 laid down the same ink and one of 0.15 laid down none.
+
+So the geometry is widened to exactly one device pixel and the alpha is scaled
+by `clamp(2 * scaled_width, 0, 1)`, which is upstream's `ComputePixelHalfWidth`
+and `ComputeStrokeAlphaCoverage` with their own constants. The factor of two is
+upstream's, and its own comment calls it eyeballed from Skia; it is carried
+rather than corrected, because the point is that a Flutter app's hairlines look
+here as they look there and any other constant is a different picture at every
+sub-pixel width.
+
+It reaches both stroke routes rather than only the one that needed it. The
+analytic route computes coverage instead of sampling it and so faded smoothly
+already, which is the argument for applying the rule there too and not against
+it: a shape must not change when it changes route, and the two routes are picked
+by properties a caller does not think of as picture-changing.
+
+Zero is the one part of upstream's rule not taken. It reads a width of zero as a
+hairline, one pixel at full opacity; here it is no stroke at all, which
+`docs/parity.md` records as a decision. The widening strengthens that decision
+rather than weakening it — a width animated toward zero now dims continuously to
+nothing, where upstream's fades and then jumps back to full at the end.
+
 **A backdrop filter cuts the pass rather than reading it.** Frosted glass asks
 for the one thing the rule above forbids: a layer whose starting content is the
 target it is about to draw into. So the pass stops. Everything drawn into that

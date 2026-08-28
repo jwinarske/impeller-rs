@@ -13,8 +13,8 @@ use crate::Color;
 use glam::{Affine2, Mat2, Vec2};
 use impeller_geometry::stroke::{LineCap, StrokeStyle};
 use impeller_geometry::transform::{
-    invert_to_local, preserves_axis_alignment, to_local_columns, transformed_bounds, unbounded,
-    viewport_projection, Transform2D,
+    invert_to_local, max_scale, preserves_axis_alignment, to_local_columns, transformed_bounds,
+    unbounded, viewport_projection, Transform2D,
 };
 use impeller_geometry::{FillRule, Path, PathBuilder, Rect as GeometryRect};
 use impeller_hal::{
@@ -1867,14 +1867,26 @@ impl Canvas {
         // Resolved before the clip is read, since it may add a slot to this
         // pass's table.
         let material = self.material_for(&paint.shader);
+        // A stroke too thin to cover a pixel is widened to one and dimmed to
+        // pay for it. See `thin_stroke`; this is the tessellated route, where
+        // the quantization it exists for is at its worst -- coverage comes
+        // from a multisample buffer, so a sub-pixel line has four coverages
+        // available to it and one of them is none.
+        let (style, coverage) = match &paint.style {
+            Style::Stroke(stroke) => {
+                let (width, coverage) = thin_stroke(self.transform, stroke.width);
+                (Style::Stroke(stroke.with_width(width)), coverage)
+            }
+            other => (*other, 1.0),
+        };
         let render_paint = RenderPaint {
-            material,
+            material: material.with_opacity(coverage),
             filter: paint.color_filter,
             blend: paint.blend,
             clip: self.clip,
             stencil: ClipState::content(self.depth),
         };
-        match &paint.style {
+        match &style {
             Style::Fill => {
                 self.renderer
                     .fill_into(&mut self.batch, path, self.transform, &render_paint)?
@@ -2384,7 +2396,12 @@ impl Canvas {
     fn filter_bounds(&self, path: &Path, paint: &Paint) -> Rect {
         let bounds = path.bounds();
         let reach = match &paint.style {
-            Style::Stroke(stroke) if stroke.width.is_finite() => stroke.width / 2.0,
+            // The width the stroke is drawn at, which for a sub-pixel one is
+            // wider than the width it asked for. A bound taken from the asked
+            // width would cut the widening off at the edge of the layer.
+            Style::Stroke(stroke) if stroke.width.is_finite() => {
+                thin_stroke(self.transform, stroke.width).0 / 2.0
+            }
             _ => 0.0,
         };
         Rect::new(
@@ -3060,7 +3077,9 @@ impl Canvas {
         if !paint.is_visible() || self.clip.is_some_and(Scissor::is_empty) {
             return None;
         }
-        let stroke = analytic_stroke(paint)?;
+        // Widened and dimmed on the same terms the tessellated route is, so
+        // that which route a shape takes stays invisible. See `thin_stroke`.
+        let (stroke, coverage) = thin_stroke(self.transform, analytic_stroke(paint)?);
         let Shader::Solid(color) = &paint.shader else {
             return None;
         };
@@ -3076,7 +3095,7 @@ impl Canvas {
             (rect.top + rect.bottom) / 2.0,
         );
         Some(Material::RoundedRect {
-            color: color.to_array(),
+            color: dimmed(*color, coverage),
             half_size: [rect.width() / 2.0, rect.height() / 2.0],
             // Maps a clip-space position back into the shape's own space,
             // measured from its center, so the distance is measured where the
@@ -3105,7 +3124,8 @@ impl Canvas {
         // A pixel for the coverage ramp, plus half the stroke where one is
         // traced: an outline straddles the edge, so it reaches outward by half
         // its width beyond the shape it belongs to.
-        let reach = 1.0 + analytic_stroke(paint).unwrap_or(0.0) / 2.0;
+        let reach =
+            1.0 + thin_stroke(self.transform, analytic_stroke(paint).unwrap_or(0.0)).0 / 2.0;
         let outset = Rect::new(
             rect.left - reach,
             rect.top - reach,
@@ -3256,7 +3276,7 @@ impl Canvas {
         if !paint.is_visible() || self.clip.is_some_and(Scissor::is_empty) {
             return None;
         }
-        let stroke = analytic_stroke(paint)?;
+        let (stroke, coverage) = thin_stroke(self.transform, analytic_stroke(paint)?);
         let Shader::Solid(color) = &paint.shader else {
             return None;
         };
@@ -3266,7 +3286,7 @@ impl Canvas {
             (bounds.top + bounds.bottom) / 2.0,
         );
         Some(Material::Ellipse {
-            color: color.to_array(),
+            color: dimmed(*color, coverage),
             half_size: [bounds.width() / 2.0, bounds.height() / 2.0],
             to_local: invert_to_local(to_clip * Affine2::from_translation(center)),
             stroke,
@@ -4735,6 +4755,71 @@ impl Canvas {
 
 /// The constant that makes four cubics approximate a circle.
 const KAPPA: f32 = 0.552_284_8;
+
+/// The smallest a stroke is drawn, in device pixels.
+///
+/// Upstream's `kMinStrokeSize`, and the same value for the same reason: a
+/// stroke narrower than a pixel has no way to cover one, so it either lands on
+/// a sample or misses it. Widening to exactly one and paying for the width in
+/// alpha is what makes a thin line fade instead of flicker.
+const MIN_STROKE_PIXELS: f32 = 1.0;
+
+/// The width a stroke is drawn at, and the alpha that pays for the difference.
+///
+/// A stroke narrower than a device pixel cannot be drawn at the width it asks
+/// for. Multisampling quantizes it: at four samples the only coverages a
+/// sub-pixel line can have are none, a quarter, a half and three quarters, so
+/// a line a fifth of a pixel wide draws at a quarter or vanishes outright
+/// depending on where it falls. Measured here before this existed, a stroke of
+/// 0.18 device pixels and one of 0.3 drew identically, and one of 0.15 drew
+/// nothing at all.
+///
+/// So the geometry is widened to a whole pixel and the alpha is scaled down to
+/// pay for it, which is what upstream does — `ComputePixelHalfWidth` takes
+/// `max(width, kMinStrokeSize / max_basis)` and `ComputeStrokeAlphaCoverage`
+/// returns `clamp(scaled_width * 2, 0, 1)`, a factor its own comment calls
+/// eyeballed from Skia. Both are carried rather than improved on: the whole
+/// point is that a Flutter app's hairlines look here as they look there, and a
+/// different constant would be a different picture at every sub-pixel width.
+///
+/// **Zero is not thin, it is nothing.** Upstream reads a width of zero as a
+/// hairline — one pixel at full alpha — and this renderer reads it as no
+/// stroke, which is `docs/parity.md`'s `strokeWidth` row and is a decision
+/// rather than an omission. It is left alone here, and the fade above only
+/// strengthens it: a caller animating a width down to nothing now sees it
+/// dim continuously to nothing rather than stopping at a quarter and jumping.
+///
+/// A projective transform is left alone too. The widening asks how much a
+/// transform stretches, which for a homography is a different answer at every
+/// point; upstream guards the same case with `HasPerspective2D`.
+fn thin_stroke(transform: Transform2D, width: f32) -> (f32, f32) {
+    let Some(affine) = transform.to_affine() else {
+        return (width, 1.0);
+    };
+    if !width.is_finite() || width <= 0.0 {
+        return (width, 1.0);
+    }
+    let basis = max_scale(&affine);
+    if !basis.is_finite() || basis <= 0.0 {
+        return (width, 1.0);
+    }
+    let scaled = basis * width;
+    if scaled >= MIN_STROKE_PIXELS {
+        return (width, 1.0);
+    }
+    (MIN_STROKE_PIXELS / basis, (scaled * 2.0).clamp(0.0, 1.0))
+}
+
+/// A color at `factor` of its opacity.
+///
+/// The analytic route's materials carry one color rather than a material this
+/// can be asked of, so the two spellings of the same dimming sit beside each
+/// other: [`Material::with_opacity`] and this.
+fn dimmed(color: crate::Color, factor: f32) -> [f32; 4] {
+    let mut c = color.to_array();
+    c[3] *= factor;
+    c
+}
 
 /// The stroke width a paint implies for a fragment-evaluated shape, if one can
 /// be drawn that way at all.

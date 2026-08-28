@@ -932,6 +932,43 @@ impl Material {
         Self::Solid(color)
     }
 
+    /// The same material at `factor` of its opacity.
+    ///
+    /// Applied to every color a material carries, since a gradient's stops may
+    /// differ in alpha and scaling them together is what keeps the ramp the
+    /// same ramp. Straight alpha, so this happens before the premultiply the
+    /// packing does rather than after it.
+    ///
+    /// Two variants are left alone and it is worth saying which. A blur or a
+    /// morphology is a filter over a finished pass rather than a paint, so
+    /// there is no color in it to dim -- and nothing asks this of one. A
+    /// caller's program is the other: its output is whatever it computes, and
+    /// this renderer has no uniform it may write to. That is a real limit
+    /// wherever the caller wanted the dimming, and it is stated at the one
+    /// place that asks for it.
+    #[must_use]
+    pub fn with_opacity(mut self, factor: f32) -> Self {
+        let scale = |color: &mut [f32; 4]| color[3] *= factor;
+        match &mut self {
+            Self::Solid(color)
+            | Self::RoundedRect { color, .. }
+            | Self::RoundedRectBlur { color, .. }
+            | Self::Ellipse { color, .. }
+            | Self::Glyph { color, .. } => scale(color),
+            Self::LinearGradient { stops, .. }
+            | Self::RadialGradient { stops, .. }
+            | Self::SweepGradient { stops, .. }
+            | Self::ConicalGradient { stops, .. } => {
+                for stop in stops.iter_mut() {
+                    scale(&mut stop.color);
+                }
+            }
+            Self::Mesh { alpha, .. } | Self::Image { alpha, .. } => *alpha *= factor,
+            Self::Runtime { .. } | Self::Blur { .. } | Self::Morphology { .. } => {}
+        }
+        self
+    }
+
     /// Whether drawing with this would change anything.
     pub fn is_invisible(&self) -> bool {
         match self {

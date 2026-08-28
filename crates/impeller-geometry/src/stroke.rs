@@ -72,6 +72,12 @@ impl StrokeStyle {
         }
     }
 
+    /// The same style at another width.
+    pub fn with_width(mut self, width: f32) -> Self {
+        self.width = width;
+        self
+    }
+
     pub fn with_cap(mut self, cap: LineCap) -> Self {
         self.cap = cap;
         self
