@@ -452,6 +452,27 @@ fn record_node(canvas: &mut Canvas, node: &Node, anti_alias: bool) -> Result<()>
                         &paint,
                     )?;
                 }
+                Shape::RoundedRectWithRadii { min, max, radii } => {
+                    canvas.draw_rrect_with_radii(
+                        Rect::new(min[0], min[1], max[0], max[1]),
+                        *radii,
+                        &paint,
+                    )?;
+                }
+                Shape::DiffRoundedRectWithRadii {
+                    outer,
+                    outer_radii,
+                    inner,
+                    inner_radii,
+                } => {
+                    canvas.draw_drrect_with_radii(
+                        Rect::new(outer[0][0], outer[0][1], outer[1][0], outer[1][1]),
+                        *outer_radii,
+                        Rect::new(inner[0][0], inner[0][1], inner[1][0], inner[1][1]),
+                        *inner_radii,
+                        &paint,
+                    )?;
+                }
                 Shape::DiffRoundedRect {
                     outer,
                     outer_radius,

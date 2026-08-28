@@ -60,6 +60,20 @@ pub enum Shape {
         /// rather than an outline that crosses itself.
         radius: f32,
     },
+    /// The eight numbers `dart:ui`'s `RRect` carries: an x and a y radius for
+    /// each corner, in upstream's order -- top left, top right, bottom left,
+    /// bottom right.
+    ///
+    /// A variant of its own rather than a widening of the one above, because
+    /// nearly every plate wants one circular radius and a reader of a scene
+    /// should not have to write `[[r, r]; 4]` to say so.
+    RoundedRectWithRadii {
+        min: [f32; 2],
+        max: [f32; 2],
+        /// Fitted by `dart:ui`'s rule where two radii overrun the side they
+        /// share, which is the renderer's own arithmetic rather than a copy.
+        radii: [[f32; 2]; 4],
+    },
     /// Flutter's rounded superellipse -- `dart:ui`'s `drawRSuperellipse`.
     ///
     /// Here as its own variant rather than as a flag on `RoundedRect` because
@@ -91,6 +105,13 @@ pub enum Shape {
         /// Minimum and maximum corners of the inner rectangle.
         inner: [[f32; 2]; 2],
         inner_radius: f32,
+    },
+    /// The same ring, with each rectangle's four corners stated on their own.
+    DiffRoundedRectWithRadii {
+        outer: [[f32; 2]; 2],
+        outer_radii: [[f32; 2]; 4],
+        inner: [[f32; 2]; 2],
+        inner_radii: [[f32; 2]; 4],
     },
     /// An arc, open for a ring or closed through the center for a slice.
     ///
@@ -196,6 +217,9 @@ impl Shape {
             Self::RoundedRect { min, max, radius } => {
                 rounded_contour(&mut b, *min, *max, *radius);
             }
+            Self::RoundedRectWithRadii { min, max, radii } => {
+                radii_contour(&mut b, *min, *max, *radii);
+            }
             Self::RoundSuperellipse { min, max, radii } => {
                 use impeller_geometry::superellipse::{CornerRadii, RoundSuperellipse};
                 RoundSuperellipse::new(
@@ -221,6 +245,16 @@ impl Shape {
                 b = b.with_fill_rule(FillRule::EvenOdd);
                 rounded_contour(&mut b, outer[0], outer[1], *outer_radius);
                 rounded_contour(&mut b, inner[0], inner[1], *inner_radius);
+            }
+            Self::DiffRoundedRectWithRadii {
+                outer,
+                outer_radii,
+                inner,
+                inner_radii,
+            } => {
+                b = b.with_fill_rule(FillRule::EvenOdd);
+                radii_contour(&mut b, outer[0], outer[1], *outer_radii);
+                radii_contour(&mut b, inner[0], inner[1], *inner_radii);
             }
             Self::Circle { center, radius } => {
                 let (cx, cy) = (center[0], center[1]);
@@ -281,6 +315,18 @@ fn trace(b: &mut PathBuilder, points: &[[f32; 2]]) {
             b.line_to(Vec2::from(*p));
         }
     }
+}
+
+/// Trace a rounded rectangle whose corners differ, as one closed contour.
+///
+/// Delegated to the renderer's own construction rather than traced here, for
+/// the reason the executor sends a rounded rectangle through `draw_rrect`
+/// rather than through its path: the scaling `dart:ui` applies when two radii
+/// overrun the side between them is part of what the shape *is*, and a second
+/// copy of that rule here could disagree with the first while still looking
+/// like a rounded rectangle.
+fn radii_contour(b: &mut PathBuilder, min: [f32; 2], max: [f32; 2], radii: [[f32; 2]; 4]) {
+    impeller_core::Rect::new(min[0], min[1], max[0], max[1]).add_rounded_outline(b, radii);
 }
 
 /// Trace a rounded rectangle as one closed contour.

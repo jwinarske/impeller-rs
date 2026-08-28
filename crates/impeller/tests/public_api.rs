@@ -15000,3 +15000,88 @@ fn the_two_stroke_routes_thin_out_the_same_way() {
         );
     }
 }
+
+#[test]
+fn the_two_ways_to_draw_a_ring_agree_on_its_color() {
+    // Upstream's `CompareDiffRoundRectAndRoundRect` puts the two side by side
+    // and leaves the comparison to whoever is looking. Here it is the
+    // assertion: a difference of two rounded rectangles is one path filled
+    // even-odd, and the outer one with the inner cleared out of it is two
+    // draws and a destination-clearing blend. They share nothing, so a defect
+    // in either shows up as the pair disagreeing -- and eight radii per
+    // rectangle is where a defect would be, since every corner is a different
+    // curvature.
+    //
+    // Color and not alpha. `Clear` makes the hole transparent where the
+    // even-odd fill leaves whatever was under it, so the two agree on what
+    // they painted and differ on what they left behind. That difference is the
+    // blend doing its job, and it is invisible on any opaque target.
+    let Some(mut ctx) = context() else { return };
+
+    let outer = Rect::new(20.0, 20.0, 108.0, 108.0);
+    let inner = Rect::new(26.0, 26.0, 102.0, 102.0);
+    // Ascending around the outer rectangle, each inner radius six less, which
+    // is what keeps the ring an even thickness at four curvatures.
+    let outer_radii = [[6.0, 6.0], [12.0, 12.0], [24.0, 24.0], [54.0, 54.0]];
+    let inner_radii = [[0.0, 0.0], [6.0, 6.0], [18.0, 18.0], [48.0, 48.0]];
+    let sky = Color::srgb(135.0 / 255.0, 206.0 / 255.0, 235.0 / 255.0, 1.0);
+
+    let differenced = {
+        let mut canvas = Canvas::new(SIZE);
+        canvas.clear(Color::BLACK);
+        canvas
+            .draw_drrect_with_radii(outer, outer_radii, inner, inner_radii, &Paint::fill(sky))
+            .expect("a difference of two rounded rectangles");
+        render(&mut ctx, canvas)
+    };
+    let cleared = {
+        let mut canvas = Canvas::new(SIZE);
+        canvas.clear(Color::BLACK);
+        canvas
+            .draw_rrect_with_radii(outer, outer_radii, &Paint::fill(sky))
+            .expect("the outer rectangle");
+        canvas
+            .draw_rrect_with_radii(
+                inner,
+                inner_radii,
+                &Paint::fill(sky).with_blend(BlendMode::Clear),
+            )
+            .expect("the inner rectangle cleared out of it");
+        render(&mut ctx, canvas)
+    };
+
+    let mut worst = 0i32;
+    let mut differing = 0usize;
+    for (a, b) in differenced.chunks_exact(4).zip(cleared.chunks_exact(4)) {
+        let delta = a[..3]
+            .iter()
+            .zip(&b[..3])
+            .map(|(p, q)| (*p as i32 - *q as i32).abs())
+            .max()
+            .unwrap_or(0);
+        worst = worst.max(delta);
+        if delta > 0 {
+            differing += 1;
+        }
+    }
+    assert_eq!(
+        (worst, differing),
+        (0, 0),
+        "the two constructions of one ring should be the same color everywhere: \
+         {differing} pixel(s) differ, worst by {worst}"
+    );
+
+    // And the ring is actually there, so the agreement above is not two blank
+    // frames agreeing.
+    let on_the_ring = pixel(&differenced, 64, 23);
+    assert!(
+        on_the_ring[2] > 200 && on_the_ring[0] > 100,
+        "the top edge of the ring should be sky blue, got {on_the_ring:?}"
+    );
+    let inside = pixel(&differenced, 64, 64);
+    assert_eq!(
+        inside,
+        [0, 0, 0, 255],
+        "the middle should be the hole, not the fill"
+    );
+}

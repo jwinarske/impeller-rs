@@ -159,6 +159,25 @@ impl Rect {
         path.build()
     }
 
+    /// Add this rectangle's rounded outline to a path already being built.
+    ///
+    /// [`Self::to_rounded_path_with_radii`] is this and nothing else when the
+    /// path holds one contour. It is public for the case that one cannot
+    /// serve: a shape made of two of these -- the ring `drawDRRect` fills, or a
+    /// caller's own compound outline -- needs both contours in one path, and a
+    /// path built from two paths is not something this crate offers.
+    ///
+    /// The radii are fitted on the way in by [`Self::fitted_radii`], so a
+    /// caller passing radii that overrun a side gets the same scaling
+    /// `drawRRect` would apply rather than an outline that crosses itself.
+    pub fn add_rounded_outline(self, path: &mut PathBuilder, radii: RoundingRadii) {
+        if self.is_empty() {
+            return;
+        }
+        let radii = self.fitted_radii(radii);
+        self.add_rounded_contour_with_radii(path, radii);
+    }
+
     /// The radii this rectangle can actually carry, made finite and made to fit.
     ///
     /// The fitting is `dart:ui`'s rule: find the edge whose two radii overrun

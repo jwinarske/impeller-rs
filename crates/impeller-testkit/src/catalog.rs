@@ -50,6 +50,8 @@ const GREEN: [f32; 4] = [0.0, 1.0, 0.0, 1.0];
 const BLUE: [f32; 4] = [0.2, 0.4, 1.0, 1.0];
 /// The same blue at half alpha, for the plate whose stroke overlaps itself.
 const BLUE_HALF: [f32; 4] = [0.2, 0.4, 1.0, 0.5];
+/// Skia's `kSkyBlue`, which upstream's difference-of-rounded-rects draws in.
+const SKY_BLUE: [f32; 4] = [135.0 / 255.0, 206.0 / 255.0, 235.0 / 255.0, 1.0];
 const YELLOW: [f32; 4] = [1.0, 0.9, 0.1, 1.0];
 /// The ground every plate clears to.
 ///
@@ -78,6 +80,7 @@ pub fn catalog() -> Vec<Scene> {
     scenes.extend(blur_variants());
     scenes.extend(backdrop_ids());
     scenes.extend(basic_pictures());
+    scenes.extend(rounded_rect_radii());
     scenes.extend(layers());
     scenes.extend(runtime_effect());
     scenes.extend(backdrops());
@@ -2763,6 +2766,150 @@ fn sheet(rect: [f32; 4], source: [f32; 4], tile: TileMode, sampling: Sampling) -
         alpha: 1.0,
         tint: WHITE,
     }
+}
+
+/// The rounded-rectangle plates that eight radii unblocked.
+///
+/// `docs/playground-parity.md` records five basic-chapter scenes that a single
+/// circular radius could not describe, and records the limit being built rather
+/// than kept. What it did not record is that the scenes stayed unwritten
+/// afterwards, which is the ordinary way a built capability goes unexercised:
+/// nothing fails when a picture nobody drew is missing.
+///
+/// Coordinates are a fifth of upstream's, which is what fits shapes drawn at
+/// five hundred points onto a plate of a hundred and twenty-eight.
+fn rounded_rect_radii() -> Vec<Scene> {
+    const FIFTH: f32 = 0.2;
+    let f = |v: f32| v * FIFTH;
+
+    vec![
+        // Upstream's four corners, no two of which are the same pair, and none
+        // circular: fifty by twenty-five and its transpose, arranged so the
+        // shape is symmetric across both diagonals. A renderer that read the
+        // pair in the wrong order draws the transpose, which is a different
+        // shape and is still a plausible rounded rectangle -- which is why the
+        // symmetry matters. It is symmetric under swapping *both* members of
+        // every pair and not under swapping the corners.
+        plate(
+            "basic/can-render-rounded-rect-with-non-uniform-radii",
+            vec![Item::fill(
+                Shape::RoundedRectWithRadii {
+                    min: [f(100.0), f(100.0)],
+                    max: [f(600.0), f(600.0)],
+                    radii: [
+                        [f(50.0), f(25.0)],
+                        [f(25.0), f(50.0)],
+                        [f(25.0), f(50.0)],
+                        [f(50.0), f(25.0)],
+                    ],
+                },
+                RED,
+            )],
+        ),
+        // `NoDimplesInRRectPath` at its sliders' defaults, which is where it is
+        // interesting: a corner radius of fifty across and a hundred down on a
+        // rectangle sixty tall. The y radius overruns half the height by more
+        // than three times, so every radius is scaled by `dart:ui`'s rule, and
+        // the dimple the scene is named for is what appears when the scaling is
+        // applied per corner instead of once for the whole shape.
+        Scene::tree(
+            "basic/no-dimples-in-r-rect-path",
+            vec![
+                Node::Paint(Box::new(PaintSpec {
+                    color: [0.1, 0.1, 0.1, 1.0],
+                    blend: BlendMode::SrcOver,
+                    clip: None,
+                    clip_out: None,
+                    transform: Transform::default(),
+                })),
+                Node::Draw(Box::new(
+                    // A half rather than the fifth the others use: this shape
+                    // is two hundred by sixty where they are five hundred
+                    // square, and at a fifth its corners would be four pixels
+                    // across.
+                    Item::filled(
+                        Shape::RoundedRectWithRadii {
+                            min: [14.0, 49.0],
+                            max: [114.0, 79.0],
+                            radii: [[25.0, 50.0]; 4],
+                        },
+                        Fill::LinearGradient {
+                            start: [14.0, 49.0],
+                            end: [114.0, 149.0],
+                            stops: vec![Stop::new(RED, 0.0), Stop::new(BLUE, 1.0)],
+                            tile: TileMode::Clamp,
+                        },
+                    )
+                    .with_stroke(StrokeSpec::new(10.0)),
+                )),
+            ],
+        )
+        .with_background(DARK)
+        .with_samples(4),
+        // The ring drawn twice: once as a difference of two rounded rectangles,
+        // and once as the outer one with the inner cleared out of it. The two
+        // are the same picture, which is the whole of the scene -- an even-odd
+        // fill and a destination-clearing blend arrive at it by routes that
+        // share nothing, so a bug in either shows as the pair disagreeing.
+        //
+        // The radii ascend around the outer rectangle -- five, ten, twenty,
+        // fifty -- and the inner ones are each five less, which is what makes
+        // the ring an even thickness at four different corner curvatures.
+        {
+            let ring = |dx: f32| {
+                let dy = f(50.0);
+                let o = [[dx + f(0.0), dy], [dx + f(100.0), dy + f(100.0)]];
+                let i = [[dx + f(5.0), dy + f(5.0)], [dx + f(95.0), dy + f(95.0)]];
+                let outer_radii = [[f(5.0); 2], [f(10.0); 2], [f(20.0); 2], [f(50.0); 2]];
+                let inner_radii = [[f(0.0); 2], [f(5.0); 2], [f(15.0); 2], [f(45.0); 2]];
+                (o, outer_radii, i, inner_radii)
+            };
+            let (o, orad, i, irad) = ring(f(60.0));
+            let (o2, orad2, i2, irad2) = ring(f(360.0));
+            Scene::tree(
+                "basic/compare-diff-round-rect-and-round-rect",
+                vec![
+                    Node::Paint(Box::new(PaintSpec {
+                        color: [0.0, 0.0, 0.0, 1.0],
+                        blend: BlendMode::Src,
+                        clip: None,
+                        clip_out: None,
+                        transform: Transform::default(),
+                    })),
+                    Node::Draw(Box::new(Item::fill(
+                        Shape::DiffRoundedRectWithRadii {
+                            outer: o,
+                            outer_radii: orad,
+                            inner: i,
+                            inner_radii: irad,
+                        },
+                        SKY_BLUE,
+                    ))),
+                    Node::Draw(Box::new(Item::fill(
+                        Shape::RoundedRectWithRadii {
+                            min: o2[0],
+                            max: o2[1],
+                            radii: orad2,
+                        },
+                        SKY_BLUE,
+                    ))),
+                    Node::Draw(Box::new(
+                        Item::fill(
+                            Shape::RoundedRectWithRadii {
+                                min: i2[0],
+                                max: i2[1],
+                                radii: irad2,
+                            },
+                            SKY_BLUE,
+                        )
+                        .with_blend(BlendMode::Clear),
+                    )),
+                ],
+            )
+            .with_background(DARK)
+            .with_samples(4)
+        },
+    ]
 }
 
 /// Five more of `aiks_dl_basic_unittests.cc`, none of which needed anything

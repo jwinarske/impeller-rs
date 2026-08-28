@@ -142,7 +142,7 @@ column is right and the obvious way to check it is wrong.
 
 | File | Scenes there | Here | Blocked on |
 |---|---|---|---|
-| `aiks_dl_basic_unittests.cc` | ~85 | 58 | subpass optimizations; see below |
+| `aiks_dl_basic_unittests.cc` | ~85 | 61 | subpass optimizations; see below |
 | `aiks_dl_path_unittests.cc` | ~30 | 21 | nothing; see below |
 | `aiks_dl_gradient_unittests.cc` | ~40 | 31 | nothing; see below |
 | `aiks_dl_clip_unittests.cc` | ~5 | 7 | nothing; this file is covered |
@@ -157,7 +157,7 @@ column is right and the obvious way to check it is wrong.
 | `aiks_dl_runtime_effect_unittests.cc` | — | 12 | nothing; see below |
 | `aiks_dl_unittests.cc` | ~36 | 15 | subpass collapse, for five of them; see below |
 
-The catalog holds two hundred and seventy-six scenes of roughly four hundred,
+The catalog holds two hundred and seventy-nine scenes of roughly four hundred,
 and the proportion is less interesting than which ones: the arithmetic of drawing is largely covered, and
 what is missing is either a capability this renderer does not have or a thing
 the scene model cannot describe.
@@ -412,6 +412,19 @@ down the diagonal with the middle one inside a layer, which is the only plate
 that says when a layer composites: it goes behind the square drawn after it and
 in front of the one drawn before, and a renderer that composited layers last
 would put it in front of both.
+
+Three more went in after that, and they are the ones this column's own history
+points at. The eight-radius rounded rectangle was found as an obstacle here,
+recorded, and built -- and then the scenes it unblocked stayed unwritten, which
+is the ordinary way a built capability goes unexercised: nothing fails when a
+picture nobody drew is missing. So there is a rectangle whose four corners are
+four different ellipses, one whose radii overrun the side they share by three
+times and are scaled by `dart:ui`'s rule, and one that draws a ring twice --
+once as a difference of two rounded rectangles and once as the outer one with
+the inner cleared out of it. That last pair agrees to the byte in color and
+differs only in alpha, which is `Clear` doing its job; the agreement is asserted
+rather than left to a reader, and it is sensitive to a two-pixel change in one
+corner's radius.
 
 The blend row named two obstacles and one of them was misread, for three of
 that file's twenty-one tests. Two are named for framebuffer fetch and one is
