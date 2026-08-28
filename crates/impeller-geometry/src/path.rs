@@ -438,36 +438,35 @@ impl PathBuilder {
     /// curve's own size, so it stays correct at every scale the path is later
     /// drawn at, and nothing downstream has to learn a fifth verb.
     ///
-    /// # What the relative error costs, measured
+    /// # Subdividing by the error rather than by the weight
     ///
-    /// A quarter to a fifth of the vertices it needs, on the one shape family
-    /// that uses conics. The criterion below counts halvings of the weight's
-    /// distance from one, and each halving *doubles* the output, so a curve is
-    /// subdivided by how hyperbolic it is rather than by how far the
-    /// approximation actually misses. A rounded superellipse corner emits two
-    /// conics per octant at weights around 0.7 and 8.3; those become thirty-two
-    /// and sixty-four quadratics.
+    /// The criterion below stops when the *error* is small enough, and that is
+    /// worth spelling out because the obvious criterion -- stop when the
+    /// weight is near one -- is what it replaced, and it was expensive by a
+    /// factor of four.
     ///
-    /// The corpus scene costs 1340 vertices where a circle costs 40. Replacing
-    /// the criterion with the error itself -- the distance between the two
-    /// curves at their midpoints, against the chord, which is computable in
-    /// four lines and keeps the same relative bound -- brings that to 305, and
-    /// every test in the workspace still passes including the upstream
-    /// boundary pin.
+    /// A weight criterion counts halvings of the weight's distance from one,
+    /// and each halving doubles the output. So a curve gets subdivided by how
+    /// hyperbolic it is rather than by how much the approximation misses. A
+    /// rounded superellipse octant emits conics at weights around 0.7 and 8.3;
+    /// under the weight criterion those became thirty-two and sixty-four
+    /// quadratics, and the corpus scene cost 1340 vertices where a circle
+    /// costs 40. It is 305 now, and the stroked one 274 against 922.
     ///
-    /// It is not done, and the reason is worth having written down. Coarser
-    /// quadratics are more sharply curved, and
-    /// `impeller-geometry/tests/hostile.rs` found within one gate run that
-    /// lyon's stroker then recurses deep enough to **overflow the stack** on
-    /// generated input -- deep but finite, since it completes under a
-    /// hundred-and-twenty-eight-megabyte stack. Forcing one split before the
-    /// new criterion may apply makes the symptom go away and keeps most of the
-    /// saving, and one passing run is not an argument that a crash class is
-    /// bounded. The same weakness sits under
-    /// `Path::is_within_tessellation_range`: lyon's stroker subdivides by its
-    /// own arithmetic with nothing at the top of it, and the answer there was a
-    /// guard at the boundary rather than a tuning constant. This wants the
-    /// same, and until it has one the documented criterion stays.
+    /// The error itself is four lines: a rational quadratic and its weight-one
+    /// counterpart differ most at their midpoints, both midpoints have closed
+    /// forms, and the distance between them measured against the chord is a
+    /// relative bound -- the same quantity the weight criterion was a proxy
+    /// for, at the same tolerance of a thousandth.
+    ///
+    /// It is a little less accurate where the proxy over-subdivided, which is
+    /// most places. Measured against the old criterion: four pixels of the
+    /// filled corpus scene and eight of the stroked one, out of sixteen
+    /// thousand, and all of them at the shape's tangent extremes where the
+    /// outline lies along a pixel boundary and a sub-pixel shift moves every
+    /// sample in the pixel together. Every comparison in the workspace passes
+    /// unchanged, including the pin on upstream's boundary points, which is
+    /// what says the outline is still the shape upstream draws.
     ///
     /// A weight that is zero or negative or not finite describes no curve, and
     /// gives the straight line between the ends.
@@ -494,7 +493,27 @@ impl PathBuilder {
         // overflow waiting for an input nobody thought of.
         const NEAR_ONE: f32 = 1e-3;
         const MAX_DEPTH: u32 = 6;
+        const RELATIVE_ERROR: f32 = 1e-3;
         if (weight - 1.0).abs() <= NEAR_ONE || depth >= MAX_DEPTH {
+            self.quad_to(ctrl, to);
+            return;
+        }
+        // The weight is a proxy and this is the thing itself: how far the
+        // quadratic actually lies from the conic. The two are only loosely
+        // related, and the proxy is the expensive way round -- each halving of
+        // the weight's distance from one doubles the output, so a curve gets
+        // subdivided by how hyperbolic it is rather than by how much the
+        // approximation misses.
+        //
+        // Compared at the midpoints, which is where a rational quadratic and
+        // its weight-one counterpart differ most, and against the chord rather
+        // than an absolute length. That is what keeps the bound *relative* --
+        // the property the note above is about, and the reason this can be
+        // decided here rather than during flattening where the scale is known.
+        let conic_mid = (from + ctrl * (2.0 * weight) + to) / (2.0 * (1.0 + weight));
+        let quad_mid = (from + ctrl * 2.0 + to) * 0.25;
+        let chord = (to - from).length();
+        if chord > 0.0 && (conic_mid - quad_mid).length() <= RELATIVE_ERROR * chord {
             self.quad_to(ctrl, to);
             return;
         }

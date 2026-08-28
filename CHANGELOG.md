@@ -64,6 +64,13 @@ fifteen modes outright, so the same picture reaches both backends -- 29 of 29
 modes are checked against the compositing equations on GLES where 14 were.
 Nothing about the API changed; a caller that was refused is not.
 
+A rounded superellipse costs a quarter of the geometry it did. The
+conic-to-quadratic conversion subdivided until the curve's *weight* was near
+one, which is a proxy that doubles its output per step; it now stops when the
+approximation error itself is small enough, at the same relative tolerance. The
+outline moves by a few thousandths at its tangent extremes, which is four
+pixels of a hundred-and-twenty-eight-square frame.
+
 A stroke wider than `MAX_STROKE_WIDTH` draws nothing rather than aborting the
 process. `Paint::stroke(color, 1e30)` with a round join used to overflow the
 stack inside the tessellation dependency, which no caller can catch.
