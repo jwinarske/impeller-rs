@@ -947,6 +947,32 @@ coordinate there cannot name a pixel and no picture depends on one. And
 measured, a curve at that magnitude strokes to about twenty thousand vertices,
 which is a shape rather than an allocation.
 
+A fourth guard is the stroke width, and it is the one that mattered most.
+`Paint::stroke(color, 1e30)` with a round join, through `Canvas::draw_path`,
+**aborted the process** — not a panic a caller could catch but a stack
+overflow, which unwinds nothing. Lyon computes a round join's subdivision count
+as `num_segments.log2().round() as u32`, and Rust's `as` cast saturates rather
+than wrapping or trapping: where that expression reaches infinity the count
+becomes `u32::MAX` and is then used as a recursion depth. Four billion frames
+is the stack.
+
+`MAX_STROKE_WIDTH` is a sixteenth of the coordinate range, and unlike the other
+bounds it is a margin around a measured cliff rather than a limit derived from
+anything. Bisected: eight million tessellates and sixteen million overflows, so
+the bound leaves an eightfold margin below the nearest width observed to fail.
+The cliff's position depends on the tolerance, the path and the version of the
+dependency, so a limit set at the edge would be a limit set for one of them —
+and a stroke wider than a million units has no picture in it at any scale this
+renderer draws at, so the margin costs nothing.
+
+Two things about how it was found are worth keeping. It is a *shipping* bug,
+not one a speculative change introduced: it reproduces on the released
+criterion three runs out of three at eight thousand generated cases. And the
+property test had been passing over it — at five hundred and twelve cases it
+surfaced perhaps one run in three, which is a test reporting the absence of a
+defect intermittently. That property now runs four thousand cases, and the
+reason is written beside the number.
+
 The third guard is the tolerance, which was passed through untouched. Zero
 trips an assertion inside lyon's flattener; a tolerance that is not a positive
 length is not a tolerance, and falls back to the default on the reading this

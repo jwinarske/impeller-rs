@@ -130,6 +130,32 @@ pub struct Path {
 /// why this is the value.
 pub const MAX_COORDINATE: f32 = 16_777_216.0;
 
+/// The widest stroke the tessellator will accept, a sixteenth of
+/// [`MAX_COORDINATE`].
+///
+/// Unlike the coordinate bound, this one is a *margin around a measured cliff*
+/// rather than a limit derived from anything, and it is worth being plain
+/// about that. Lyon computes a round join's subdivision count as
+/// `num_segments.log2().round() as u32`, and Rust's `as` cast saturates: where
+/// that expression reaches infinity the count becomes `u32::MAX` and is used
+/// as a recursion depth. Four billion frames is a stack overflow, which
+/// unwinds nothing and cannot be caught, and it is reachable in four lines
+/// through `Canvas::draw_path`.
+///
+/// Bisected on a three-segment path at a quarter-pixel tolerance: a width of
+/// eight million tessellates (ten thousand vertices, growing linearly with the
+/// width, which is the round join being subdivided as its radius grows), and
+/// sixteen million overflows. The bound is a sixteenth of the coordinate
+/// range, which leaves an eightfold margin below the nearest width observed to
+/// fail.
+///
+/// The margin is what a bound around someone else's arithmetic is worth: the
+/// cliff's position depends on the tolerance, the path and the version of the
+/// dependency, so a limit set at the edge would be a limit set for one of
+/// them. A stroke wider than a million units has no picture in it at any scale
+/// this renderer draws at, so nothing is lost by staying far away.
+pub const MAX_STROKE_WIDTH: f32 = MAX_COORDINATE / 16.0;
+
 impl Path {
     pub fn builder() -> PathBuilder {
         PathBuilder::new()

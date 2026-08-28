@@ -250,7 +250,13 @@ fn in_range_stroke() -> impl Strategy<Value = StrokeStyle> {
 }
 
 proptest! {
-    #![proptest_config(ProptestConfig { cases: 512, ..ProptestConfig::default() })]
+    // Five hundred and twelve was too few, and finding that out is the point.
+    // The stack overflow below took eight thousand cases to appear reliably --
+    // at five hundred it surfaced perhaps one run in three, which is how the
+    // gate stayed green over a bug that aborts the process. A property test
+    // that finds a defect intermittently is a property test that reports the
+    // absence of one intermittently.
+    #![proptest_config(ProptestConfig { cases: 4096, ..ProptestConfig::default() })]
 
     /// Filling anything at all leaves buffers the GPU can index.
     #[test]
@@ -377,7 +383,7 @@ proptest! {
 /// down or allocated without bound before the boundary guards existed.
 mod found_by_generation {
     use super::*;
-    use impeller_geometry::MAX_COORDINATE;
+    use impeller_geometry::{MAX_COORDINATE, MAX_STROKE_WIDTH};
 
     /// `debug_assert!(tolerance >= S::EPSILON * S::EPSILON)` inside lyon's
     /// cubic flattener. A tolerance of zero is a number a caller can arrive at
@@ -418,6 +424,48 @@ mod found_by_generation {
         let mut tess = Tessellator::new();
         assert!(tess.fill(&path, 0.25).is_empty());
         assert!(tess.stroke(&path, &StrokeStyle::new(4.0), 0.25).is_empty());
+    }
+
+    /// A stroke wide enough to make lyon's round join recurse four billion
+    /// deep, which is a stack overflow and cannot be caught.
+    ///
+    /// The mechanism is worth writing out because it is not the shape of bug
+    /// the guards above are for. Lyon computes a round join's subdivision
+    /// count as `num_segments.log2().round() as u32`, and Rust's `as` cast
+    /// *saturates*: an infinite `num_segments` -- which a zero flattening step
+    /// produces, and a huge radius does -- becomes `u32::MAX` rather than
+    /// wrapping or panicking. That value is then used as a recursion depth.
+    ///
+    /// Reachable through the public API in four lines:
+    /// `Canvas::draw_path` with `Paint::stroke(color, 1e30)` and a round join
+    /// aborted the process, with no device involved. A stack overflow unwinds
+    /// nothing, so no amount of care at the call site helps; the width has to
+    /// be refused before lyon sees it.
+    #[test]
+    fn a_stroke_wider_than_the_coordinate_range_is_refused() {
+        let mut b = PathBuilder::new();
+        b.move_to(Vec2::new(10.0, 10.0))
+            .line_to(Vec2::new(50.0, 10.0))
+            .line_to(Vec2::new(50.0, 50.0));
+        let path = b.build();
+        let mut tess = Tessellator::new();
+
+        for width in [1e30f32, f32::MAX, f32::INFINITY, MAX_STROKE_WIDTH * 2.0] {
+            let style = StrokeStyle::new(width)
+                .with_cap(LineCap::Round)
+                .with_join(LineJoin::Round);
+            assert!(
+                tess.stroke(&path, &style, 0.25).is_empty(),
+                "a stroke {width:e} wide should be refused"
+            );
+        }
+
+        // And the width just inside the bound still draws, so the guard is a
+        // bound rather than a refusal of strokes.
+        let style = StrokeStyle::new(MAX_STROKE_WIDTH)
+            .with_cap(LineCap::Round)
+            .with_join(LineJoin::Round);
+        assert!(!tess.stroke(&path, &style, 0.25).is_empty());
     }
 
     /// The one with the widest blast radius, and the one no assertion catches

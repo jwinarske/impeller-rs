@@ -64,6 +64,11 @@ fifteen modes outright, so the same picture reaches both backends -- 29 of 29
 modes are checked against the compositing equations on GLES where 14 were.
 Nothing about the API changed; a caller that was refused is not.
 
+A stroke wider than `MAX_STROKE_WIDTH` draws nothing rather than aborting the
+process. `Paint::stroke(color, 1e30)` with a round join used to overflow the
+stack inside the tessellation dependency, which no caller can catch.
+`MAX_STROKE_WIDTH` is new and public.
+
 A path is bounded before it is tessellated. A coordinate past two to the
 twenty-fourth is refused rather than drawn, because past that a float cannot
 name a pixel and because a stroke at a larger one grows without bound -- three

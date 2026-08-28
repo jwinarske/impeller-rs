@@ -158,6 +158,21 @@ impl Tessellator {
             self.buffers.clear();
             return &self.buffers;
         }
+        // And the width, which is a length like any other and is the one that
+        // took the process down. A stroke's outline is offset by half its
+        // width, so a width outside the range a coordinate may occupy
+        // describes a band wider than the whole space the tessellator will
+        // accept a point in -- there is no picture in it, and the same
+        // argument that bounds a coordinate bounds this.
+        //
+        // Measured before the guard: `Paint::stroke(color, 1e30)` with a round
+        // join, through `Canvas::draw_path`, aborted the process. See
+        // `MAX_STROKE_WIDTH` for the mechanism, where the cliff was bisected
+        // to, and why the bound sits well below it rather than at it.
+        if !style.width.is_finite() || style.width > crate::path::MAX_STROKE_WIDTH {
+            self.buffers.clear();
+            return &self.buffers;
+        }
         let tolerance = usable_tolerance(tolerance);
         use lyon_tessellation::{
             BuffersBuilder, LineCap as LyonCap, LineJoin as LyonJoin, StrokeOptions,

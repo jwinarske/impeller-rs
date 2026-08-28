@@ -15409,3 +15409,56 @@ fn a_layer_matrix_does_not_recover_what_fell_outside_the_layer() {
          -- or something else changed"
     );
 }
+
+#[test]
+fn a_stroke_too_wide_to_tessellate_draws_nothing_rather_than_aborting() {
+    // The most serious thing the generated tests have found, and the only one
+    // reachable in four lines of ordinary API use. `Paint::stroke(color, 1e30)`
+    // with a round join used to take the process down -- not a panic a caller
+    // could catch, a stack overflow, which unwinds nothing.
+    //
+    // Lyon computes a round join's subdivision count as
+    // `num_segments.log2().round() as u32`, and Rust's `as` cast saturates: an
+    // infinite `num_segments` becomes `u32::MAX` and is then used as a
+    // recursion depth. `MAX_STROKE_WIDTH` keeps a width that could reach it
+    // from being handed over at all.
+    //
+    // Here rather than only in the geometry crate because the point is the
+    // route: this is what a caller of the *renderer* can write.
+    let Some(mut ctx) = context() else { return };
+
+    let bar = |width: f32| {
+        let mut b = PathBuilder::new();
+        b.move_to(Vec2::new(20.0, 40.0))
+            .line_to(Vec2::new(90.0, 40.0))
+            .line_to(Vec2::new(90.0, 100.0));
+        let mut canvas = Canvas::new(SIZE);
+        canvas.clear(Color::BLACK);
+        let paint = Paint::stroke(Color::WHITE, width).with_style(Style::Stroke(
+            StrokeStyle::new(width)
+                .with_cap(LineCap::Round)
+                .with_join(LineJoin::Round),
+        ));
+        canvas.draw_path(&b.build(), &paint).expect("a stroke");
+        canvas
+    };
+
+    // An ordinary width draws, so the refusal below is about the width and not
+    // about the path.
+    let drawn = render(&mut ctx, bar(6.0));
+    assert!(
+        drawn.chunks_exact(4).filter(|p| p[0] > 128).count() > 200,
+        "a six-wide stroke should draw"
+    );
+
+    // And the widths that could reach the recursion draw nothing at all --
+    // reaching this line is most of the assertion, since the failure being
+    // guarded against never returns.
+    for width in [1e30f32, f32::MAX, 1e9] {
+        let blank = render(&mut ctx, bar(width));
+        assert!(
+            blank.chunks_exact(4).all(|p| p[0] < 8),
+            "a stroke {width:e} wide should draw nothing"
+        );
+    }
+}
