@@ -11,7 +11,7 @@ use crate::ramp::Ramp;
 use crate::vertices::{Sprite, VertexMode, Vertices};
 use crate::Color;
 use glam::{Affine2, Mat2, Vec2};
-use impeller_geometry::stroke::{LineCap, StrokeStyle};
+use impeller_geometry::stroke::{LineCap, LineJoin, StrokeStyle};
 use impeller_geometry::transform::{
     invert_to_local, max_scale, preserves_axis_alignment, to_local_columns, transformed_bounds,
     unbounded, viewport_projection, Transform2D,
@@ -3095,6 +3095,27 @@ impl Canvas {
         // discards a pixel at a time.
         if !paint.is_visible() || self.clip.is_some_and(Scissor::is_empty) {
             return None;
+        }
+        // A stroked rectangle with square corners is the one shape this route
+        // draws differently, and it took a plate sending a rectangle through
+        // `draw_rect` to notice. A distance field's stroke is the band a fixed
+        // distance either side of the outline, and at a vertex that band's
+        // outer edge is an arc -- so the corners come out *rounded*, where
+        // `dart:ui`'s default join is a miter and the tessellated route gives
+        // the sharp corner it asks for. Measured on a nine-wide stroke, one
+        // route draws the corner pixel and the other does not: a difference of
+        // two hundred and fifty-three out of two hundred and fifty-five.
+        //
+        // With a radius the outline has no vertex, so there is no join to get
+        // wrong and the arc is what the shape is. Only the square-cornered case
+        // is refused, and only where the caller asked for something other than
+        // the round join the field would give them anyway.
+        if radius <= 0.0 {
+            if let Style::Stroke(style) = &paint.style {
+                if style.width > 0.0 && style.join != LineJoin::Round {
+                    return None;
+                }
+            }
         }
         // Widened and dimmed on the same terms the tessellated route is, so
         // that which route a shape takes stays invisible. See `thin_stroke`.

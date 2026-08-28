@@ -851,6 +851,30 @@ hairline, one pixel at full opacity; here it is no stroke at all, which
 rather than weakening it — a width animated toward zero now dims continuously to
 nothing, where upstream's fades and then jumps back to full at the end.
 
+**A stroked rectangle with square corners cannot take the analytic route.** A
+distance field's stroke is the band a fixed distance either side of the
+outline, and at a vertex that band's outer edge is an arc — so a stroked
+rectangle drawn that way comes out with *rounded* corners, where `dart:ui`'s
+default join is a miter and the tessellated stroker gives the sharp corner it
+asks for. Measured on a nine-wide stroke, one route draws the outer corner
+pixel and the other does not: two hundred and fifty-three levels apart.
+
+So the route is refused for a rectangle with no corner radius whose join is
+anything but round, and taken for everything else. With a radius the outline
+has no vertex, there is no join to get wrong, and the arc is what the shape
+is.
+
+It went unnoticed because nothing compared the two routes. The testkit sent a
+rectangle through `draw_path` rather than through `draw_rect` — against the
+rule it states for a rounded rectangle two lines away, that a shape goes
+through the call the public API offers so the corpus exercises whichever way
+that call decides to draw it. Rectangles go through `draw_rect` now, which is
+eighteen analytic draws the catalog did not have, and the pair is asserted
+directly besides: the two routes agree over every edge and interior pixel and
+part company only at a corner, where a signed distance is one number and a
+corner pixel is cut by two edges. Three or four pixels per rectangle, by up to
+a quarter of a pixel's worth of coverage.
+
 **A backdrop filter cuts the pass rather than reading it.** Frosted glass asks
 for the one thing the rule above forbids: a layer whose starting content is the
 target it is about to draw into. So the pass stops. Everything drawn into that

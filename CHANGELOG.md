@@ -64,6 +64,11 @@ fifteen modes outright, so the same picture reaches both backends -- 29 of 29
 modes are checked against the compositing equations on GLES where 14 were.
 Nothing about the API changed; a caller that was refused is not.
 
+A stroked rectangle keeps its join. `draw_rect` and `draw_rrect` at a radius of
+zero handed a stroked shape to the fragment-evaluated route, whose stroke band
+rounds a vertex whatever the join says, so a rectangular border came out with
+rounded corners. They tessellate now unless the caller asked for a round join.
+
 A stroke narrower than a device pixel draws differently. It is widened to one
 pixel and dimmed by `clamp(2 * scaled_width, 0, 1)`, which is upstream's
 arithmetic with upstream's constants, so a thin line fades with its width

@@ -9,10 +9,10 @@
 use googletest::prelude::*;
 use impeller::{
     Affine2, Atlas, BackendPreference, BlendMode, Canvas, Color, ColorFilter, Context, Coverage,
-    Dash, Error, Extent2D, GlyphKey, GradientStop, ImageFilter, Layer, LineCap, MaskBlurStyle,
-    Morphology, Paint, Path, PathBuilder, PixelFormat, PointMode, PositionedGlyph, Rect, Result,
-    RoundingRadii, Sampling, Shader, SourceRect, Sprite, StrokeStyle, Style, TileMode, Transform2D,
-    Vec2, VertexMode, Vertices, MAX_STOPS, MORPHOLOGY_TAPS, RUNTIME_FLOATS,
+    Dash, Error, Extent2D, GlyphKey, GradientStop, ImageFilter, Layer, LineCap, LineJoin,
+    MaskBlurStyle, Morphology, Paint, Path, PathBuilder, PixelFormat, PointMode, PositionedGlyph,
+    Rect, Result, RoundingRadii, Sampling, Shader, SourceRect, Sprite, StrokeStyle, Style,
+    TileMode, Transform2D, Vec2, VertexMode, Vertices, MAX_STOPS, MORPHOLOGY_TAPS, RUNTIME_FLOATS,
 };
 
 const SIZE: Extent2D = Extent2D {
@@ -15182,4 +15182,170 @@ fn a_translucent_stroke_blends_with_itself_only_where_its_caps_overlap() {
          {doubled} of {} pixels there blended twice",
         gap.len()
     );
+}
+
+#[test]
+fn a_rectangle_drawn_two_ways_agrees_everywhere_but_its_corners() {
+    // `draw_rect` evaluates a distance field on a quad where `draw_path` of the
+    // same four corners tessellates, and which one a caller gets is decided by
+    // properties they do not think of as picture-changing -- whether the paint
+    // is a solid color, whether it asks for antialiasing, whether a filter is
+    // on it. So the two have to agree, and until the testkit started sending a
+    // rectangle through `draw_rect` nothing compared them: every scene in the
+    // catalog reached the tessellated one.
+    //
+    // They agree over every edge and every interior pixel, and they cannot
+    // agree at a corner. A corner pixel is cut by two edges and a signed
+    // distance is one number, so the field has no way to say that a quarter of
+    // the pixel is covered rather than a half -- measured, a rectangle whose
+    // corner falls on a pixel center gives 128 from the field against 64 from
+    // the triangles, which is a half against the true quarter. Three or four
+    // pixels per rectangle, always within a pixel of a corner.
+    //
+    // The bound below is those measurements and not a tolerance chosen to pass.
+    // It is here so that a change making the field wrong along an *edge* fails
+    // rather than being absorbed.
+    let Some(mut ctx) = context() else { return };
+
+    let corners = |r: Rect| {
+        let mut b = PathBuilder::new();
+        b.move_to(Vec2::new(r.left, r.top))
+            .line_to(Vec2::new(r.right, r.top))
+            .line_to(Vec2::new(r.right, r.bottom))
+            .line_to(Vec2::new(r.left, r.bottom))
+            .close();
+        b.build()
+    };
+
+    for (label, rect, paint) in [
+        (
+            "aligned to the pixel grid",
+            Rect::new(20.0, 20.0, 100.0, 100.0),
+            Paint::fill(Color::WHITE),
+        ),
+        (
+            "on pixel centers",
+            Rect::new(20.5, 20.5, 100.5, 100.5),
+            Paint::fill(Color::WHITE),
+        ),
+        (
+            "stroked",
+            Rect::new(18.0, 30.0, 110.0, 96.0),
+            Paint::stroke(Color::WHITE, 9.0),
+        ),
+    ] {
+        let primitive = {
+            let mut canvas = Canvas::new(SIZE);
+            canvas.clear(Color::BLACK);
+            canvas.draw_rect(rect, &paint).expect("the primitive");
+            render(&mut ctx, canvas)
+        };
+        let as_path = {
+            let mut canvas = Canvas::new(SIZE);
+            canvas.clear(Color::BLACK);
+            canvas
+                .draw_path(&corners(rect), &paint)
+                .expect("the same four corners");
+            render(&mut ctx, canvas)
+        };
+
+        let lit = primitive.chunks_exact(4).filter(|p| p[0] > 8).count();
+        assert!(
+            lit > 500,
+            "{label}: the rectangle should cover a good part of the frame, got \
+             {lit} pixels"
+        );
+
+        let mut differing = Vec::new();
+        for (i, (a, b)) in primitive
+            .chunks_exact(4)
+            .zip(as_path.chunks_exact(4))
+            .enumerate()
+        {
+            if a != b {
+                let (x, y) = (i as u32 % SIZE.width, i as u32 / SIZE.width);
+                let delta = a
+                    .iter()
+                    .zip(b)
+                    .map(|(p, q)| (*p as i32 - *q as i32).abs())
+                    .max()
+                    .unwrap_or(0);
+                differing.push((x, y, delta));
+            }
+        }
+        assert!(
+            differing.len() <= 4,
+            "{label}: {} pixels differ between the two routes, which is more \
+             than the corners can account for: {differing:?}",
+            differing.len()
+        );
+        for (x, y, delta) in &differing {
+            // Within two pixels of both a vertical edge and a horizontal one,
+            // which is the corner and nothing else: the affected cluster is an
+            // L of three pixels tucked inside it.
+            let near_x =
+                (*x as f32 - rect.left).abs() <= 2.5 || (*x as f32 - rect.right).abs() <= 2.5;
+            let near_y =
+                (*y as f32 - rect.top).abs() <= 2.5 || (*y as f32 - rect.bottom).abs() <= 2.5;
+            assert!(
+                near_x && near_y,
+                "{label}: ({x}, {y}) differs by {delta} and is not at a corner \
+                 of {rect:?}, so the two routes part company along an edge"
+            );
+            assert!(
+                *delta <= 64,
+                "{label}: ({x}, {y}) differs by {delta}, past the quarter of a \
+                 pixel a corner can account for"
+            );
+        }
+    }
+}
+
+#[test]
+fn a_stroked_rectangle_has_the_corners_its_join_asks_for() {
+    // The default `strokeJoin` is a miter, so a rectangular border has square
+    // outer corners. `draw_rect` used to hand a stroked rectangle to the
+    // fragment-evaluated route, where a stroke is the band a fixed distance
+    // either side of the outline -- and that band's outer edge at a vertex is
+    // an arc. So the corners came out rounded, on the call a caller reaches for
+    // to draw a border, and nothing compared the two routes.
+    let Some(mut ctx) = context() else { return };
+
+    let rect = Rect::new(18.0, 30.0, 110.0, 96.0);
+    let width = 9.0f32;
+    // The outer corner of the band, which a miter fills and an arc does not.
+    let (cx, cy) = (
+        (rect.left - width / 2.0).ceil() as u32,
+        (rect.top - width / 2.0).ceil() as u32,
+    );
+
+    let corner_of = |ctx: &mut Context, join: LineJoin| {
+        let mut canvas = Canvas::new(SIZE);
+        canvas.clear(Color::BLACK);
+        canvas
+            .draw_rect(
+                rect,
+                &Paint::stroke(Color::WHITE, width)
+                    .with_style(Style::Stroke(StrokeStyle::new(width).with_join(join))),
+            )
+            .expect("a stroked rectangle");
+        pixel(&render(ctx, canvas), cx, cy)
+    };
+
+    let mitered = corner_of(&mut ctx, LineJoin::Miter);
+    assert!(
+        mitered[0] > 200,
+        "a mitered corner should reach ({cx}, {cy}), got {mitered:?}"
+    );
+
+    // A bevel cuts the corner off and a round join arcs across it, so both
+    // leave that pixel behind -- which is what says the assertion above is
+    // about the join and not about the pixel being inside the band anyway.
+    for join in [LineJoin::Bevel, LineJoin::Round] {
+        let got = corner_of(&mut ctx, join);
+        assert!(
+            got[0] < 100,
+            "{join:?} should not reach ({cx}, {cy}), got {got:?}"
+        );
+    }
 }
