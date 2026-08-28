@@ -61,5 +61,7 @@
   layer-blended-composite                2      3       44      114       1     0
   layer-bounded                          2      3       40      102       1     0
   layer-nested-clipped                   3      6       47      105       2     0
+  nine-patch-stretched                   1      1       36       54       1     0
+  point-field                            1      1       48       72       0     0
   glyph-run                              1      1      140      210       1     0
   glyph-run-over-nothing                 1      1      140      210       1     0

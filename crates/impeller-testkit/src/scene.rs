@@ -1062,6 +1062,33 @@ impl Node {
     /// A separate question from [`Self::samples_fixture`] because it is a
     /// separate texture: the sheet is color and the glyph atlas is coverage,
     /// and a scene may want either, both, or neither.
+    /// Whether this node draws a shape a fragment evaluates rather than one
+    /// the rasterizer covers.
+    ///
+    /// `Item::is_analytic` answers this for the shapes an item can hold, and
+    /// cannot answer it here: a field of points is not an item and has no
+    /// shape. That is the third time this derivation has been extended by a
+    /// kind it could not see -- a new fill kind, then a new node kind, and now
+    /// a new *material* kind -- and the lesson the second one recorded holds:
+    /// the trouble is derivations that enumerate, not the lists they enumerate.
+    /// This one is caught before the scene that needs it was added rather than
+    /// after, which is the only reason it is not a fourth story about a scene
+    /// that diverged by a unit on every edge.
+    ///
+    /// A round cap only. Its coverage comes from the same implicit disc an
+    /// ellipse uses, evaluated from the vertices; a square cap is the quad
+    /// itself, whose edges the rasterizer covers like any other triangle's.
+    fn is_analytic(&self) -> bool {
+        match self {
+            Self::Points(spec) => {
+                matches!(spec.mode, PointMode::Points)
+                    && matches!(spec.stroke.cap, LineCap::Round)
+                    && spec.blend.respects_coverage()
+            }
+            _ => false,
+        }
+    }
+
     fn uses_glyphs(&self) -> bool {
         let reads_atlas = |fill: &Fill| match fill {
             Fill::RuntimeEffect { images, .. } => images.contains(&1),
@@ -1460,7 +1487,9 @@ impl Scene {
         // executor ask for antialiasing and the call take that path. Without
         // it this would loosen the aliased rounded-rectangle scene, which is
         // drawn from triangles and should still compare exactly.
-        if self.samples > 1 && self.items().any(Item::is_analytic) {
+        if self.samples > 1
+            && (self.items().any(Item::is_analytic) || self.items.iter().any(Node::is_analytic))
+        {
             return crate::image::Tolerance::ANALYTIC;
         }
         // An additive blend before the rest, because it is the one case where a
@@ -2967,6 +2996,66 @@ pub fn corpus() -> Vec<Scene> {
         // same run renders identically twice. Coverage arrives premultiplied
         // from a texture rather than computed, so none of those followed from
         // the shape cases.
+        // Two scenes for two draws that used to be many, and they are here
+        // because the counts baseline covers this collection and not the
+        // catalog. Both wins were asserted directly when they landed; neither
+        // was guarded against creeping back, which is what a row in
+        // `tests/cost-baseline.txt` is for.
+        Scene::tree(
+            "nine-patch-stretched",
+            vec![Node::NinePatch(Box::new(NinePatchSpec {
+                // Stretched hard in both directions, which is what a
+                // nine-patch is for and where the seams between its quads show
+                // if the half-texel inset that replaced their per-draw
+                // clamping ever stops being applied.
+                // In texels of the fixture sheet, which is eight by eight: the
+                // middle four, leaving a two-texel frame that must not stretch.
+                center: [2.0, 2.0, 6.0, 6.0],
+                into: [6.0, 6.0, 122.0, 122.0],
+                alpha: 1.0,
+                blend: BlendMode::SrcOver,
+                transform: Transform::default(),
+            }))],
+        )
+        .with_background([0.06, 0.07, 0.10, 1.0])
+        .with_samples(4),
+        Scene::tree(
+            "point-field",
+            vec![Node::Points(Box::new(PointsSpec {
+                // A ring of dots, round-capped, which is the arrangement that
+                // costs a draw each unless the field carries its centers on
+                // the vertices. Round rather than square because that is the
+                // one the fragment evaluates: a square cap is its quad, and
+                // its edges are the rasterizer's.
+                mode: PointMode::Points,
+                // Twelve dots at a radius of eleven rather than
+                // twenty-four at five and a half, and the size is the part
+                // that had to be measured. The field's edge comes from the
+                // derivative of an interpolated value, and how much two
+                // devices disagree about that grows as the disc shrinks:
+                // at five and a half, v3d's neighbor and the software
+                // rasterizer differed by sixteen on thirty-two pixels, twice
+                // what `Tolerance::ANALYTIC` allows. Bending that budget for
+                // one scene would be the same enumerating mistake this file's
+                // derivation has made twice; drawing a disc big enough to be
+                // measured is not.
+                points: (0..12)
+                    .map(|i| {
+                        let a = i as f32 * std::f32::consts::TAU / 12.0;
+                        [64.0 + 40.0 * a.cos(), 64.0 + 40.0 * a.sin()]
+                    })
+                    .collect(),
+                stroke: StrokeSpec {
+                    cap: LineCap::Round,
+                    ..StrokeSpec::new(22.0)
+                },
+                color: WHITE,
+                blend: BlendMode::SrcOver,
+                transform: Transform::default(),
+            }))],
+        )
+        .with_background([0.06, 0.07, 0.10, 1.0])
+        .with_samples(4),
         Scene::tree(
             "glyph-run",
             vec![Node::Glyphs(Box::new(GlyphRunSpec {
