@@ -142,7 +142,7 @@ column is right and the obvious way to check it is wrong.
 
 | File | Scenes there | Here | Blocked on |
 |---|---|---|---|
-| `aiks_dl_basic_unittests.cc` | ~85 | 61 | subpass optimizations; see below |
+| `aiks_dl_basic_unittests.cc` | ~85 | 65 | subpass optimizations; see below |
 | `aiks_dl_path_unittests.cc` | ~30 | 21 | nothing; see below |
 | `aiks_dl_gradient_unittests.cc` | ~40 | 31 | nothing; see below |
 | `aiks_dl_clip_unittests.cc` | ~5 | 7 | nothing; this file is covered |
@@ -157,7 +157,7 @@ column is right and the obvious way to check it is wrong.
 | `aiks_dl_runtime_effect_unittests.cc` | — | 12 | nothing; see below |
 | `aiks_dl_unittests.cc` | ~36 | 15 | subpass collapse, for five of them; see below |
 
-The catalog holds two hundred and seventy-nine scenes of roughly four hundred,
+The catalog holds two hundred and eighty-three scenes of roughly four hundred,
 and the proportion is less interesting than which ones: the arithmetic of drawing is largely covered, and
 what is missing is either a capability this renderer does not have or a thing
 the scene model cannot describe.
@@ -425,6 +425,19 @@ the inner cleared out of it. That last pair agrees to the byte in color and
 differs only in alpha, which is `Clear` doing its job; the agreement is asserted
 rather than left to a reader, and it is sensitive to a two-pixel change in one
 corner's radius.
+
+Four after those, and they are one question asked four ways: where does a
+layer's target sit and what does it cover. Three siblings each bounded to a
+small square and each filling the whole frame inside it, so nothing but the
+bounds decides what shows. One layer bounded to a quarter of what is drawn into
+it, where the bounds cut three overlapping squares and the order among them
+survives being cut. One layer with nothing in it at all, composited with a mode
+that discards its destination -- empty is not absent, so it cuts a hole the size
+of its bounds in the image behind it. And one that is about the origin rather
+than the extent: a bounded layer's target starts where the bounds start, so its
+contents are placed against that origin, and a renderer that forgot would slide
+them by the offset and still draw three squares. That last one has the bounds
+drawn as a yellow outline so the two can be read against each other.
 
 The blend row named two obstacles and one of them was misread, for three of
 that file's twenty-one tests. Two are named for framebuffer fetch and one is

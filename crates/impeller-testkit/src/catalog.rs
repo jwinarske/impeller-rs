@@ -81,6 +81,7 @@ pub fn catalog() -> Vec<Scene> {
     scenes.extend(backdrop_ids());
     scenes.extend(basic_pictures());
     scenes.extend(rounded_rect_radii());
+    scenes.extend(save_layer_pictures());
     scenes.extend(layers());
     scenes.extend(runtime_effect());
     scenes.extend(backdrops());
@@ -2766,6 +2767,164 @@ fn sheet(rect: [f32; 4], source: [f32; 4], tile: TileMode, sampling: Sampling) -
         alpha: 1.0,
         tint: WHITE,
     }
+}
+
+/// The save-layer plates from `aiks_dl_basic_unittests.cc`.
+///
+/// Grouped because they are the same question asked four ways: where does a
+/// layer's target sit, and what does it cover. That is arithmetic rather than a
+/// picture -- `save_layer_bounds` gives the layer a target the size of the
+/// region and offsets everything drawn into it -- and it is the kind of
+/// arithmetic that draws something plausible when it is wrong.
+fn save_layer_pictures() -> Vec<Scene> {
+    // Upstream's coordinates, which already fit a plate this size.
+    let everywhere = Shape::Rect {
+        min: [0.0, 0.0],
+        max: [128.0, 128.0],
+    };
+    let bounded = |bounds: [f32; 4], children: Vec<Node>| Node::Layer {
+        layer: Box::new(LayerSpec::default()),
+        bounds: Some(bounds),
+        transform: Transform::default(),
+        children,
+    };
+    let fill_all = |color: [f32; 4]| Node::Draw(Box::new(Item::fill(everywhere.clone(), color)));
+
+    vec![
+        // Three layers side by side, each bounded to a small square and each
+        // filling the whole frame inside it. Nothing but the bounds decides
+        // what shows, so a layer that ignored them would paint the frame three
+        // times and leave one flat color.
+        Scene::tree(
+            "basic/sibling-save-layer-bounds-are-respected",
+            vec![
+                bounded(
+                    [25.0, 25.0, 50.0, 50.0],
+                    vec![fill_all([0.0, 0.0, 0.0, 1.0])],
+                ),
+                bounded([35.0, 35.0, 60.0, 60.0], vec![fill_all(GREEN)]),
+                bounded([45.0, 45.0, 70.0, 70.0], vec![fill_all(RED)]),
+            ],
+        )
+        .with_background(DARK)
+        .with_samples(4),
+        // One layer bounded to a quarter of what is drawn into it, with three
+        // overlapping squares inside. The bounds cut the corner off all three,
+        // and the order inside survives being cut: blue over green over red.
+        Scene::tree(
+            "basic/can-perform-save-layer-with-bounds",
+            vec![bounded(
+                [0.0, 0.0, 50.0, 50.0],
+                vec![
+                    Node::Draw(Box::new(Item::fill(
+                        Shape::Rect {
+                            min: [0.0, 0.0],
+                            max: [100.0, 100.0],
+                        },
+                        RED,
+                    ))),
+                    Node::Draw(Box::new(Item::fill(
+                        Shape::Rect {
+                            min: [10.0, 10.0],
+                            max: [110.0, 110.0],
+                        },
+                        GREEN,
+                    ))),
+                    Node::Draw(Box::new(Item::fill(
+                        Shape::Rect {
+                            min: [20.0, 20.0],
+                            max: [120.0, 120.0],
+                        },
+                        BLUE,
+                    ))),
+                ],
+            )],
+        )
+        .with_background(DARK)
+        .with_samples(4),
+        // A layer with nothing in it, composited with a mode that discards its
+        // destination. Empty is not the same as absent: the layer covers its
+        // bounds whether or not anything was drawn into it, so the mode acts on
+        // that whole region and cuts a hole in the image behind it.
+        //
+        // Upstream states the region with a clip where this states it with the
+        // layer's bounds, which the scene format puts on a layer and not on a
+        // clip of its own. Same region, same picture.
+        Scene::tree(
+            "basic/empty-save-layer-renders-with-clear",
+            vec![
+                Node::Draw(Box::new(Item::filled(
+                    everywhere.clone(),
+                    sheet(ALL, ALL, TileMode::Clamp, Sampling::Linear),
+                ))),
+                Node::Layer {
+                    layer: Box::new(LayerSpec {
+                        blend: BlendMode::Clear,
+                        ..LayerSpec::default()
+                    }),
+                    bounds: Some([40.0, 40.0, 90.0, 90.0]),
+                    transform: Transform::default(),
+                    children: Vec::new(),
+                },
+            ],
+        )
+        .with_background(DARK)
+        .with_samples(1),
+        // The one that is about the origin rather than the extent. A bounded
+        // layer's target starts where the bounds start, so everything drawn
+        // into it has to be placed against that origin rather than against the
+        // frame's -- and a renderer that forgot would slide the contents by the
+        // bounds' offset and still draw three squares. The yellow outline is
+        // where the bounds are, so the two can be read against each other.
+        Scene::tree(
+            "basic/coverage-origin-should-be-accounted-for-in-subpasses",
+            vec![
+                Node::Draw(Box::new(
+                    Item::fill(
+                        Shape::Rect {
+                            min: [20.0, 20.0],
+                            max: [80.0, 80.0],
+                        },
+                        [1.0, 1.0, 0.0, 1.0],
+                    )
+                    .with_stroke(StrokeSpec::new(2.5)),
+                )),
+                Node::Layer {
+                    layer: Box::new(LayerSpec {
+                        alpha: 0.5,
+                        ..LayerSpec::default()
+                    }),
+                    bounds: Some([20.0, 20.0, 80.0, 80.0]),
+                    transform: Transform::default(),
+                    children: vec![
+                        Node::Draw(Box::new(Item::fill(
+                            Shape::Rect {
+                                min: [12.0, 12.0],
+                                max: [62.0, 62.0],
+                            },
+                            RED,
+                        ))),
+                        Node::Draw(Box::new(Item::fill(
+                            Shape::Rect {
+                                min: [25.0, 25.0],
+                                max: [75.0, 75.0],
+                            },
+                            GREEN,
+                        ))),
+                        Node::Draw(Box::new(Item::fill(
+                            Shape::Rect {
+                                min: [37.0, 37.0],
+                                max: [87.0, 87.0],
+                            },
+                            BLUE,
+                        ))),
+                    ],
+                },
+            ],
+        )
+        .with_background(DARK)
+        .with_samples(4),
+    ]
 }
 
 /// The rounded-rectangle plates that eight radii unblocked.
