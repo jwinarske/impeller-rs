@@ -264,6 +264,53 @@ A whole-frame figure seems less sensitive to the drift than the micro-benchmark
 paths -- 21.2 ms held across it -- but that is an observation rather than
 something to rely on.
 
+## Why the timing baseline lives here and not on the workstation
+
+Asked directly, because "the desktop is too noisy" had been an impression
+rather than a number. Three runs of `xtask bench --skip llvmpipe`, release
+build, on the development machine — a sixteen-core Ryzen with an integrated
+Radeon and a desktop session running — and the spread of the *median* across
+those three runs, per row:
+
+| row | min | max | spread |
+| --- | --- | --- | --- |
+| vulkan tessellated, 1 sample | 0.743 | 0.749 | 0.8% |
+| vulkan distance field | 0.804 | 0.818 | 1.7% |
+| gles distance field | 0.913 | 0.932 | 2.1% |
+| gles tessellated, 1 sample | 0.791 | 0.813 | 2.8% |
+| gles tessellated, 4 samples | 1.523 | 1.591 | 4.5% |
+| gles full frame | 1.997 | 2.139 | 7.1% |
+| vulkan full frame | 2.002 | 2.383 | 19.0% |
+| vulkan tessellated, 4 samples | 1.270 | 1.927 | **51.7%** |
+
+Three per cent is the size of a difference worth reporting. A tolerance loose
+enough to admit the bottom row would admit anything, and one tight enough to
+mean something would fire on half the runs. That is the whole answer: this
+machine cannot gate a timing baseline, and the reason is not the tail but the
+median — two of eight rows move by more than any regression this project would
+be trying to catch.
+
+The tails are worse and are worth seeing once. In these three runs a row with a
+median of 2.068 ms reported a ninety-ninth percentile of **374.752 ms**, and
+another with a median of 0.748 ms reported 63.432 ms. Those are this process
+being descheduled, not a frame taking that long, which is what the bench's own
+preamble warns about.
+
+Against that, the Pi 5 on the same day: seven of eight rows within 0.3% of a
+recorded baseline across two runs, and the four GLES rows within a tenth of a
+per cent. That is five hundred times steadier on the rows that matter, and it
+is why the recorded baseline is a board's and why `--check` is run there.
+
+Scoped honestly: this is a statement about *this machine as configured*, with a
+compositor competing for the same GPU. A quiet, headless x86 runner might do
+better and has not been tried. What is settled is that the workstation someone
+is working on is not that machine, and that the cheap version of a perf gate —
+record a baseline here, check it in CI — cannot work.
+
+The gate that does work on every commit is a different quantity entirely: see
+`crates/impeller-testkit/tests/cost.rs`, which counts what a frame does rather
+than timing it.
+
 ## A second board, and what it says about reading a green run
 
 A Radxa Zero 3 (RK3566, Mali-G52, Debian 12) is the other target here, and
