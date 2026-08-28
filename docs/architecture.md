@@ -874,8 +874,22 @@ directly besides: the two routes agree over every edge and interior pixel and
 part company only at a corner, where a signed distance is one number and a
 corner pixel is cut by two edges. Three or four pixels per rectangle.
 
-*How far* apart they get there is not asserted, and that is a correction rather
-than an omission. The first version bounded it at sixty-four levels, which is
+A rounded rectangle is a different case and was measured while looking for more
+of the same. Its two routes differ over the *curved* corners, by up to eighty
+levels on an edge pixel, and none of it is a defect. Two causes, separated by
+experiment rather than argued about. Replacing the cubic corners with two
+hundred and fifty-six explicit segments drops the worst difference from
+eighty-three to fifty-two and then stops improving, which is the quarter-pixel
+flattening tolerance and nothing else. What is left does not shrink with more
+samples either — eight-times multisampling moves fifty-two to forty-seven — and
+it is the same size for a filled rounded rectangle as for a stroked one, which
+rules out the stroke band. It is the coverage model: the field ramps linearly
+over one pixel from the signed distance, and that is exact only for a straight
+edge through the pixel, where multisampling measures area. On a curve the two
+disagree by about a fifth of a pixel however finely either is sampled.
+
+*How far* the two routes get apart at a corner is not asserted, and that is a
+correction rather than an omission. The first version bounded it at sixty-four levels, which is
 what this machine measures, and the software rasterizer in CI came back with a
 hundred and ninety-one on the rectangle whose corners fall on pixel centers —
 the one alignment where a corner sits exactly on the sample grid, so which
