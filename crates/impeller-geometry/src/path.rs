@@ -412,6 +412,37 @@ impl PathBuilder {
     /// curve's own size, so it stays correct at every scale the path is later
     /// drawn at, and nothing downstream has to learn a fifth verb.
     ///
+    /// # What the relative error costs, measured
+    ///
+    /// A quarter to a fifth of the vertices it needs, on the one shape family
+    /// that uses conics. The criterion below counts halvings of the weight's
+    /// distance from one, and each halving *doubles* the output, so a curve is
+    /// subdivided by how hyperbolic it is rather than by how far the
+    /// approximation actually misses. A rounded superellipse corner emits two
+    /// conics per octant at weights around 0.7 and 8.3; those become thirty-two
+    /// and sixty-four quadratics.
+    ///
+    /// The corpus scene costs 1340 vertices where a circle costs 40. Replacing
+    /// the criterion with the error itself -- the distance between the two
+    /// curves at their midpoints, against the chord, which is computable in
+    /// four lines and keeps the same relative bound -- brings that to 305, and
+    /// every test in the workspace still passes including the upstream
+    /// boundary pin.
+    ///
+    /// It is not done, and the reason is worth having written down. Coarser
+    /// quadratics are more sharply curved, and
+    /// `impeller-geometry/tests/hostile.rs` found within one gate run that
+    /// lyon's stroker then recurses deep enough to **overflow the stack** on
+    /// generated input -- deep but finite, since it completes under a
+    /// hundred-and-twenty-eight-megabyte stack. Forcing one split before the
+    /// new criterion may apply makes the symptom go away and keeps most of the
+    /// saving, and one passing run is not an argument that a crash class is
+    /// bounded. The same weakness sits under
+    /// `Path::is_within_tessellation_range`: lyon's stroker subdivides by its
+    /// own arithmetic with nothing at the top of it, and the answer there was a
+    /// guard at the boundary rather than a tuning constant. This wants the
+    /// same, and until it has one the documented criterion stays.
+    ///
     /// A weight that is zero or negative or not finite describes no curve, and
     /// gives the straight line between the ends.
     pub fn conic_to(&mut self, ctrl: Vec2, to: Vec2, weight: f32) -> &mut Self {
