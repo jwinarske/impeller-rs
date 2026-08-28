@@ -371,18 +371,48 @@ with two of the three. Coherency is not taken on the driver's word: a test
 renders overlapping draws as one batch and as two submissions, which differ only
 if the second draw blends against a stale destination.
 
-GLES has `GL_KHR_blend_equation_advanced`, but reaching it needs a hand-written
-GLSL ES fragment stage. The extension requires the shader to declare
-`layout(blend_support_all_equations) out;`, and naga's GLSL backend cannot emit
-that qualifier from WGSL — this is the "hand-written overrides where translation
-falls short" path, and it is the first thing to need it. Where the coherent
-variant of the extension is absent, it additionally needs `glBlendBarrierKHR`
-between overlapping draws, which changes how a batch is recorded rather than
-merely which enum is set. Until that lands, the GLES backend reports the
-capability as false and refuses the modes.
+GLES has `GL_KHR_blend_equation_advanced`, and reaching it needed less than this
+paragraph used to claim. The extension requires the fragment stage to declare
+`layout(blend_support_all_equations) out;`, which naga cannot emit from WGSL —
+recorded here for a while as needing a hand-written GLSL ES stage, and it does
+not. The declaration and the `#extension` that legalizes it are two lines after
+the version line, inserted by the backend the way the shader crate's build
+script already inserts a `std140` qualifier: located exactly, asserted, and
+failing the build rather than producing a shader whose blending is undefined.
+The same insertion serves a caller's own program, whose source this project did
+not write and cannot pattern-match further into.
 
-That asymmetry is why the scene corpus derives what a scene *requires* from what
-it contains, alongside deriving its tolerance. A scene refused by a device that
+Two things about it were not obvious and both were measured rather than reasoned
+about.
+
+**The qualifier is not free for draws that are not using it.** It says which
+equations a shader tolerates, not which one is in force, so a qualified shader
+blended by `FUNC_ADD` ought to draw what it always did. On the driver here it
+does not: declaring it moved eleven catalog plates and a corpus scene past their
+cross-backend tolerances, by five to thirteen levels over most of a frame,
+across blurs, an image and a runtime effect, none of which use an advanced mode
+at all. So the backend keeps two programs and binds the qualified one only for
+the draws that need it. The program key is the pair — which program, and which
+of its two forms — beside the blend, the scissor and the stencil this loop
+already tracks.
+
+**The barrier is needed against the clear, not only against an earlier draw.**
+Where the coherent variant of the extension is absent — as it is here —
+`glBlendBarrierKHR` orders an advanced equation against what has already been
+written to the destination, and a pass's clear is a write. Without it this
+driver returns the source unblended for every advanced mode, on a pass whose
+only draw covers a freshly cleared target and overlaps nothing. So the barrier
+goes before every advanced draw rather than between overlapping ones; it costs
+nothing where the coherent variant exists, since there is then nothing to call.
+
+A device whose extension is present but whose entry point cannot be resolved
+reports the capability as false and refuses the modes, which is where the whole
+backend sat before this.
+
+The asymmetry that remains is between devices rather than between backends: an
+extension one physical device has and another lacks, on the same machine. That
+is why the scene corpus derives what a scene *requires* from what it contains,
+alongside deriving its tolerance. A scene refused by a device that
 declares it needs nothing special is a defect; a scene refused by a device the
 scene says cannot render it is a declared gap, and the corpus reports the second
 as coverage it did not get rather than as a pass. Deriving rather than declaring

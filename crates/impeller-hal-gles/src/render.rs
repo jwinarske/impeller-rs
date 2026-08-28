@@ -74,6 +74,11 @@ const MATERIAL_BYTES: usize = impeller_hal::MATERIAL_FLOATS * 4;
 /// The compiled solid-color program and the vertex state it draws with.
 pub(crate) struct SolidProgram {
     pub(crate) program: glow::Program,
+    /// The same program, allowed to be blended by an advanced equation.
+    ///
+    /// `None` on a device without the extension. See `with_advanced_blend` for
+    /// why this is a second object rather than the only one.
+    pub(crate) advanced: Option<glow::Program>,
     /// The sampler the image paint reads.
     ///
     /// The translator combines WGSL's separate texture and sampler into one
@@ -271,6 +276,8 @@ impl GlesContext {
         }
         self.capabilities().check_blend_modes(batch)?;
         self.ensure_program()?;
+        // Read before the context is borrowed for the draw loop below.
+        let blend_barrier = self.blend_barrier();
 
         let extent = target.extent;
         // Rendering goes to a transient multisample framebuffer and is resolved
@@ -418,13 +425,31 @@ impl GlesContext {
             // Which program is bound, tracked like the blend and the scissor:
             // a run of draws sharing one costs a single call, and switching is
             // the direct analogue of binding a different pipeline.
-            let mut bound_program: Option<Option<u32>> = None;
+            let mut bound_program: Option<(Option<u32>, bool)> = None;
             let mut stencil_state: Option<ClipState> = None;
             let mut bound_texture: Option<[Option<u32>; impeller_hal::MAX_EFFECT_TEXTURES]> = None;
             for (index, draw) in batch.draws().iter().enumerate() {
                 if current != Some(draw.blend) {
                     apply_blend(gl, draw.blend);
                     current = Some(draw.blend);
+                }
+                // Before every advanced draw, not only where two of them
+                // overlap. An advanced equation reads the destination, so
+                // everything already written to it has to have settled -- and
+                // the pass's own clear is a write. Measured: without this, the
+                // driver here returns the source unblended for every advanced
+                // mode, on a pass whose only draw covers a freshly cleared
+                // target and overlaps nothing at all.
+                //
+                // It costs nothing on a device with the coherent variant, where
+                // there is no barrier to call, and nothing on a batch with no
+                // advanced mode in it.
+                if let Some(barrier) = blend_barrier {
+                    if draw.blend.is_advanced() {
+                        // SAFETY: a context is current, and the entry point
+                        // was resolved for it.
+                        barrier();
+                    }
                 }
                 if stencil.is_some() && stencil_state != Some(draw.stencil) {
                     apply_stencil(gl, draw.stencil);
@@ -486,17 +511,30 @@ impl GlesContext {
                     bound_texture = Some(wanted);
                 }
 
-                let wanted = draw.material.program();
+                // Which program, and which of its two forms. An advanced
+                // equation needs the qualified one; everything else needs the
+                // plain one, which is not the same picture on this driver.
+                let wanted = (draw.material.program(), draw.blend.is_advanced());
                 if bound_program != Some(wanted) {
-                    let object =
-                        match wanted {
+                    let pair =
+                        match wanted.0 {
                             Some(id) => *self.runtime_programs.get(id as usize).ok_or(
                                 Error::Unsupported(
                                     "a draw names a runtime program that was never registered",
                                 ),
                             )?,
-                            None => program.program,
+                            None => (program.program, program.advanced),
                         };
+                    let object = if wanted.1 {
+                        // Reached only when the capability is on, which is what
+                        // built the second form; submission refused the batch
+                        // otherwise.
+                        pair.1.ok_or(Error::Unsupported(
+                            "an advanced blend mode on a program with no blend-qualified form",
+                        ))?
+                    } else {
+                        pair.0
+                    };
                     gl.use_program(Some(object));
                     bound_program = Some(wanted);
                 }
@@ -760,7 +798,8 @@ impl GlesContext {
         if self.program().is_some() {
             return Ok(());
         }
-        let built = build_program(self.raw_gl())?;
+        let advanced = self.capabilities().advanced_blend;
+        let built = build_program(self.raw_gl(), advanced)?;
         self.set_program(built);
         Ok(())
     }
@@ -948,13 +987,18 @@ fn apply_blend(gl: &glow::Context, blend: BlendMode) {
         // so the two backends cannot disagree about what a mode means. It
         // assumes premultiplied color, which is what the shader emits.
         //
-        // An advanced mode has no factors at all, and submission has already
-        // refused the batch by the time this runs, since this backend reports
-        // no advanced-blend capability. Leaving blending disabled rather than
-        // guessing keeps a future gap in that check visible as a missing blend
-        // rather than as a plausible-looking wrong one.
+        // An advanced mode has no factors at all: it names an equation the
+        // blend unit evaluates instead. Submission refuses the batch before
+        // this runs on a device without the extension, so arriving here with
+        // one means the extension is present and the program was linked with
+        // the qualifier that lets it be used.
         let Some(factors) = blend.factors() else {
-            gl.disable(glow::BLEND);
+            gl.enable(glow::BLEND);
+            // Factors are ignored by an advanced equation, but they are not
+            // unset: leaving stale ones behind would take effect the moment a
+            // later draw switched back to `FUNC_ADD` without setting its own.
+            gl.blend_func_separate(glow::ONE, glow::ZERO, glow::ONE, glow::ZERO);
+            gl.blend_equation(gl_advanced_blend_equation(blend));
             return;
         };
         let src = gl_blend_factor(factors.src);
@@ -965,6 +1009,41 @@ fn apply_blend(gl: &glow::Context, blend: BlendMode) {
         // factors breaks compositing a layer onto something else.
         gl.blend_func_separate(src, dst, src, dst);
         gl.blend_equation(glow::FUNC_ADD);
+    }
+}
+
+/// Translate an advanced blend mode to the equation that names it.
+///
+/// The enumerants of `GL_KHR_blend_equation_advanced`, spelled out because
+/// glow does not carry extension constants. They are the same equations
+/// `VK_EXT_blend_operation_advanced` names and the same the compositing
+/// specification defines, which is what lets one conformance test check both
+/// backends against one reference.
+///
+/// Panicking on a Porter-Duff mode is right for the reason the Vulkan side
+/// gives: callers reach this only through the `None` arm of `factors`, so
+/// arriving with one means the two classifications have diverged, and guessing
+/// an equation would turn that into a wrong picture instead of a crash.
+fn gl_advanced_blend_equation(mode: BlendMode) -> u32 {
+    match mode {
+        BlendMode::Multiply => 0x9294,
+        BlendMode::Screen => 0x9295,
+        BlendMode::Overlay => 0x9296,
+        BlendMode::Darken => 0x9297,
+        BlendMode::Lighten => 0x9298,
+        BlendMode::ColorDodge => 0x9299,
+        BlendMode::ColorBurn => 0x929A,
+        BlendMode::HardLight => 0x929B,
+        BlendMode::SoftLight => 0x929C,
+        BlendMode::Difference => 0x929E,
+        BlendMode::Exclusion => 0x92A0,
+        // The non-separable four, named HSL by the extension for the
+        // attributes they exchange.
+        BlendMode::Hue => 0x92AD,
+        BlendMode::Saturation => 0x92AE,
+        BlendMode::Color => 0x92AF,
+        BlendMode::Luminosity => 0x92B0,
+        other => unreachable!("{other} is not an advanced blend mode"),
     }
 }
 
@@ -1003,7 +1082,62 @@ fn sampler_name(index: usize) -> String {
     format!("_group_0_binding_{binding}_fs")
 }
 
-pub(crate) fn build_runtime_program(gl: &glow::Context, fragment: &str) -> Result<glow::Program> {
+/// The line a GLSL ES source begins with, and the only place to insert before.
+const VERSION_LINE: &str = "#version 300 es\n";
+
+/// The same fragment source, allowed to be blended by an advanced equation.
+///
+/// `GL_KHR_blend_equation_advanced` will not apply one of its equations to a
+/// shader that has not said it expects one: the result is undefined unless the
+/// fragment stage declares `blend_support_all_equations`, or the particular
+/// equation in use. So the declaration goes in, along with the directive that
+/// makes it legal, both immediately after the version line -- which is where
+/// an `#extension` has to be and where a global declaration may be.
+///
+/// Editing generated source rather than hand-writing a stage, which is what
+/// `docs/architecture.md` said this would need. The precedent is `force_std140`
+/// in the shader crate's build script, and the same discipline applies: the
+/// insertion point is located exactly and asserted, so a translator that stops
+/// emitting a version line fails here rather than producing a shader whose
+/// blending is undefined. This also serves a caller's own program, whose source
+/// this project did not write and cannot pattern-match further into.
+///
+/// The result is a *second* program rather than a replacement, and that was
+/// found rather than designed. `blend_support_all_equations` says which
+/// equations a shader tolerates and not which one is in force, so a qualified
+/// shader blended by `FUNC_ADD` ought to draw what it always did -- and on this
+/// driver it does not. Declaring it moved eleven catalog plates and a corpus
+/// scene past their cross-backend tolerances, by five to thirteen levels over
+/// most of a frame: blurs, an image, a runtime effect, none of them using an
+/// advanced mode at all. So the qualified program is bound only for the draws
+/// that need it, and every other draw goes through the program it always did.
+fn with_advanced_blend(source: &str) -> Result<String> {
+    if !source.starts_with(VERSION_LINE) {
+        return Err(Error::Backend {
+            backend: "gles",
+            detail: "a fragment source does not begin with `#version 300 es`, so there \
+                     is nowhere to declare advanced blend support"
+                .to_owned(),
+        });
+    }
+    Ok(format!(
+        "{VERSION_LINE}#extension GL_KHR_blend_equation_advanced : require\n\
+         layout(blend_support_all_equations) out;\n{}",
+        &source[VERSION_LINE.len()..]
+    ))
+}
+pub(crate) fn build_runtime_program(
+    gl: &glow::Context,
+    fragment: &str,
+    advanced_blend: bool,
+) -> Result<glow::Program> {
+    let qualified;
+    let fragment = if advanced_blend {
+        qualified = with_advanced_blend(fragment)?;
+        qualified.as_str()
+    } else {
+        fragment
+    };
     // SAFETY: a context is current; every object is deleted on the failure
     // paths below.
     unsafe {
@@ -1078,7 +1212,8 @@ pub(crate) fn build_runtime_program(gl: &glow::Context, fragment: &str) -> Resul
     }
 }
 
-fn build_program(gl: &glow::Context) -> Result<SolidProgram> {
+fn build_program(gl: &glow::Context, advanced_blend: bool) -> Result<SolidProgram> {
+    let fragment = impeller_shaders::SOLID_FS_GLSL.to_owned();
     // SAFETY: a context is current; every object is deleted on the failure
     // paths below.
     unsafe {
@@ -1089,7 +1224,7 @@ fn build_program(gl: &glow::Context) -> Result<SolidProgram> {
         let mut shaders = Vec::new();
         for (stage, source) in [
             (glow::VERTEX_SHADER, impeller_shaders::SOLID_VS_GLSL),
-            (glow::FRAGMENT_SHADER, impeller_shaders::SOLID_FS_GLSL),
+            (glow::FRAGMENT_SHADER, fragment.as_str()),
         ] {
             let shader = match gl.create_shader(stage) {
                 Ok(s) => s,
@@ -1172,8 +1307,23 @@ fn build_program(gl: &glow::Context) -> Result<SolidProgram> {
             .max(1)) as usize;
         let paint_stride = MATERIAL_BYTES.div_ceil(alignment) * alignment;
 
+        // The second form, built here so that an advanced blend costs a
+        // program switch rather than a compile. It shares the vertex stage and
+        // every buffer with the first; only the fragment source differs, by the
+        // two lines `with_advanced_blend` inserts.
+        let advanced = if advanced_blend {
+            Some(build_runtime_program(
+                gl,
+                impeller_shaders::SOLID_FS_GLSL,
+                true,
+            )?)
+        } else {
+            None
+        };
+
         Ok(SolidProgram {
             program,
+            advanced,
             image,
             vao,
             vertices,

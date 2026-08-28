@@ -17,7 +17,7 @@ use impeller_hal::{
 use impeller_hal_gles::Validated as GlesValidated;
 use impeller_hal_gles::{DisplayTarget, GlesHal};
 use impeller_hal_vulkan::Validated;
-use impeller_hal_vulkan::{DevicePreference, VulkanContext, VulkanHal};
+use impeller_hal_vulkan::{DevicePreference, VulkanHal};
 
 const SIZE: Extent2D = Extent2D {
     width: 16,
@@ -369,7 +369,10 @@ fn check_distinctness(mut ctx: Validated) {
 /// feature into something checked rather than believed — a driver blending the
 /// second shape against the original backdrop instead of against the first
 /// shape's result would differ exactly in the overlap.
-fn overlapping_draws_two_ways(ctx: &mut VulkanContext, mode: BlendMode) -> (Vec<u8>, Vec<u8>) {
+fn overlapping_draws_two_ways<H: Hal>(ctx: &mut H::Context, mode: BlendMode) -> (Vec<u8>, Vec<u8>)
+where
+    H::Context: HalContext<Hal = H>,
+{
     // Two rectangles sharing a middle band, so part of each lies over bare
     // backdrop and part over the other.
     const LEFT: [[f32; 2]; 4] = [[-0.9, -0.6], [0.3, -0.6], [0.3, 0.6], [-0.9, 0.6]];
@@ -377,7 +380,7 @@ fn overlapping_draws_two_ways(ctx: &mut VulkanContext, mode: BlendMode) -> (Vec<
     let first = [0.85, 0.45, 0.2, 0.75];
     let second = [0.3, 0.65, 0.9, 0.75];
 
-    let render_with = |ctx: &mut VulkanContext, batched: bool| {
+    let render_with = |ctx: &mut H::Context, batched: bool| {
         let mut target = ctx
             .create_texture(&TextureDescriptor::offscreen(SIZE, PixelFormat::Rgba8Unorm))
             .expect("texture");
@@ -414,6 +417,33 @@ fn overlapping_draws_two_ways(ctx: &mut VulkanContext, mode: BlendMode) -> (Vec<
     (batched, separate)
 }
 
+/// Every advanced mode, batched once and submitted twice, must agree.
+///
+/// The two renderings differ only if the second draw blended against a
+/// destination the first had not finished writing, so agreement is the whole
+/// of what coherency means here.
+fn check_coherence<H: Hal>(ctx: &mut H::Context, backend: &str) -> usize
+where
+    H::Context: HalContext<Hal = H>,
+{
+    let mut checked = 0;
+    for mode in BlendMode::ADVANCED {
+        let (batched, separate) = overlapping_draws_two_ways::<H>(ctx, *mode);
+        let differing = batched
+            .chunks_exact(4)
+            .zip(separate.chunks_exact(4))
+            .filter(|(a, b)| a != b)
+            .count();
+        assert_eq!(
+            differing, 0,
+            "{backend} {mode}: {differing} pixel(s) differ between one batch and \
+             two submissions, so blending is not coherent within a batch"
+        );
+        checked += 1;
+    }
+    checked
+}
+
 #[test]
 fn advanced_blending_is_coherent_within_a_batch() {
     let mut ran = false;
@@ -424,24 +454,46 @@ fn advanced_blending_is_coherent_within_a_batch() {
         if !ctx.capabilities().advanced_blend {
             continue;
         }
-        for mode in BlendMode::ADVANCED {
-            let (batched, separate) = overlapping_draws_two_ways(&mut ctx, *mode);
-            let differing = batched
-                .chunks_exact(4)
-                .zip(separate.chunks_exact(4))
-                .filter(|(a, b)| a != b)
-                .count();
-            assert_eq!(
-                differing, 0,
-                "{mode}: {differing} pixel(s) differ between one batch and two \
-                 submissions, so blending is not coherent within a batch"
-            );
-            ran = true;
-        }
+        check_coherence::<VulkanHal>(&mut ctx, "vulkan");
+        ran = true;
     }
     if !ran {
         eprintln!("skipping: no device reports advanced blending");
     }
+}
+
+#[test]
+fn advanced_blending_is_coherent_within_a_batch_on_gles() {
+    // Separate from the Vulkan test above because the two get coherency from
+    // different places, and only one of them gets it for free. Vulkan asks for
+    // `advancedBlendCoherentOperations` and refuses the device without it;
+    // GLES has a coherent variant of the extension that this machine's driver
+    // does not offer, so the backend calls `glBlendBarrierKHR` before every
+    // advanced draw instead.
+    //
+    // What this does *not* check is that barrier, and the distinction is worth
+    // writing down because the first draft of this comment claimed the
+    // opposite. Removing the barrier leaves both halves of the comparison
+    // equally wrong -- the driver returns the source unblended either way --
+    // so a test that compares them cannot see it. What sees it is
+    // `every_mode_matches_its_equation_on_gles`, which compares against an
+    // answer rather than against another rendering. This checks the property
+    // its name says instead: that how a picture is submitted does not change
+    // it.
+    let Ok(mut ctx) = GlesValidated::new(DisplayTarget::Surfaceless) else {
+        eprintln!("skipping: no GLES context");
+        return;
+    };
+    if !ctx.capabilities().advanced_blend {
+        eprintln!("skipping: this GLES context has no advanced-blend extension");
+        return;
+    }
+    let checked = check_coherence::<GlesHal>(&mut ctx, "gles");
+    assert_eq!(
+        checked,
+        BlendMode::ADVANCED.len(),
+        "every advanced mode should have been checked"
+    );
 }
 
 #[test]
@@ -459,7 +511,7 @@ fn overlapping_advanced_draws_actually_blend_with_each_other() {
         return;
     };
 
-    let (batched, _) = overlapping_draws_two_ways(&mut ctx, BlendMode::Multiply);
+    let (batched, _) = overlapping_draws_two_ways::<VulkanHal>(&mut ctx, BlendMode::Multiply);
     let row = (SIZE.height / 2) as usize * SIZE.width as usize * 4;
     // A column inside the shared band, and one inside the left shape only.
     let overlap = &batched[row + 8 * 4..row + 8 * 4 + 4];

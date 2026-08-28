@@ -147,7 +147,7 @@ column is right and the obvious way to check it is wrong.
 | `aiks_dl_gradient_unittests.cc` | ~40 | 31 | nothing; see below |
 | `aiks_dl_clip_unittests.cc` | ~5 | 7 | nothing; this file is covered |
 | `aiks_dl_opacity_unittests.cc` | ~3 | 3 | nothing; this file is covered |
-| `aiks_dl_blend_unittests.cc` | ~79 | 39 | framebuffer fetch and subpass collapse, for three of them; see below |
+| `aiks_dl_blend_unittests.cc` | ~79 | 40 | capability injection and subpass collapse, for two of them; see below |
 | `aiks_dl_blur_unittests.cc` | ~59 | 41 | nothing; see below |
 | `aiks_dl_vertices_unittests.cc` | ~16 | 19 | nothing; see below |
 | `aiks_dl_atlas_unittests.cc` | ~11 | 9 | nothing; see below |
@@ -157,7 +157,7 @@ column is right and the obvious way to check it is wrong.
 | `aiks_dl_runtime_effect_unittests.cc` | — | 12 | nothing; see below |
 | `aiks_dl_unittests.cc` | ~36 | 15 | subpass collapse, for five of them; see below |
 
-The catalog holds two hundred and seventy scenes of roughly four hundred,
+The catalog holds two hundred and seventy-one scenes of roughly four hundred,
 and the proportion is less interesting than which ones: the arithmetic of drawing is largely covered, and
 what is missing is either a capability this renderer does not have or a thing
 the scene model cannot describe.
@@ -402,9 +402,16 @@ too, which is the second entry in this column to have gone that way, so the row
 is now short by subpass optimizations and forty ordinary pictures nobody has
 written.
 
-The blend row named two obstacles and both are real, for three of that file's
-twenty-one tests: two need framebuffer fetch by name, and one is the subpass
-collapse optimization itself. Twelve of the rest were unwritten rather than
+The blend row named two obstacles and one of them was misread, for three of
+that file's twenty-one tests. Two are named for framebuffer fetch and one is
+the subpass collapse optimization itself, which is out of scope for the reason
+below. Of the two, only `ColorFilterAdvancedBlendNoFbFetch` is blocked, and not
+by framebuffer fetch: it is a Metal-only test that installs a mock capabilities
+object to force `SupportsFramebufferFetch()` false, so what it needs is
+capability injection and there is none here. `FramebufferAdvancedBlendCoverage`
+is named for upstream's implementation and not for anything it requires -- it
+draws an image with `kMultiply` under a scale, and asserts the scale reached the
+image. That is a picture this renderer can draw, and it is here now. Twelve of the rest were unwritten rather than
 blocked, and three of those are here now -- `drawPaint` twice under a
 non-separable mode, an advanced blend clipped so its destination runs out, and
 an empty group whose color filter floods what its bounds admit. That last is

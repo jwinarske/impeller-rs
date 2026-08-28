@@ -30,6 +30,18 @@ mod ext {
     /// Turn a GL fence into a sync_file fd, which is what keeps the DRM frame
     /// loop explicit rather than falling back to a CPU wait.
     pub const NATIVE_FENCE_SYNC: &str = "EGL_ANDROID_native_fence_sync";
+
+    /// The blend equations a fixed-function unit cannot express as factors.
+    pub const BLEND_ADVANCED: &str = "GL_KHR_blend_equation_advanced";
+
+    /// The same, with overlapping draws blending in order without help.
+    ///
+    /// Where it is absent, an advanced equation needs `glBlendBarrierKHR`
+    /// before it against anything already written to the destination -- which
+    /// includes the pass's clear, not only an earlier overlapping draw. This
+    /// machine's driver has the first and not this, and without the barrier it
+    /// returns the source unblended for every advanced mode.
+    pub const BLEND_ADVANCED_COHERENT: &str = "GL_KHR_blend_equation_advanced_coherent";
 }
 
 /// How the context gets its display.
@@ -56,6 +68,13 @@ pub struct GlesContext {
     capabilities: Capabilities,
     egl_extensions: HashSet<String>,
     gl_extensions: HashSet<String>,
+    /// `Some` when an advanced blend needs a barrier before each draw.
+    ///
+    /// `None` covers both reasons there is nothing to call: the device has no
+    /// advanced blending at all, or it has the coherent variant and orders the
+    /// draws itself. Resolved once here rather than per draw, since a proc
+    /// address does not change under a context.
+    blend_barrier: Option<BlendBarrier>,
     program: Option<crate::render::SolidProgram>,
     /// Fragment programs a caller registered, by the index they were given.
     ///
@@ -63,7 +82,16 @@ pub struct GlesContext {
     /// backend: a GL program is the whole of what a draw needs, where a
     /// pipeline there also needs a render pass and a blend mode that only a
     /// draw knows.
-    pub(crate) runtime_programs: Vec<glow::Program>,
+    /// Each registered runtime program, plain and blend-qualified.
+    ///
+    /// Two objects rather than one because declaring
+    /// `blend_support_all_equations` is not free of consequence for a draw that
+    /// is not using an advanced equation: the driver here renders such a draw
+    /// measurably differently, enough to move a corpus scene past its
+    /// cross-backend tolerance. So the qualified program is used only where an
+    /// advanced equation is in force. The second is `None` on a device without
+    /// the extension, where no draw can ask for one.
+    pub(crate) runtime_programs: Vec<(glow::Program, Option<glow::Program>)>,
     /// The source each was linked from, so registering it again is recognized.
     runtime_sources: Vec<String>,
     /// A one-pixel opaque white texture, bound where a draw samples nothing.
@@ -213,6 +241,26 @@ impl GlesContext {
         let gl_extensions = gl_extension_set(&gl);
         let capabilities = detect_capabilities(&gl, &egl, &egl_extensions, &gl_extensions);
 
+        // Only where the equations are available and the driver does not order
+        // overlapping draws itself. A missing entry point where the extension
+        // said there would be one leaves this `None`, which is the same
+        // position the backend was in before advanced blending worked here --
+        // and `advanced_blend` is turned off with it, since an equation whose
+        // ordering cannot be arranged is one this backend cannot honor.
+        let blend_barrier = (capabilities.advanced_blend
+            && !gl_extensions.contains(ext::BLEND_ADVANCED_COHERENT))
+        .then(|| {
+            egl.get_proc_address("glBlendBarrierKHR")
+                // SAFETY: `glBlendBarrierKHR` takes and returns nothing, and
+                // the pointer came from the loader for a current context.
+                .map(|proc| unsafe { std::mem::transmute::<_, BlendBarrier>(proc) })
+        });
+        let mut capabilities = capabilities;
+        if matches!(blend_barrier, Some(None)) {
+            capabilities.advanced_blend = false;
+        }
+        let blend_barrier = blend_barrier.flatten();
+
         // Asked for and available are separate questions, and a driver without
         // debug output still renders. `debug_active` reports which happened, so
         // a caller asserting on the log can tell "clean" from "not looking".
@@ -235,6 +283,7 @@ impl GlesContext {
             capabilities,
             egl_extensions,
             gl_extensions,
+            blend_barrier,
             program: None,
             runtime_programs: Vec::new(),
             runtime_sources: Vec::new(),
@@ -349,7 +398,17 @@ impl GlesContext {
             return Ok(existing as u32);
         }
         // SAFETY: a context is current for this context's whole life.
-        let linked = crate::render::build_runtime_program(&self.gl, &program.glsl_es)?;
+        let linked = crate::render::build_runtime_program(&self.gl, &program.glsl_es, false)?;
+        let qualified = if self.capabilities.advanced_blend {
+            Some(crate::render::build_runtime_program(
+                &self.gl,
+                &program.glsl_es,
+                true,
+            )?)
+        } else {
+            None
+        };
+        let linked = (linked, qualified);
         self.runtime_programs.push(linked);
         self.runtime_sources.push(program.glsl_es.clone());
         Ok((self.runtime_programs.len() - 1) as u32)
@@ -400,6 +459,11 @@ impl GlesContext {
         self.egl_extensions.contains(name)
     }
 
+    /// The blend barrier to call before an advanced blend, if one is needed.
+    pub(crate) fn blend_barrier(&self) -> Option<BlendBarrier> {
+        self.blend_barrier
+    }
+
     /// Whether a GL-side extension is present.
     ///
     /// Kept queryable rather than folded into [`Capabilities`] until something
@@ -420,6 +484,9 @@ impl Drop for GlesContext {
             // these objects.
             unsafe {
                 self.gl.delete_program(program.program);
+                if let Some(advanced) = program.advanced {
+                    self.gl.delete_program(advanced);
+                }
                 self.gl.delete_vertex_array(program.vao);
                 self.gl.delete_buffer(program.vertices);
                 self.gl.delete_buffer(program.indices);
@@ -428,7 +495,11 @@ impl Drop for GlesContext {
         }
         // SAFETY: the same context is still current.
         unsafe {
-            for program in std::mem::take(&mut self.runtime_programs) {
+            for program in std::mem::take(&mut self.runtime_programs)
+                .into_iter()
+                .flat_map(|(plain, qualified)| [Some(plain), qualified])
+                .flatten()
+            {
                 self.gl.delete_program(program);
             }
             // The placeholder is created on the first draw that samples
@@ -525,6 +596,14 @@ fn gl_extension_set(gl: &glow::Context) -> HashSet<String> {
             .collect()
     }
 }
+
+/// `glBlendBarrierKHR`, which glow does not wrap.
+///
+/// Needed only where `GL_KHR_blend_equation_advanced` is present without its
+/// coherent variant. It orders one draw's blend against the pixels an earlier
+/// draw in the same pass wrote; without it, an advanced equation may read a
+/// destination that has not settled.
+pub(crate) type BlendBarrier = unsafe extern "system" fn();
 
 /// `glGetInternalformativ`, which glow does not wrap.
 ///
@@ -656,14 +735,17 @@ fn detect_capabilities(
     // process, which is no use to an atomic commit.
     let fence = egl_extensions.contains(ext::NATIVE_FENCE_SYNC);
     Capabilities {
-        // No advanced blending: the extension GLES exposes for it requires the
-        // fragment shader to declare `blend_support_all_equations`, and the
-        // shader translator this backend generates GLSL with cannot emit that
-        // qualifier. Reporting true and hoping would produce plain source-over
-        // silently. Lifting this needs a hand-written GLSL fragment stage plus
-        // blend barriers between overlapping draws wherever the coherent
-        // variant of the extension is missing.
-        advanced_blend: false,
+        // The extension requires the fragment stage to declare
+        // `blend_support_all_equations`, which naga cannot emit from WGSL --
+        // recorded here for a while as needing a hand-written GLSL stage, and
+        // it does not: the declaration and the `#extension` that legalizes it
+        // are two lines after the version line, inserted by
+        // `render::with_advanced_blend` the way the shader crate's build
+        // script already inserts a `std140` qualifier.
+        //
+        // Reporting the extension is therefore honest here, where reporting it
+        // before would have produced plain source-over silently.
+        advanced_blend: gl_extensions.contains(ext::BLEND_ADVANCED),
         max_texture_size,
         sample_counts: SampleCounts::from_mask(mask),
         dma_buf,

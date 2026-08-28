@@ -2485,6 +2485,39 @@ fn blend() -> Vec<Scene> {
     ));
 
     scenes.push(plate(
+        "blend/framebuffer-advanced-blend-coverage",
+        vec![
+            // Upstream's gray, which is what the multiply has to act on.
+            Item::fill(
+                Shape::Rect {
+                    min: [0.0, 0.0],
+                    max: [128.0, 128.0],
+                },
+                [169.0 / 255.0, 169.0 / 255.0, 169.0 / 255.0, 1.0],
+            ),
+            // The sheet drawn into a rectangle smaller than itself, which is
+            // the scale upstream applies before drawing. What the scene is for
+            // is that the scale reaches the image at all: upstream's own name
+            // is for the path it takes there, where a blend that reads the
+            // framebuffer is a separate pass and the transform has to survive
+            // being handed to it.
+            Item::filled(
+                Shape::Rect {
+                    min: [8.0, 8.0],
+                    max: [59.2, 59.2],
+                },
+                sheet(
+                    [8.0, 8.0, 59.2, 59.2],
+                    ALL,
+                    TileMode::Clamp,
+                    Sampling::Linear,
+                ),
+            )
+            .with_blend(BlendMode::Multiply),
+        ],
+    ));
+
+    scenes.push(plate(
         "blend/color-filter-blend",
         vec![Item::filled(
             Shape::Rect {

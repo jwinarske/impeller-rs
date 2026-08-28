@@ -58,6 +58,12 @@ smaller triangle than P3's. Nothing between the paint and the target clamps, so
 those components reach a floating-point surface intact, through layers,
 gradients and filters.
 
+The GLES backend has the advanced blend modes. It reports
+`GL_KHR_blend_equation_advanced` as the capability now rather than refusing the
+fifteen modes outright, so the same picture reaches both backends -- 29 of 29
+modes are checked against the compositing equations on GLES where 14 were.
+Nothing about the API changed; a caller that was refused is not.
+
 A stroke narrower than a device pixel draws differently. It is widened to one
 pixel and dimmed by `clamp(2 * scaled_width, 0, 1)`, which is upstream's
 arithmetic with upstream's constants, so a thin line fades with its width
