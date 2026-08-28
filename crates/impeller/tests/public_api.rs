@@ -15570,6 +15570,13 @@ fn a_nine_patch_is_one_draw_and_the_same_picture_as_nine() {
         render_with(&mut ctx, canvas)
     };
 
+    // Before the assertions, so a failing one does not leave the sheet
+    // behind. An image outliving its context is a validation error rather
+    // than a test failure, and it is reported against whichever test runs
+    // next -- which is how this one showed up in CI, as somebody else's
+    // problem, on a run where every test passed.
+    ctx.destroy_image(image);
+
     assert_eq!(merged.0, 1, "a nine-patch should record one draw");
     assert_eq!(
         separate.0, 9,
