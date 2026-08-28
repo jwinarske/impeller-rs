@@ -15,9 +15,12 @@ the whole project rather than a delta, and `docs/parity.md` and
 both are checked by tests, so neither can drift from the code without failing
 the build.
 
-What stands between here and a first release with an API:
-
-- Two operations are absent: `drawRSuperellipse` and `clipRSuperellipse`.
+This section used to carry a list of what stood between here and a first release
+with an API. It had one entry, `drawRSuperellipse` and `clipRSuperellipse`, and
+it stayed on the list for a while after both were written -- which is the
+duplication the paragraph above rules out. `docs/parity.md` says what is built,
+a test checks that it says so truly, and a copy of that claim kept by hand here
+is the same claim without the check. So there is no list.
 
 `Color` stores sRGB-encoded components rather than linear light. `Color::srgb`
 keeps what it is given, `Color::linear` encodes on the way in, and `to_array`
@@ -32,7 +35,7 @@ backend knows that, and it is what decides a gradient's dither; the same
 recording drawn into an eight-bit surface and a float one wants different
 answers, so it could not have been a property of the recording.
 
-`transform` was listed here too, taking a 2D affine where `dart:ui` takes a 4×4
+`transform` was on that list too, taking a 2D affine where `dart:ui` takes a 4×4
 and so admits perspective, and was described as a deliberate design limit
 rather than an omission. That was an assertion with no argument behind it,
 unlike the superellipse decision beside it, and it is no longer true either way:

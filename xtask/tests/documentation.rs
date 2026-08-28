@@ -711,3 +711,67 @@ fn every_non_parity_entry_states_its_impact() {
         silent.join("\n  ")
     );
 }
+
+/// The changelog says of itself that `docs/parity.md` describes what is built
+/// "far better than a list could -- both are checked by tests, so neither can
+/// drift from the code without failing the build." Four lines below that it
+/// kept its own list of two operations it called absent, and went on calling
+/// them absent after they were written, because nothing read it.
+///
+/// So this reads it. Not the whole duplication -- a changelog is allowed to say
+/// what an operation's signature used to be, and one paragraph does -- but the
+/// one shape that can only ever be wrong: an operation the parity table has
+/// verified as built, described here as missing.
+#[test]
+fn the_changelog_does_not_call_a_built_operation_absent() {
+    const ABSENCE: [&str; 5] = ["absent", "absence", "not built", "missing", "unimplemented"];
+
+    let path = repo_root().join("CHANGELOG.md");
+    let text = std::fs::read_to_string(&path)
+        .unwrap_or_else(|e| panic!("reading {}: {e}", path.display()));
+
+    // A cell can name more than one operation, so the names are taken one at a
+    // time and with their backticks: `transform` is both a parity row and an
+    // ordinary English word, and only the quoted form means the operation.
+    let built: Vec<String> = rows(&parity())
+        .into_iter()
+        .filter(|(_, status, _)| status == "yes")
+        .flat_map(|(feature, _, _)| {
+            feature
+                .split(',')
+                .map(|name| name.trim().to_owned())
+                .filter(|name| name.starts_with('`') && name.ends_with('`'))
+                .collect::<Vec<_>>()
+        })
+        .collect();
+    assert!(
+        built.len() >= 40,
+        "the parity table yielded {} built rows, which is too few to be the table \
+         it was parsed from -- did the columns change shape?",
+        built.len()
+    );
+
+    let mut stale: Vec<String> = Vec::new();
+    for paragraph in text.split("\n\n") {
+        let flattened = paragraph.split_whitespace().collect::<Vec<_>>().join(" ");
+        let lowered = flattened.to_lowercase();
+        let Some(word) = ABSENCE.iter().find(|w| lowered.contains(**w)) else {
+            continue;
+        };
+        for feature in &built {
+            if flattened.contains(feature.as_str()) {
+                stale.push(format!("{feature} -- said to be {word}"));
+            }
+        }
+    }
+
+    assert!(
+        stale.is_empty(),
+        "CHANGELOG.md describes as unbuilt what docs/parity.md has verified is \
+         built:\n  {}\n\
+         The parity table owns that claim and a test holds it to the code. A \
+         second copy here has nothing holding it to anything, which is how the \
+         first one went stale.",
+        stale.join("\n  ")
+    );
+}
