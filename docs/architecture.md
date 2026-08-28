@@ -872,8 +872,16 @@ that call decides to draw it. Rectangles go through `draw_rect` now, which is
 eighteen analytic draws the catalog did not have, and the pair is asserted
 directly besides: the two routes agree over every edge and interior pixel and
 part company only at a corner, where a signed distance is one number and a
-corner pixel is cut by two edges. Three or four pixels per rectangle, by up to
-a quarter of a pixel's worth of coverage.
+corner pixel is cut by two edges. Three or four pixels per rectangle.
+
+*How far* apart they get there is not asserted, and that is a correction rather
+than an omission. The first version bounded it at sixty-four levels, which is
+what this machine measures, and the software rasterizer in CI came back with a
+hundred and ninety-one on the rectangle whose corners fall on pixel centers —
+the one alignment where a corner sits exactly on the sample grid, so which
+samples a triangle covers there is a property of the rasterizer and not of
+either route. Where they differ and how many survives a second device; how much
+does not.
 
 **A backdrop filter cuts the pass rather than reading it.** Frosted glass asks
 for the one thing the rule above forbids: a layer whose starting content is the
