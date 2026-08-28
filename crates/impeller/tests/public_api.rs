@@ -15085,3 +15085,101 @@ fn the_two_ways_to_draw_a_ring_agree_on_its_color() {
         "the middle should be the hole, not the fill"
     );
 }
+
+/// The stroke pixels in a window, as the red channel of half-alpha blue on
+/// white: 128 where the stroke covered once, 64 where it covered twice, and
+/// values above 128 at the antialiased outline where it covered part of one.
+fn stroke_covers(pixels: &[u8], x: std::ops::Range<u32>, y: std::ops::Range<u32>) -> Vec<u8> {
+    let mut out = Vec::new();
+    for row in y {
+        for column in x.clone() {
+            let p = pixel(pixels, column, row);
+            if p[2] > 200 && p[0] < 250 {
+                out.push(p[0]);
+            }
+        }
+    }
+    out
+}
+
+#[test]
+fn a_translucent_stroke_blends_with_itself_only_where_its_caps_overlap() {
+    // A stroke is tessellated as a run of overlapping quads with a cap shape on
+    // each end, so anywhere the outline covers a pixel twice the second cover
+    // blends over the first. At full opacity that is invisible -- opaque over
+    // opaque is opaque -- and at half it is one blend against two. Upstream
+    // draws its arc farm translucently for exactly this reason, at stroke
+    // widths running up to the whole diameter.
+    //
+    // Two claims, and the second is what keeps the first honest. Along the run
+    // of the stroke nothing covers twice, however much the quads overlap each
+    // other geometrically. Where the two caps *are* on top of each other --
+    // this arc closes to within twenty degrees and its stroke is wider than its
+    // diameter -- they do, and they should: that is two shapes over one pixel
+    // and not a tessellation covering itself.
+    let Some(mut ctx) = context() else { return };
+
+    let sweep = 5.93f32;
+    let (cx, cy, r) = (64.0f32, 64.0f32, 26.0f32);
+    let mut canvas = Canvas::new(SIZE);
+    canvas.clear(Color::WHITE);
+    let mut b = PathBuilder::new();
+    for i in 0..=128 {
+        let a = sweep * (i as f32 / 128.0);
+        let p = Vec2::new(cx + r * a.cos(), cy + r * a.sin());
+        if i == 0 {
+            b.move_to(p);
+        } else {
+            b.line_to(p);
+        }
+    }
+    canvas
+        .draw_path(
+            &b.build(),
+            &Paint::stroke(Color::srgb(0.0, 0.0, 1.0, 0.5), 40.0).with_style(Style::Stroke(
+                StrokeStyle::new(40.0).with_cap(LineCap::Round),
+            )),
+        )
+        .expect("a wide translucent arc");
+    let pixels = render(&mut ctx, canvas);
+
+    // Three windows on the run, none of them near the ends.
+    for (label, x, y) in [
+        ("the far side", 8..30u32, 50..80u32),
+        ("the top", 50..80u32, 8..26u32),
+        ("the bottom", 50..80u32, 100..120u32),
+    ] {
+        let covers = stroke_covers(&pixels, x, y);
+        assert!(
+            covers.len() > 150,
+            "{label} should be mostly stroke, got {} pixels",
+            covers.len()
+        );
+        let twice = covers.iter().filter(|v| **v < 120).count();
+        assert_eq!(
+            twice,
+            0,
+            "{label}: {twice} of {} stroke pixels blended more than once, so the \
+             run of the stroke is covering itself",
+            covers.len()
+        );
+        let once = covers.iter().filter(|v| v.abs_diff(128) <= 2).count();
+        assert!(
+            once * 10 > covers.len() * 9,
+            "{label}: only {once} of {} pixels carry a single cover, so this \
+             window is edge rather than run",
+            covers.len()
+        );
+    }
+
+    // And the caps do overlap, which is what says the windows above were not
+    // simply somewhere the arc never reached.
+    let gap = stroke_covers(&pixels, 84..120u32, 55..75u32);
+    let doubled = gap.iter().filter(|v| **v < 120).count();
+    assert!(
+        doubled > 100,
+        "the two caps should be on top of each other near the gap, and only \
+         {doubled} of {} pixels there blended twice",
+        gap.len()
+    );
+}

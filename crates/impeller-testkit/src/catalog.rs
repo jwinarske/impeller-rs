@@ -749,8 +749,42 @@ fn basic() -> Vec<Scene> {
                 ),
             ],
         ),
+        // Open, which is what `use_center = false` means and what this plate is
+        // named for. It drew closed slices for a while, under this name, with
+        // the with-center plate below not existing at all -- so the pair that
+        // upstream splits into two farms was one plate showing the wrong half
+        // of it. A filled open arc is closed by the chord between its ends
+        // rather than through the center, and that is the whole difference.
         plate(
             "basic/filled-arcs-render-correctly",
+            vec![
+                Item::fill(
+                    Shape::Arc {
+                        center: [64.0, 64.0],
+                        radii: [52.0, 52.0],
+                        start: -1.2,
+                        sweep: 2.4,
+                        through_center: false,
+                    },
+                    RED,
+                ),
+                Item::fill(
+                    Shape::Arc {
+                        center: [64.0, 64.0],
+                        radii: [34.0, 34.0],
+                        start: 1.6,
+                        sweep: 2.0,
+                        through_center: false,
+                    },
+                    GREEN,
+                ),
+            ],
+        ),
+        // The same two through the center, which is the other farm. A sweep
+        // under half a turn is where the two differ most: the chord cuts a
+        // segment off where the center makes a wedge.
+        plate(
+            "basic/filled-arcs-render-correctly-with-center",
             vec![
                 Item::fill(
                     Shape::Arc {
@@ -776,6 +810,24 @@ fn basic() -> Vec<Scene> {
         ),
         plate(
             "basic/non-square-filled-arcs-render-correctly",
+            vec![Item::fill(
+                Shape::Arc {
+                    center: [64.0, 64.0],
+                    radii: [56.0, 30.0],
+                    start: -0.6,
+                    sweep: 4.0,
+                    through_center: false,
+                },
+                YELLOW,
+            )],
+        ),
+        // On an ellipse the center matters more than it does on a circle: the
+        // chord between two points of an ellipse is not perpendicular to
+        // anything in particular, so the segment it cuts off and the wedge the
+        // center makes are different shapes rather than the same shape at two
+        // sizes.
+        plate(
+            "basic/non-square-filled-arcs-render-correctly-with-center",
             vec![Item::fill(
                 Shape::Arc {
                     center: [64.0, 64.0],
@@ -886,6 +938,162 @@ fn basic() -> Vec<Scene> {
                     ..StrokeSpec::new(10.0)
                 },
                 WHITE,
+            )],
+        ),
+        // The third join, and the one the pair above cannot stand in for. A
+        // miter runs the two edges out to their crossing and a round join arcs
+        // between them; a bevel cuts straight across, which at this sweep sits
+        // between the two rather than near either. The same narrow sweep, for
+        // the reason stated above it -- at an obtuse vertex all three agree.
+        plate(
+            "basic/stroked-arcs-render-correctly-with-bevel-joins-and-center",
+            vec![Item::stroke(
+                Shape::Arc {
+                    center: [64.0, 64.0],
+                    radii: [42.0, 42.0],
+                    start: -1.2,
+                    sweep: 0.7,
+                    through_center: true,
+                },
+                StrokeSpec {
+                    join: LineJoin::Bevel,
+                    ..StrokeSpec::new(10.0)
+                },
+                WHITE,
+            )],
+        ),
+        // Upstream draws its whole farm once per cap and reads the two against
+        // each other; this draws one arc twice, so the difference is where the
+        // ends are rather than which plate is being looked at. A square end
+        // projects half the stroke width along the tangent and a butt end stops
+        // on it, so the red shows past the blue at both ends and nowhere else.
+        plate(
+            "basic/stroked-arcs-render-correctly-with-square-and-butt-ends",
+            vec![
+                Item::stroke(
+                    Shape::Arc {
+                        center: [64.0, 64.0],
+                        radii: [44.0, 44.0],
+                        start: -2.2,
+                        sweep: 3.6,
+                        through_center: false,
+                    },
+                    StrokeSpec {
+                        cap: LineCap::Square,
+                        ..StrokeSpec::new(16.0)
+                    },
+                    RED,
+                ),
+                Item::stroke(
+                    Shape::Arc {
+                        center: [64.0, 64.0],
+                        radii: [44.0, 44.0],
+                        start: -2.2,
+                        sweep: 3.6,
+                        through_center: false,
+                    },
+                    StrokeSpec {
+                        cap: LineCap::Butt,
+                        ..StrokeSpec::new(16.0)
+                    },
+                    BLUE,
+                ),
+            ],
+        ),
+        // And all three, which is upstream's third cap plate. A round end is a
+        // half disc and a square end is a half square, so the green shows in
+        // the corners the round cap leaves and the red shows past both.
+        plate(
+            "basic/stroked-arcs-render-correctly-with-square-and-butt-and-round-ends",
+            vec![
+                Item::stroke(
+                    Shape::Arc {
+                        center: [64.0, 64.0],
+                        radii: [44.0, 44.0],
+                        start: -2.2,
+                        sweep: 3.6,
+                        through_center: false,
+                    },
+                    StrokeSpec {
+                        cap: LineCap::Square,
+                        ..StrokeSpec::new(16.0)
+                    },
+                    RED,
+                ),
+                Item::stroke(
+                    Shape::Arc {
+                        center: [64.0, 64.0],
+                        radii: [44.0, 44.0],
+                        start: -2.2,
+                        sweep: 3.6,
+                        through_center: false,
+                    },
+                    StrokeSpec {
+                        cap: LineCap::Round,
+                        ..StrokeSpec::new(16.0)
+                    },
+                    GREEN,
+                ),
+                Item::stroke(
+                    Shape::Arc {
+                        center: [64.0, 64.0],
+                        radii: [44.0, 44.0],
+                        start: -2.2,
+                        sweep: 3.6,
+                        through_center: false,
+                    },
+                    StrokeSpec {
+                        cap: LineCap::Butt,
+                        ..StrokeSpec::new(16.0)
+                    },
+                    BLUE,
+                ),
+            ],
+        ),
+        // The pair upstream draws translucently, and translucency is the whole
+        // of what they are for. A stroke is tessellated as a run of overlapping
+        // quads with a cap on each end, so anywhere the outline covers a pixel
+        // twice an opaque stroke looks perfect and a half-transparent one comes
+        // out darker. This arc closes to within twenty degrees and its stroke
+        // is wider than its diameter, so the two caps sit on top of each other
+        // and that patch is visibly darker -- correctly, since it is two shapes
+        // over one pixel.
+        //
+        // What must *not* darken is the run between them, and
+        // `a_translucent_stroke_blends_with_itself_only_where_its_caps_overlap`
+        // is where that is asserted rather than looked at.
+        plate(
+            "basic/stroked-arcs-render-correctly-with-translucency-and-round-ends",
+            vec![Item::stroke(
+                Shape::Arc {
+                    center: [64.0, 64.0],
+                    radii: [26.0, 26.0],
+                    start: 0.0,
+                    sweep: 5.93,
+                    through_center: false,
+                },
+                StrokeSpec {
+                    cap: LineCap::Round,
+                    ..StrokeSpec::new(40.0)
+                },
+                BLUE_HALF,
+            )],
+        ),
+        plate(
+            "basic/stroked-arcs-render-correctly-with-translucency-and-square-ends",
+            vec![Item::stroke(
+                Shape::Arc {
+                    center: [64.0, 64.0],
+                    radii: [26.0, 26.0],
+                    start: 0.0,
+                    sweep: 5.93,
+                    through_center: false,
+                },
+                StrokeSpec {
+                    cap: LineCap::Square,
+                    ..StrokeSpec::new(40.0)
+                },
+                BLUE_HALF,
             )],
         ),
         plate(

@@ -142,7 +142,7 @@ column is right and the obvious way to check it is wrong.
 
 | File | Scenes there | Here | Blocked on |
 |---|---|---|---|
-| `aiks_dl_basic_unittests.cc` | ~85 | 65 | subpass optimizations; see below |
+| `aiks_dl_basic_unittests.cc` | ~85 | 72 | subpass optimizations; see below |
 | `aiks_dl_path_unittests.cc` | ~30 | 21 | nothing; see below |
 | `aiks_dl_gradient_unittests.cc` | ~40 | 31 | nothing; see below |
 | `aiks_dl_clip_unittests.cc` | ~5 | 7 | nothing; this file is covered |
@@ -157,7 +157,7 @@ column is right and the obvious way to check it is wrong.
 | `aiks_dl_runtime_effect_unittests.cc` | — | 12 | nothing; see below |
 | `aiks_dl_unittests.cc` | ~36 | 15 | subpass collapse, for five of them; see below |
 
-The catalog holds two hundred and eighty-three scenes of roughly four hundred,
+The catalog holds two hundred and ninety scenes of roughly four hundred,
 and the proportion is less interesting than which ones: the arithmetic of drawing is largely covered, and
 what is missing is either a capability this renderer does not have or a thing
 the scene model cannot describe.
@@ -438,6 +438,25 @@ than the extent: a bounded layer's target starts where the bounds start, so its
 contents are placed against that origin, and a renderer that forgot would slide
 them by the offset and still draw three squares. That last one has the bounds
 drawn as a yellow outline so the two can be read against each other.
+
+The arc family went next, and writing it found that two of its existing plates
+were the wrong picture. Upstream splits every arc farm in two -- one closed by
+the chord between the ends, one closed through the center -- and both of the
+plates here named for the *open* half were drawing the closed one, with the
+closed half not present at all. So the pair upstream draws was one plate showing
+the wrong side of it. The two are corrected and their siblings added, along with
+the third join a bevel makes, the two cap plates that read a square end against
+a butt and then against a round one, and the pair upstream draws translucently.
+
+That last pair is the one worth the words. A stroke is a run of overlapping
+quads with a cap on each end, so an outline covering a pixel twice is invisible
+at full opacity and darker at half. The plate closes its arc to within twenty
+degrees at a stroke wider than the diameter, so the two caps land on top of each
+other and that patch is darker -- correctly, being two shapes over one pixel.
+What must not darken is the run between them, and that is asserted rather than
+looked at: three windows away from the ends carry a single cover and no pixel
+darker, and a fourth window over the caps has to find the doubling, so the first
+three cannot pass by the arc having missed them.
 
 The blend row named two obstacles and one of them was misread, for three of
 that file's twenty-one tests. Two are named for framebuffer fetch and one is
