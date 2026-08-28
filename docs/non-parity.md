@@ -330,6 +330,45 @@ wrong in exactly the way Flutter's is. It is written down because the next
 person to measure this shape will find the jump and reasonably think it is a
 local mistake.
 
+## 12. A field of points is a draw each; upstream's is one
+
+**What differs.** `drawPoints` in `PointMode::Points` draws each point through
+the call that shape has -- a circle for a round cap, a rectangle for a square
+one -- so a field of a thousand dots records a thousand draws. Upstream's
+`PointFieldGeometry` builds a single vertex buffer for the whole field,
+tessellating each round point into a circle mesh and stitching them with
+degenerate triangles, and issues one.
+
+The other two modes already batch, and finding that out is what makes this
+entry narrow. `PointMode::Lines` and `PointMode::Polygon` come out as one draw
+already -- not because they are written to, but because the batch merges draws
+that share a material, and consecutive line segments do. A point does not: the
+analytic circle carries its center and radius in `to_local`, so no two points
+share a material and none of them merge.
+
+**Why it is not simply changed.** Merging costs the analytic edge. Measured on
+sixteen points at radius four and a half: sixteen draws and sixty-four vertices
+become one draw and a hundred and ninety-two, and four hundred and fifty-one
+pixels of a hundred-and-twenty-eight-square frame differ by as much as
+ninety-two levels. That is the same distance-field-against-multisample
+difference `docs/architecture.md` records for the two rectangle routes, and it
+is a real quality loss on the small round shapes it applies to.
+
+Three ways out, and the third is the one worth building. Tessellate always,
+which is upstream's answer and costs the quality above. Tessellate past some
+number of points, which is a threshold nobody can argue for. Or carry the
+circle's center and radius on the vertices the way `drawAtlas` carries texture
+coordinates, so the field evaluates per fragment from interpolated data and one
+draw keeps the analytic edge -- which needs a material variant and a shader
+that reads it, and would be the first thing in this renderer to do that.
+
+**Impact.** A scatter plot, a debug overlay, a particle field: any of them at a
+thousand points costs a thousand draws where upstream costs one, and draw count
+is the quantity this renderer's own benchmark is built to measure. Below a few
+dozen points it is not worth noticing. Nothing about the picture is wrong --
+each dot is drawn better than upstream draws it -- so this is a cost gap rather
+than a correctness one.
+
 ## 12. A layer's matrix cannot bring content in from off the target
 
 **What differs.** `Layer::with_matrix` is `dart:ui`'s matrix image filter on a

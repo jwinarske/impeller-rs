@@ -3707,6 +3707,13 @@ impl Canvas {
         }
 
         match mode {
+            // One draw per point, where upstream's `PointFieldGeometry` builds
+            // one buffer for the whole field. The other two modes below batch
+            // already -- not by being written to, but because a batch merges
+            // draws that share a material and consecutive segments do. A point
+            // does not: an analytic circle carries its center and radius in
+            // `to_local`, so no two of them are alike. `docs/non-parity.md`
+            // §12 has the measurement and the three ways out.
             PointMode::Points => {
                 let radius = stroke.width / 2.0;
                 // Filled rather than stroked: what is being drawn is the cap
