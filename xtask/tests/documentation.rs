@@ -775,3 +775,150 @@ fn the_changelog_does_not_call_a_built_operation_absent() {
         stale.join("\n  ")
     );
 }
+
+/// A run of spaces inside a string literal is alignment or it is a mistake.
+///
+/// Rust's line continuation swallows the newline *and* the indentation after
+/// it, which is why a long message can be written across several lines and
+/// still read as one sentence. Drop the backslash and nothing complains: the
+/// literal keeps the indentation, and the message reaches a caller with
+/// eighteen spaces in the middle of it. One did, in the refusal for asking to
+/// draw into an sRGB target, and it read as one sentence in the source the
+/// whole time.
+///
+/// The rule below is what separates the two cases. Padding inside a literal is
+/// legitimate when it lines up columns, and something with columns in it has
+/// lines: `xtask report` writes rows like `"  dma-buf           import {}"`. A
+/// run of spaces in a literal with no newline in it is aligning nothing.
+///
+/// That is narrower than the mistake, deliberately. A backslash deleted where
+/// it stands leaves a real newline in the literal followed by the source's
+/// indentation, and this does not catch that: a newline followed by spaces is
+/// how several messages here lay out a list, and the shortest indent a dropped
+/// backslash leaves is not far above the longest one that is meant. Both
+/// instances found so far were the flattened form, which has no such ambiguity
+/// -- so this catches the shape it can be sure about rather than guessing at
+/// the other, and a reader should not take a pass here as saying no message is
+/// wrapped oddly.
+#[test]
+fn no_message_carries_a_run_of_spaces_where_a_line_continuation_was_dropped() {
+    let mut flattened: Vec<String> = Vec::new();
+    let mut seen = 0usize;
+    for source in sources() {
+        for literal in string_literals(&source) {
+            seen += 1;
+            if !literal.contains('\n') && literal.trim().contains("   ") {
+                flattened.push(literal);
+            }
+        }
+    }
+    // A scanner that found nothing would pass this and say nothing, which is
+    // the shape of check this file exists to distrust. Both instances the rule
+    // caught were found by running it, so the floor is set where a scanner that
+    // still walks the tree stays above it and one that stopped does not.
+    assert!(
+        seen > 3_000,
+        "the scanner found {seen} string literals across the workspace, which is \
+         too few to have read it -- the check would pass whatever the sources say"
+    );
+    assert!(
+        flattened.is_empty(),
+        "these string literals carry a run of spaces and have no line to align \
+         to, which is what a dropped `\\` leaves behind:\n  {}",
+        flattened.join("\n  ")
+    );
+}
+
+/// Every ordinary string literal in a source file, as Rust will have it.
+///
+/// Escapes are resolved far enough for the caller above and no further: `\n`
+/// becomes a newline so a literal with lines in it can be recognized, a line
+/// continuation eats the newline and the indentation after it the way the
+/// compiler does, and every other escape yields the character it escaped so
+/// that `\"` cannot end a literal early.
+///
+/// Comments are skipped, both kinds, because a quotation mark inside one would
+/// otherwise open a literal that runs to the next unrelated quote and swallow
+/// the source between them. Raw strings are skipped rather than returned: the
+/// tree's are shader source and SQL-shaped fixtures, none of which is a message
+/// anyone reads, and taking them properly means matching hash counts.
+fn string_literals(source: &str) -> Vec<String> {
+    let bytes: Vec<char> = source.chars().collect();
+    let mut out = Vec::new();
+    let mut i = 0;
+    while i < bytes.len() {
+        match bytes[i] {
+            '/' if bytes.get(i + 1) == Some(&'/') => {
+                while i < bytes.len() && bytes[i] != '\n' {
+                    i += 1;
+                }
+            }
+            '/' if bytes.get(i + 1) == Some(&'*') => {
+                i += 2;
+                while i < bytes.len() && !(bytes[i] == '*' && bytes.get(i + 1) == Some(&'/')) {
+                    i += 1;
+                }
+                i += 2;
+            }
+            'r' if matches!(bytes.get(i + 1), Some('"') | Some('#')) => {
+                let mut hashes = 0;
+                let mut j = i + 1;
+                while bytes.get(j) == Some(&'#') {
+                    hashes += 1;
+                    j += 1;
+                }
+                if bytes.get(j) != Some(&'"') {
+                    i += 1;
+                    continue;
+                }
+                let close: String = std::iter::once('"')
+                    .chain(std::iter::repeat_n('#', hashes))
+                    .collect();
+                let rest: String = bytes[j + 1..].iter().collect();
+                i = match rest.find(&close) {
+                    Some(at) => j + 1 + rest[..at].chars().count() + close.chars().count(),
+                    None => bytes.len(),
+                };
+            }
+            // A lifetime or a character literal, not the start of a string.
+            '\'' => {
+                i += if bytes.get(i + 1) == Some(&'\\') {
+                    4
+                } else {
+                    3
+                }
+            }
+            '"' => {
+                i += 1;
+                let mut literal = String::new();
+                while i < bytes.len() && bytes[i] != '"' {
+                    if bytes[i] != '\\' {
+                        literal.push(bytes[i]);
+                        i += 1;
+                        continue;
+                    }
+                    i += 1;
+                    match bytes.get(i) {
+                        Some('n') => literal.push('\n'),
+                        // The continuation: the newline goes, and so does the
+                        // indentation that follows it. This is the whole point.
+                        Some('\n') => {
+                            i += 1;
+                            while bytes.get(i).is_some_and(|c| c.is_whitespace()) {
+                                i += 1;
+                            }
+                            continue;
+                        }
+                        Some(other) => literal.push(*other),
+                        None => break,
+                    }
+                    i += 1;
+                }
+                out.push(literal);
+                i += 1;
+            }
+            _ => i += 1,
+        }
+    }
+    out
+}

@@ -1939,7 +1939,8 @@ fn an_analytic_shape_does_not_erase_what_is_behind_it() {
     let (_, composited_vertices) = over_a_backdrop(BlendMode::SrcOver, true);
     assert!(
         replaced_vertices > composited_vertices,
-        "a destination-discarding mode should have fallen back to tessellation:          {replaced_vertices} against {composited_vertices}"
+        "a destination-discarding mode should have fallen back to tessellation: \
+         {replaced_vertices} against {composited_vertices}"
     );
     for (x, y) in gaps {
         assert_eq!(

@@ -193,7 +193,8 @@ impl Capabilities {
         // into one has no reading under which it is correct.
         if desc.usage.render_target && !desc.format.is_drawable() {
             return Err(crate::Error::Unsupported(
-                "an sRGB render target; this pipeline already holds encoded                  color and the format would encode it a second time",
+                "an sRGB render target; this pipeline already holds encoded \
+                 color and the format would encode it a second time",
             ));
         }
         if desc.usage.render_target
