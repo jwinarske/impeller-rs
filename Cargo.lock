@@ -455,6 +455,7 @@ dependencies = [
  "impeller-present-vk",
  "impeller-rs",
  "impeller-shaders",
+ "proptest",
 ]
 
 [[package]]
