@@ -338,30 +338,39 @@ vec4 rounded_rect_coverage(vec3 clip_3) {
     return vec4((tint_3.xyz * alpha_1), alpha_1);
 }
 
-vec4 ellipse_coverage(vec3 clip_4) {
+vec4 disc_coverage(vec2 point_2, vec2 axes) {
     float stroke = 0.0;
+    float implicit = (length((point_2 / axes)) - 1.0);
+    float _e6 = dFdx(implicit);
+    float _e7 = dFdy(implicit);
+    vec2 gradient_1 = vec2(_e6, _e7);
+    float per_pixel_2 = max(length(gradient_1), 1e-6);
+    float _e15 = _group_1_binding_0_fs.params.w;
+    stroke = _e15;
+    float _e17 = stroke;
+    if ((_e17 > 0.0)) {
+        float k1_ = max(length((point_2 / axes)), 1e-6);
+        float k2_ = length((point_2 / (axes * axes)));
+        float _e27 = stroke;
+        stroke = ((_e27 * k2_) / k1_);
+    }
+    float _e30 = stroke;
+    float _e31 = coverage_of(implicit, per_pixel_2, _e30);
+    vec4 tint_4 = _group_1_binding_0_fs.stops[0];
+    float alpha_2 = (tint_4.w * _e31);
+    return vec4((tint_4.xyz * alpha_2), alpha_2);
+}
+
+vec4 ellipse_coverage(vec3 clip_4) {
     vec2 _e1 = to_gradient_space(clip_4);
     vec4 _e4 = _group_1_binding_0_fs.geometry;
-    vec2 axes = max(_e4.zw, vec2(1e-6));
-    float implicit = (length((_e1 / axes)) - 1.0);
-    float _e13 = dFdx(implicit);
-    float _e14 = dFdy(implicit);
-    vec2 gradient_1 = vec2(_e13, _e14);
-    float per_pixel_2 = max(length(gradient_1), 1e-6);
-    float _e22 = _group_1_binding_0_fs.params.w;
-    stroke = _e22;
-    float _e24 = stroke;
-    if ((_e24 > 0.0)) {
-        float k1_ = max(length((_e1 / axes)), 1e-6);
-        float k2_ = length((_e1 / (axes * axes)));
-        float _e34 = stroke;
-        stroke = ((_e34 * k2_) / k1_);
-    }
-    float _e37 = stroke;
-    float _e38 = coverage_of(implicit, per_pixel_2, _e37);
-    vec4 tint_4 = _group_1_binding_0_fs.stops[0];
-    float alpha_2 = (tint_4.w * _e38);
-    return vec4((tint_4.xyz * alpha_2), alpha_2);
+    vec4 _e9 = disc_coverage(_e1, max(_e4.zw, vec2(1e-6)));
+    return _e9;
+}
+
+vec4 point_field_coverage(vec2 uv_3) {
+    vec4 _e4 = disc_coverage(uv_3, vec2(1.0, 1.0));
+    return _e4;
 }
 
 vec4 blur_along_axis(vec3 clip_5) {
@@ -400,11 +409,11 @@ vec4 blur_along_axis(vec3 clip_5) {
     return (_e61 / vec4(max(_e62, 1e-6)));
 }
 
-vec4 sample_or_nothing(vec2 uv_3) {
-    if ((any(lessThan(uv_3, vec2(0.0))) || any(greaterThan(uv_3, vec2(1.0))))) {
+vec4 sample_or_nothing(vec2 uv_4) {
+    if ((any(lessThan(uv_4, vec2(0.0))) || any(greaterThan(uv_4, vec2(1.0))))) {
         return vec4(0.0);
     }
-    vec4 _e15 = textureLod(_group_0_binding_0_fs, vec2(uv_3), 0.0);
+    vec4 _e15 = textureLod(_group_0_binding_0_fs, vec2(uv_4), 0.0);
     return _e15;
 }
 
@@ -823,37 +832,41 @@ vec4 shade(VertexOutput in_1) {
         vec4 _e199 = rrect_blur_coverage(in_1.clip);
         return _e199;
     }
-    if (((kind_2 > 7.5) && (kind_2 < 8.5))) {
-        vec4 _e206 = ellipse_coverage(in_1.clip);
+    if (((kind_2 > 12.5) && (kind_2 < 13.5))) {
+        vec4 _e206 = point_field_coverage(in_1.uv);
         return _e206;
     }
-    if (((kind_2 > 6.5) && (kind_2 < 7.5))) {
-        vec4 _e213 = rounded_rect_coverage(in_1.clip);
+    if (((kind_2 > 7.5) && (kind_2 < 8.5))) {
+        vec4 _e213 = ellipse_coverage(in_1.clip);
         return _e213;
     }
-    if (((kind_2 > 5.5) && (kind_2 < 6.5))) {
-        vec4 _e220 = blur_along_axis(in_1.clip);
+    if (((kind_2 > 6.5) && (kind_2 < 7.5))) {
+        vec4 _e220 = rounded_rect_coverage(in_1.clip);
         return _e220;
     }
-    if (((kind_2 > 10.5) && (kind_2 < 11.5))) {
-        vec4 _e227 = morphology_along_axis(in_1.clip);
+    if (((kind_2 > 5.5) && (kind_2 < 6.5))) {
+        vec4 _e227 = blur_along_axis(in_1.clip);
         return _e227;
     }
-    if (((kind_2 > 9.5) && (kind_2 < 10.5))) {
-        vec4 _e234 = sample_mesh(in_1.uv);
+    if (((kind_2 > 10.5) && (kind_2 < 11.5))) {
+        vec4 _e234 = morphology_along_axis(in_1.clip);
         return _e234;
     }
+    if (((kind_2 > 9.5) && (kind_2 < 10.5))) {
+        vec4 _e241 = sample_mesh(in_1.uv);
+        return _e241;
+    }
     if (((kind_2 > 4.5) && (kind_2 < 5.5))) {
-        vec4 _e244 = textureLod(_group_0_binding_0_fs, vec2(in_1.uv), 0.0);
-        float coverage_1 = _e244.x;
+        vec4 _e251 = textureLod(_group_0_binding_0_fs, vec2(in_1.uv), 0.0);
+        float coverage_1 = _e251.x;
         vec4 tint_5 = _group_1_binding_0_fs.stops[0];
         float alpha_5 = (tint_5.w * coverage_1);
         return vec4((tint_5.xyz * alpha_5), alpha_5);
     }
-    vec4 _e255 = color_2;
-    float _e258 = color_2.w;
-    float _e261 = color_2.w;
-    return vec4((_e255.xyz * _e258), _e261);
+    vec4 _e262 = color_2;
+    float _e265 = color_2.w;
+    float _e268 = color_2.w;
+    return vec4((_e262.xyz * _e265), _e268);
 }
 
 void main() {

@@ -15605,3 +15605,95 @@ fn a_nine_patch_is_one_draw_and_the_same_picture_as_nine() {
          seams bleeding"
     );
 }
+
+#[test]
+fn a_field_of_points_is_one_draw_with_the_edge_each_dot_had() {
+    // `drawPoints` in `Points` mode used to record a draw per point: each dot
+    // went through the analytic circle, which carries its center in `to_local`,
+    // so no two dots shared a material and none of them merged. A thousand-dot
+    // scatter plot was a thousand draws where upstream's `PointFieldGeometry`
+    // is one.
+    //
+    // `Material::PointField` is the same field with the center taken off the
+    // paint and put on the vertices. Both halves are asserted because the easy
+    // way to get one draw is to tessellate, which costs the edge -- measured at
+    // the time, four hundred and fifty-one pixels different by up to
+    // ninety-two levels. This keeps it exactly.
+    let Some(mut ctx) = context() else { return };
+
+    let points: Vec<Vec2> = (0..16)
+        .map(|i| {
+            let a = i as f32 * 0.4;
+            Vec2::new(64.0 + 40.0 * a.cos(), 64.0 + 40.0 * a.sin())
+        })
+        .collect();
+    let radius = 4.5f32;
+
+    let field = {
+        let mut canvas = Canvas::new(SIZE);
+        canvas.clear(Color::BLACK);
+        let paint = Paint::stroke(Color::WHITE, radius * 2.0).with_style(Style::Stroke(
+            StrokeStyle::new(radius * 2.0).with_cap(LineCap::Round),
+        ));
+        canvas
+            .draw_points(PointMode::Points, &points, &paint)
+            .expect("a field");
+        canvas
+    };
+    // The same dots one at a time, which is what the field replaced.
+    let separately = {
+        let mut canvas = Canvas::new(SIZE);
+        canvas.clear(Color::BLACK);
+        for center in &points {
+            canvas
+                .draw_circle(*center, radius, &Paint::fill(Color::WHITE))
+                .expect("a dot");
+        }
+        canvas
+    };
+
+    let shot = |ctx: &mut Context, canvas: Canvas| {
+        let recording = canvas.finish();
+        let draws: usize = recording.passes.iter().map(|p| p.batch.draws().len()).sum();
+        let mut surface = ctx
+            .create_surface(SIZE, PixelFormat::Rgba8Unorm)
+            .expect("surface");
+        ctx.draw(&mut surface, &recording).expect("draw");
+        let pixels = ctx.read(&mut surface).expect("read");
+        ctx.destroy_surface(surface);
+        (draws, pixels)
+    };
+    let (field_draws, field_pixels) = shot(&mut ctx, field);
+    let (dot_draws, dot_pixels) = shot(&mut ctx, separately);
+
+    assert_eq!(field_draws, 1, "sixteen points should record one draw");
+    assert_eq!(
+        dot_draws, 16,
+        "sixteen circles drawn one at a time are sixteen"
+    );
+
+    let lit = field_pixels.chunks_exact(4).filter(|p| p[0] > 8).count();
+    assert!(
+        lit > 800,
+        "the field should draw something, got {lit} pixels"
+    );
+
+    let differing = field_pixels
+        .chunks_exact(4)
+        .zip(dot_pixels.chunks_exact(4))
+        .filter(|(a, b)| a != b)
+        .count();
+    let worst = field_pixels
+        .iter()
+        .zip(&dot_pixels)
+        .map(|(a, b)| (*a as i32 - *b as i32).abs())
+        .max()
+        .unwrap_or(0);
+    assert_eq!(
+        (differing, worst),
+        (0, 0),
+        "one draw should be the same picture as sixteen: {differing} pixel(s) \
+         differ, worst by {worst}. Without the pixel of outset on the quad this \
+         is ninety-two pixels, where the disc meets the quad it is drawn on"
+    );
+}

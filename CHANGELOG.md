@@ -64,6 +64,12 @@ fifteen modes outright, so the same picture reaches both backends -- 29 of 29
 modes are checked against the compositing equations on GLES where 14 were.
 Nothing about the API changed; a caller that was refused is not.
 
+`drawPoints` in `PointMode::Points` records one draw where it recorded one per
+point. The dots carry their centers on the vertices rather than in the paint, so
+they share a material; the edge is unchanged, to the byte. A paint that is not a
+single solid color, or one carrying a mask blur or an image filter, keeps the
+per-point route.
+
 `drawImageNine` records one draw where it recorded nine. The patches carry
 their texture coordinates on the vertices rather than each carrying a source
 rectangle of its own, with a half-texel inset standing in for the clamping a

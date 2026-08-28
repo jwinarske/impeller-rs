@@ -3707,43 +3707,102 @@ impl Canvas {
         }
 
         match mode {
-            // One draw per point, where upstream's `PointFieldGeometry` builds
-            // one buffer for the whole field. The other two modes below batch
-            // already -- not by being written to, but because a batch merges
-            // draws that share a material and consecutive segments do. A point
-            // does not: an analytic circle carries its center and radius in
-            // `to_local`, so no two of them are alike. `docs/non-parity.md`
-            // §12 has the measurement and the three ways out.
+            // One draw for the whole field, which is what upstream's
+            // `PointFieldGeometry` produces and what this used to fail to.
+            //
+            // It used to be a draw per point, and the reason is worth keeping
+            // because it is not the obvious one. The other two modes below
+            // issue a call per segment and still come out as one draw: a batch
+            // merges draws that share a material, and consecutive segments do.
+            // A point did not, because the analytic circle it went through
+            // carries its center in `to_local` -- so two points at two places
+            // were two materials, and no number of them could merge.
+            //
+            // `Material::PointField` is the same field with the center taken
+            // off the paint and put on the vertices, as the unit circle's
+            // corners in the texture coordinate. Every point is then the same
+            // material and the field is one draw, with the edge each of them
+            // had: the shader differentiates the implicit function across the
+            // pixel rather than forming a distance, and a derivative of an
+            // interpolated value is as good as one of a computed value.
             PointMode::Points => {
                 let radius = stroke.width / 2.0;
-                // Filled rather than stroked: what is being drawn is the cap
-                // itself, and asking the stroker for a segment of no length is
-                // asking it for a direction that does not exist.
-                let dot = paint.clone().with_style(Style::Fill);
+                if !matches!(stroke.cap, LineCap::Round | LineCap::Square) {
+                    // A butt cap extends a segment by nothing, and nothing is
+                    // what a segment of no length becomes.
+                    return Ok(self);
+                }
+                let round = matches!(stroke.cap, LineCap::Round);
+                // A mask blur or an image filter wants a layer around the
+                // draw, which is machinery the per-point route already reaches
+                // through `draw_circle` and this one skips entirely. Two tests
+                // that walk every call taking a paint caught exactly that: the
+                // field accepted a blur and drew what it draws without one.
+                //
+                // The condition is the same one `analytic_stroke` states for
+                // the same reason, and it is worth keeping the shape of that
+                // rule rather than a list: every route that needs a layer has
+                // to decline here.
+                if paint.mask_blur > 0.0 || !paint.image_filter.is_identity() {
+                    return self.draw_points_individually(points, &stroke, paint);
+                }
+                let material = self.material_for(&paint.shader);
+                let Material::Solid(color) = material else {
+                    // A field takes one color, which is what a point field is.
+                    // Anything else keeps the old route, where each point is
+                    // its own shape and can carry its own mapping.
+                    return self.draw_points_individually(points, &stroke, paint);
+                };
+
+                // A round cap's quad is a pixel wider than the disc, for the
+                // reason `draw_analytic` outsets its own: the coverage ramp
+                // runs half a pixel either side of the edge, and a quad ending
+                // exactly on the circle clips the outer half of its own
+                // antialiasing. Measured without it, ninety-two pixels of the
+                // frame differed from the same dots drawn one at a time, at
+                // the four places the circle meets its quad.
+                //
+                // The texture coordinate is scaled to match, so that the unit
+                // circle still falls where the disc's edge is rather than at
+                // the corner of the widened quad. A square cap is the quad
+                // itself and takes neither: its coordinates are zero, where
+                // the field is saturated, so it covers what it is given.
+                let (extent, coord) = if round {
+                    (radius + 1.0, (radius + 1.0) / radius.max(1e-6))
+                } else {
+                    (radius, 0.0)
+                };
+                let to_clip = self.target.projection() * self.transform;
+                let mut vertices: Vec<Vertex> = Vec::with_capacity(points.len() * 4);
+                let mut indices: Vec<u32> = Vec::with_capacity(points.len() * 6);
                 for point in points {
                     if !point.is_finite() {
                         continue;
                     }
-                    match stroke.cap {
-                        LineCap::Round => {
-                            self.draw_circle(*point, radius, &dot)?;
-                        }
-                        LineCap::Square => {
-                            self.draw_rect(
-                                Rect::new(
-                                    point.x - radius,
-                                    point.y - radius,
-                                    point.x + radius,
-                                    point.y + radius,
-                                ),
-                                &dot,
-                            )?;
-                        }
-                        // A butt cap extends a segment by nothing, and nothing
-                        // is what a segment of no length becomes.
-                        LineCap::Butt => {}
+                    let base = vertices.len() as u32;
+                    for (dx, dy) in [(-1.0, -1.0), (1.0, -1.0), (1.0, 1.0), (-1.0, 1.0)] {
+                        let at = Vec2::new(point.x + dx * extent, point.y + dy * extent);
+                        let clip = to_clip.project_homogeneous(at);
+                        vertices.push(Vertex::projected(
+                            [clip.x, clip.y, clip.z],
+                            [dx * coord, dy * coord],
+                        ));
                     }
+                    indices.extend([base, base + 1, base + 2, base, base + 2, base + 3]);
                 }
+                if indices.is_empty() {
+                    return Ok(self);
+                }
+                self.batch.push_mesh_tinted(
+                    &vertices,
+                    &indices,
+                    Material::PointField { color },
+                    paint.color_filter,
+                    paint.blend,
+                    self.clip,
+                    ClipState::content(self.depth),
+                    paint.tint_blend,
+                )?;
             }
             PointMode::Lines => {
                 for pair in points.chunks_exact(2) {
@@ -3759,6 +3818,50 @@ impl Canvas {
                     }
                     self.draw_path(&b.build(), paint)?;
                 }
+            }
+        }
+        Ok(self)
+    }
+
+    /// The field drawn a point at a time, for a paint a field cannot carry.
+    ///
+    /// A point field is one color by construction -- the material holds one --
+    /// so a gradient or an image paint still goes through the shape each point
+    /// has, and costs a draw each. That is the old behavior kept for the case
+    /// it was right for rather than a fallback nobody exercises: `dart:ui`
+    /// allows any paint on `drawPoints`, and a caller who asks for a gradient
+    /// across a field should get one.
+    fn draw_points_individually(
+        &mut self,
+        points: &[Vec2],
+        stroke: &StrokeStyle,
+        paint: &Paint,
+    ) -> Result<&mut Self> {
+        let radius = stroke.width / 2.0;
+        // Filled rather than stroked: what is being drawn is the cap itself,
+        // and asking the stroker for a segment of no length is asking it for a
+        // direction that does not exist.
+        let dot = paint.clone().with_style(Style::Fill);
+        for point in points {
+            if !point.is_finite() {
+                continue;
+            }
+            match stroke.cap {
+                LineCap::Round => {
+                    self.draw_circle(*point, radius, &dot)?;
+                }
+                LineCap::Square => {
+                    self.draw_rect(
+                        Rect::new(
+                            point.x - radius,
+                            point.y - radius,
+                            point.x + radius,
+                            point.y + radius,
+                        ),
+                        &dot,
+                    )?;
+                }
+                LineCap::Butt => {}
             }
         }
         Ok(self)

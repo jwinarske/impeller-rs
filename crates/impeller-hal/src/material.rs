@@ -144,6 +144,7 @@ pub mod kind {
     pub const MESH: f32 = 10.0;
     pub const MORPHOLOGY: f32 = 11.0;
     pub const ROUNDED_RECT_BLUR: f32 = 12.0;
+    pub const POINT_FIELD: f32 = 13.0;
 }
 
 /// How many textures one runtime program may sample.
@@ -901,6 +902,25 @@ pub enum Material {
         /// Index into the texture table given at submission.
         slot: u32,
     },
+    /// Many discs of one color, evaluated from the vertices rather than the
+    /// paint, so that a field of them is one draw.
+    ///
+    /// Carries no mapping and no size, which is the whole point of it. Every
+    /// other fragment-evaluated shape here locates itself through `to_local`,
+    /// and `to_local` holds the shape's center -- so two of them at different
+    /// places are two materials and cannot share a draw. This one locates
+    /// itself from the interpolated texture coordinate, which the vertices
+    /// carry as the unit circle's corners, so any number of discs at any
+    /// centers are one material and one draw.
+    ///
+    /// The edge is the same edge. `disc_coverage` in the shader differentiates
+    /// the implicit function across the pixel rather than forming a distance,
+    /// and a derivative of an interpolated value is as available as that of a
+    /// computed one.
+    PointField {
+        /// One color for the field, premultiplied as everything here is.
+        color: [f32; 4],
+    },
 }
 
 /// What happens outside an image's own bounds.
@@ -954,6 +974,7 @@ impl Material {
             | Self::RoundedRect { color, .. }
             | Self::RoundedRectBlur { color, .. }
             | Self::Ellipse { color, .. }
+            | Self::PointField { color }
             | Self::Glyph { color, .. } => scale(color),
             Self::LinearGradient { stops, .. }
             | Self::RadialGradient { stops, .. }
@@ -972,7 +993,7 @@ impl Material {
     /// Whether drawing with this would change anything.
     pub fn is_invisible(&self) -> bool {
         match self {
-            Self::Solid(color) => color[3] <= 0.0,
+            Self::Solid(color) | Self::PointField { color } => color[3] <= 0.0,
             Self::LinearGradient { stops, .. }
             | Self::RadialGradient { stops, .. }
             | Self::SweepGradient { stops, .. }
@@ -1038,6 +1059,7 @@ impl Material {
             | Self::SweepGradient { ramp, .. }
             | Self::ConicalGradient { ramp, .. } => *ramp,
             Self::Solid(_)
+            | Self::PointField { .. }
             | Self::RoundedRect { .. }
             | Self::RoundedRectBlur { .. }
             | Self::Ellipse { .. } => None,
@@ -1055,6 +1077,7 @@ impl Material {
     fn stops(&self) -> &[Stop] {
         match self {
             Self::Solid(_)
+            | Self::PointField { .. }
             | Self::Image { .. }
             | Self::Mesh { .. }
             | Self::Glyph { .. }
@@ -1103,6 +1126,13 @@ impl Material {
 
         // An image carries no stops and no count, and must be packed before
         // the gradient path below decides it has too few to interpolate.
+        if let Self::PointField { color } = self {
+            out[layout::STOPS..layout::STOPS + 4].copy_from_slice(color);
+            out[layout::PARAMS] = 1.0;
+            out[layout::PARAMS + 1] = kind::POINT_FIELD;
+            return out;
+        }
+
         if let Self::Ellipse {
             color,
             half_size,
@@ -1272,6 +1302,7 @@ impl Material {
 
         match self {
             Self::Solid(_)
+            | Self::PointField { .. }
             | Self::Image { .. }
             | Self::Mesh { .. }
             | Self::Glyph { .. }

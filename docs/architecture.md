@@ -897,6 +897,39 @@ samples a triangle covers there is a property of the rasterizer and not of
 either route. Where they differ and how many survives a second device; how much
 does not.
 
+**A field of points is one draw, and the vertices are what make it one.** The
+cost table found this the same way it found the nine-patch: sixteen points cost
+sixteen draws where upstream's `PointFieldGeometry` costs one.
+
+The cause was not what it looked like. `drawPoints` in the other two modes
+issues a call per segment and still comes out as *one* draw, because a batch
+merges draws that share a material and consecutive segments do — so counting
+calls says nothing. A point did not merge because the analytic circle it went
+through carries its center in `to_local`: two dots at two places were two
+materials, and no number of them could ever share a draw.
+
+So the center comes off the paint and goes on the vertices. `Material::PointField`
+carries a color and nothing else — no mapping, no size — and each dot's quad
+carries the unit circle's corners as its texture coordinate, so the fragment
+locates itself from the interpolated value without knowing which dot it belongs
+to. Every point is then the same material, and the field is one draw.
+
+The edge survives exactly, which is the whole reason to do it this way rather
+than tessellating. `disc_coverage` differentiates the implicit function across
+the pixel instead of forming a distance, and the derivative of an interpolated
+value is as available as that of a computed one — so the same function serves
+an ellipse reading `to_local` and a point field reading `uv`. Measured against
+sixteen dots drawn one at a time: zero pixels differ. Tessellating them instead,
+which is upstream's answer, moved four hundred and fifty-one pixels by up to
+ninety-two levels.
+
+Two things it declines rather than does. A paint that is not one solid color
+keeps the per-point route, since a field carries one color by construction and
+`dart:ui` allows any paint on `drawPoints`. And a mask blur or an image filter
+does too, because those want a layer around the draw and this route skips the
+machinery that builds one — a rule `analytic_stroke` already states, and which
+two tests that walk every call taking a paint caught this route breaking.
+
 **A nine-patch is one draw, and the half-texel inset is what makes it one.**
 It was nine, and the cost table is what pointed at it: four nine-patches in a
 catalog plate cost thirty-six draws at four vertices each, where four atlases

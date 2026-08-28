@@ -680,9 +680,31 @@ fn rounded_rect_coverage(clip: vec3<f32>) -> vec4<f32> {
 /// sampled true distance it is within a thousandth of a unit there, and drifts
 /// only well inside, where coverage has saturated and nothing can see it.
 fn ellipse_coverage(clip: vec3<f32>) -> vec4<f32> {
-    let point = to_gradient_space(clip);
-    let axes = max(paint.geometry.zw, vec2<f32>(1e-6));
+    return disc_coverage(to_gradient_space(clip), max(paint.geometry.zw, vec2<f32>(1e-6)));
+}
 
+/// Every point of a field, from one draw.
+///
+/// The same field an ellipse uses and the same arithmetic, with the position
+/// coming from the vertices rather than from the paint. A field of points is
+/// one shape repeated at many centers, and the center is the only thing that
+/// differs between them -- so an ellipse's mapping, which carries its center
+/// in `to_local` and therefore differs per point, is exactly what stops one
+/// such draw from merging with the next.
+///
+/// Each point's quad carries the unit circle's corners as its texture
+/// coordinates, so the interpolated value *is* the position in the shape's own
+/// space and this reads it without knowing which point it belongs to. That is
+/// what turns a thousand draws into one while keeping the edge each of them
+/// had: `disc_coverage` never forms a distance, it differentiates the implicit
+/// function across the pixel, and the derivative of an interpolated value is
+/// exactly as available as that of a computed one.
+fn point_field_coverage(uv: vec2<f32>) -> vec4<f32> {
+    return disc_coverage(uv, vec2<f32>(1.0, 1.0));
+}
+
+/// The body both share: an implicit ellipse, differentiated into coverage.
+fn disc_coverage(point: vec2<f32>, axes: vec2<f32>) -> vec4<f32> {
     // The implicit function itself: zero on the curve, negative inside and
     // positive outside, in no particular units.
     let implicit = length(point / axes) - 1.0;
@@ -1322,6 +1344,9 @@ fn shade(in: VertexOutput) -> vec4<f32> {
     // as a rounded rectangle the first time it ran.
     if (kind > 11.5 && kind < 12.5) {
         return rrect_blur_coverage(in.clip);
+    }
+    if (kind > 12.5 && kind < 13.5) {
+        return point_field_coverage(in.uv);
     }
     if (kind > 7.5 && kind < 8.5) {
         return ellipse_coverage(in.clip);
