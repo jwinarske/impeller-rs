@@ -330,6 +330,39 @@ wrong in exactly the way Flutter's is. It is written down because the next
 person to measure this shape will find the jump and reasonably think it is a
 local mistake.
 
+## 12. A layer's matrix cannot bring content in from off the target
+
+**What differs.** `Layer::with_matrix` is `dart:ui`'s matrix image filter on a
+save layer, and it resamples what the layer captured. What the layer captured
+is bounded by its target, and a layer's target never exceeds its parent's -- so
+a shape drawn outside the parent is gone before the matrix runs, and a
+translation that would have brought it into view brings in nothing.
+
+Upstream sizes the layer through the filter: it computes the coverage the
+filtered result will occupy and allocates for that, so a circle drawn three
+hundred points to the left of the frame inside a layer translated three hundred
+to the right renders. Its
+`MatrixImageFilterDoesntCullWhenTranslatedFromOffscreen` is that case by name.
+Measured here, the same picture draws nothing at all -- not a clipped circle, no
+pixels.
+
+Fixing it means sizing a matrix layer's target to the pre-image of the visible
+region rather than to the parent, which is a memory decision as much as an
+arithmetic one: the inverse of a minifying matrix is a magnifying one, and
+`docs/architecture.md` records that layer allocation is already where this
+project has run a machine out of texture memory. So it is written down rather
+than done, and pinned by
+`a_layer_matrix_does_not_recover_what_fell_outside_the_layer` so that building
+it is a test that changes rather than a behavior nobody had noticed.
+
+**Impact.** A caller who moves a layer *within* the frame sees no difference,
+which is nearly every use: a matrix filter is usually a scale or a small
+translation applied to something already drawn where it can be seen. A caller
+who draws deliberately off-target and translates it in gets nothing, where
+upstream gets the picture. There is no partial failure between the two -- the
+content is either inside the target or absent -- so the case is visible the
+first time it is tried rather than subtly wrong.
+
 ## 11. One thing that looks like a difference and is not
 
 Worth stating because a reviewer raised it as a hole. **The advanced blend modes

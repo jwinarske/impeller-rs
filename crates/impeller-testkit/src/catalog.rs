@@ -3078,6 +3078,71 @@ fn save_layer_pictures() -> Vec<Scene> {
         )
         .with_background(DARK)
         .with_samples(1),
+        // A layer on its own with nothing under it, at half opacity. The
+        // simplest thing a save layer does, and the catalog had no plate for
+        // it: group opacity over a ground, with one shape inside so the
+        // half-alpha is the layer's and not the shape's.
+        Scene::tree(
+            "basic/can-save-layer-standalone",
+            vec![Node::Layer {
+                layer: Box::new(LayerSpec {
+                    alpha: 0.5,
+                    ..LayerSpec::default()
+                }),
+                bounds: None,
+                transform: Transform::default(),
+                children: vec![Node::Draw(Box::new(Item::fill(
+                    Shape::Circle {
+                        center: [64.0, 64.0],
+                        radius: 56.0,
+                    },
+                    RED,
+                )))],
+            }],
+        )
+        .with_background(DARK)
+        .with_samples(4),
+        // A clip of a shape a scissor cannot express, then a bounded layer
+        // inside it, then an advanced blend inside that. Three things that each
+        // narrow or divert what is drawn, stacked: the clip goes to the
+        // stencil, the layer to a target of its own, and the blend needs its
+        // destination -- and the destination it needs is the layer's, not the
+        // frame's.
+        Scene::tree(
+            "basic/can-render-clipped-layers",
+            vec![
+                Node::Paint(Box::new(PaintSpec {
+                    color: WHITE,
+                    blend: BlendMode::SrcOver,
+                    clip: None,
+                    clip_out: None,
+                    transform: Transform::default(),
+                })),
+                Node::Layer {
+                    layer: Box::new(LayerSpec::default()),
+                    bounds: Some([25.0, 25.0, 75.0, 75.0]),
+                    transform: Transform::default(),
+                    children: vec![
+                        Node::Draw(Box::new(
+                            Item::fill(everywhere.clone(), WHITE).with_clip_shape(Shape::Circle {
+                                center: [50.0, 50.0],
+                                radius: 25.0,
+                            }),
+                        )),
+                        Node::Draw(Box::new(
+                            Item::fill(everywhere.clone(), GREEN)
+                                .with_clip_shape(Shape::Circle {
+                                    center: [50.0, 50.0],
+                                    radius: 25.0,
+                                })
+                                .with_blend(BlendMode::HardLight),
+                        )),
+                    ],
+                },
+            ],
+        )
+        .with_background(DARK)
+        .with_samples(1),
         // The one that is about the origin rather than the extent. A bounded
         // layer's target starts where the bounds start, so everything drawn
         // into it has to be placed against that origin rather than against the
@@ -5557,7 +5622,6 @@ fn barred_ground() -> Vec<Node> {
 /// about grouping rather than about any one shape.
 fn layers() -> Vec<Scene> {
     vec![
-        grouped("dl/can-save-layer-standalone", LayerSpec::default(), None),
         grouped(
             "dl/translucent-save-layer-draws-correctly",
             LayerSpec {
@@ -5672,14 +5736,6 @@ fn layers() -> Vec<Scene> {
             None,
         ),
         grouped(
-            "dl/can-perform-save-layer-with-bounds",
-            LayerSpec::default(),
-            // Bounds narrower than the contents, which is the case a target
-            // smaller than the frame exists for and the one where a wrong
-            // origin shows as a shift rather than as a crop.
-            Some([40.0, 40.0, 100.0, 90.0]),
-        ),
-        grouped(
             "dl/can-render-destructive-save-layer",
             LayerSpec {
                 // Replaces rather than composites, so the group erases what is
@@ -5689,48 +5745,6 @@ fn layers() -> Vec<Scene> {
             },
             Some([24.0, 34.0, 108.0, 94.0]),
         ),
-        Scene::tree(
-            "dl/sibling-save-layer-bounds-are-respected",
-            vec![
-                Node::Layer {
-                    layer: Box::new(LayerSpec {
-                        alpha: 0.6,
-                        ..LayerSpec::default()
-                    }),
-                    bounds: Some([8.0, 8.0, 64.0, 64.0]),
-                    transform: Transform::default(),
-                    children: vec![Node::Draw(Box::new(Item::fill(
-                        Shape::Rect {
-                            min: [0.0, 0.0],
-                            max: [128.0, 128.0],
-                        },
-                        RED,
-                    )))],
-                },
-                // A second group beside it: each is confined to its own
-                // bounds, and one leaking into the other is what this catches.
-                Node::Layer {
-                    layer: Box::new(LayerSpec {
-                        alpha: 0.6,
-                        ..LayerSpec::default()
-                    }),
-                    bounds: Some([64.0, 64.0, 120.0, 120.0]),
-                    transform: Transform::default(),
-                    children: vec![Node::Draw(Box::new(
-                        Item::fill(
-                            Shape::Rect {
-                                min: [0.0, 0.0],
-                                max: [128.0, 128.0],
-                            },
-                            BLUE,
-                        )
-                        .with_blend(BlendMode::SrcOver),
-                    ))],
-                },
-            ],
-        )
-        .with_background(DARK)
-        .with_samples(4),
         Scene::tree(
             "dl/can-render-tiny-overlapping-subpasses",
             (0..6)
@@ -6178,7 +6192,7 @@ fn image_filters() -> Vec<Scene> {
     };
     vec![
         plate(
-            "basic/matrix-image-filter-magnify",
+            "dl/matrix-image-filter-magnify",
             vec![
                 // The same card twice: once resampled to twice its size, once
                 // drawn at twice its size, side by side so a reader comparing

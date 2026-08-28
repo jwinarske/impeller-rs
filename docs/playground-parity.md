@@ -142,7 +142,7 @@ column is right and the obvious way to check it is wrong.
 
 | File | Scenes there | Here | Blocked on |
 |---|---|---|---|
-| `aiks_dl_basic_unittests.cc` | ~85 | 72 | subpass optimizations; see below |
+| `aiks_dl_basic_unittests.cc` | ~85 | 73 | subpass optimizations; see below |
 | `aiks_dl_path_unittests.cc` | ~30 | 21 | nothing; see below |
 | `aiks_dl_gradient_unittests.cc` | ~40 | 31 | nothing; see below |
 | `aiks_dl_clip_unittests.cc` | ~5 | 7 | nothing; this file is covered |
@@ -155,9 +155,9 @@ column is right and the obvious way to check it is wrong.
 | `aiks_dl_primitive_shape_unittests.cc` | ~2 | 0 | one is a playground harness, one wants a stroke width of zero to mean a hairline |
 | `aiks_dl_text_unittests.cc` | — | 7 | shaping and font parsing, which are out of scope; glyph rendering is not, and these use synthetic coverage |
 | `aiks_dl_runtime_effect_unittests.cc` | — | 12 | nothing; see below |
-| `aiks_dl_unittests.cc` | ~36 | 15 | subpass collapse, for five of them; see below |
+| `aiks_dl_unittests.cc` | ~36 | 13 | subpass collapse, for five of them; see below |
 
-The catalog holds two hundred and ninety scenes of roughly four hundred,
+The catalog holds two hundred and eighty-nine scenes of roughly four hundred,
 and the proportion is less interesting than which ones: the arithmetic of drawing is largely covered, and
 what is missing is either a capability this renderer does not have or a thing
 the scene model cannot describe.
@@ -457,6 +457,24 @@ What must not darken is the run between them, and that is asserted rather than
 looked at: three windows away from the ends carry a single cover and no pixel
 darker, and a fourth window over the caps has to find the doubling, so the first
 three cannot pass by the arc having missed them.
+
+Four scenes were filed under the wrong chapter, which is worth recording
+because of how it was found rather than because of the four. Writing the
+save-layer plates, three of them turned out to already exist under `dl/` --
+mirrors of basic-chapter tests sitting in the miscellany chapter, so the
+inventory counted them against the wrong file and a name-by-name diff of the
+basic chapter reported them missing. One went the other way: a matrix-filter
+plate under `basic/` mirrors a test in the miscellany file.
+
+They cannot be caught by a test. The topic a scene is filed under has to match
+the file its name comes from, and this repository keeps no copy of those files
+-- so the check is a comparison against sources fetched at tip of tree, run by
+hand, and the four are what it found. Where the two mirrors of one test
+differed, the closer one was kept: upstream's sibling-bounds test is three
+layers each filling the frame and the incumbent had two at six-tenths alpha,
+its standalone layer is half-transparent where the incumbent was opaque, and
+its bounded layer holds three overlapping squares where the incumbent held the
+chapter's generic pair.
 
 The blend row named two obstacles and one of them was misread, for three of
 that file's twenty-one tests. Two are named for framebuffer fetch and one is

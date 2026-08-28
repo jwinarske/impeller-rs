@@ -628,6 +628,13 @@ pub struct Layer {
     /// means -- a caller wanting the sharp one already has the transform
     /// stack.
     ///
+    /// It resamples what the layer *captured*, and a layer captures no more
+    /// than its target holds. So a matrix moves an image and cannot recover
+    /// what fell outside the layer to begin with: a shape drawn past the edge
+    /// of the frame is gone before this runs, where upstream sizes the layer
+    /// through the filter and brings it back. `docs/non-parity.md` §12 has the
+    /// case and what fixing it would cost.
+    ///
     /// `None` composites the layer where it was drawn, which is what every
     /// layer did before this existed.
     pub matrix: Option<Transform2D>,

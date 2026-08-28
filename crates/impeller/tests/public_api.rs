@@ -15356,3 +15356,56 @@ fn a_stroked_rectangle_has_the_corners_its_join_asks_for() {
         );
     }
 }
+
+#[test]
+fn a_layer_matrix_does_not_recover_what_fell_outside_the_layer() {
+    // `docs/non-parity.md` §12. A matrix on a layer resamples what the layer
+    // captured, and a layer captures no more than its target holds -- so a
+    // shape drawn past the edge of the frame is gone before the matrix runs.
+    // Upstream sizes the layer through the filter and renders it, which is
+    // what `MatrixImageFilterDoesntCullWhenTranslatedFromOffscreen` is named
+    // for.
+    //
+    // Pinned rather than left as a thing nobody noticed, so that building the
+    // sizing is a test that changes rather than a silent improvement -- and so
+    // that the half of it which *does* work is stated beside the half that
+    // does not.
+    let Some(mut ctx) = context() else { return };
+
+    let green = Paint::fill(Color::srgb(0.0, 1.0, 0.0, 1.0));
+    let radius = 30.0;
+    let shot = |ctx: &mut Context, at: f32, moved_by: f32| {
+        let mut canvas = Canvas::new(SIZE);
+        canvas.clear(Color::BLACK);
+        canvas.save_layer(
+            Layer::opacity(1.0).with_matrix(Affine2::from_translation(Vec2::new(moved_by, 0.0))),
+        );
+        canvas
+            .draw_circle(Vec2::new(at, 64.0), radius, &green)
+            .expect("a circle");
+        canvas.restore();
+        let pixels = render(ctx, canvas);
+        pixels.chunks_exact(4).filter(|p| p[1] > 100).count()
+    };
+
+    // Drawn where the layer can hold it and moved within the frame: the matrix
+    // carries it, and the count is what a circle of this radius covers.
+    let moved_inside = shot(&mut ctx, 34.0, 40.0);
+    assert!(
+        moved_inside > 2_000,
+        "a circle moved within the frame should still be there, got \
+         {moved_inside} pixels"
+    );
+
+    // Drawn off the left edge and translated back into view: nothing. Not a
+    // clipped circle, not a sliver -- the layer never held it.
+    let moved_in_from_outside = shot(&mut ctx, -36.0, 100.0);
+    assert_eq!(
+        moved_in_from_outside, 0,
+        "the limitation this pins is that content outside the layer is absent \
+         rather than partial; {moved_in_from_outside} pixels came back, so \
+         either the layer is now sized through its matrix -- in which case \
+         `docs/non-parity.md` §12 needs deleting and this test needs inverting \
+         -- or something else changed"
+    );
+}
