@@ -897,6 +897,33 @@ samples a triangle covers there is a property of the rasterizer and not of
 either route. Where they differ and how many survives a second device; how much
 does not.
 
+**A frame's cost has two halves, and only one of them can be gated on every
+commit.** Wall-clock time needs a quiet machine and a real device, which is
+what `cargo xtask bench --check` and `tests/bench-baselines/` are for and why
+they are run by hand on a bench board. Nothing in CI can measure it: a shared
+runner has more variance than the regressions worth catching, and a timing gate
+there would either be too loose to fire or too tight to trust.
+
+What a frame *does* is a different quantity. How many passes it needs, how many
+draws go in them, how much geometry those draws carry, how many texture
+bindings and baked ramps it asks for — all of it is decided while recording,
+before any device is involved. `record_scene` needs no context at all. So those
+numbers are the same on lavapipe, on V3D, and on a machine with no GPU, which
+means they can be recorded once and checked everywhere at no variance.
+
+That is the half that catches an *algorithmic* regression, and most regressions
+worth catching are algorithmic. `tests/cost-baseline.txt` holds one row per
+corpus scene and `tests/cost.rs` checks it. Loosening the flattening tolerance
+from a quarter pixel to a half moves thirty of its rows; taking the analytic
+route away from rounded rectangles moves three, and says which — a scene's
+vertex count going from four to thirty-two is a quad becoming a tessellation,
+and the row names the scene it happened to. Neither is visible to a timer in
+CI, and both are visible here immediately.
+
+Updating it is a reviewed event on the same terms as the shader snapshots:
+regenerate, then read the diff, because it is the claim that every number which
+moved was meant to.
+
 **A path arrives from a caller and is bounded before it reaches lyon.** Two
 guards sit at `Tessellator::fill` and `Tessellator::stroke`, and both are there
 because generated input found what they now stop.
