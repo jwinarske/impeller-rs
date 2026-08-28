@@ -142,7 +142,7 @@ column is right and the obvious way to check it is wrong.
 
 | File | Scenes there | Here | Blocked on |
 |---|---|---|---|
-| `aiks_dl_basic_unittests.cc` | ~85 | 53 | subpass optimizations; see below |
+| `aiks_dl_basic_unittests.cc` | ~85 | 58 | subpass optimizations; see below |
 | `aiks_dl_path_unittests.cc` | ~30 | 21 | nothing; see below |
 | `aiks_dl_gradient_unittests.cc` | ~40 | 31 | nothing; see below |
 | `aiks_dl_clip_unittests.cc` | ~5 | 7 | nothing; this file is covered |
@@ -157,7 +157,7 @@ column is right and the obvious way to check it is wrong.
 | `aiks_dl_runtime_effect_unittests.cc` | — | 12 | nothing; see below |
 | `aiks_dl_unittests.cc` | ~36 | 15 | subpass collapse, for five of them; see below |
 
-The catalog holds two hundred and seventy-one scenes of roughly four hundred,
+The catalog holds two hundred and seventy-six scenes of roughly four hundred,
 and the proportion is less interesting than which ones: the arithmetic of drawing is largely covered, and
 what is missing is either a capability this renderer does not have or a thing
 the scene model cannot describe.
@@ -399,8 +399,19 @@ which is what the entry had said should happen to it, having named the limit as
 a generalization nobody had written rather than a decision anybody took. So the
 five scenes are no longer blocked. The superellipses have since been built
 too, which is the second entry in this column to have gone that way, so the row
-is now short by subpass optimizations and forty ordinary pictures nobody has
-written.
+is short by subpass optimizations and by ordinary pictures nobody has written.
+
+Five more of those are written now, and they were chosen for covering something
+no other plate does rather than for being next in the file. Two draw a paint
+with no shape at all, once and then twice with the second translucent -- what a
+paint covers is the clip, so a renderer that took its extent from a shape's
+bounds would be right everywhere else and wrong here. One shears, which nothing
+else in the catalog does. One puts five clip shapes against three fills, a
+color, a mirror-tiled radial and a repeated image. And one steps three squares
+down the diagonal with the middle one inside a layer, which is the only plate
+that says when a layer composites: it goes behind the square drawn after it and
+in front of the one drawn before, and a renderer that composited layers last
+would put it in front of both.
 
 The blend row named two obstacles and one of them was misread, for three of
 that file's twenty-one tests. Two are named for framebuffer fetch and one is

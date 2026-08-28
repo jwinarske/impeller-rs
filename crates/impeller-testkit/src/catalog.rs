@@ -77,6 +77,7 @@ pub fn catalog() -> Vec<Scene> {
     scenes.extend(shadow());
     scenes.extend(blur_variants());
     scenes.extend(backdrop_ids());
+    scenes.extend(basic_pictures());
     scenes.extend(layers());
     scenes.extend(runtime_effect());
     scenes.extend(backdrops());
@@ -2762,6 +2763,234 @@ fn sheet(rect: [f32; 4], source: [f32; 4], tile: TileMode, sampling: Sampling) -
         alpha: 1.0,
         tint: WHITE,
     }
+}
+
+/// Five more of `aiks_dl_basic_unittests.cc`, none of which needed anything
+/// built.
+///
+/// The row for that file has been short by a large number of ordinary pictures
+/// for a while, and the reason is that they are ordinary: nothing here is
+/// blocked, so nothing was forced. What they cover is not nothing, though --
+/// two of them are the only plates that draw a paint with no shape at all, and
+/// one is the only one that shears.
+fn basic_pictures() -> Vec<Scene> {
+    // Upstream's two, kept as they are written there.
+    const TURQUOISE: [f32; 4] = [72.0 / 255.0, 209.0 / 255.0, 204.0 / 255.0, 1.0];
+    const ORANGE_RED: [f32; 4] = [1.0, 69.0 / 255.0, 0.0, 0.5];
+
+    let paint = |color: [f32; 4]| {
+        Node::Paint(Box::new(PaintSpec {
+            color,
+            blend: BlendMode::SrcOver,
+            clip: None,
+            clip_out: None,
+            transform: Transform::default(),
+        }))
+    };
+
+    // `CanRenderSimpleClips` at a fifth of upstream's coordinates, which is
+    // what fits its three groups on a plate this size. Upstream scales by two
+    // when it draws them, so the shapes are the same shapes.
+    const FIFTH: f32 = 0.2;
+    let at = |l: f32, t: f32, r: f32, b: f32, dx: f32, dy: f32| {
+        [
+            l * FIFTH + dx,
+            t * FIFTH + dy,
+            r * FIFTH + dx,
+            b * FIFTH + dy,
+        ]
+    };
+    let clipped_group = |fill: Fill, dx: f32, dy: f32| -> Vec<Node> {
+        // Each region is `drawPaint` under a clip. A paint has no shape, so
+        // what it covers is the clip -- which is why an item filling the whole
+        // plate under a clip shape is the same picture and not an
+        // approximation of it.
+        let whole = || Shape::Rect {
+            min: [0.0, 0.0],
+            max: [128.0, 128.0],
+        };
+        let rect = at(50.0, 50.0, 150.0, 150.0, dx, dy);
+        let oval = at(200.0, 50.0, 300.0, 150.0, dx, dy);
+        let tall = at(50.0, 200.0, 150.0, 300.0, dx, dy);
+        let wide = at(200.0, 230.0, 300.0, 270.0, dx, dy);
+        let narrow = at(230.0, 200.0, 270.0, 300.0, dx, dy);
+        let radius = 20.0 * FIFTH;
+        let rounded = |r: [f32; 4]| Shape::RoundedRect {
+            min: [r[0], r[1]],
+            max: [r[2], r[3]],
+            radius,
+        };
+        vec![
+            Node::Draw(Box::new(
+                Item::filled(whole(), fill.clone()).with_clip(rect),
+            )),
+            Node::Draw(Box::new(
+                Item::filled(whole(), fill.clone()).with_clip_shape(Shape::Oval {
+                    min: [oval[0], oval[1]],
+                    max: [oval[2], oval[3]],
+                }),
+            )),
+            // The last three are rounded rectangles whose radius is large
+            // against one side and small against the other, which is where a
+            // corner that normalized the wrong way round would show.
+            Node::Draw(Box::new(
+                Item::filled(whole(), fill.clone()).with_clip_shape(rounded(tall)),
+            )),
+            Node::Draw(Box::new(
+                Item::filled(whole(), fill.clone()).with_clip_shape(rounded(wide)),
+            )),
+            Node::Draw(Box::new(
+                Item::filled(whole(), fill).with_clip_shape(rounded(narrow)),
+            )),
+        ]
+    };
+
+    // Upstream's seven-stop mirror-tiled radial, which is the second of its
+    // three fills.
+    let sunset = Fill::RadialGradient {
+        center: [100.0, 120.0],
+        radius: 15.0,
+        stops: vec![
+            Stop::new([0x1f as f32 / 255.0, 0.0, 0x5c as f32 / 255.0, 1.0], 0.0),
+            Stop::new(
+                [0x5b as f32 / 255.0, 0.0, 0x60 as f32 / 255.0, 1.0],
+                1.0 / 6.0,
+            ),
+            Stop::new(
+                [
+                    0x87 as f32 / 255.0,
+                    0x01 as f32 / 255.0,
+                    0x60 as f32 / 255.0,
+                    1.0,
+                ],
+                2.0 / 6.0,
+            ),
+            Stop::new(
+                [
+                    0xac as f32 / 255.0,
+                    0x25 as f32 / 255.0,
+                    0x53 as f32 / 255.0,
+                    1.0,
+                ],
+                3.0 / 6.0,
+            ),
+            Stop::new(
+                [
+                    0xe1 as f32 / 255.0,
+                    0x6b as f32 / 255.0,
+                    0x5c as f32 / 255.0,
+                    1.0,
+                ],
+                4.0 / 6.0,
+            ),
+            Stop::new(
+                [
+                    0xf3 as f32 / 255.0,
+                    0x90 as f32 / 255.0,
+                    0x60 as f32 / 255.0,
+                    1.0,
+                ],
+                5.0 / 6.0,
+            ),
+            Stop::new([1.0, 0xb5 as f32 / 255.0, 0x6b as f32 / 255.0, 1.0], 1.0),
+        ],
+        tile: TileMode::Mirror,
+    };
+
+    let square = Shape::Rect {
+        min: [25.0, 25.0],
+        max: [50.0, 50.0],
+    };
+    let moved = |shape: &Shape, by: f32| match shape {
+        Shape::Rect { min, max } => Shape::Rect {
+            min: [min[0] + by, min[1] + by],
+            max: [max[0] + by, max[1] + by],
+        },
+        other => other.clone(),
+    };
+
+    vec![
+        // A paint with no shape, which is the whole of what this one is. The
+        // scale upstream applies before it makes no difference and is left
+        // out: what a paint covers is the clip, and neither has one.
+        Scene::tree("basic/can-draw-paint", vec![paint(TURQUOISE)])
+            .with_background(DARK)
+            .with_samples(4),
+        // The same twice, the second translucent. Distinct from the plate in
+        // the blend chapter that draws these two colors under `Hue`: this is
+        // the ordinary composite, and it is what says the second paint reaches
+        // the whole frame rather than whatever the first one's bounds were.
+        Scene::tree(
+            "basic/can-draw-paint-multiple-times",
+            vec![paint(TURQUOISE), paint(ORANGE_RED)],
+        )
+        .with_background(DARK)
+        .with_samples(4),
+        // The only plate that shears. Upstream's coefficients on a fifth of
+        // upstream's square, which is what keeps the far corner on the plate:
+        // two and five are steep, and the corner travels five times its own
+        // height down the frame.
+        plate(
+            "basic/can-perform-skew",
+            vec![Item::fill(
+                Shape::Rect {
+                    min: [0.0, 0.0],
+                    max: [20.0, 20.0],
+                },
+                RED,
+            )
+            .with_transform(Transform {
+                skew: [2.0, 5.0],
+                ..Transform::default()
+            })],
+        ),
+        Scene::tree(
+            "basic/can-render-simple-clips",
+            [
+                // Upstream's white ground, which the clipped regions are read
+                // against.
+                vec![paint(WHITE)],
+                clipped_group(Fill::Solid(BLUE), 0.0, 0.0),
+                clipped_group(sunset, 0.0, 60.0),
+                clipped_group(
+                    sheet(
+                        [0.0, 0.0, 32.0, 32.0],
+                        ALL,
+                        TileMode::Repeat,
+                        Sampling::Nearest,
+                    ),
+                    60.0,
+                    0.0,
+                ),
+            ]
+            .concat(),
+        )
+        .with_background(DARK)
+        .with_samples(4),
+        // Three squares stepped down the diagonal, the middle one inside a
+        // layer of its own. What it is for is the order: a layer composites
+        // when it is restored, so the square inside it goes *behind* the one
+        // drawn after it and in front of the one drawn before -- and a
+        // renderer that composited layers last would put it in front of both.
+        Scene::tree(
+            "basic/save-layer-draws-behind-subsequent-entities",
+            vec![
+                Node::Draw(Box::new(Item::fill(square.clone(), [0.0, 0.0, 0.0, 1.0]))),
+                Node::Layer {
+                    layer: Box::new(LayerSpec::default()),
+                    bounds: None,
+                    transform: Transform::default(),
+                    children: vec![Node::Draw(Box::new(Item::fill(
+                        moved(&square, 10.0),
+                        GREEN,
+                    )))],
+                },
+                Node::Draw(Box::new(Item::fill(moved(&square, 20.0), RED))),
+            ],
+        )
+        .with_background(DARK)
+        .with_samples(4),
+    ]
 }
 
 /// The texture scenes from `aiks_dl_basic_unittests.cc`.
