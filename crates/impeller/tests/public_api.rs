@@ -15462,3 +15462,139 @@ fn a_stroke_too_wide_to_tessellate_draws_nothing_rather_than_aborting() {
         );
     }
 }
+
+#[test]
+fn a_nine_patch_is_one_draw_and_the_same_picture_as_nine() {
+    // A nine-patch used to be nine draws, one per patch, because a per-draw
+    // source rectangle is also what *clamps* a patch from sampling its
+    // neighbor. It is one draw now, with the coordinates carried on the
+    // vertices the way `drawAtlas` has always carried them, and the clamping
+    // bought back by insetting each patch's texture coordinates half a texel --
+    // exactly the reach of a linear sample.
+    //
+    // Both halves are asserted because either alone is worthless: one draw
+    // that bleeds at the seams is not an improvement, and nine draws that look
+    // right is what this replaced.
+    let Some(mut ctx) = context() else { return };
+
+    // A sheet whose color changes hard at the patch boundaries, so bleeding
+    // across one is the most visible thing that can happen.
+    let sheet = Extent2D {
+        width: 32,
+        height: 32,
+    };
+    let mut texels = vec![0u8; 32 * 32 * 4];
+    for y in 0..32usize {
+        for x in 0..32usize {
+            let edge = !(8..24).contains(&x) || !(8..24).contains(&y);
+            let color: [u8; 4] = if edge {
+                [255, 0, 0, 255]
+            } else {
+                [0, 0, 255, 255]
+            };
+            texels[(y * 32 + x) * 4..(y * 32 + x) * 4 + 4].copy_from_slice(&color);
+        }
+    }
+    let mut image = ctx
+        .create_image(sheet, PixelFormat::Rgba8Unorm)
+        .expect("sheet");
+    ctx.write_image(&mut image, &texels).expect("upload");
+
+    let center = Rect::new(8.0, 8.0, 24.0, 24.0);
+    // Stretched hard in both directions, which is what a nine-patch is for and
+    // where a seam would show worst.
+    let into = Rect::new(4.0, 4.0, 124.0, 124.0);
+
+    let render_with = |ctx: &mut Context, canvas: Canvas| {
+        let recording = canvas.finish();
+        let draws: usize = recording.passes.iter().map(|p| p.batch.draws().len()).sum();
+        let mut surface = ctx
+            .create_surface(SIZE, PixelFormat::Rgba8Unorm)
+            .expect("surface");
+        ctx.draw_with_images(&mut surface, &recording, &[&image])
+            .expect("draw");
+        let pixels = ctx.read(&mut surface).expect("read");
+        ctx.destroy_surface(surface);
+        (draws, pixels)
+    };
+
+    let merged = {
+        let mut canvas = Canvas::new(SIZE);
+        canvas.clear(Color::BLACK);
+        canvas
+            .draw_image_nine(0, sheet, center, into, &Paint::default())
+            .expect("a nine-patch");
+        render_with(&mut ctx, canvas)
+    };
+
+    // The nine, written out here as the implementation used to write them: a
+    // paint per patch carrying its own source rectangle, which clamps.
+    let separate = {
+        let (w, h) = (sheet.width as f32, sheet.height as f32);
+        let sx = [0.0, center.left, center.right, w];
+        let sy = [0.0, center.top, center.bottom, h];
+        let dx = [
+            into.left,
+            into.left + center.left,
+            into.right - (w - center.right),
+            into.right,
+        ];
+        let dy = [
+            into.top,
+            into.top + center.top,
+            into.bottom - (h - center.bottom),
+            into.bottom,
+        ];
+        let mut canvas = Canvas::new(SIZE);
+        canvas.clear(Color::BLACK);
+        for row in 0..3 {
+            for column in 0..3 {
+                let destination = Rect::new(dx[column], dy[row], dx[column + 1], dy[row + 1]);
+                let paint = Paint::default().with_shader(Shader::Image {
+                    slot: 0,
+                    rect: destination,
+                    alpha: 1.0,
+                    tile: TileMode::Clamp,
+                    source: Rect::new(
+                        sx[column] / w,
+                        sy[row] / h,
+                        sx[column + 1] / w,
+                        sy[row + 1] / h,
+                    ),
+                    tint: Color::WHITE,
+                    sampling: Sampling::Linear,
+                });
+                canvas.draw_rect(destination, &paint).expect("a patch");
+            }
+        }
+        render_with(&mut ctx, canvas)
+    };
+
+    assert_eq!(merged.0, 1, "a nine-patch should record one draw");
+    assert_eq!(
+        separate.0, 9,
+        "nine patches drawn one at a time are nine draws"
+    );
+
+    let differing = merged
+        .1
+        .chunks_exact(4)
+        .zip(separate.1.chunks_exact(4))
+        .filter(|(a, b)| a != b)
+        .count();
+    let worst = merged
+        .1
+        .iter()
+        .zip(&separate.1)
+        .map(|(a, b)| (*a as i32 - *b as i32).abs())
+        .max()
+        .unwrap_or(0);
+    assert_eq!(
+        (differing, worst),
+        (0, 0),
+        "one draw should be the same picture as nine: {differing} pixel(s) \
+         differ, worst by {worst}. Without the half-texel inset this is about \
+         twelve hundred pixels and a hundred and seventy levels, which is the \
+         seams bleeding"
+    );
+}

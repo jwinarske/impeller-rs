@@ -4045,6 +4045,35 @@ impl Canvas {
             into.bottom,
         ];
 
+        // One mesh rather than nine draws, which is what this used to be.
+        //
+        // Each patch reads a different part of the image into a different
+        // place, and the obvious way to say that is a shader per patch with
+        // its own source rectangle -- nine paints, nine draws. Carrying the
+        // coordinates on the vertices instead says the same thing in one
+        // draw, which is how `draw_atlas` has always done it, and a nine-patch
+        // is the same shape of work: several quads out of one sheet.
+        //
+        // What made the nine separate is that a per-draw source rectangle also
+        // *clamps* to itself, so a patch could not sample its neighbor. Merged
+        // naively that clamping goes and the seams bleed -- measured, twelve
+        // hundred pixels of a hundred-and-twenty-eight-square frame, by as
+        // much as a hundred and seventy levels, which on the one primitive
+        // whose whole purpose is stretching without artifacts is not a
+        // trade worth making.
+        //
+        // The half-texel inset below is what buys it back. A linear sample
+        // reaches exactly half a texel past its coordinate, so pulling each
+        // patch's edge in by that much removes the reach across the boundary
+        // rather than compensating for it. With it the merged draw is
+        // byte-identical to the nine: zero pixels differ, at the same worst
+        // case of zero. The sampling is this call's own rather than the
+        // caller's, and is linear, which is what makes half a texel the right
+        // number rather than a guess.
+        let (half_u, half_v) = (0.5 / w, 0.5 / h);
+        let mut positions = Vec::with_capacity(36);
+        let mut coords = Vec::with_capacity(36);
+        let mut indices = Vec::with_capacity(54);
         for row in 0..3 {
             for column in 0..3 {
                 let source = Rect::new(
@@ -4062,24 +4091,55 @@ impl Canvas {
                 if source.is_empty() || destination.is_empty() {
                     continue;
                 }
-                // The paint supplies everything except the shader: its
-                // blend, its filters, whether it antialiases. The shader is
-                // this piece's own, because each of the nine reads a different
-                // part of the image into a different place, which is the only
-                // thing that distinguishes them.
-                let piece = paint.clone().with_shader(Shader::Image {
-                    slot,
-                    rect: destination,
-                    alpha: 1.0,
-                    tile: TileMode::Clamp,
-                    source,
-                    tint: Color::WHITE,
-                    sampling: Sampling::Linear,
-                });
-                self.draw_rect(destination, &piece)?;
+                // Inset toward the middle, and never past it: a patch one texel
+                // across has nothing to give up, and an inset that crossed
+                // would turn the quad inside out.
+                let mid_u = (source.left + source.right) * 0.5;
+                let mid_v = (source.top + source.bottom) * 0.5;
+                let u0 = (source.left + half_u).min(mid_u);
+                let u1 = (source.right - half_u).max(mid_u);
+                let v0 = (source.top + half_v).min(mid_v);
+                let v1 = (source.bottom - half_v).max(mid_v);
+
+                let base = positions.len() as u32;
+                positions.extend([
+                    Vec2::new(destination.left, destination.top),
+                    Vec2::new(destination.right, destination.top),
+                    Vec2::new(destination.right, destination.bottom),
+                    Vec2::new(destination.left, destination.bottom),
+                ]);
+                coords.extend([
+                    Vec2::new(u0, v0),
+                    Vec2::new(u1, v0),
+                    Vec2::new(u1, v1),
+                    Vec2::new(u0, v1),
+                ]);
+                indices.extend([base, base + 1, base + 2, base, base + 2, base + 3]);
             }
         }
-        Ok(self)
+        if positions.is_empty() {
+            return Ok(self);
+        }
+
+        let mesh = crate::vertices::Vertices::indexed(
+            crate::vertices::VertexMode::Triangles,
+            positions,
+            coords,
+            indices,
+        )?;
+        // The paint supplies everything but the shader -- its blend, its
+        // filters, whether it antialiases -- and the shader is the sheet, read
+        // by the coordinates the vertices carry.
+        let painted = paint.clone().with_shader(Shader::Image {
+            slot,
+            rect: into,
+            alpha: 1.0,
+            tile: TileMode::Clamp,
+            source: Rect::new(0.0, 0.0, 1.0, 1.0),
+            tint: Color::WHITE,
+            sampling: Sampling::Linear,
+        });
+        self.draw_vertices(&mesh, &painted)
     }
 
     pub fn draw_line(&mut self, from: Vec2, to: Vec2, paint: &Paint) -> Result<&mut Self> {

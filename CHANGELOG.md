@@ -64,6 +64,11 @@ fifteen modes outright, so the same picture reaches both backends -- 29 of 29
 modes are checked against the compositing equations on GLES where 14 were.
 Nothing about the API changed; a caller that was refused is not.
 
+`drawImageNine` records one draw where it recorded nine. The patches carry
+their texture coordinates on the vertices rather than each carrying a source
+rectangle of its own, with a half-texel inset standing in for the clamping a
+per-draw source rectangle used to give. The picture is unchanged, to the byte.
+
 A rounded superellipse costs a quarter of the geometry it did. The
 conic-to-quadratic conversion subdivided until the curve's *weight* was near
 one, which is a proxy that doubles its output per step; it now stops when the

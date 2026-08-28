@@ -897,6 +897,32 @@ samples a triangle covers there is a property of the rasterizer and not of
 either route. Where they differ and how many survives a second device; how much
 does not.
 
+**A nine-patch is one draw, and the half-texel inset is what makes it one.**
+It was nine, and the cost table is what pointed at it: four nine-patches in a
+catalog plate cost thirty-six draws at four vertices each, where four atlases
+of the same shape — several quads out of one sheet — cost one draw apiece.
+
+The reason for the nine was real. A per-draw source rectangle also *clamps*, so
+a patch could not sample its neighbor, and merging naively loses that: measured,
+twelve hundred pixels of a hundred-and-twenty-eight-square frame differ by as
+much as a hundred and seventy levels, which is the seams bleeding on the one
+primitive whose entire purpose is stretching without artifacts.
+
+The inset buys it back exactly. A linear sample reaches half a texel past its
+coordinate, so pulling each patch's texture coordinates in by that much removes
+the reach rather than compensating for it — and the sampling here is this
+call's own and is linear, which is what makes half a texel the right number
+instead of a guess. With it the merged draw is byte-identical to the nine: zero
+pixels differ. `a_nine_patch_is_one_draw_and_the_same_picture_as_nine` asserts
+both halves, because either alone is worthless — one draw that bleeds is not an
+improvement, and nine draws that look right is what it replaced.
+
+Worth noting what did *not* catch this. The corpus has no nine-patch, so the
+cost baseline has no row for it and the win is not gated there; the assertion
+above stands in for that. And the catalog's cross-backend comparison would not
+have caught the bleeding either, because both backends would have bled
+identically.
+
 **A frame's cost has two halves, and only one of them can be gated on every
 commit.** Wall-clock time needs a quiet machine and a real device, which is
 what `cargo xtask bench --check` and `tests/bench-baselines/` are for and why
