@@ -159,7 +159,7 @@ column is right and the obvious way to check it is wrong.
 | `aiks_dl_clip_unittests.cc` | ~5 | 7 | nothing; this file is covered |
 | `aiks_dl_opacity_unittests.cc` | ~3 | 3 | nothing; this file is covered |
 | `aiks_dl_blend_unittests.cc` | ~79 | 40 | capability injection and subpass collapse, for two of them; see below |
-| `aiks_dl_blur_unittests.cc` | ~59 | 47 | a blur does not turn with a rotation, and a mask blur under a mode that ignores coverage erases its bounds, for one of them each; see below |
+| `aiks_dl_blur_unittests.cc` | ~59 | 51 | a blur does not turn with a rotation, and a mask blur under a mode that ignores coverage erases its bounds, for one of them each; see below |
 | `aiks_dl_vertices_unittests.cc` | ~16 | 20 | a shader other than an image cannot be read at a mesh's texture coordinates, for two of them; see below |
 | `aiks_dl_atlas_unittests.cc` | ~11 | 12 | nothing; see below |
 | `aiks_dl_shadow_unittests.cc` | ~30 | 13 | a convex-shadow optimization this renderer does not have; see below |
@@ -168,7 +168,7 @@ column is right and the obvious way to check it is wrong.
 | `aiks_dl_runtime_effect_unittests.cc` | — | 12 | nothing; see below |
 | `aiks_dl_unittests.cc` | ~36 | 13 | subpass collapse, for five of them; see below |
 
-The catalog holds three hundred and thirty-nine scenes of roughly four hundred,
+The catalog holds three hundred and forty-three scenes of roughly four hundred,
 and the proportion is less interesting than which ones: the arithmetic of drawing is largely covered, and
 what is missing is either a capability this renderer does not have or a thing
 the scene model cannot describe.
@@ -309,6 +309,29 @@ neither was taken in passing: refusing withdraws seven modes from a feature
 upstream supports, and compositing correctly means a per-mode table nobody has
 derived. A plate under upstream's name drawing a rectangle would report the
 chapter as covered while showing the wrong thing, so there is none.
+
+Four more after that. The periphery plate's twin, turned: a strip down the
+middle running to the top and bottom edges, so the kernel reaches past the
+target along the other axis. Its ground turns with it, and that is not
+decoration -- a blur reading past the edge has to answer with the clamped edge
+texel, and the way to see that it did is to blur *across* the stripes. Stripes
+parallel to the blur would look the same either way.
+
+A blurred layer under a mirrored transform, which is the one of the four that
+could have drawn nothing. A mirror has a negative determinant, so a renderer
+deriving the layer's extent by transforming its corners and subtracting gets a
+negative width and a target of no size. The content sits left of center in the
+layer's own space and has to land right of center on the frame; symmetric
+content would have made the mirror invisible, and taking the flip out of the
+transform fails the assertion, which is what it was written against.
+
+A gradient under a mask blur inside a group at half opacity -- three layers deep
+before the group's own opacity applies, since a mask blur over a varying fill
+draws the fill across everything the blur reaches and masks it with a blurred
+coverage. And an image under a mask blur, which is the same route again with the
+fill being a sheet: what comes out is the image with soft edges rather than a
+blurred image, because a mask blur acts on coverage and an image's coverage is
+the rectangle it is drawn into.
 
 The default style blurs coverage and fills through it, which works for any
 fill. The three that combine a blurred mask with a sharp one -- solid, outer,

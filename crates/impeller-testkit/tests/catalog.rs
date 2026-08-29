@@ -1036,3 +1036,51 @@ fn a_clip_cuts_a_blurred_shape_after_the_blur_rather_than_before() {
          of the column carried a partial value, so the blur is being cut off"
     );
 }
+
+#[test]
+fn a_blurred_layer_survives_a_mirrored_transform() {
+    // A mirrored transform has a negative determinant, so a renderer deriving
+    // a layer's extent by transforming its corners and subtracting gets a
+    // negative width -- a target of no size, which draws nothing at all. That
+    // is the failure upstream keeps its flipped scene for, and it is loud:
+    // either the layer is there or it is not.
+    //
+    // The content sits left of center in the layer's own space, so it has to
+    // land right of center on the frame. Symmetric content would have made the
+    // mirror invisible, and a renderer that dropped the flip would place the
+    // rectangle on the wrong side while drawing an otherwise plausible
+    // picture.
+    let Ok(mut ctx) = Validated::new(DevicePreference::Auto) else {
+        eprintln!("skipping: no Vulkan device");
+        return;
+    };
+    let scene = catalog()
+        .into_iter()
+        .find(|s| s.name == "blur/gaussian-blur-flipped")
+        .expect("the plate is in the catalog");
+    let img = render::<VulkanHal>(&mut ctx, &scene);
+
+    let red: Vec<(u32, u32)> = (0..128u32)
+        .flat_map(|y| (0..128u32).map(move |x| (x, y)))
+        .filter(|(x, y)| {
+            let p = img.pixel(*x, *y);
+            p[0] > 100 && p[1] < 100
+        })
+        .collect();
+    assert!(
+        red.len() > 1000,
+        "the mirrored layer drew {} red pixels, which is not a layer",
+        red.len()
+    );
+    let left = red.iter().map(|p| p.0).min().unwrap_or(0);
+    let right = red.iter().map(|p| p.0).max().unwrap_or(0);
+    assert!(
+        left > 64,
+        "content left of center in the layer's space belongs right of center \
+         on the frame; it runs from {left} to {right}"
+    );
+    assert!(
+        right <= 112,
+        "and it must still stop at the layer's bounds, but reaches {right}"
+    );
+}

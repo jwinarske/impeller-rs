@@ -6714,6 +6714,153 @@ fn blur_variants() -> Vec<Scene> {
         .with_blend(BlendMode::SrcOver)],
     ));
 
+    scenes.push(
+        Scene::tree(
+            "blur/gaussian-blur-at-periphery-vertical",
+            // The horizontal plate's twin, turned. A strip down the middle of
+            // the frame runs to the top and bottom edges, so the kernel reaches
+            // past the target along the axis this one is read for. The ground's
+            // stripes turn with it: a blur reading past the top row and finding
+            // the clear rather than the clamped edge texel shows against bars
+            // it crosses and not against bars it runs along.
+            [
+                banded_ground(),
+                vec![Node::Layer {
+                    layer: Box::new(LayerSpec {
+                        backdrop_blur: 8.0,
+                        blend: BlendMode::Src,
+                        ..LayerSpec::default()
+                    }),
+                    bounds: Some([47.0, 0.0, 81.0, 128.0]),
+                    transform: Transform::default(),
+                    children: Vec::new(),
+                }],
+            ]
+            .concat(),
+        )
+        .with_background(DARK)
+        .with_samples(1),
+    );
+
+    scenes.push(
+        Scene::tree(
+            "blur/gaussian-blur-flipped",
+            // A blurred layer under a mirrored transform. The determinant is
+            // negative, so a renderer deriving the layer's extent by
+            // transforming its corners and subtracting gets a negative width
+            // and a target of no size -- which draws nothing at all rather
+            // than drawing something wrong, and is the failure upstream keeps
+            // this scene for.
+            vec![
+                Node::Draw(Box::new(Item::fill(
+                    Shape::Rect {
+                        min: [0.0, 0.0],
+                        max: [128.0, 128.0],
+                    },
+                    WHITE,
+                ))),
+                Node::Layer {
+                    layer: Box::new(LayerSpec {
+                        filter: ImageFilter::blur(6.0),
+                        ..LayerSpec::default()
+                    }),
+                    bounds: Some([16.0, 40.0, 112.0, 88.0]),
+                    transform: Transform {
+                        scale: [-1.0, 1.0],
+                        translate: [128.0, 0.0],
+                        ..Transform::default()
+                    },
+                    // Left of center in the layer's own space, which is right
+                    // of center on the frame. Symmetric content would have made
+                    // the mirror invisible and the plate worthless.
+                    children: vec![Node::Draw(Box::new(
+                        Item::fill(
+                            Shape::Rect {
+                                min: [24.0, 8.0],
+                                max: [60.0, 120.0],
+                            },
+                            RED,
+                        )
+                        .with_blend(BlendMode::SrcOver),
+                    ))],
+                },
+            ],
+        )
+        .with_background(DARK)
+        .with_samples(4),
+    );
+
+    scenes.push(
+        Scene::tree(
+            "blur/blur-gradient-with-opacity",
+            // A gradient under a mask blur, inside a group at half opacity. The
+            // mask blur over a varying fill is the route that draws the fill
+            // across everything the blur reaches and masks it with a blurred
+            // coverage, so it is three layers deep before the group's own
+            // opacity is applied -- and the opacity has to reach the composite
+            // of all of it rather than any one of them.
+            vec![Node::Layer {
+                layer: Box::new(LayerSpec {
+                    alpha: 0.5,
+                    ..LayerSpec::default()
+                }),
+                bounds: None,
+                transform: Transform::default(),
+                children: vec![Node::Draw(Box::new(
+                    Item::filled(
+                        Shape::Rect {
+                            min: [28.0, 28.0],
+                            max: [100.0, 100.0],
+                        },
+                        Fill::LinearGradient {
+                            start: [28.0, 28.0],
+                            end: [100.0, 100.0],
+                            stops: vec![Stop::new(RED, 0.0), Stop::new(GREEN, 1.0)],
+                            tile: TileMode::Clamp,
+                        },
+                    )
+                    .with_mask_blur(4.0)
+                    .with_blend(BlendMode::SrcOver),
+                ))],
+            }],
+        )
+        .with_background(DARK)
+        .with_samples(4),
+    );
+
+    scenes.push(plate(
+        "blur/mask-blur-texture",
+        // An image under a mask blur, with an opaque rectangle beside it so
+        // the halo has something to be read against. A mask blur acts on
+        // coverage and the fill colors whatever survives, so an image's
+        // coverage is the rectangle it is drawn into -- the picture is the
+        // image with soft edges, not a blurred image.
+        vec![
+            Item::filled(
+                Shape::Rect {
+                    min: [40.0, 40.0],
+                    max: [112.0, 112.0],
+                },
+                sheet(
+                    [40.0, 40.0, 112.0, 112.0],
+                    ALL,
+                    TileMode::Clamp,
+                    Sampling::Nearest,
+                ),
+            )
+            .with_mask_blur(6.0)
+            .with_blend(BlendMode::SrcOver),
+            Item::fill(
+                Shape::Rect {
+                    min: [8.0, 8.0],
+                    max: [48.0, 48.0],
+                },
+                RED,
+            )
+            .with_blend(BlendMode::SrcOver),
+        ],
+    ));
+
     // A deviation per axis, which `dart:ui` states and this renderer now
     // carries. Two squares, one blurred along x alone and one along y, so
     // either plate on its own says the sigma arrived and the pair says which
@@ -6850,6 +6997,21 @@ fn blur_variants() -> Vec<Scene> {
 /// is the sheet being flat there. Even bars vary the same everywhere, so what
 /// changes between regions is what was done to them.
 fn barred_ground() -> Vec<Node> {
+    ruled_ground(false)
+}
+
+/// The same ground with its stripes the other way round.
+///
+/// Which way they run is not decoration. A blur reading past the edge of its
+/// target has to answer with the clamped edge texel, and the way to see that it
+/// did is to blur *across* the stripes -- so a band at the top of the frame is
+/// read against vertical bars, and a strip down the side against horizontal
+/// ones. Stripes parallel to the blur would look identical either way.
+fn banded_ground() -> Vec<Node> {
+    ruled_ground(true)
+}
+
+fn ruled_ground(horizontal: bool) -> Vec<Node> {
     let mut items = vec![Node::Draw(Box::new(Item::fill(
         Shape::Rect {
             min: [0.0, 0.0],
@@ -6858,12 +7020,14 @@ fn barred_ground() -> Vec<Node> {
         WHITE,
     )))];
     for i in 0..16 {
-        let x = i as f32 * 8.0;
+        let at = i as f32 * 8.0;
+        let (min, max) = if horizontal {
+            ([0.0, at], [128.0, at + 4.0])
+        } else {
+            ([at, 0.0], [at + 4.0, 128.0])
+        };
         items.push(Node::Draw(Box::new(Item::fill(
-            Shape::Rect {
-                min: [x, 0.0],
-                max: [x + 4.0, 128.0],
-            },
+            Shape::Rect { min, max },
             [0.05, 0.05, 0.1, 1.0],
         ))));
     }
