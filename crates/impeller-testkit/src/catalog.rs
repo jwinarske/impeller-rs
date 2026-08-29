@@ -129,6 +129,72 @@ fn plate(name: &'static str, items: Vec<Item>) -> Scene {
         .with_samples(4)
 }
 
+/// Upstream's `MakeWideStrokedRects`, which two of its scenes draw and differ
+/// only in how they say the rectangle.
+///
+/// Six outlines: three joins in a row where the stroke leaves a gap down the
+/// middle, and the same three where it is wider than the shape and the two
+/// sides of it land on the same pixels.
+///
+/// **The half alpha is the whole plate.** An outline that covers a pixel twice
+/// is invisible at full opacity and darker at half, so a stroke drawn opaque
+/// cannot show whether it overlapped itself -- and this plate, which is named
+/// for not overlapping, used to be drawn opaque and could not. That it now
+/// draws upstream's translucent blue is the difference between a picture and a
+/// picture that can fail.
+fn wide_stroked_rects(as_path: bool) -> Vec<Item> {
+    let mut items = Vec::new();
+    for (i, join) in [LineJoin::Bevel, LineJoin::Round, LineJoin::Miter]
+        .into_iter()
+        .enumerate()
+    {
+        let x = i as f32 * 43.0;
+        // Twenty-two across with a stroke of eight: the inner edges stop
+        // fourteen apart, so the four sides are four separate bands.
+        items.push((
+            Shape::Rect {
+                min: [x + 10.0, 12.0],
+                max: [x + 32.0, 34.0],
+            },
+            8.0,
+            join,
+        ));
+        // Ten across with a stroke of twenty: each side reaches five past the
+        // middle, so the left band and the right band want the same pixels and
+        // so do the top and the bottom.
+        items.push((
+            Shape::Rect {
+                min: [x + 16.0, 78.0],
+                max: [x + 26.0, 88.0],
+            },
+            20.0,
+            join,
+        ));
+    }
+    items
+        .into_iter()
+        .map(|(shape, width, join)| {
+            let item = Item::stroke(
+                shape,
+                StrokeSpec {
+                    join,
+                    ..StrokeSpec::new(width)
+                },
+                BLUE_HALF,
+            )
+            // Composited rather than replaced: half an alpha written by a mode
+            // that replaces leaves a half-transparent hole, and what this plate
+            // is read for is how the ink stacks.
+            .with_blend(BlendMode::SrcOver);
+            if as_path {
+                item.as_path()
+            } else {
+                item
+            }
+        })
+        .collect()
+}
+
 /// The three boxes upstream draws in every rounded-superellipse plate.
 ///
 /// A square, a tall one and a wide one, at a quarter of upstream's
@@ -607,14 +673,11 @@ fn basic() -> Vec<Scene> {
         ),
         plate(
             "basic/can-render-wide-stroked-rect-without-overlap",
-            vec![Item::stroke(
-                Shape::Rect {
-                    min: [44.0, 44.0],
-                    max: [84.0, 84.0],
-                },
-                StrokeSpec::new(28.0),
-                WHITE,
-            )],
+            wide_stroked_rects(false),
+        ),
+        plate(
+            "basic/can-render-wide-stroked-rect-path-without-overlap",
+            wide_stroked_rects(true),
         ),
         plate(
             "basic/stroked-rects-render-correctly",

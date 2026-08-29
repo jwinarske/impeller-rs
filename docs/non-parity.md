@@ -386,3 +386,49 @@ who draws deliberately off-target and translates it in gets nothing, where
 upstream gets the picture. There is no partial failure between the two -- the
 content is either inside the target or absent -- so the case is visible the
 first time it is tried rather than subtly wrong.
+
+## 13. A translucent stroke laid down by the tessellator covers a pixel twice
+
+**What differs.** A stroke is tessellated as a run of quads with a join between
+each pair and a cap on each end, and where those quads land on the same pixel
+the outline covers it more than once. At full opacity that is invisible. At
+half it is not: each cover blends over the last, so the pixel comes out darker
+than a stroke of that alpha should ever be.
+
+Upstream draws exactly this picture to say it does not happen. Its
+`CanRenderWideStrokedRectWithoutOverlap` and its `...RectPath...` twin are the
+same six outlines, translucent blue, three joins where the stroke leaves a gap
+down the middle and three where it is wider than the shape it outlines -- one
+saying the rectangle directly and one handing over its path, so that neither
+route may double.
+
+Measured here on the second row, where the stroke is twice the width of the
+rectangle. Through `draw_rect` with a round join, which this renderer answers
+analytically, every pixel of the middle carries one cover and reads 140 in
+blue. Through the tessellator -- which is what the other two joins get, a
+stroked rectangle with a square corner having no analytic form here, and what
+all three get when the scene hands over a path -- the same pixels read 226 and
+251, which is three covers and six.
+
+So the analytic route is right and the tessellated one is not, and the two
+plates are in the catalog side by side to keep the difference visible. The
+analytic half is pinned by
+`a_wide_stroke_through_its_own_call_covers_each_pixel_once`, which fails if that
+route ever starts doubling too.
+
+Fixing it is not a change to the stroker. The quads have to overlap -- that is
+how a join covers the wedge between two segments -- so what has to change is
+that the whole outline is resolved to coverage before the paint's alpha is
+applied, rather than each quad blending as it arrives. That is a stencil pass or
+an offscreen per stroke, and it is a cost every stroke would pay for a case only
+a translucent self-overlapping one has. Upstream's own route to the picture
+suggests the cheaper answer first: it turns a stroked rectangle into an
+analytic rounded rectangle where it can, which is the same move this renderer
+already makes for the round join and declines for the other two.
+
+**Impact.** Confined to a translucent stroke wide enough to reach across the
+shape it outlines, or one whose path doubles back on itself inside a stroke
+width. An opaque stroke of any width is unaffected, and so is a translucent one
+narrow relative to its geometry, which is nearly every stroke drawn. Where it
+does show, it shows as a darker patch at the joins rather than as anything
+structural, and it is the same on both backends.

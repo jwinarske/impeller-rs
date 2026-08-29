@@ -492,6 +492,22 @@ pub struct Item {
     /// worth having, since a difference clip alone leaves the bounds it was
     /// given untouched.
     pub clip_out: Option<[f32; 4]>,
+    /// Draw the shape through `draw_path` rather than through whatever call
+    /// the public API offers for it.
+    ///
+    /// Five shapes have their own entry point -- rectangle, circle, oval,
+    /// rounded rectangle and difference of two -- and a scene naming one gets
+    /// that call, so the choice each makes between an analytic field and a
+    /// tessellation stays under test. This says the other thing: the same
+    /// outline, handed over as a path.
+    ///
+    /// It is not a way of writing the same picture twice. Upstream keeps both
+    /// forms of a scene for the cases where the two routes can disagree -- a
+    /// wide stroke around a small rectangle is one, since the analytic route
+    /// covers a pixel once where a tessellated one can lay two quads over it
+    /// -- and a pair here can assert that they agree, which neither plate can
+    /// say alone.
+    pub as_path: bool,
     /// Confine this item to an arbitrary shape, in the item's own space.
     ///
     /// Needs the stencil rather than the scissor, and so exercises a quite
@@ -510,6 +526,12 @@ impl Item {
     /// is the case that needed it.
     pub fn with_stroke(mut self, spec: StrokeSpec) -> Self {
         self.stroke = Some(spec);
+        self
+    }
+
+    /// Draw this item's shape as a path rather than through its own call.
+    pub fn as_path(mut self) -> Self {
+        self.as_path = true;
         self
     }
 
@@ -532,6 +554,7 @@ impl Item {
             blend: BlendMode::Src,
             clip: None,
             clip_out: None,
+            as_path: false,
             clip_shape: None,
         }
     }
@@ -563,6 +586,7 @@ impl Item {
             blend: BlendMode::Src,
             clip: None,
             clip_out: None,
+            as_path: false,
             clip_shape: None,
         }
     }
@@ -580,6 +604,7 @@ impl Item {
             blend: BlendMode::Src,
             clip: None,
             clip_out: None,
+            as_path: false,
             clip_shape: None,
         }
     }

@@ -400,3 +400,74 @@ fn a_backdrop_key_plate_would_notice_if_the_key_stopped_working() {
         "three keyed plates share a capture between panels; this checked {checked}"
     );
 }
+
+/// The blue an unoverlapped `BLUE_HALF` stroke leaves on the catalog ground.
+///
+/// Read off a render rather than derived, and the two doubled values are
+/// nowhere near it: a second cover reads 226 and a sixth reads 251, so a
+/// threshold between them does not need to be exact to mean what it says.
+const SINGLE_COVER_BLUE: u8 = 140;
+
+#[test]
+fn a_wide_stroke_through_its_own_call_covers_each_pixel_once() {
+    // Upstream keeps two forms of this scene, one drawing the rectangle
+    // directly and one handing over its path, and both are named for the
+    // stroke not overlapping itself. The half alpha is what makes the claim
+    // legible: an outline covering a pixel twice is invisible at full opacity
+    // and darker at half.
+    //
+    // The two routes here do not agree, and that is recorded rather than
+    // asserted -- `docs/non-parity.md` section 13, with these numbers. What is
+    // asserted is the half that holds: where the stroke goes through the call
+    // the public API offers for a rectangle, the middle of a rectangle whose
+    // stroke is twice its width carries exactly one cover. That is a real
+    // property and nothing else in the suite protects it.
+    let Ok(mut ctx) = Validated::new(DevicePreference::Auto) else {
+        eprintln!("skipping: no Vulkan device");
+        return;
+    };
+
+    let find = |name: &str| {
+        catalog()
+            .into_iter()
+            .find(|s| s.name == name)
+            .unwrap_or_else(|| panic!("{name} is not in the catalog"))
+    };
+    let direct = find("basic/can-render-wide-stroked-rect-without-overlap");
+    let as_path = find("basic/can-render-wide-stroked-rect-path-without-overlap");
+    assert_ne!(
+        direct.items, as_path.items,
+        "the pair is supposed to differ in how it says the rectangle"
+    );
+
+    // The round-join rectangle of the lower row, which is the one this
+    // renderer draws analytically: a stroked rectangle with a square corner
+    // falls back to the tessellator, so the other two columns are the same
+    // picture in both plates and have nothing to say here.
+    let img = render::<VulkanHal>(&mut ctx, &direct);
+    let mut covered = 0usize;
+    let mut worst = (0u8, (0u32, 0u32));
+    for y in 68..98u32 {
+        for x in 49..79u32 {
+            let blue = img.pixel(x, y)[2];
+            if blue > worst.0 {
+                worst = (blue, (x, y));
+            }
+            if blue.abs_diff(SINGLE_COVER_BLUE) <= 2 {
+                covered += 1;
+            }
+        }
+    }
+    assert!(
+        worst.0 <= SINGLE_COVER_BLUE + 20,
+        "a pixel at {:?} reads {} where one cover is {SINGLE_COVER_BLUE}, so the \
+         outline is blending over itself",
+        worst.1,
+        worst.0
+    );
+    assert!(
+        covered > 700,
+        "only {covered} of 900 pixels carry a full cover, so this window is \
+         edge rather than stroke and the bound above proved nothing"
+    );
+}

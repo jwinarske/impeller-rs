@@ -142,7 +142,7 @@ column is right and the obvious way to check it is wrong.
 
 | File | Scenes there | Here | Blocked on |
 |---|---|---|---|
-| `aiks_dl_basic_unittests.cc` | ~85 | 75 | subpass optimizations; see below |
+| `aiks_dl_basic_unittests.cc` | ~85 | 76 | subpass optimizations; see below |
 | `aiks_dl_path_unittests.cc` | ~30 | 21 | nothing; see below |
 | `aiks_dl_gradient_unittests.cc` | ~40 | 31 | nothing; see below |
 | `aiks_dl_clip_unittests.cc` | ~5 | 7 | nothing; this file is covered |
@@ -157,7 +157,7 @@ column is right and the obvious way to check it is wrong.
 | `aiks_dl_runtime_effect_unittests.cc` | — | 12 | nothing; see below |
 | `aiks_dl_unittests.cc` | ~36 | 13 | subpass collapse, for five of them; see below |
 
-The catalog holds two hundred and ninety-one scenes of roughly four hundred,
+The catalog holds two hundred and ninety-two scenes of roughly four hundred,
 and the proportion is less interesting than which ones: the arithmetic of drawing is largely covered, and
 what is missing is either a capability this renderer does not have or a thing
 the scene model cannot describe.
@@ -473,6 +473,32 @@ it; here the same shape takes the fragment-evaluated route. That is the reason
 to have them rather than an obstacle to it -- the tessellated stroker is
 already covered by the corpus, and what these say is that the *field* holds up
 where the numbers are hard.
+
+The wide stroked rectangle went in next, as the pair upstream keeps, and it
+is the first plate in this chapter to have been added because the one already
+here could not fail. Upstream draws six outlines in translucent blue -- three
+joins where the stroke leaves a gap down the middle and three where it is
+wider than the shape it outlines -- and it draws them twice, once saying the
+rectangle directly and once handing over its path, so that neither route may
+cover a pixel twice. What was here was one opaque rectangle with a gap in it,
+under upstream's name. Opaque is the part that matters: an outline covering a
+pixel twice is invisible at full opacity, so a plate named for not overlapping
+was drawn in the one color that could not show an overlap.
+
+Saying the path form at all needed something the catalog did not have. Five
+shapes have their own entry point here and a scene naming one gets that call,
+which is deliberate -- it keeps the choice each makes between an analytic field
+and a tessellation under test -- but it left no way to ask for the other route,
+so every rectangle in the catalog was an analytic one. An item can now say
+`as_path`, and the two plates differ in that field and nothing else.
+
+They do not agree, which is the point of having both. Through `draw_rect` with
+a round join, answered analytically, the middle of a rectangle whose stroke is
+twice its width carries exactly one cover. Through the tessellator -- what the
+square-cornered joins get, since a stroked rectangle with a miter has no
+analytic form here, and what all three get from the path form -- the same
+pixels carry three covers and six. The analytic half is asserted; the other is
+`docs/non-parity.md` section 13, with the numbers.
 
 Four scenes were filed under the wrong chapter, which is worth recording
 because of how it was found rather than because of the four. Writing the

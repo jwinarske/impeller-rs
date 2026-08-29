@@ -436,6 +436,11 @@ fn record_node(canvas: &mut Canvas, node: &Node, anti_alias: bool) -> Result<()>
             // instead would pin the corpus to the tessellated one and leave the
             // choice untested by everything the corpus drives.
             match &item.shape {
+                // A scene can ask for the path route explicitly, which is the
+                // only way to reach it for a shape that has its own call.
+                _ if item.as_path => {
+                    canvas.draw_path(&item.shape.to_path(), &paint)?;
+                }
                 // A circle goes through its own call for the same reason: that
                 // is where the choice between a distance field and four cubics
                 // is made, and handing over a path would decide it here.
