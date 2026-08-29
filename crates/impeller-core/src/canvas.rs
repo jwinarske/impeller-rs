@@ -776,6 +776,27 @@ impl Layer {
     /// this is their sum rather than whichever is larger -- the passes run one
     /// after the other, and the second reaches out from where the first put
     /// things.
+    /// The same layer with its lengths converted into device pixels.
+    ///
+    /// A sigma reaches the caller in the space they were drawing in and every
+    /// pass that acts on it works on a target, so one of the two has to move.
+    /// This is that move, and it happens once at `save_layer` rather than at
+    /// each use -- the transform that decides it is the one in force when the
+    /// layer is opened, and it may be gone by the time the layer is composited.
+    ///
+    /// The morphology is left alone: it is stated in device pixels and says so,
+    /// and upstream has no morphology to be in parity with.
+    fn scaled_by(self, scale: f32) -> Self {
+        if !scale.is_finite() || scale <= 0.0 {
+            return self;
+        }
+        Self {
+            blur: self.blur * scale,
+            backdrop_blur: self.backdrop_blur * scale,
+            ..self
+        }
+    }
+
     fn reach(&self) -> Vec2 {
         let blur = Vec2::splat(blur_reach(self.blur));
         match self.morphology {
@@ -1266,6 +1287,12 @@ impl Canvas {
     /// which costs some work in the layer and keeps a stencil clip from having
     /// to be rebuilt in a second target.
     pub fn save_layer(&mut self, layer: Layer) -> &mut Self {
+        // The other entry to `open_layer` converts the sigmas where it computes
+        // its reach; this one has no bounds to reach past and so converts them
+        // here. Both are the same conversion at the same moment -- the layer is
+        // opened under the transform the caller drew in, which is the one its
+        // sigma is stated against.
+        let layer = layer.scaled_by(max_scale_of(self.transform));
         let pending = self.open_layer(layer, None, None).unwrap_or(None);
         self.seed_backdrop(pending);
         self
@@ -1650,6 +1677,15 @@ impl Canvas {
         filter: Option<ImageFilter>,
         backdrop: Option<&ImageFilter>,
     ) -> Result<&mut Self> {
+        // A caller's sigma is in the space they were drawing in, which is what
+        // `dart:ui` means by it and what upstream honors -- its
+        // `GaussianBlurFilterContents` scales by `effect_transform.Basis()`,
+        // and the backdrop path hands it `transform.Basis()`. Everything below
+        // this line works in device pixels: the reach is applied to bounds
+        // already transformed, and the passes that do the blurring run on a
+        // target. So the conversion happens once, here, where the transform
+        // that decides it is still the one the caller drew under.
+        let layer = layer.scaled_by(max_scale_of(self.transform));
         let reach = layer.reach();
         // Opened without seeding, because the seed has to land in the target
         // the content will draw into and that target is decided below. A
@@ -2991,7 +3027,11 @@ impl Canvas {
         if (sx - sy).abs() > 1e-3 * sx.max(sy) {
             return None;
         }
-        let sigma = paint.mask_blur / sx;
+        // Stated in the shape's own space already, so there is nothing to
+        // convert. It used to be `paint.mask_blur / sx`, which is what a
+        // device-space sigma needed and what made a blur refuse to grow with
+        // the transform.
+        let sigma = paint.mask_blur;
 
         let radius = radius.min(rect.width() / 2.0).min(rect.height() / 2.0);
         let material = self.rrect_blur_material(rect, radius, sigma, *color)?;
@@ -3243,6 +3283,27 @@ impl Canvas {
         // larger half of what made a shadow here twice as soft as upstream's.
         let sigma = sigma_for_radius(LIGHT_RADIUS * elevation);
         let shade = tonal_shadow_color(color);
+        // Divided by the transform's scale, which is upstream's division and
+        // is here for upstream's reason. A mask blur's sigma is stated in the
+        // space the drawing is in and grows with the transform, so a shadow
+        // whose softness comes from an *elevation* rather than from a length
+        // would grow with it too -- and upstream's does not. Its
+        // `drawShadow` divides its radius by the canvas scale precisely to
+        // cancel the multiplication its filter applies, leaving a shadow's
+        // softness fixed in device pixels however large the caster is drawn.
+        //
+        // This division did not exist while the sigma was device-space,
+        // because there was no multiplication to cancel. Removing it was the
+        // half of the blur change that a test caught rather than the half that
+        // was designed: `a_shadows_softness_is_fixed_in_device_pixels` is that
+        // test, and it was written when the opposite convention made the same
+        // shadow come out right without any division at all.
+        let scale = max_scale_of(self.transform);
+        let sigma = if scale.is_finite() && scale > 0.0 {
+            sigma / scale
+        } else {
+            sigma
+        };
         let paint = Paint::fill(shade).with_mask_blur(sigma);
 
         // The whole shadow, whatever the occluder is, which is what upstream
@@ -4967,6 +5028,21 @@ impl Canvas {
             extent: self.extent,
             ramps: self.ramps,
         }
+    }
+}
+
+/// How much a transform magnifies, for converting a length into device pixels.
+///
+/// The larger of the two basis lengths, which is what upstream's
+/// `GetMaxBasisLengthXY` gives and what `thin_stroke` already uses for the same
+/// kind of conversion. A projective transform has no single answer -- it
+/// magnifies differently at every point -- so it converts by its affine part,
+/// which is exact wherever the perspective is mild and is the same reading the
+/// stroke widening takes.
+fn max_scale_of(transform: Transform2D) -> f32 {
+    match transform.to_affine() {
+        Some(affine) => max_scale(&affine),
+        None => 1.0,
     }
 }
 

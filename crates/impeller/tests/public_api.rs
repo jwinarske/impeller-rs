@@ -221,23 +221,25 @@ fn translucent_paint_blends_with_what_is_underneath() {
     }
 }
 
-/// A mask blur's deviation is in device pixels, not in the space it is drawn in.
+/// A shadow's softness is fixed in device pixels, though a blur's is not.
 ///
-/// Load-bearing for parity, and not obviously either way, so it is pinned.
-/// Upstream's shadow divides its blur radius by the canvas transform's vertical
-/// scale, which looks like something to copy until both sides are measured:
-/// upstream's blur sigma is in *local* space — `gaussian_blur_filter_contents`
-/// multiplies it by the entity transform's scale — so that division exists to
-/// cancel the multiplication and leave a shadow's softness fixed in device
-/// pixels. This renderer's sigma is already in device space and arrives at the
-/// same place without it. Copying the division would shrink a shadow as the
-/// canvas grew, which is parity backwards.
+/// The pair is the parity, and it is not obvious either way. Upstream's blur
+/// sigma is in the space the drawing is in --
+/// `gaussian_blur_filter_contents` scales it by the entity transform -- and
+/// its `drawShadow` *divides* its radius by the canvas scale, precisely to
+/// cancel that multiplication. So upstream's blur grows with the transform and
+/// upstream's shadow does not, and matching it means having both.
 ///
-/// Checked in both directions at once: the shape has to grow with the scale, or
-/// the transform is not reaching the draw at all and the blur staying put would
+/// This renderer used to have neither. Its sigma was device-space, which made
+/// a shadow come out right with no division at all -- and made every other
+/// blur wrong under a scale, which is `docs/architecture.md`'s note on the
+/// change. The division exists now because the multiplication does.
+///
+/// Checked in both directions at once: the shape has to grow with the scale,
+/// or the transform is not reaching the draw and a softness staying put would
 /// mean nothing.
 #[test]
-fn a_mask_blurs_deviation_is_in_device_pixels() {
+fn a_shadows_softness_is_fixed_in_device_pixels() {
     let Some(mut ctx) = context() else { return };
     let extent = Extent2D::new(256, 256);
 
@@ -246,16 +248,16 @@ fn a_mask_blurs_deviation_is_in_device_pixels() {
         canvas.clear(Color::BLACK);
         canvas.save();
         canvas.scale(scale, scale);
-        // Fixed geometry in the scaled space, placed so it stays centered.
         let center = 128.0 / scale;
+        let mut b = PathBuilder::new();
+        b.move_to(Vec2::new(center - 20.0, center - 20.0))
+            .line_to(Vec2::new(center + 20.0, center - 20.0))
+            .line_to(Vec2::new(center + 20.0, center + 20.0))
+            .line_to(Vec2::new(center - 20.0, center + 20.0))
+            .close();
         canvas
-            .draw_rect(
-                Rect::new(center - 20.0, center - 20.0, center + 20.0, center + 20.0),
-                &Paint::fill(Color::WHITE)
-                    .with_mask_blur(6.0)
-                    .with_anti_alias(false),
-            )
-            .expect("blurred square");
+            .draw_shadow(&b.build(), Color::WHITE, 6.0, false)
+            .expect("a shadow");
         canvas.restore();
         let mut surface = ctx
             .create_surface(extent, PixelFormat::Rgba8Unorm)
@@ -264,10 +266,15 @@ fn a_mask_blurs_deviation_is_in_device_pixels() {
         let pixels = ctx.read(&mut surface).expect("read");
         ctx.destroy_surface(surface);
 
-        // Along the middle row, left of center: how much is solid, and how much
-        // is lit at all. The difference is the blur's tail.
+        // Along the middle row, left of center: how much is at more than half
+        // the shadow's own strength, and how much is lit at all. The difference
+        // is the tail. Measured against the peak rather than an absolute level,
+        // because a shadow is a tonal color -- this one peaks at a hundred and
+        // eight, not at white -- and a fixed threshold would be measuring
+        // `tonal_shadow_color` instead of the blur.
         let value = |x: usize| pixels[(128 * extent.width as usize + x) * 4];
-        let solid = (0..128).filter(|x| value(*x) > 240).count();
+        let peak = (0..extent.width as usize).map(value).max().unwrap_or(0) as u32;
+        let solid = (0..128).filter(|x| value(*x) as u32 * 2 > peak).count();
         let lit = (0..128).filter(|x| value(*x) > 6).count();
         (solid, lit - solid)
     };
@@ -275,19 +282,15 @@ fn a_mask_blurs_deviation_is_in_device_pixels() {
     let (solid_at_one, tail_at_one) = measure(&mut ctx, 1.0);
     let (solid_at_two, tail_at_two) = measure(&mut ctx, 2.0);
 
-    // The transform reaches the geometry, or nothing below is meaningful.
     assert!(
         solid_at_two > solid_at_one + 8,
-        "doubling the scale did not grow the shape: {solid_at_one} then {solid_at_two}"
+        "doubling the scale did not grow the caster: {solid_at_one} then {solid_at_two}"
     );
-
-    // And does not reach the deviation.
     assert!(
-        (tail_at_one as i32 - tail_at_two as i32).abs() <= 1,
-        "the blur's tail moved with the transform: {tail_at_one} then {tail_at_two} \
-         device pixels. A deviation that scales with the canvas is upstream's \
-         arrangement, not this one, and the two differ by whether a shadow \
-         divides by the scale"
+        (tail_at_one as i32 - tail_at_two as i32).abs() <= 2,
+        "the shadow's softness moved with the transform: {tail_at_one} then \
+         {tail_at_two} device pixels. Upstream's does not, and the division in \
+         `draw_shadow` is what holds it still now that a blur's sigma scales"
     );
 }
 
@@ -15696,4 +15699,87 @@ fn a_field_of_points_is_one_draw_with_the_edge_each_dot_had() {
          differ, worst by {worst}. Without the pixel of outset on the quad this \
          is ninety-two pixels, where the disc meets the quad it is drawn on"
     );
+}
+
+/// How far a blur reaches from the center of the frame, in device pixels.
+fn blur_reach_of(pixels: &[u8]) -> u32 {
+    let mut reach = 0;
+    for x in 0..SIZE.width {
+        if pixel(pixels, x, SIZE.height / 2)[0] > 8 {
+            reach = reach.max((x as i32 - SIZE.width as i32 / 2).unsigned_abs());
+        }
+    }
+    reach
+}
+
+#[test]
+fn a_blur_scales_with_the_transform() {
+    // `dart:ui` states a blur's sigma in the space the drawing is in, and
+    // upstream honors that: `GaussianBlurFilterContents` computes its
+    // `scaled_sigma` from `effect_transform.Basis()`, and the backdrop path
+    // hands it `transform.Basis()` too. So the same sigma under a scale of
+    // three is three times the blur.
+    //
+    // This renderer stated its sigmas in device pixels instead, and said so in
+    // both doc comments -- predictable without knowing the transform, and
+    // wrong for anything that animates a scale: a card lifting kept a blur the
+    // same size while its content grew.
+    let Some(mut ctx) = context() else { return };
+
+    // The same square, at the same device size, under two transforms. Only the
+    // blur can differ between them.
+    let shot = |ctx: &mut Context, scale: f32, blurred: &dyn Fn(&mut Canvas, Rect)| {
+        let mut canvas = Canvas::new(SIZE);
+        canvas.clear(Color::BLACK);
+        canvas.save();
+        canvas.scale(scale, scale);
+        let side = 24.0 / scale;
+        let at = 64.0 / scale;
+        blurred(
+            &mut canvas,
+            Rect::new(
+                at - side / 2.0,
+                at - side / 2.0,
+                at + side / 2.0,
+                at + side / 2.0,
+            ),
+        );
+        canvas.restore();
+        blur_reach_of(&render(ctx, canvas))
+    };
+
+    for (what, draw) in [
+        (
+            "a paint's mask blur",
+            &(|canvas: &mut Canvas, r: Rect| {
+                canvas
+                    .draw_rect(r, &Paint::fill(Color::WHITE).with_mask_blur(4.0))
+                    .expect("a blurred rectangle");
+            }) as &dyn Fn(&mut Canvas, Rect),
+        ),
+        (
+            "a layer's blur",
+            &(|canvas: &mut Canvas, r: Rect| {
+                canvas.save_layer(Layer::opacity(1.0).with_blur(4.0));
+                canvas
+                    .draw_rect(r, &Paint::fill(Color::WHITE))
+                    .expect("a rectangle in a blurred layer");
+                canvas.restore();
+            }) as &dyn Fn(&mut Canvas, Rect),
+        ),
+    ] {
+        let plain = shot(&mut ctx, 1.0, draw);
+        let scaled = shot(&mut ctx, 3.0, draw);
+        // The square is the same device size either way, so the extra reach is
+        // the blur and nothing else. Three times the sigma is not three times
+        // the reach -- the square contributes twelve pixels of its own -- so
+        // the claim is on the *growth*, which should be about threefold.
+        let grew = (scaled - 12) as f32 / (plain - 12).max(1) as f32;
+        assert!(
+            (grew - 3.0).abs() < 0.5,
+            "{what}: reach went from {plain} to {scaled} under a scale of three, \
+             a growth of {grew:.2} where about three was wanted. A sigma that \
+             does not scale gives a growth of one"
+        );
+    }
 }

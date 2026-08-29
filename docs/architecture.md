@@ -823,6 +823,53 @@ fade it" rather than "fade each shape in it": two overlapping half-transparent
 shapes drawn directly show where they cross, and the same pair inside a
 half-transparent layer does not.
 
+**A blur's sigma is in the space the caller drew in, and a shadow's softness is
+not.** The pair is the parity and neither half stands alone, which is why this
+paragraph exists rather than a line in a doc comment.
+
+`dart:ui` states a mask filter's sigma in the space the drawing is in, and
+upstream honors it: `GaussianBlurFilterContents` computes its `scaled_sigma`
+from `effect_transform.Basis()`, and the backdrop path hands it
+`transform.Basis()` as well. So the same sigma under a scale of three is three
+times the blur, for a paint's mask filter, a layer's own blur and a backdrop's
+alike.
+
+Upstream's *shadow* then divides by the canvas scale — `drawShadow` does it
+explicitly — precisely to cancel that multiplication. A shadow's softness comes
+from an elevation rather than from a length a caller chose, so it stays fixed
+in device pixels however large the caster is drawn.
+
+This renderer had neither half. Its sigmas were device-space and said so, which
+made a shadow come out right with no division at all and made every other blur
+wrong under a scale: a card lifting kept a blur the same size while its content
+grew. Measured before the change, a square in a blurred layer reached the same
+twenty-nine pixels at a scale of one and of three.
+
+**Where the conversion happens, and why there.** Once, when a layer is opened —
+`Layer::scaled_by`, called from both entries to `open_layer`. Everything past
+that line works in device pixels: the reach is applied to bounds already
+transformed, and the passes that do the blurring run on a target. The transform
+that decides the conversion is the one in force when the layer is opened, and
+it may be gone by the time the layer is composited, so converting later would
+mean carrying it. A paint's mask blur needs no conversion of its own: the
+general route hands its sigma to a layer, which converts it, and the analytic
+route works in the shape's own space and simply stopped dividing by the scale —
+that division existed to bring a device sigma back into shape space and had
+nothing left to do.
+
+**What caught the shadow half.** Not design. A test named
+`a_mask_blurs_deviation_is_in_device_pixels` had pinned the old convention, and
+its doc comment had already worked out upstream's arrangement in full — that
+the sigma is local and the shadow's division cancels it — and concluded,
+correctly for the convention then in force, that copying the division would
+shrink a shadow as the canvas grew. Changing the convention inverted that
+conclusion, and the test failed the moment it did. Without it the shadow would
+have silently started growing with the transform, which is the one thing
+upstream is explicit about not doing.
+
+The morphology is left in device pixels and says so. Upstream has no morphology
+to be in parity with.
+
 **A stroke narrower than a pixel is widened, and dimmed to pay for it.** A
 stroke's width is a length in the space the shape is drawn in, and nothing stops
 a caller asking for one that maps to a fraction of a device pixel. There is no

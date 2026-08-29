@@ -377,35 +377,3 @@ who draws deliberately off-target and translates it in gets nothing, where
 upstream gets the picture. There is no partial failure between the two -- the
 content is either inside the target or absent -- so the case is visible the
 first time it is tried rather than subtly wrong.
-
-## 13. A blur's sigma is in device pixels; upstream's scales with the transform
-
-**What differs.** `Paint::with_mask_blur` and `Layer::with_blur` both state
-their sigma in device pixels, and both say so. Upstream's does not: its
-`GaussianBlurFilterContents` computes `scaled_sigma` from
-`effect_transform.Basis()`, so a blur under a scale of three is three times as
-wide. Its `SaveLayerFiltersScaleWithTransform` draws the same blurred image at
-one and at three to show it.
-
-Measured here, both ways round: the same square in a blurred layer at scale one
-and scale three, arranged to cover the same device area, blurs to *the same*
-twenty-nine pixels of reach and lights the same three thousand one hundred and
-sixty-one pixels. A paint's mask blur behaves the same way -- thirty-one pixels
-at both scales. So the sigma is device-space here in both places, exactly as
-documented, and exactly not what upstream does.
-
-**Why it is written down rather than changed.** It is a deliberate choice with
-its own reasoning -- a blur stated in device pixels is the one a caller can
-predict without knowing the transform -- and it is stated in both doc comments
-rather than being an accident. Changing it means multiplying the sigma by the
-transform's basis at record time in three places (the mask blur, a layer's own
-blur, and a backdrop's), and each of those also feeds a bounds computation that
-decides how large a layer to allocate, so the change is not one line and its
-failure mode is a blur clipped square at the edge of a target too small for it.
-
-**Impact.** This is the most visible difference in this file for anything that
-animates. A Flutter app that scales a blurred element -- a card lifting, a
-sheet zooming -- gets a blur that stays the same size in device pixels while its
-content grows, where upstream's grows with it. At a fixed scale, which is most
-of a static frame, there is no difference at all: a caller who never scales a
-blurred thing cannot tell the two apart.

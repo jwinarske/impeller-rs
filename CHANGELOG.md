@@ -64,6 +64,13 @@ fifteen modes outright, so the same picture reaches both backends -- 29 of 29
 modes are checked against the compositing equations on GLES where 14 were.
 Nothing about the API changed; a caller that was refused is not.
 
+A blur's sigma is in the space the drawing is in and scales with the transform,
+where it used to be in device pixels. `Paint::with_mask_blur`,
+`Layer::with_blur` and `Layer::with_backdrop_blur` all change meaning: the same
+number under a scale of three is now three times the blur, which is what
+`dart:ui` states and what upstream does. `draw_shadow` divides by the scale to
+cancel it, so a shadow's softness is unchanged -- also upstream's arrangement.
+
 `drawPoints` in `PointMode::Points` records one draw where it recorded one per
 point. The dots carry their centers on the vertices rather than in the paint, so
 they share a material; the edge is unchanged, to the byte. A paint that is not a
