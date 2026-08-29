@@ -514,6 +514,108 @@ struct LayerFrame {
     /// parent that has drawn nothing needing multisampling does not start
     /// needing it because something inside a layer did.
     anti_alias: bool,
+    /// The directions this layer's blur runs along.
+    ///
+    /// Taken from the transform in force when the layer opened, for the same
+    /// reason its sigma is: the transform that decides them may be gone by the
+    /// time the layer is composited, and both halves of a blur -- how far it
+    /// reaches and which way -- have to be settled together or a target is
+    /// sized for one blur and filled by another.
+    blur_basis: BlurBasis,
+}
+
+/// The two directions a blur runs along, in device pixels.
+///
+/// A blur is two separable passes, and which directions they take is the whole
+/// of the difference between a blur that turns with the caller's transform and
+/// one that does not. `dart:ui` states a deviation per axis in the space the
+/// caller was drawing in; if that space is turned relative to the target, the
+/// passes have to turn with it or a horizontal smear stays horizontal on
+/// screen while the thing it is smearing rotates underneath.
+///
+/// **This is not how upstream does it, and the difference is worth stating.**
+/// `GaussianBlurFilterContents` removes the rotation instead: it re-renders its
+/// input into what its own comment calls "un-rotated local space", scaled by
+/// the transform but not turned by it, blurs along that space's own axes, and
+/// applies the rotation to the *result*. Its reason is quality rather than
+/// correctness -- the comment says the un-rotated space "is a requirement for
+/// text to be rendered correctly", because taps landing on texel centers is
+/// what keeps a glyph sharp.
+///
+/// That arrangement is not available here. A layer is a recorded pass with a
+/// device-space target, a device-space scissor and a stencil buffer to match,
+/// so its content cannot be drawn into a space of its own choosing after the
+/// fact. What *is* available is the pass's `step`, which was already a free
+/// two-vector rather than an axis flag -- the shader walks its taps along
+/// whatever direction it is given. So the passes turn instead of the space.
+///
+/// The two are the same Gaussian. A blur with deviations along orthogonal
+/// directions is separable along exactly those directions, so the picture is
+/// upstream's; what differs is that a tap here lands between texels and is
+/// resolved by the sampler, which costs a little sharpness that upstream's
+/// arrangement does not.
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct BlurBasis {
+    /// Unit vectors in device space, in the order the deviations are stated.
+    directions: [Vec2; 2],
+}
+
+impl BlurBasis {
+    /// The target's own axes, which is what every blur used before this and
+    /// what a transform this cannot decompose still gets.
+    const AXES: Self = Self {
+        directions: [Vec2::X, Vec2::Y],
+    };
+
+    /// Where the caller's axes point once the transform has been applied.
+    ///
+    /// Refused rather than approximated in two cases. A transform with
+    /// perspective has no single basis -- the directions would differ per
+    /// fragment, which a pass walking a constant step cannot express. And a
+    /// transform whose image axes are not perpendicular, which is a shear,
+    /// leaves a Gaussian that two separable passes cannot state at all:
+    /// separability is a property of orthogonal directions, and running the
+    /// passes along oblique ones would not be a wrong blur so much as not a
+    /// blur. Upstream is no better off here -- its `ExtractScale` takes the
+    /// lengths of the image axes and drops the shear entirely.
+    fn of(transform: Transform2D) -> Self {
+        let Some(affine) = transform.to_affine() else {
+            return Self::AXES;
+        };
+        let (x, y) = (affine.matrix2.x_axis, affine.matrix2.y_axis);
+        let (lx, ly) = (x.length(), y.length());
+        if !lx.is_finite() || !ly.is_finite() || lx <= 0.0 || ly <= 0.0 {
+            return Self::AXES;
+        }
+        let directions = [x / lx, y / ly];
+        // The cosine of the angle between them, both being unit vectors. A
+        // thousandth is well inside what a rotation composed with a scale
+        // produces and well outside anything a shear does.
+        if directions[0].dot(directions[1]).abs() > 1e-3 {
+            return Self::AXES;
+        }
+        Self { directions }
+    }
+
+    /// Whether these are the target's own axes, which several things below can
+    /// take shortcuts for.
+    fn is_axis_aligned(&self) -> bool {
+        *self == Self::AXES
+    }
+
+    /// How far past its content a blur along these directions carries, as an
+    /// outset on each of the target's axes.
+    ///
+    /// The bounding box of the two reaches laid along the two directions,
+    /// which for the target's own axes is the pair of reaches unchanged.
+    fn reach(&self, sigma: Vec2) -> Vec2 {
+        let [u, v] = self.directions;
+        let (ru, rv) = (blur_reach(sigma.x), blur_reach(sigma.y));
+        Vec2::new(
+            u.x.abs() * ru + v.x.abs() * rv,
+            u.y.abs() * ru + v.y.abs() * rv,
+        )
+    }
 }
 
 /// Spreading or shrinking a finished layer, one axis at a time.
@@ -803,10 +905,8 @@ impl Layer {
         }
     }
 
-    fn reach(&self) -> Vec2 {
-        // Per axis. A blur along one axis alone must not widen the other, or
-        // the target holding the result is bigger than the picture in it.
-        let blur = Vec2::new(blur_reach(self.blur.x), blur_reach(self.blur.y));
+    fn reach(&self, basis: BlurBasis) -> Vec2 {
+        let blur = basis.reach(self.blur);
         match self.morphology {
             Some(m) if m.dilate => blur + Vec2::new(m.radius[0], m.radius[1]),
             _ => blur,
@@ -1388,7 +1488,10 @@ impl Canvas {
     ) -> Result<(usize, Target)> {
         let Some(id) = id else {
             let cut = self.cut_pass();
-            return Ok((self.filter_passes(cut, parent, filter)?, parent));
+            return Ok((
+                self.filter_passes(cut, parent, filter, BlurBasis::of(self.transform))?,
+                parent,
+            ));
         };
 
         // Read out by value first: what follows needs `&mut self`, and the
@@ -1421,7 +1524,7 @@ impl Canvas {
             }
         };
 
-        let pass = self.filter_passes(captured, over, filter)?;
+        let pass = self.filter_passes(captured, over, filter, BlurBasis::of(self.transform))?;
         if let Some(share) = self.backdrops.get_mut(&id) {
             share.filtered.push((filter.clone(), pass));
         }
@@ -1548,6 +1651,7 @@ impl Canvas {
                 filter,
                 parent: self.target,
                 anti_alias: std::mem::take(&mut self.anti_alias),
+                blur_basis: BlurBasis::of(self.transform),
             }),
         });
         self.clip = None;
@@ -1709,7 +1813,7 @@ impl Canvas {
         // target. So the conversion happens once, here, where the transform
         // that decides it is still the one the caller drew under.
         let layer = layer.scaled_by(max_scale_of(self.transform));
-        let reach = layer.reach();
+        let reach = layer.reach(BlurBasis::of(self.transform));
         // Opened without seeding, because the seed has to land in the target
         // the content will draw into and that target is decided below. A
         // backdrop drawn into the full-size target and then narrowed would be
@@ -2310,7 +2414,8 @@ impl Canvas {
             ));
         }
         let (min, max) = transformed_bounds(self.transform, min, max).unwrap_or_else(unbounded);
-        let (min, max) = rest.covering(min, max);
+        let basis = BlurBasis::of(self.transform);
+        let (min, max) = rest.covering(min, max, &|sigma| basis.reach(sigma));
         let _ = self.save_layer_device_bounds_running(
             layer.with_blend(paint.blend),
             min,
@@ -2355,7 +2460,8 @@ impl Canvas {
             return Err(Error::Unsupported("a mesh position is not a finite number"));
         }
         let (min, max) = transformed_bounds(self.transform, min, max).unwrap_or_else(unbounded);
-        let (min, max) = rest.covering(min, max);
+        let basis = BlurBasis::of(self.transform);
+        let (min, max) = rest.covering(min, max, &|sigma| basis.reach(sigma));
         let _ = self.save_layer_device_bounds_running(
             layer.with_blend(paint.blend),
             min,
@@ -2439,7 +2545,8 @@ impl Canvas {
             Vec2::new(bounds.right, bounds.bottom),
         )
         .unwrap_or_else(unbounded);
-        let (min, max) = rest.covering(min, max);
+        let basis = BlurBasis::of(self.transform);
+        let (min, max) = rest.covering(min, max, &|sigma| basis.reach(sigma));
         // The caller's blend rides the outermost composite. Left on the draw
         // inside, it was applied against the layer's own transparent black --
         // so a mode that reads its destination found nothing there, and the
@@ -4465,6 +4572,7 @@ impl Canvas {
         batch: &Batch,
         filter: Option<&ImageFilter>,
         paint: Layer,
+        basis: BlurBasis,
         layer: Target,
     ) -> Option<Target> {
         // A layer composited with a mode that changes the destination where the
@@ -4482,7 +4590,7 @@ impl Canvas {
         // The same expansion the caller-bounded path makes, and for the same
         // reason: the content is where the draws are, and how far the layer's
         // own blur carries them past that is this renderer's arithmetic.
-        let reach = paint.reach();
+        let reach = paint.reach(basis);
         let (min, max) = (
             Vec2::new(content.left - reach.x, content.top - reach.y),
             Vec2::new(content.right + reach.x, content.bottom + reach.y),
@@ -4498,7 +4606,7 @@ impl Canvas {
         // After the layer's own blur and morphology, because that is the order
         // `finish_layer` applies them in: the filter sees what those produced.
         let (min, max) = match filter {
-            Some(filter) => filter.covering(min, max),
+            Some(filter) => filter.covering(min, max, &|sigma| basis.reach(sigma)),
             None => (min, max),
         };
         let left = min.x.floor().max(layer.origin.x);
@@ -4548,7 +4656,7 @@ impl Canvas {
         // center among them. The pass keeps the space it was recorded against
         // and carries a viewport that lands it on the narrowed target, which
         // crops instead of scaling. See `PassViewport`.
-        let layer = match self.narrowed(&batch, filter.as_ref(), paint, opened) {
+        let layer = match self.narrowed(&batch, filter.as_ref(), paint, frame.blur_basis, opened) {
             Some(narrowed) => {
                 let (dx, dy) = (
                     (narrowed.origin.x - opened.origin.x) as u32,
@@ -4587,7 +4695,7 @@ impl Canvas {
         self.anti_alias = frame.anti_alias;
         let mut index = self.finished.len() - 1;
         if frame.paint.blur.max_element() > 0.0 {
-            index = self.blur_passes(index, layer, frame.paint.blur);
+            index = self.blur_passes(index, layer, frame.paint.blur, frame.blur_basis);
         }
         // After the blur, because that is the order the reach above assumes
         // when a layer asks for both: the blur softens the content and the
@@ -4607,7 +4715,7 @@ impl Canvas {
         // that can supply one already refuse before opening the layer. So this
         // is unreachable rather than ignored.
         if let Some(filter) = frame.filter.clone() {
-            if let Ok(filtered) = self.filter_passes(index, layer, &filter) {
+            if let Ok(filtered) = self.filter_passes(index, layer, &filter, frame.blur_basis) {
                 index = filtered;
             }
         }
@@ -4715,11 +4823,12 @@ impl Canvas {
         source: usize,
         target: Target,
         filter: &ImageFilter,
+        basis: BlurBasis,
     ) -> Result<usize> {
         Ok(match filter {
             ImageFilter::None => source,
             ImageFilter::Blur { sigma_x, sigma_y } => {
-                self.blur_passes(source, target, Vec2::new(*sigma_x, *sigma_y))
+                self.blur_passes(source, target, Vec2::new(*sigma_x, *sigma_y), basis)
             }
             ImageFilter::Dilate { radius_x, radius_y } => {
                 self.morphology_passes(source, target, Morphology::dilate(*radius_x, *radius_y))
@@ -4732,8 +4841,8 @@ impl Canvas {
             }
             ImageFilter::Color(recolor) => self.recolor_pass(source, target, *recolor),
             ImageFilter::Compose { outer, inner } => {
-                let inner = self.filter_passes(source, target, inner)?;
-                self.filter_passes(inner, target, outer)?
+                let inner = self.filter_passes(source, target, inner, basis)?;
+                self.filter_passes(inner, target, outer, basis)?
             }
             ImageFilter::Matrix { .. } => {
                 return Err(Error::Unsupported(
@@ -4991,7 +5100,13 @@ impl Canvas {
         scale
     }
 
-    fn blur_passes(&mut self, source: usize, target: Target, sigma: Vec2) -> usize {
+    fn blur_passes(
+        &mut self,
+        source: usize,
+        target: Target,
+        sigma: Vec2,
+        basis: BlurBasis,
+    ) -> usize {
         // Clip space spans two units and runs upward, so this is the mapping
         // that turns a full-target quad's clip position into the texture
         // coordinates of the pass it samples -- the same pair a layer
@@ -5016,10 +5131,24 @@ impl Canvas {
         // -- shrinking and enlarging a sharp axis for the sake of the other one
         // would soften it, which is the whole difference between a directional
         // blur and a soft smear.
-        let scale = [
-            Self::blur_downsample(sigma.x, target.extent.width),
-            Self::blur_downsample(sigma.y, target.extent.height),
-        ];
+        //
+        // Only where the passes run along the target's own axes, though. Turned
+        // off them, reducing one axis and not the other would shear the
+        // directions the steps are stated in: two perpendicular directions in a
+        // stretched image are no longer perpendicular, and separability is
+        // exactly the property that would be lost. So a turned blur reduces both
+        // axes together, which is a similarity and leaves the angle alone.
+        let scale = if basis.is_axis_aligned() {
+            [
+                Self::blur_downsample(sigma.x, target.extent.width),
+                Self::blur_downsample(sigma.y, target.extent.height),
+            ]
+        } else {
+            let smallest = target.extent.width.min(target.extent.height);
+            let together = Self::blur_downsample(sigma.x, smallest)
+                .max(Self::blur_downsample(sigma.y, smallest));
+            [together, together]
+        };
         let reduced = |by: [u32; 2]| Target {
             origin: target.origin,
             extent: Extent2D::new(
@@ -5048,10 +5177,15 @@ impl Canvas {
         // A step of one texel along each axis, in the sampled texture's own
         // coordinates. The shader cannot derive this: it does not know the size
         // of what it is sampling.
-        let steps = [
-            (sigma.x, [1.0 / blurred.extent.width as f32, 0.0]),
-            (sigma.y, [0.0, 1.0 / blurred.extent.height as f32]),
-        ];
+        //
+        // A unit device direction moves `d.x` texels across and `d.y` down, so
+        // in normalized coordinates it is `d` divided componentwise by the
+        // extent. That reduces to the pair of axis steps this used to state when
+        // the directions are the axes, and it is the whole of what makes a blur
+        // turn with its caller.
+        let (w, h) = (blurred.extent.width as f32, blurred.extent.height as f32);
+        let [u, v] = basis.directions;
+        let steps = [(sigma.x, [u.x / w, u.y / h]), (sigma.y, [v.x / w, v.y / h])];
 
         let mut sampled = source;
         for (sigma, step) in steps {

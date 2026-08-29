@@ -22,6 +22,16 @@ duplication the paragraph above rules out. `docs/parity.md` says what is built,
 a test checks that it says so truly, and a copy of that claim kept by hand here
 is the same claim without the check. So there is no list.
 
+A blur turns with the transform it was stated under. `dart:ui` states a
+deviation per axis in the caller's own space, and the two separable passes now
+run along the directions that space's axes point in once the transform has been
+applied rather than along the target's -- so a quarter turn transposes the
+picture exactly. Upstream reaches the same Gaussian by removing the rotation and
+blurring in an un-rotated space, which is not available to a recorded pass with
+a device-space target; §15 of `docs/non-parity.md` keeps the difference and what
+it costs. A transform with perspective, or a shear, still falls back to the
+target's axes.
+
 A mask blur drawn with `BlendMode::Clear` erases by the blur's falloff rather
 than clearing the layer's bounding rectangle, where the shape is a rounded
 rectangle, a circle or an oval. `Clear` is the one coverage-ignoring mode the

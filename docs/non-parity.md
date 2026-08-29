@@ -468,62 +468,62 @@ case: coordinates exist to place an image, and a caller who wanted a gradient
 across a mesh usually states it in the mesh's own space and needs no
 coordinates at all.
 
-## 15. A blur runs along the device's axes, so a rotation does not turn it
+## 15. A blur turns with its caller, but by turning the passes rather than the space
 
-**What differs.** `ImageFilter::Blur` now carries a deviation per axis, as
-`dart:ui`'s `ImageFilter.blur` does. The two passes it runs are along the
-target's own axes, which is right while the two agree with the caller's and is
-wrong as soon as they do not: a layer turned forty-five degrees with a blur
-along x alone spreads along the *screen's* x, not along the axis the caller
-stated it in.
+**What differs, and it is now a mechanism rather than a result.** `dart:ui`
+states a deviation per axis in the space the caller was drawing in. Where that
+space is turned relative to the target, the blur turns with it here as it does
+upstream -- a quarter turn transposes the picture exactly, pixel for pixel --
+but the two get there by different routes, and the difference is worth keeping
+written down.
 
-Measured. A thirty-two pixel square blurred with a deviation of ten in x and
-none in y covers thirty-nine by fifteen upright. Turned a quarter of a right
-angle it covers forty-five by twenty-one -- which is the same horizontal smear
-applied to a diamond, not a smear that turned with it. Upstream's
-`GaussianBlurRotatedNonUniform` is that case by name, and it is the one scene of
-its file that is not mirrored here for this reason.
-
-An isotropic blur is unaffected, which is why nothing had noticed: a rotation
-takes a circular kernel to a circular kernel, and every blur in this repository
-was circular until the second deviation existed.
-
-**What upstream does**, read at tip of tree in
-`impeller/entity/contents/filters/gaussian_blur_filter_contents.cc`, and it is
-not what a first guess suggests. It does not turn the blur. It removes the
-rotation from the space the blur happens in and puts it back afterwards:
+**Upstream removes the rotation.** `GaussianBlurFilterContents` re-renders its
+input into what its comment calls "un-rotated local space", scaled by the
+transform but not turned by it:
 
     // Source space here is scaled by the entity's transform. [...] You can
     // think of this as "scaled source space" or "un-rotated local space". The
     // entity's rotation is applied to the result of the blur as part of the
     // result's transform.
 
-`ExtractScale` takes the *lengths* of the transformed basis vectors, so a
-rotation contributes nothing to it; the input is then re-rendered under
-`MakeTranslation(offset) * MakeScale(scale)` alone, blurred along that space's
-own axes with a sigma per axis, and the finished image is drawn back under the
-full transform, rotation included. A `FML_DCHECK` on the snapshot's transform
-being translation-and-scale only holds the invariant in place.
+`ExtractScale` takes the lengths of the transformed basis vectors, so a rotation
+contributes nothing to it; the blur then runs along that space's own axes and
+the finished image is drawn back under the full transform. An `FML_DCHECK` that
+the snapshot's transform is translation-and-scale only holds the invariant in
+place. The stated reason is quality rather than correctness: the comment says
+the un-rotated space "is a requirement for text to be rendered correctly",
+because taps landing on texel centers is what keeps a glyph sharp.
 
-So the blur is always axis-aligned, and the rotation is a resample of the
-blurred result. That is a quality decision as much as an implementation one --
-the content is rasterized un-rotated and then turned -- and it is why upstream
-needs no separable-blur-along-a-rotated-basis and no fallback for a shear.
+**This turns the passes instead.** That arrangement is not available here. A
+layer is a recorded pass with a device-space target, a device-space scissor and
+a stencil buffer to match, so its content cannot be re-rendered into a space of
+its own choosing after the fact. What was available is the blur pass's `step`,
+which was already a free two-vector rather than an axis flag -- the shader walks
+its taps along whatever direction it is given. So `BlurBasis` takes the
+directions the caller's axes point in once the transform has been applied, and
+the two passes run along those.
 
-An earlier version of this entry said the fix was for the layer to carry a
-basis where it carries a scale. That was a guess and it was wrong in kind. What
-this renderer would need is upstream's arrangement: a layer opened under a
-rotation would have to take its target in the un-rotated space -- scale and
-translation only, which is already what `Layer::scaled_by` extracts -- draw its
-contents there, and carry the rotation to the composite instead. The pass's
-`step` staying axis-aligned is then correct rather than a limitation.
+The two are the same Gaussian. A blur with deviations along orthogonal
+directions is separable along exactly those directions, so the picture is
+upstream's. What differs is that a tap here lands between texels and is resolved
+by the sampler, which costs a little sharpness upstream's arrangement does not
+pay. Nothing in this repository renders text through a blur, which is the case
+upstream's comment is about.
 
-**Impact.** Confined to a blur whose two deviations differ *and* which is drawn
-under a rotation. A blur stated with one deviation is unaffected at any
-transform. A blur with two under a translation, a scale or no transform at all
-is correct, which is the case a caller reaching for `sigmaX` and `sigmaY`
-usually has -- a horizontal smear on upright content. Where it does bite it is
-visible rather than subtle: the smear points the wrong way.
+**What is refused, and it is the same set upstream loses.** A transform with
+perspective has no single basis -- the directions would differ per fragment,
+which a pass walking a constant step cannot express. And a transform whose image
+axes are not perpendicular, which is a shear, leaves a Gaussian that two
+separable passes cannot state at all: separability is a property of orthogonal
+directions. Both fall back to the target's own axes. Upstream is no better off
+here, its `ExtractScale` taking the lengths of the image axes and dropping the
+shear entirely.
+
+**Impact.** A blur under a rotation now smears the way the caller asked, which
+is visible only where the two deviations differ -- an isotropic blur was always
+correct under a rotation, a circular kernel being circular whichever way it is
+turned. Under a shear or a perspective transform, an anisotropic blur still
+runs along the target's axes.
 
 ## 16. A mask blur under a mode that ignores coverage erases its whole bounds
 

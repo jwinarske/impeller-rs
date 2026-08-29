@@ -159,7 +159,7 @@ column is right and the obvious way to check it is wrong.
 | `aiks_dl_clip_unittests.cc` | ~5 | 7 | nothing; this file is covered |
 | `aiks_dl_opacity_unittests.cc` | ~3 | 3 | nothing; this file is covered |
 | `aiks_dl_blend_unittests.cc` | ~79 | 40 | capability injection and subpass collapse, for two of them; see below |
-| `aiks_dl_blur_unittests.cc` | ~59 | 55 | a blur does not turn with a rotation, for one of them; see below |
+| `aiks_dl_blur_unittests.cc` | ~59 | 56 | nothing; see below |
 | `aiks_dl_vertices_unittests.cc` | ~16 | 20 | a shader other than an image cannot be read at a mesh's texture coordinates, for two of them; see below |
 | `aiks_dl_atlas_unittests.cc` | ~11 | 12 | nothing; see below |
 | `aiks_dl_shadow_unittests.cc` | ~30 | 13 | a convex-shadow optimization this renderer does not have; see below |
@@ -168,7 +168,7 @@ column is right and the obvious way to check it is wrong.
 | `aiks_dl_runtime_effect_unittests.cc` | — | 14 | a drawPaint with a program, and a sampler bound to something that is not a texture, for one each; see below |
 | `aiks_dl_unittests.cc` | ~36 | 13 | subpass collapse, for five of them; see below |
 
-The catalog holds three hundred and forty-nine scenes of roughly four hundred,
+The catalog holds three hundred and fifty scenes of roughly four hundred,
 and the proportion is less interesting than which ones: the arithmetic of drawing is largely covered, and
 what is missing is either a capability this renderer does not have or a thing
 the scene model cannot describe.
@@ -269,15 +269,23 @@ with an isotropic blur of the same deviation spreads the sharp axis from
 thirty-two pixels to fifty-nine, which is what the assertion was written
 against.
 
-Upstream's own scene for this is `GaussianBlurRotatedNonUniform`, and it is not
-mirrored. The passes run along the target's axes, so a layer turned forty-five
-degrees with a blur along x alone smears along the screen's x rather than along
-the axis the caller stated. Measured: thirty-nine by fifteen upright, forty-five
-by twenty-one turned, which is the same horizontal smear applied to a diamond.
-That is `docs/non-parity.md` section 15, which has since been corrected against
-upstream: it does not turn the blur either. It removes the rotation from the
-space the blur happens in, blurs axis-aligned there, and applies the rotation to
-the *result*.
+Upstream's own scene for this, `GaussianBlurRotatedNonUniform`, went unmirrored
+for a while: the passes ran along the target's axes, so a layer turned
+forty-five degrees with a blur along x alone smeared along the screen's x rather
+than along the axis the caller stated. Thirty-nine by fifteen upright,
+forty-five by twenty-one turned, which is the same horizontal smear applied to a
+diamond.
+
+It is built now, and by a different mechanism from upstream's. Upstream removes
+the rotation -- it re-renders its input into an un-rotated space, blurs
+axis-aligned there, and applies the rotation to the result, for a reason its own
+comment gives as text quality. That is not available here, a layer being a
+recorded pass with a device-space target and a stencil to match. What was
+available is the blur pass's step, which was already a free two-vector: the
+passes turn instead of the space. Same Gaussian, one tap landing between texels
+rather than on one. `docs/non-parity.md` section 15 keeps the difference and
+what it costs; the row above says nothing because there is nothing left of that
+file this renderer cannot draw.
 
 Four more plates from that file, and a second defect found by writing a fifth.
 The four: a blurred circle whose clip cuts it *after* the blur, so the halo
@@ -354,11 +362,11 @@ contour cannot be recognized as a rounded rectangle, so the blur cannot be
 evaluated in the fragment stage and takes the general route -- on a target sized
 for a shape most of which is not there.
 
-What is left of the file is seven scenes and each has a reason. Three are
+What is left of the file is six scenes and each has a reason. Three are
 interactive harnesses with sliders. Two are unit tests that build a texture and
 assert it exists rather than opening a playground, in the way four of the atlas
 file's are. One is `MaskBlurOnZeroDimensionIsSkippedWideGamut`, which needs a
-wide-gamut target to present and is §4. One is
+wide-gamut target to present and is §4. And one is
 `CanRenderForegroundAdvancedBlendWithMaskBlur`, whose color filter is a blend in
 a non-separable mode -- a color filter here is an affine map, and `Color` is not
 one.

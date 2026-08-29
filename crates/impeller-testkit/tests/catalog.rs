@@ -1141,3 +1141,91 @@ fn a_clipped_blur_fills_its_window_and_turns_with_its_content() {
          not reaching the content: {diff:?}"
     );
 }
+
+#[test]
+fn a_blur_turns_with_the_transform_it_was_stated_under() {
+    // `dart:ui` states a deviation per axis in the space the caller was drawing
+    // in. If that space is turned relative to the target, the blur has to turn
+    // with it -- otherwise a horizontal smear stays horizontal on screen while
+    // the thing it is smearing rotates underneath, which is what this renderer
+    // did until the passes took their directions from the transform.
+    //
+    // A quarter turn is the case that can be checked exactly rather than
+    // approximately. The content is a square, so it is unchanged by the
+    // rotation; the blur is along one axis only, so turning it a quarter turn
+    // has to give precisely the transpose of the upright picture. Nothing about
+    // that depends on a threshold or a tolerance chosen by hand.
+    let Ok(mut ctx) = Validated::new(DevicePreference::Auto) else {
+        eprintln!("skipping: no Vulkan device");
+        return;
+    };
+    let mut smear = |rotate: f32| {
+        let scene = Scene::tree(
+            "smear",
+            vec![impeller_testkit::Node::Layer {
+                layer: Box::new(impeller_testkit::LayerSpec {
+                    filter: impeller_core::ImageFilter::blur_xy(10.0, 0.0),
+                    ..impeller_testkit::LayerSpec::default()
+                }),
+                bounds: None,
+                transform: impeller_testkit::Transform {
+                    rotate,
+                    translate: [64.0, 64.0],
+                    ..impeller_testkit::Transform::default()
+                },
+                children: vec![impeller_testkit::Node::Draw(Box::new(
+                    impeller_testkit::Item::fill(
+                        impeller_testkit::Shape::Rect {
+                            min: [-8.0, -8.0],
+                            max: [8.0, 8.0],
+                        },
+                        [1.0, 1.0, 1.0, 1.0],
+                    ),
+                ))],
+            }],
+        );
+        render::<VulkanHal>(&mut ctx, &scene)
+    };
+    let upright = smear(0.0);
+    let quarter = smear(std::f32::consts::FRAC_PI_2);
+
+    // The upright smear is wide and sharp: a deviation of ten reaches
+    // seventeen, and the axis with no deviation stays the square's own size.
+    let extent = |img: &Image| {
+        let lit: Vec<(u32, u32)> = (0..128u32)
+            .flat_map(|y| (0..128u32).map(move |x| (x, y)))
+            .filter(|(x, y)| img.pixel(*x, *y)[0] > 20)
+            .collect();
+        assert!(!lit.is_empty(), "the smear drew nothing");
+        (
+            lit.iter().map(|p| p.0).max().unwrap() - lit.iter().map(|p| p.0).min().unwrap(),
+            lit.iter().map(|p| p.1).max().unwrap() - lit.iter().map(|p| p.1).min().unwrap(),
+        )
+    };
+    let (wide, tall) = extent(&upright);
+    assert!(
+        wide > tall + 12,
+        "upright, the smear should be much wider than it is tall: {wide} by {tall}"
+    );
+    assert_eq!(
+        extent(&quarter),
+        (tall, wide),
+        "a quarter turn should transpose the smear's extent"
+    );
+
+    // And the whole picture, not only its extent. The square is unchanged by a
+    // quarter turn, so the two frames have to be each other's transpose.
+    let mut differing = 0usize;
+    for y in 0..128u32 {
+        for x in 0..128u32 {
+            if upright.pixel(x, y)[0].abs_diff(quarter.pixel(y, x)[0]) > 2 {
+                differing += 1;
+            }
+        }
+    }
+    assert_eq!(
+        differing, 0,
+        "{differing} pixels differ between the upright smear and the transpose \
+         of the turned one, so the blur did not turn with the layer"
+    );
+}

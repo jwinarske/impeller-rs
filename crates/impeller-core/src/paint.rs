@@ -311,6 +311,14 @@ pub enum ImageFilter {
     },
 }
 
+/// How far a blur of the given deviations reaches, as an outset per target axis.
+///
+/// A function rather than a pair of numbers because the answer depends on which
+/// directions the blur will run along, and those come from the transform in
+/// force where the layer opened -- which `paint.rs` has no view of. See
+/// `BlurBasis` in `canvas.rs`.
+pub(crate) type BlurReach<'a> = &'a dyn Fn(Vec2) -> Vec2;
+
 impl ImageFilter {
     /// A blur of the same deviation along both axes, which is nearly every use.
     pub fn blur(sigma: f32) -> Self {
@@ -428,7 +436,7 @@ impl ImageFilter {
     ///
     /// Erosion is left alone rather than shrunk. Covering more than the result
     /// needs costs a little memory; covering less loses drawing.
-    pub(crate) fn covering(&self, min: Vec2, max: Vec2) -> (Vec2, Vec2) {
+    pub(crate) fn covering(&self, min: Vec2, max: Vec2, blur: BlurReach) -> (Vec2, Vec2) {
         match self {
             // A color filter changes what a pixel is and never which pixels
             // there are, so it needs exactly the region it was given. A runtime
@@ -439,10 +447,15 @@ impl ImageFilter {
                 // Per axis, which is the whole reason a filter states two: a
                 // blur along one axis alone must not widen the other, or the
                 // target holding it is bigger than the picture in it.
-                let reach = Vec2::new(
-                    crate::canvas::blur_reach(*sigma_x),
-                    crate::canvas::blur_reach(*sigma_y),
-                );
+                //
+                // Which axes, though, is the caller's to say. A blur runs along
+                // the directions the caller's own axes point once the transform
+                // has been applied, so the outset is the bounding box of the two
+                // reaches laid along those -- and asking here with the target's
+                // axes when the blur will run along turned ones sizes a target
+                // for one blur and fills it with another. That is not a
+                // conservative error: it is short exactly where the blur went.
+                let reach = blur(Vec2::new(*sigma_x, *sigma_y));
                 (min - reach, max + reach)
             }
             Self::Dilate { radius_x, radius_y } => {
@@ -460,8 +473,8 @@ impl ImageFilter {
                 (min.min(moved_min), max.max(moved_max))
             }
             Self::Compose { outer, inner } => {
-                let (min, max) = inner.covering(min, max);
-                outer.covering(min, max)
+                let (min, max) = inner.covering(min, max, blur);
+                outer.covering(min, max, blur)
             }
         }
     }

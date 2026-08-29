@@ -6961,6 +6961,42 @@ fn blur_variants() -> Vec<Scene> {
         ],
     ));
 
+    scenes.push(
+        Scene::tree(
+            "blur/gaussian-blur-rotated-non-uniform",
+            // A blur along one axis only, on content turned off that axis.
+            // Upstream draws this at forty-five degrees under a scale, and it
+            // is the scene that says a deviation is stated in the caller's
+            // space rather than the target's: the smear runs along the shape's
+            // own axis, not along the screen's.
+            vec![Node::Layer {
+                layer: Box::new(LayerSpec {
+                    filter: ImageFilter::blur_xy(11.0, 0.0),
+                    ..LayerSpec::default()
+                }),
+                bounds: None,
+                transform: Transform {
+                    scale: [0.6, 0.6],
+                    rotate: 45.0f32.to_radians(),
+                    translate: [64.0, 64.0],
+                    ..Transform::default()
+                },
+                children: vec![Node::Draw(Box::new(
+                    Item::fill(
+                        Shape::Rect {
+                            min: [-50.0, -50.0],
+                            max: [50.0, 50.0],
+                        },
+                        GREEN,
+                    )
+                    .with_blend(BlendMode::SrcOver),
+                ))],
+            }],
+        )
+        .with_background(DARK)
+        .with_samples(4),
+    );
+
     // A deviation per axis, which `dart:ui` states and this renderer now
     // carries. Two squares, one blurred along x alone and one along y, so
     // either plate on its own says the sigma arrived and the pair says which
