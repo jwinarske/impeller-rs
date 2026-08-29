@@ -432,3 +432,38 @@ width. An opaque stroke of any width is unaffected, and so is a translucent one
 narrow relative to its geometry, which is nearly every stroke drawn. Where it
 does show, it shows as a darker patch at the joins rather than as anything
 structural, and it is the same on both backends.
+
+## 14. Only an image can be read at a mesh's texture coordinates
+
+**What differs.** `draw_vertices` takes a per-vertex texture coordinate, and
+here that coordinate is only ever read by an image: a mesh carrying coordinates
+with anything else on the paint is refused with "a mesh with texture
+coordinates needs an image paint to read". Upstream reads whatever the paint's
+color source is at those coordinates, image or not, and keeps two scenes on it
+-- `DrawVerticesLinearGradientWithTextureCoordinates`, which runs a linear ramp
+across a triangle in a direction the triangle's own shape does not suggest, and
+`DrawVerticesTextureCoordinatesWithFragmentShader`, which does the same with a
+runtime effect.
+
+The reason is in the shader rather than in the API. A gradient's coordinate
+comes from `to_gradient_space(in.clip)` -- the fragment's position carried back
+through the inverse of what placed the geometry -- while an image's comes from
+`in.uv`, the interpolated attribute. The vertex already carries the coordinate
+in both cases; nothing reads it except the image branch. So the change is a
+material that says which of the two a shader takes its coordinate from, and a
+branch in the shader for every gradient draw to honor it.
+
+That is worth stating precisely because the refusal, as it stood, said nothing.
+It was a bare `return Err` with no comment beside it, in a file where the
+refusals around it each carry a paragraph on why substituting something would
+be worse. This one is not that kind of refusal: there is no argument that
+reading a gradient at a mesh's coordinates is the wrong picture, and upstream
+draws it. It is unbuilt, and it was recorded as though it were decided.
+
+**Impact.** A caller who gives a mesh texture coordinates and a paint that is
+not an image gets an error rather than a picture, which is visible the first
+time it is tried rather than subtly wrong. A mesh with no texture coordinates
+is unaffected and takes the paint exactly as a path does, which is the common
+case: coordinates exist to place an image, and a caller who wanted a gradient
+across a mesh usually states it in the mesh's own space and needs no
+coordinates at all.

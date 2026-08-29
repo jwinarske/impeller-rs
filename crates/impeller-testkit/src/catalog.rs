@@ -4897,6 +4897,26 @@ fn vertices() -> Vec<Scene> {
             mesh_of(triangle(), ramp()),
         ),
         mesh(
+            "vertices/vertices-geometry-color-uv-position-data-advanced-blend",
+            MeshSpec {
+                positions: quad.clone(),
+                // The same six vertices and the same half-alpha colors as the
+                // separable plate above, combined into the fill by a mode that
+                // reads its destination. An advanced mode over a per-vertex
+                // color is where the two things this renderer keeps apart --
+                // the tint blend and the draw's own blend -- are easiest to
+                // confuse, because both are blends and only one of them is
+                // this one.
+                colors: corners.iter().map(|c| [c[0], c[1], c[2], 0.5]).collect(),
+                indices: vec![0, 1, 2, 0, 2, 3],
+                tint_blend: BlendMode::ColorBurn,
+                ..mesh_of(
+                    Vec::new(),
+                    sheet(SHEET, ALL, TileMode::Clamp, Sampling::Linear),
+                )
+            },
+        ),
+        mesh(
             "vertices/vertices-geometry-color-uv-position-data",
             MeshSpec {
                 positions: quad.clone(),

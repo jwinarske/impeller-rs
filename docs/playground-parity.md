@@ -54,6 +54,17 @@ vertices file and never did: a mesh without texture coordinates takes its
 material from the paint's shader like any other geometry, so a caller's
 program reached it through the ordinary path and nothing had to be built.
 
+That row has a blocker again now, and it is a different one and real. A mesh
+*with* texture coordinates is refused unless the paint is an image: a gradient's
+coordinate comes from the fragment's position carried back through the inverse
+of what placed the geometry, an image's comes from the interpolated attribute,
+and nothing but the image branch reads that attribute. Two of upstream's scenes
+draw a gradient and a runtime effect at a mesh's coordinates and cannot be
+mirrored. It is `docs/non-parity.md` section 14, and the entry says plainly that
+it is unbuilt rather than decided -- the refusal was a bare `return Err` with no
+comment beside it, in a file where every refusal around it carries a paragraph
+on why substituting something would be worse.
+
 Difference-of-rounded-rects was the interesting one, because it was half
 true. `draw_drrect` existed and had a test, so the renderer was not what
 stopped it -- the scene format was, having no shape to say it with. A
@@ -149,7 +160,7 @@ column is right and the obvious way to check it is wrong.
 | `aiks_dl_opacity_unittests.cc` | ~3 | 3 | nothing; this file is covered |
 | `aiks_dl_blend_unittests.cc` | ~79 | 40 | capability injection and subpass collapse, for two of them; see below |
 | `aiks_dl_blur_unittests.cc` | ~59 | 41 | nothing; see below |
-| `aiks_dl_vertices_unittests.cc` | ~16 | 19 | nothing; see below |
+| `aiks_dl_vertices_unittests.cc` | ~16 | 20 | a shader other than an image cannot be read at a mesh's texture coordinates, for two of them; see below |
 | `aiks_dl_atlas_unittests.cc` | ~11 | 9 | nothing; see below |
 | `aiks_dl_shadow_unittests.cc` | ~30 | 13 | a convex-shadow optimization this renderer does not have; see below |
 | `aiks_dl_primitive_shape_unittests.cc` | ~2 | 0 | one is a playground harness, one wants a stroke width of zero to mean a hairline |
@@ -157,7 +168,7 @@ column is right and the obvious way to check it is wrong.
 | `aiks_dl_runtime_effect_unittests.cc` | — | 12 | nothing; see below |
 | `aiks_dl_unittests.cc` | ~36 | 13 | subpass collapse, for five of them; see below |
 
-The catalog holds three hundred and twenty-nine scenes of roughly four hundred,
+The catalog holds three hundred and thirty scenes of roughly four hundred,
 and the proportion is less interesting than which ones: the arithmetic of drawing is largely covered, and
 what is missing is either a capability this renderer does not have or a thing
 the scene model cannot describe.
