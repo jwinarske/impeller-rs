@@ -6861,6 +6861,76 @@ fn blur_variants() -> Vec<Scene> {
         ],
     ));
 
+    // The same blurred image clipped to a window, once scaled and once scaled
+    // and turned. Upstream keeps both because the clip is stated outside the
+    // transform: the window stays put on the frame while what is drawn into it
+    // moves, so the blur's target is decided by one space and its contents by
+    // another.
+    for (name, rotate) in [
+        ("blur/gaussian-blur-scaled-and-clipped", 0.0f32),
+        (
+            "blur/gaussian-blur-rotated-and-clipped",
+            25.0f32.to_radians(),
+        ),
+    ] {
+        scenes.push(
+            Scene::tree(
+                name,
+                vec![Node::Layer {
+                    layer: Box::new(LayerSpec::default()),
+                    bounds: Some([34.0, 45.0, 94.0, 83.0]),
+                    transform: Transform::default(),
+                    children: vec![Node::Draw(Box::new(
+                        Item::filled(
+                            Shape::Rect {
+                                min: [-56.0, -42.0],
+                                max: [56.0, 42.0],
+                            },
+                            sheet(
+                                [-56.0, -42.0, 56.0, 42.0],
+                                ALL,
+                                TileMode::Clamp,
+                                Sampling::Nearest,
+                            ),
+                        )
+                        .with_image_filter(ImageFilter::blur(4.0))
+                        .with_transform(Transform {
+                            scale: [0.6, 0.6],
+                            rotate,
+                            translate: [64.0, 64.0],
+                            ..Transform::default()
+                        })
+                        .with_blend(BlendMode::SrcOver),
+                    ))],
+                }],
+            )
+            .with_background(DARK)
+            .with_samples(4),
+        );
+    }
+
+    scenes.push(plate(
+        "blur/clipped-blur-filter-renders-correctly",
+        // A shape larger than the frame, moved so most of it is off the
+        // top, under a mask blur wide enough that the halo alone would fill
+        // the picture. The second contour is upstream's and is the reason
+        // the scene exists: a path holding more than one contour cannot be
+        // recognized as a rounded rectangle, so the blur cannot be
+        // evaluated in the fragment stage and has to take the general
+        // route -- on a target sized for a shape most of which is not
+        // there.
+        vec![Item::fill(
+            Shape::Contours(vec![
+                vec![[0.0, 0.0], [128.0, 0.0], [128.0, 128.0], [0.0, 128.0]],
+                vec![[0.0, 0.0], [0.5, 0.0], [0.5, 0.5]],
+            ]),
+            RED,
+        )
+        .with_mask_blur(16.0)
+        .with_transform(Transform::translate(0.0, -64.0))
+        .with_blend(BlendMode::SrcOver)],
+    ));
+
     // A deviation per axis, which `dart:ui` states and this renderer now
     // carries. Two squares, one blurred along x alone and one along y, so
     // either plate on its own says the sigma arrived and the pair says which

@@ -159,7 +159,7 @@ column is right and the obvious way to check it is wrong.
 | `aiks_dl_clip_unittests.cc` | ~5 | 7 | nothing; this file is covered |
 | `aiks_dl_opacity_unittests.cc` | ~3 | 3 | nothing; this file is covered |
 | `aiks_dl_blend_unittests.cc` | ~79 | 40 | capability injection and subpass collapse, for two of them; see below |
-| `aiks_dl_blur_unittests.cc` | ~59 | 51 | a blur does not turn with a rotation, and a mask blur under a mode that ignores coverage erases its bounds, for one of them each; see below |
+| `aiks_dl_blur_unittests.cc` | ~59 | 54 | a blur does not turn with a rotation, and a mask blur under a mode that ignores coverage erases its bounds, for one of them each; see below |
 | `aiks_dl_vertices_unittests.cc` | ~16 | 20 | a shader other than an image cannot be read at a mesh's texture coordinates, for two of them; see below |
 | `aiks_dl_atlas_unittests.cc` | ~11 | 12 | nothing; see below |
 | `aiks_dl_shadow_unittests.cc` | ~30 | 13 | a convex-shadow optimization this renderer does not have; see below |
@@ -168,7 +168,7 @@ column is right and the obvious way to check it is wrong.
 | `aiks_dl_runtime_effect_unittests.cc` | — | 12 | nothing; see below |
 | `aiks_dl_unittests.cc` | ~36 | 13 | subpass collapse, for five of them; see below |
 
-The catalog holds three hundred and forty-three scenes of roughly four hundred,
+The catalog holds three hundred and forty-six scenes of roughly four hundred,
 and the proportion is less interesting than which ones: the arithmetic of drawing is largely covered, and
 what is missing is either a capability this renderer does not have or a thing
 the scene model cannot describe.
@@ -332,6 +332,32 @@ coverage. And an image under a mask blur, which is the same route again with the
 fill being a sheet: what comes out is the image with soft edges rather than a
 blurred image, because a mask blur acts on coverage and an image's coverage is
 the rectangle it is drawn into.
+
+Three more, and the chapter's remainder is now named rather than merely
+uncounted. Upstream's clipped pair -- the same blurred image scaled into a
+window, and scaled and turned -- goes in with both halves, because the clip is
+stated outside the transform: the window stays put on the frame while what is
+drawn into it moves, so the blur's target is decided in one space and its
+contents in another. Two things are asserted and they pull opposite ways. The
+window is filled edge to edge in both, which a clip applied in the wrong space
+would break; and the two are different pictures, which a dropped rotation would
+break while still drawing a plausible blurred window.
+
+The third is a shape larger than the frame, moved so most of it is off the top,
+under a blur wide enough that the halo alone fills the picture. Its second
+contour is upstream's and is why the scene exists: a path holding more than one
+contour cannot be recognized as a rounded rectangle, so the blur cannot be
+evaluated in the fragment stage and takes the general route -- on a target sized
+for a shape most of which is not there.
+
+What is left of the file is eight scenes and each has a reason. Three are
+interactive harnesses with sliders. Two are unit tests that build a texture and
+assert it exists rather than opening a playground, in the way four of the atlas
+file's are. One is `MaskBlurOnZeroDimensionIsSkippedWideGamut`, which needs a
+wide-gamut target to present and is §4. One is
+`CanRenderForegroundAdvancedBlendWithMaskBlur`, whose color filter is a blend in
+a non-separable mode -- a color filter here is an affine map, and `Color` is not
+one. And one is `ClearBlendWithBlur`, which is §16 above.
 
 The default style blurs coverage and fills through it, which works for any
 fill. The three that combine a blurred mask with a sharp one -- solid, outer,

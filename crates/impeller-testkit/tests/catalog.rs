@@ -1084,3 +1084,60 @@ fn a_blurred_layer_survives_a_mirrored_transform() {
         "and it must still stop at the layer's bounds, but reaches {right}"
     );
 }
+
+#[test]
+fn a_clipped_blur_fills_its_window_and_turns_with_its_content() {
+    // The clip is stated outside the transform, so the window stays put on the
+    // frame while what is drawn into it moves: the blur's target is decided by
+    // one space and its contents by another. Upstream keeps the scaled version
+    // and the scaled-and-turned one side by side for that reason.
+    //
+    // Two things have to hold and they pull in opposite directions. The window
+    // is filled edge to edge in both, so nothing about the transform may leave
+    // a gap at the clip -- and the two are different pictures, so the rotation
+    // has to reach the content. A renderer that clipped in the wrong space
+    // would fail the first; one that dropped the rotation would fail the
+    // second, while still drawing a plausible blurred window.
+    let Ok(mut ctx) = Validated::new(DevicePreference::Auto) else {
+        eprintln!("skipping: no Vulkan device");
+        return;
+    };
+    let mut shot = |name: &str| {
+        let scene = catalog()
+            .into_iter()
+            .find(|s| s.name == name)
+            .unwrap_or_else(|| panic!("{name} is not in the catalog"));
+        render::<VulkanHal>(&mut ctx, &scene)
+    };
+    let flat = shot("blur/gaussian-blur-scaled-and-clipped");
+    let turned = shot("blur/gaussian-blur-rotated-and-clipped");
+
+    // The window is thirty-four to ninety-four and forty-five to eighty-three,
+    // and every pixel of it has to differ from the ground outside.
+    let ground = flat.pixel(0, 0);
+    for img in [&flat, &turned] {
+        let mut inside = 0usize;
+        for y in 45..83u32 {
+            for x in 34..94u32 {
+                if img.pixel(x, y) != ground {
+                    inside += 1;
+                }
+            }
+        }
+        assert_eq!(
+            inside,
+            60 * 38,
+            "the clip's window should be filled edge to edge; {inside} of \
+             {} pixels were",
+            60 * 38
+        );
+        assert_eq!(img.pixel(33, 64), ground, "and nothing may fall outside it");
+    }
+
+    let diff = compare(&flat, &turned).expect("the two renders are the same size");
+    assert!(
+        !accepts(&diff, CATALOG),
+        "the turned plate renders the same as the flat one, so the rotation is \
+         not reaching the content: {diff:?}"
+    );
+}
