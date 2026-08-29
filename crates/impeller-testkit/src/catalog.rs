@@ -6629,6 +6629,91 @@ fn blur_variants() -> Vec<Scene> {
         ));
     }
 
+    // The channel swap upstream composes with a blur, in both orders.
+    let swap = || {
+        ImageFilter::Color(ColorFilter::matrix([
+            0.0, 1.0, 0.0, 0.0, 0.0, //
+            1.0, 0.0, 0.0, 0.0, 0.0, //
+            0.0, 0.0, 1.0, 0.0, 0.0, //
+            0.0, 0.0, 0.0, 1.0, 0.0,
+        ]))
+    };
+    for (name, filter) in [
+        // Upstream calls the recolor-then-blur order "inner" and the other
+        // "outer", after which of the two is nearer the drawing.
+        (
+            "blur/compose-paint-blur-inner",
+            ImageFilter::compose(swap(), ImageFilter::blur(6.0)),
+        ),
+        (
+            "blur/compose-paint-blur-outer",
+            ImageFilter::compose(ImageFilter::blur(6.0), swap()),
+        ),
+    ] {
+        scenes.push(
+            Scene::new(
+                name,
+                // Green, so the swap is loud: it takes green to red, and both
+                // orders end green-to-red -- what differs is where the halo
+                // gets its color, since one blurs a red disc and the other
+                // recolors a blurred green one. On a solid color those agree,
+                // and the ground they are drawn over is what makes them not.
+                vec![Item::fill(
+                    Shape::Circle {
+                        center: [64.0, 64.0],
+                        radius: 36.0,
+                    },
+                    GREEN,
+                )
+                .with_image_filter(filter)
+                .with_blend(BlendMode::SrcOver)],
+            )
+            .with_background(DARK)
+            .with_samples(4),
+        );
+    }
+
+    scenes.push(plate(
+        "blur/can-render-clipped-blur",
+        // A blurred circle whose clip cuts it after the blur rather than
+        // before. The halo stops dead at the clip's edge and the circle's
+        // own edge stays soft, which is the opposite of clipping the shape
+        // and blurring what is left -- that would soften the cut too.
+        vec![Item::fill(
+            Shape::Circle {
+                center: [76.0, 76.0],
+                radius: 36.0,
+            },
+            GREEN,
+        )
+        .with_image_filter(ImageFilter::blur(6.0))
+        .with_clip([16.0, 24.0, 112.0, 112.0])
+        .with_blend(BlendMode::SrcOver)],
+    ));
+
+    scenes.push(plate(
+        "blur/can-render-foreground-blend-with-mask-blur",
+        // A color filter over a mask blur, which upstream keeps because
+        // the two are easy to apply in the wrong order. The filter acts on
+        // the color and the mask decides where that color lands, so the
+        // result is a green disc with a soft edge -- not a green disc with
+        // a hard edge, which is what applying the filter to the finished
+        // coverage would give.
+        vec![Item::fill(
+            Shape::Circle {
+                center: [76.0, 76.0],
+                radius: 36.0,
+            },
+            WHITE,
+        )
+        .with_color_filter(
+            ColorFilter::blend(GREEN, BlendMode::Src).expect("a source tint is affine"),
+        )
+        .with_mask_blur(6.0)
+        .with_clip([16.0, 24.0, 112.0, 112.0])
+        .with_blend(BlendMode::SrcOver)],
+    ));
+
     // A deviation per axis, which `dart:ui` states and this renderer now
     // carries. Two squares, one blurred along x alone and one along y, so
     // either plate on its own says the sigma arrived and the pair says which

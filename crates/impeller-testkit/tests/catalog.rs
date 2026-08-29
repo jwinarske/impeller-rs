@@ -962,3 +962,77 @@ fn a_blur_along_one_axis_leaves_the_other_alone() {
         "the two plates should be each other transposed"
     );
 }
+
+#[test]
+fn composing_a_channel_swap_with_a_blur_gives_the_same_picture_either_way() {
+    // Upstream keeps both orders, and they are the same picture on purpose: a
+    // channel swap is a permutation matrix, a blur is a weighted sum, and two
+    // linear operators commute. So the plates agree, and the agreement is the
+    // assertion rather than a redundancy.
+    //
+    // What it catches is a composition that applied only the outer filter.
+    // That failure keeps both plates valid-looking -- one would be a recolored
+    // sharp circle and the other a blurred green one -- and it makes them
+    // differ, which nothing else here would notice. Dropping the *inner* one
+    // instead is caught by the rule that a scene carrying a filter has to
+    // render differently without it.
+    let Ok(mut ctx) = Validated::new(DevicePreference::Auto) else {
+        eprintln!("skipping: no Vulkan device");
+        return;
+    };
+    let mut shot = |name: &str| {
+        let scene = catalog()
+            .into_iter()
+            .find(|s| s.name == name)
+            .unwrap_or_else(|| panic!("{name} is not in the catalog"));
+        render::<VulkanHal>(&mut ctx, &scene)
+    };
+    let inner = shot("blur/compose-paint-blur-inner");
+    let outer = shot("blur/compose-paint-blur-outer");
+    let diff = compare(&inner, &outer).expect("the two renders are the same size");
+    assert_eq!(
+        diff.differing, 0,
+        "a permutation and a blur commute, so composing them either way is one \
+         operator; these differ, which means one of the two was dropped: {diff:?}"
+    );
+    // And the swap ran at all: green in, red out.
+    let middle = inner.pixel(64, 64);
+    assert!(
+        middle[0] > middle[1],
+        "the swap should take the circle's green to red; the middle reads {middle:?}"
+    );
+}
+
+#[test]
+fn a_clip_cuts_a_blurred_shape_after_the_blur_rather_than_before() {
+    // The halo has to stop dead at the clip and the shape's own edge has to
+    // stay soft. Blurring what the clip left would soften the cut as well, and
+    // the two are told apart by looking at one edge of each in the same frame.
+    let Ok(mut ctx) = Validated::new(DevicePreference::Auto) else {
+        eprintln!("skipping: no Vulkan device");
+        return;
+    };
+    let scene = catalog()
+        .into_iter()
+        .find(|s| s.name == "blur/can-render-clipped-blur")
+        .expect("the plate is in the catalog");
+    let img = render::<VulkanHal>(&mut ctx, &scene);
+
+    // The clip's right edge is at a hundred and twelve, and the circle reaches
+    // past it, so the transition there is one pixel wide.
+    let green = |x: u32, y: u32| img.pixel(x, y)[1];
+    assert!(
+        green(110, 76) > 120 && green(114, 76) < 40,
+        "the clip's edge should be a cut, and reads {} then {}",
+        green(110, 76),
+        green(114, 76)
+    );
+    // The circle's own top edge is nowhere near the clip and has to fade.
+    let column: Vec<u8> = (28..48u32).map(|y| green(76, y)).collect();
+    let partial = column.iter().filter(|g| (40..120).contains(*g)).count();
+    assert!(
+        partial >= 4,
+        "the circle's unclipped edge should fade over several pixels; {partial} \
+         of the column carried a partial value, so the blur is being cut off"
+    );
+}

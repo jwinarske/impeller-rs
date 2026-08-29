@@ -510,3 +510,53 @@ transform. A blur with two under a translation, a scale or no transform at all
 is correct, which is the case a caller reaching for `sigmaX` and `sigmaY`
 usually has -- a horizontal smear on upright content. Where it does bite it is
 visible rather than subtle: the smear points the wrong way.
+
+## 16. A mask blur under a mode that ignores coverage erases its whole bounds
+
+**What differs.** A mask blur that cannot be evaluated in the fragment stage is
+drawn as a layer: the shape goes into a target, the target is blurred, and the
+layer is composited onto the frame with the caller's blend. That composite
+covers the layer's *bounds*, and a mode that writes where its source is
+transparent writes across all of them. So a blurred circle drawn with `Clear`
+clears a rectangle where upstream clears a soft disc.
+
+Measured, on a circle of radius thirty-six at the middle of a 128-pixel frame
+over an opaque fill. Sharp, it erases 4052 pixels against a disc's 4071 -- the
+circle, correctly. Blurred at a deviation of seven it erases 9216, which is
+96 by 96 exactly: the circle's bounds outset by the blur's reach, to the pixel.
+
+The renderer already knows the shape of this mistake. `analytic_style_blur`
+refuses a mode that does not respect coverage, and the comment says why -- a
+fragment is emitted across a quad larger than the shape, so a mode that touches
+the destination where the source is transparent erases what is behind it in the
+gap. The layer route has the same gap and no such guard, which is why the
+analytic half of the same feature is right and this half is not.
+
+Seven of `dart:ui`'s modes are affected: the ones whose destination factor is
+neither `One` nor `OneMinusSrcAlpha` -- `Clear`, `Src`, `SrcIn`, `SrcOut`,
+`DstIn`, `DstATop` and `Modulate`. Every other mode, `SrcOver` and all the
+advanced ones included, is unaffected at any deviation.
+
+**Two ways out, and neither is taken here.** Refusing, as the analytic route
+does, would turn a wrong picture into an error and matches this repository's
+stated position that substituting something produces a picture nobody can debug
+from -- but it withdraws seven modes from a feature upstream supports, which is
+a decision about the API rather than a bug fix. Compositing correctly is the
+other, and it means treating the layer's alpha as coverage rather than as an
+image: `mix(dst, M(src, dst), src_alpha)` for each mode, which for `Clear` is
+exactly `DstOut` and for the rest is a table nobody has derived. Both are
+larger than the defect and neither should be chosen in passing, so this is
+written down instead, and pinned by
+`a_mask_blur_under_a_mode_that_ignores_coverage_erases_its_whole_bounds`.
+
+Upstream's `ClearBlendWithBlur` is that scene by name, and it is the one
+picture of its file left unmirrored for this reason: a plate under upstream's
+name that draws a rectangle where upstream draws a soft hole would report the
+chapter as covered while showing the wrong thing.
+
+**Impact.** Confined to a mask blur combined with one of those seven modes.
+`SrcOver` is what nearly every blurred draw uses and is unaffected, as is every
+mask blur on a rectangle, rounded rectangle or circle with a solid color under a
+mode that does respect coverage -- those are evaluated in the fragment stage and
+never open a layer at all. Where it does bite it is loud rather than subtle: a
+rectangle appears where a soft shape was asked for.

@@ -15776,3 +15776,66 @@ fn a_blur_scales_with_the_transform() {
         );
     }
 }
+
+#[test]
+fn a_mask_blur_under_a_mode_that_ignores_coverage_erases_its_whole_bounds() {
+    // A defect, pinned rather than fixed, so that fixing it is a test that
+    // changes rather than a behavior nobody had noticed. `docs/non-parity.md`
+    // section 16 has the reasoning and the two ways out.
+    //
+    // A mask blur that cannot be evaluated in the fragment stage is drawn as a
+    // layer: the shape goes into a target, the target is blurred, and the
+    // layer is composited with the caller's blend. That composite covers the
+    // layer's bounds, and a mode that writes where its source is transparent
+    // writes across all of them -- so `Clear` on a blurred circle clears a
+    // rectangle instead of a soft disc.
+    //
+    // The analytic route refuses exactly this, and says why: a fragment is
+    // emitted across a quad larger than the shape, so a mode that touches the
+    // destination where the source is transparent erases what is behind it in
+    // the gap. The layer route has the same gap and no such guard.
+    let Some(mut ctx) = context() else { return };
+
+    let shot = |ctx: &mut Context, sigma: f32| {
+        let mut canvas = Canvas::new(SIZE);
+        canvas.clear(Color::BLACK);
+        canvas
+            .draw_rect(
+                Rect::new(0.0, 0.0, 128.0, 128.0),
+                &Paint::fill(Color::srgb(0.2, 0.4, 1.0, 1.0)),
+            )
+            .expect("a ground to erase from");
+        canvas
+            .draw_circle(
+                Vec2::new(64.0, 64.0),
+                36.0,
+                &Paint::fill(Color::WHITE)
+                    .with_mask_blur(sigma)
+                    .with_blend(BlendMode::Clear),
+            )
+            .expect("a blurred hole");
+        render(ctx, canvas)
+    };
+
+    let erased = |pixels: &[u8]| pixels.chunks_exact(4).filter(|p| p[3] == 0).count();
+
+    // Sharp, and correct: the hole is the circle, so its area is about pi r
+    // squared and nothing like the quad the field is evaluated on.
+    let sharp = erased(&shot(&mut ctx, 0.0));
+    let disc = (std::f32::consts::PI * 36.0 * 36.0) as usize;
+    assert!(
+        sharp.abs_diff(disc) < disc / 20,
+        "a sharp clear should erase the circle: {sharp} against about {disc}"
+    );
+
+    // Blurred, and not: ninety-six by ninety-six exactly, which is the
+    // circle's bounds outset by the blur's reach and is a rectangle.
+    let blurred = erased(&shot(&mut ctx, 7.0));
+    assert_eq!(
+        blurred,
+        96 * 96,
+        "this pins a known defect: a blurred clear erases its layer's bounds \
+         rather than the blurred coverage. If this now fails because the count \
+         changed, section 16 of docs/non-parity.md is what to read"
+    );
+}

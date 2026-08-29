@@ -159,7 +159,7 @@ column is right and the obvious way to check it is wrong.
 | `aiks_dl_clip_unittests.cc` | ~5 | 7 | nothing; this file is covered |
 | `aiks_dl_opacity_unittests.cc` | ~3 | 3 | nothing; this file is covered |
 | `aiks_dl_blend_unittests.cc` | ~79 | 40 | capability injection and subpass collapse, for two of them; see below |
-| `aiks_dl_blur_unittests.cc` | ~59 | 43 | a blur does not turn with a rotation, for one of them; see below |
+| `aiks_dl_blur_unittests.cc` | ~59 | 47 | a blur does not turn with a rotation, and a mask blur under a mode that ignores coverage erases its bounds, for one of them each; see below |
 | `aiks_dl_vertices_unittests.cc` | ~16 | 20 | a shader other than an image cannot be read at a mesh's texture coordinates, for two of them; see below |
 | `aiks_dl_atlas_unittests.cc` | ~11 | 12 | nothing; see below |
 | `aiks_dl_shadow_unittests.cc` | ~30 | 13 | a convex-shadow optimization this renderer does not have; see below |
@@ -168,7 +168,7 @@ column is right and the obvious way to check it is wrong.
 | `aiks_dl_runtime_effect_unittests.cc` | — | 12 | nothing; see below |
 | `aiks_dl_unittests.cc` | ~36 | 13 | subpass collapse, for five of them; see below |
 
-The catalog holds three hundred and thirty-five scenes of roughly four hundred,
+The catalog holds three hundred and thirty-nine scenes of roughly four hundred,
 and the proportion is less interesting than which ones: the arithmetic of drawing is largely covered, and
 what is missing is either a capability this renderer does not have or a thing
 the scene model cannot describe.
@@ -278,6 +278,37 @@ That is `docs/non-parity.md` section 15, which also says why it was left --
 the pass's step is already a free direction, so the shader is not the problem;
 the layer would have to carry a basis where it carries a scale, and the
 reduction and the bounds follow from that.
+
+Four more plates from that file, and a second defect found by writing a fifth.
+The four: a blurred circle whose clip cuts it *after* the blur, so the halo
+stops dead at the clip's edge while the shape's own edge stays soft -- the
+opposite picture from clipping first and blurring what is left; a color filter
+over a mask blur, which upstream keeps because the two are easy to apply in the
+wrong order; and upstream's channel swap composed with a blur, in both orders.
+
+The compose pair is worth a sentence because the two are the same picture on
+purpose. A permutation matrix and a weighted sum are both linear, so they
+commute, and the plates agree to the byte. That agreement is the assertion
+rather than a redundancy: a composition that applied only the outer filter would
+leave one plate a recolored sharp circle and the other a blurred green one, and
+nothing else here would notice. Dropping the inner one instead is caught by the
+rule that a scene carrying a filter has to render differently without it.
+
+The fifth was `ClearBlendWithBlur`, and it is not here. A mask blur that cannot
+be evaluated in the fragment stage is drawn as a layer, and the layer is
+composited with the caller's blend -- across the layer's *bounds*. A mode that
+writes where its source is transparent writes across all of them, so a blurred
+circle drawn with `Clear` clears a rectangle: 9216 pixels, which is 96 by 96 to
+the pixel, where the sharp version correctly erases 4052 against a disc's 4071.
+
+The renderer already knows the shape of that mistake -- the analytic route
+refuses a mode that does not respect coverage, and says why in those words --
+so the analytic half of the feature is right and the layer half is not. It is
+`docs/non-parity.md` section 16, which sets out the two ways out and why
+neither was taken in passing: refusing withdraws seven modes from a feature
+upstream supports, and compositing correctly means a per-mode table nobody has
+derived. A plate under upstream's name drawing a rectangle would report the
+chapter as covered while showing the wrong thing, so there is none.
 
 The default style blurs coverage and fills through it, which works for any
 fill. The three that combine a blurred mask with a sharp one -- solid, outer,
