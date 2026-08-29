@@ -142,7 +142,7 @@ column is right and the obvious way to check it is wrong.
 
 | File | Scenes there | Here | Blocked on |
 |---|---|---|---|
-| `aiks_dl_basic_unittests.cc` | ~85 | 76 | subpass optimizations; see below |
+| `aiks_dl_basic_unittests.cc` | ~85 | 78 | subpass optimizations; see below |
 | `aiks_dl_path_unittests.cc` | ~30 | 21 | nothing; see below |
 | `aiks_dl_gradient_unittests.cc` | ~40 | 31 | nothing; see below |
 | `aiks_dl_clip_unittests.cc` | ~5 | 7 | nothing; this file is covered |
@@ -157,7 +157,7 @@ column is right and the obvious way to check it is wrong.
 | `aiks_dl_runtime_effect_unittests.cc` | — | 12 | nothing; see below |
 | `aiks_dl_unittests.cc` | ~36 | 13 | subpass collapse, for five of them; see below |
 
-The catalog holds two hundred and ninety-two scenes of roughly four hundred,
+The catalog holds two hundred and ninety-four scenes of roughly four hundred,
 and the proportion is less interesting than which ones: the arithmetic of drawing is largely covered, and
 what is missing is either a capability this renderer does not have or a thing
 the scene model cannot describe.
@@ -499,6 +499,34 @@ square-cornered joins get, since a stroked rectangle with a miter has no
 analytic form here, and what all three get from the path form -- the same
 pixels carry three covers and six. The analytic half is asserted; the other is
 `docs/non-parity.md` section 13, with the numbers.
+
+Then upstream's two mask-blur grids, which are the same question asked at two
+resolutions: whether a blurred shape is still that shape. One runs five kinds
+of shape down its rows -- rectangle, circle, oval, a rounded rectangle with
+circular corners and one whose corners are ellipses -- and sweeps each row from
+a sliver one way to a sliver the other. The other holds the shape still and
+sweeps the corner instead, five radii each way, so its grid runs from a plain
+rectangle in one corner to a stadium in the opposite one and the two edges are
+the cases a rounded rectangle usually never meets: one radius zero and the other
+not.
+
+Both draw on white rather than on this catalog's ground, which upstream also
+does and which is not decoration. A blur spreads coverage outward; against a
+dark ground the spread edge fades toward what it is already nearest, and against
+white it fades the other way, where it can be read.
+
+The sigma is the one number not taken from upstream. These plates are a fifth
+of upstream's size, so a faithful sigma would be a fifth of a pixel -- a blur no
+comparison could fail on. One pixel against a twelve-pixel shape is upstream's
+picture at this scale rather than upstream's number, and the picture is what the
+plate is for.
+
+Writing them found that nothing in this suite checked that a mask blur reaches
+the frame at all, which is the same trap the backdrop-blur plates fell into
+once: a plate that asks for a filter and renders identically without it counts
+as covered while showing nothing. Every plate holding a mask blur -- twenty-five
+of them -- is now rendered a second time with its sigma set to zero and has to
+come out different. All twenty-five do.
 
 Four scenes were filed under the wrong chapter, which is worth recording
 because of how it was found rather than because of the four. Writing the

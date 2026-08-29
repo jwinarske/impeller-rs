@@ -471,3 +471,72 @@ fn a_wide_stroke_through_its_own_call_covers_each_pixel_once() {
          edge rather than stroke and the bound above proved nothing"
     );
 }
+
+fn forget_mask_blurs(nodes: &mut [impeller_testkit::Node]) -> usize {
+    let mut dropped = 0;
+    for node in nodes {
+        match node {
+            impeller_testkit::Node::Draw(item) => {
+                if item.mask_blur > 0.0 {
+                    item.mask_blur = 0.0;
+                    dropped += 1;
+                }
+            }
+            impeller_testkit::Node::Layer { children, .. } => {
+                dropped += forget_mask_blurs(children);
+            }
+            impeller_testkit::Node::Picture(spec) => {
+                dropped += forget_mask_blurs(&mut spec.children);
+            }
+            _ => {}
+        }
+    }
+    dropped
+}
+
+#[test]
+fn every_plate_that_asks_for_a_mask_blur_can_show_one() {
+    // The failure this is here for has happened in this catalog before, to the
+    // backdrop-blur plates: two scenes rendered identically to themselves with
+    // the filter taken away, so they asked for it and could not show it. A
+    // plate that cannot tell whether the thing it is named for happened is
+    // worse than no plate, because the inventory counts it as covered.
+    //
+    // Nothing else catches it. Cross-backend comparison says the two backends
+    // agree, and they agree just as well on the wrong picture. So every plate
+    // holding a mask blur is rendered again with the sigma set to zero and has
+    // to come out different.
+    let Ok(mut ctx) = Validated::new(DevicePreference::Auto) else {
+        eprintln!("skipping: no Vulkan device");
+        return;
+    };
+
+    let mut checked = 0usize;
+    for scene in catalog() {
+        let mut without = scene.clone();
+        if forget_mask_blurs(&mut without.items) == 0 {
+            continue;
+        }
+        if !scene.supported_by(ctx.capabilities()) {
+            eprintln!("skipping: {} is not supported here", scene.name);
+            continue;
+        }
+        let blurred = render::<VulkanHal>(&mut ctx, &scene);
+        let sharp = render::<VulkanHal>(&mut ctx, &without);
+        assert!(
+            !accepts(
+                &compare(&blurred, &sharp).expect("the two renders are the same size"),
+                CATALOG
+            ),
+            "{} renders the same with its mask blur as without it, so it cannot \
+             show what it asked for",
+            scene.name
+        );
+        checked += 1;
+    }
+    assert!(
+        checked >= 25,
+        "only {checked} plates were found to hold a mask blur, which is fewer \
+         than the catalog has and means the walk missed some"
+    );
+}

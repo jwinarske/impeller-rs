@@ -129,6 +129,16 @@ fn plate(name: &'static str, items: Vec<Item>) -> Scene {
         .with_samples(4)
 }
 
+/// A plate whose scene is a tree rather than a flat run of items.
+///
+/// The same background and sample count as [`plate`]; the difference is only
+/// that a scene needing a `drawPaint` or a layer cannot say it as an `Item`.
+fn plate_tree(name: &'static str, items: Vec<Node>) -> Scene {
+    Scene::tree(name, items)
+        .with_background(DARK)
+        .with_samples(4)
+}
+
 /// Upstream's `MakeWideStrokedRects`, which two of its scenes draw and differ
 /// only in how they say the rectangle.
 ///
@@ -194,6 +204,36 @@ fn wide_stroked_rects(as_path: bool) -> Vec<Item> {
         })
         .collect()
 }
+
+/// Skia's crimson, orange and purple, which upstream's mask-blur grid uses.
+const CRIMSON: [f32; 4] = [220.0 / 255.0, 20.0 / 255.0, 60.0 / 255.0, 1.0];
+const ORANGE: [f32; 4] = [1.0, 165.0 / 255.0, 0.0, 1.0];
+const PURPLE: [f32; 4] = [128.0 / 255.0, 0.0, 128.0 / 255.0, 1.0];
+
+/// White under a plate that would otherwise read as a blur against nothing.
+///
+/// Upstream's two mask-blur grids draw a white ground first, and it is not
+/// decoration: a blur spreads coverage outward, and against this catalog's dark
+/// ground a spread edge fades toward the ground it is already nearest. Against
+/// white it fades the other way, which is the direction a reader can see.
+fn white_ground() -> Node {
+    Node::Paint(Box::new(PaintSpec {
+        color: WHITE,
+        blend: BlendMode::Src,
+        clip: None,
+        clip_out: None,
+        transform: Transform::default(),
+    }))
+}
+
+/// The sigma both mask-blur grids are drawn at.
+///
+/// Upstream blurs at one against shapes a hundred points across. These plates
+/// are a fifth of upstream's size, so the faithful sigma would be a fifth of a
+/// pixel -- which is a blur nothing could see and no comparison could fail on.
+/// One pixel against a twelve-pixel shape is the same *picture* at this scale
+/// rather than the same number, and it is the picture the plate is for.
+const GRID_BLUR: f32 = 1.0;
 
 /// The three boxes upstream draws in every rounded-superellipse plate.
 ///
@@ -669,6 +709,90 @@ fn basic() -> Vec<Scene> {
                 color: RED,
                 blend: BlendMode::SrcOver,
                 transform: Transform::default(),
+            },
+        ),
+        plate_tree(
+            "basic/solid-color-circles-ovals-r-rects-mask-blur-correctly",
+            {
+                let mut items = vec![white_ground()];
+                for (row, color) in [CRIMSON, BLUE, GREEN, PURPLE, ORANGE]
+                    .into_iter()
+                    .enumerate()
+                {
+                    let cy = row as f32 * 25.0 + 14.0;
+                    for col in 0..5 {
+                        let cx = col as f32 * 25.0 + 14.0;
+                        // Upstream's shapes narrow as they widen, which is what
+                        // makes the row a sweep rather than five of the same
+                        // thing: the first is a sliver a tenth of its height
+                        // and the last is a sliver the other way round.
+                        let r = (col + 1) as f32 * 2.0;
+                        let shape = match row {
+                            0 => Shape::Rect {
+                                min: [cx - r / 2.0, cy - (12.0 - r) / 2.0],
+                                max: [cx + r / 2.0, cy + (12.0 - r) / 2.0],
+                            },
+                            1 => Shape::Circle {
+                                center: [cx, cy],
+                                radius: r,
+                            },
+                            2 => Shape::Oval {
+                                min: [cx - r / 2.0, cy - (12.0 - r) / 2.0],
+                                max: [cx + r / 2.0, cy + (12.0 - r) / 2.0],
+                            },
+                            // A round corner, then the same corner made an
+                            // ellipse by holding one radius still: the last row
+                            // is the only one whose corners are not circular,
+                            // and it is why the eight-radius rounded rectangle
+                            // had to exist before this plate could.
+                            3 => Shape::RoundedRect {
+                                min: [cx - 6.0, cy - 6.0],
+                                max: [cx + 6.0, cy + 6.0],
+                                radius: (col + 1) as f32,
+                            },
+                            _ => Shape::RoundedRectWithRadii {
+                                min: [cx - 6.0, cy - 6.0],
+                                max: [cx + 6.0, cy + 6.0],
+                                radii: [[(col + 1) as f32, 1.0]; 4],
+                            },
+                        };
+                        items.push(Node::Draw(Box::new(
+                            Item::fill(shape, color)
+                                .with_mask_blur(GRID_BLUR)
+                                .with_blend(BlendMode::SrcOver),
+                        )));
+                    }
+                }
+                items
+            },
+        ),
+        plate_tree(
+            "basic/fast-elliptical-r-rect-mask-blurs-render-correctly",
+            {
+                let mut items = vec![white_ground()];
+                // Five radii each way against one shape, so the grid runs from
+                // a plain rectangle in one corner to a stadium in the other and
+                // every corner between them is a different ellipse. The two
+                // edges are the cases a rounded rectangle usually never sees:
+                // one radius zero and the other not.
+                for row in 0..5 {
+                    for col in 0..5 {
+                        let (x, y) = (col as f32 * 25.0 + 6.0, row as f32 * 25.0 + 6.0);
+                        items.push(Node::Draw(Box::new(
+                            Item::fill(
+                                Shape::RoundedRectWithRadii {
+                                    min: [x, y],
+                                    max: [x + 16.0, y + 16.0],
+                                    radii: [[col as f32 * 2.4, row as f32 * 2.4]; 4],
+                                },
+                                BLUE,
+                            )
+                            .with_mask_blur(GRID_BLUR)
+                            .with_blend(BlendMode::SrcOver),
+                        )));
+                    }
+                }
+                items
             },
         ),
         plate(
