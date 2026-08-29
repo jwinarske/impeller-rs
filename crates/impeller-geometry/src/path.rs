@@ -140,7 +140,9 @@ pub const MAX_COORDINATE: f32 = 16_777_216.0;
 /// that expression reaches infinity the count becomes `u32::MAX` and is used
 /// as a recursion depth. Four billion frames is a stack overflow, which
 /// unwinds nothing and cannot be caught, and it is reachable in four lines
-/// through `Canvas::draw_path`.
+/// through `Canvas::draw_path`. Reported upstream as
+/// <https://github.com/nical/lyon/issues/959>, with the standalone repro and
+/// the values read out of the frame that saturates.
 ///
 /// Bisected on a three-segment path at a quarter-pixel tolerance: a width of
 /// eight million tessellates (ten thousand vertices, growing linearly with the
