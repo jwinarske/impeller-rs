@@ -142,7 +142,7 @@ column is right and the obvious way to check it is wrong.
 
 | File | Scenes there | Here | Blocked on |
 |---|---|---|---|
-| `aiks_dl_basic_unittests.cc` | ~85 | 78 | subpass optimizations; see below |
+| `aiks_dl_basic_unittests.cc` | ~85 | 82 | subpass optimizations; see below |
 | `aiks_dl_path_unittests.cc` | ~30 | 21 | nothing; see below |
 | `aiks_dl_gradient_unittests.cc` | ~40 | 31 | nothing; see below |
 | `aiks_dl_clip_unittests.cc` | ~5 | 7 | nothing; this file is covered |
@@ -157,7 +157,7 @@ column is right and the obvious way to check it is wrong.
 | `aiks_dl_runtime_effect_unittests.cc` | — | 12 | nothing; see below |
 | `aiks_dl_unittests.cc` | ~36 | 13 | subpass collapse, for five of them; see below |
 
-The catalog holds two hundred and ninety-four scenes of roughly four hundred,
+The catalog holds two hundred and ninety-eight scenes of roughly four hundred,
 and the proportion is less interesting than which ones: the arithmetic of drawing is largely covered, and
 what is missing is either a capability this renderer does not have or a thing
 the scene model cannot describe.
@@ -527,6 +527,27 @@ once: a plate that asks for a filter and renders identically without it counts
 as covered while showing nothing. Every plate holding a mask blur -- twenty-five
 of them -- is now rendered a second time with its sigma set to zero and has to
 come out different. All twenty-five do.
+
+Four more after those, and between them they take the chapter to eighty-two of
+its eighty-five. Upstream's rounded rectangles drawn as paths, which the
+`as_path` field above had just made sayable and which pair with the analytic
+trio already here. A rectangle in one color, which is upstream's whole scene and
+is what every other plate in the chapter rests on. A layer with nothing in it,
+opened over a red frame and closed at once, which asks whether an empty layer's
+target was cleared before it was composited -- an uncleared one would show as a
+rectangle of whatever the allocation held, exactly where the bounds are, and the
+frame is asserted to be one color end to end.
+
+And the same layer twice at two scales, each blurring what it captured, which
+is the one plate in this chapter that checks a decision rather than a picture.
+A filter on a save layer is stated in the space of the caller rather than in
+device pixels, so the copy drawn at three times the scale blurs three times as
+wide on screen. A renderer holding the sigma in device pixels would draw both
+panels with the same soft edge and differ only in size, which is not a thing
+anyone comparing them by eye would reliably catch -- so the edge is measured.
+It falls from covered to ground over six pixels in one panel and nineteen in
+the other, and setting the second layer's sigma to a third of the first's puts
+that ratio at exactly one, which is what the assertion is written against.
 
 Four scenes were filed under the wrong chapter, which is worth recording
 because of how it was found rather than because of the four. Writing the

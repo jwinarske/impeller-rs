@@ -540,3 +540,84 @@ fn every_plate_that_asks_for_a_mask_blur_can_show_one() {
          than the catalog has and means the walk missed some"
     );
 }
+
+#[test]
+fn a_layers_blur_widens_with_the_transform_it_was_opened_under() {
+    // A filter on a save layer is stated in the space of the caller, not in
+    // device pixels, so the same layer opened under a threefold scale blurs
+    // three times as wide on screen. Upstream draws its scene twice at two
+    // scales to say so, and this repository's architecture document records
+    // taking the same position deliberately -- the sigma is local and the
+    // conversion happens where the layer opens.
+    //
+    // A renderer that treated the sigma as already-device would draw the two
+    // panels with the same soft edge and differ only in size, which is a
+    // difference nobody comparing them by eye would necessarily notice. The
+    // edge is measured instead.
+    let Ok(mut ctx) = Validated::new(DevicePreference::Auto) else {
+        eprintln!("skipping: no Vulkan device");
+        return;
+    };
+    let scene = catalog()
+        .into_iter()
+        .find(|s| s.name == "basic/save-layer-filters-scale-with-transform")
+        .expect("the plate is in the catalog");
+    let img = render::<VulkanHal>(&mut ctx, &scene);
+
+    // How many pixels the right edge of each panel takes to fall from covered
+    // to ground, counted along one row well clear of the corners.
+    let ramp = |y: u32, xs: std::ops::Range<u32>| {
+        xs.filter(|x| (20..250).contains(&img.pixel(*x, y)[0]))
+            .count()
+    };
+    let small = ramp(16, 14..40);
+    let large = ramp(74, 90..128);
+    assert!(
+        small >= 3 && large >= 3,
+        "neither panel should have a hard edge; they measured {small} and {large}"
+    );
+    let ratio = large as f32 / small as f32;
+    assert!(
+        (2.2..3.8).contains(&ratio),
+        "the panel drawn at three times the scale spread its blur over {large} \
+         pixels against the other's {small}, a ratio of {ratio:.2}; a sigma \
+         carried in device pixels would put that at one"
+    );
+}
+
+#[test]
+fn an_empty_layer_composites_nothing_at_all() {
+    // A layer with no contents still allocates a target and still composites
+    // it, so what this asks is whether that target was cleared: a layer
+    // composited over a buffer nobody wrote would show as a rectangle of
+    // whatever the allocation held, exactly where the layer's bounds are.
+    //
+    // Upstream's scene paints the frame red, opens a layer with a blue paint
+    // and closes it at once, and the frame stays red. Here the frame is one
+    // color or the plate has failed, which is a thing a test can say exactly.
+    let Ok(mut ctx) = Validated::new(DevicePreference::Auto) else {
+        eprintln!("skipping: no Vulkan device");
+        return;
+    };
+    let scene = catalog()
+        .into_iter()
+        .find(|s| s.name == "basic/empty-save-layer-ignores-paint")
+        .expect("the plate is in the catalog");
+    let img = render::<VulkanHal>(&mut ctx, &scene);
+    let ground = img.pixel(0, 0);
+    for y in 0..128 {
+        for x in 0..128 {
+            assert_eq!(
+                img.pixel(x, y),
+                ground,
+                "({x}, {y}) is not the color the rest of the frame is, so the \
+                 empty layer left something behind"
+            );
+        }
+    }
+    assert_eq!(
+        ground,
+        [255, 0, 0, 255],
+        "the frame should be the paint's red"
+    );
+}

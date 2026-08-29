@@ -139,6 +139,55 @@ fn plate_tree(name: &'static str, items: Vec<Node>) -> Scene {
         .with_samples(4)
 }
 
+/// The three filled rounded rectangles upstream draws, in both of the forms it
+/// keeps them in.
+///
+/// A small radius, a large one, and one asked for more than half the shorter
+/// side so it becomes a stadium rather than an outline that crosses itself.
+/// Upstream keeps the same trio drawn as paths, and the reason is the corner:
+/// the analytic route evaluates a rounded rectangle's field directly where the
+/// path route scales each corner's radii to fit and then tessellates, and this
+/// repository's `no-dimples-in-r-rect-path` exists because that scaling can be
+/// done per corner instead of once and leave a visible notch.
+fn filled_round_rects(as_path: bool) -> Vec<Item> {
+    [
+        (
+            Shape::RoundedRect {
+                min: [10.0, 10.0],
+                max: [60.0, 50.0],
+                radius: 4.0,
+            },
+            RED,
+        ),
+        (
+            Shape::RoundedRect {
+                min: [68.0, 10.0],
+                max: [118.0, 50.0],
+                radius: 20.0,
+            },
+            GREEN,
+        ),
+        (
+            Shape::RoundedRect {
+                min: [10.0, 62.0],
+                max: [118.0, 118.0],
+                radius: 64.0,
+            },
+            BLUE,
+        ),
+    ]
+    .into_iter()
+    .map(|(shape, color)| {
+        let item = Item::fill(shape, color);
+        if as_path {
+            item.as_path()
+        } else {
+            item
+        }
+    })
+    .collect()
+}
+
 /// Upstream's `MakeWideStrokedRects`, which two of its scenes draw and differ
 /// only in how they say the rectangle.
 ///
@@ -796,6 +845,92 @@ fn basic() -> Vec<Scene> {
             },
         ),
         plate(
+            "basic/can-render-colored-rect-primitive",
+            // Upstream's whole scene: one rectangle in one color, drawn
+            // through the call the API offers for it. There is nothing to it,
+            // and that is what it is for -- every other plate in this chapter
+            // rests on this one working.
+            vec![Item::fill(
+                Shape::Rect {
+                    min: [32.0, 32.0],
+                    max: [96.0, 96.0],
+                },
+                BLUE,
+            )],
+        ),
+        plate_tree(
+            "basic/empty-save-layer-ignores-paint",
+            // A layer with nothing drawn into it composites nothing, whatever
+            // its paint says. Upstream's scene paints the frame red, clips,
+            // opens a layer with a blue paint and closes it at once, and the
+            // frame stays red.
+            //
+            // The clip is the half that can fail here. An empty layer still
+            // allocates a target and still composites it, and a target
+            // composited without its contents having been cleared is the
+            // failure this would show -- as a rectangle of whatever the
+            // allocation held, exactly where the clip is.
+            vec![
+                Node::Paint(Box::new(PaintSpec {
+                    color: RED,
+                    blend: BlendMode::Src,
+                    clip: None,
+                    clip_out: None,
+                    transform: Transform::default(),
+                })),
+                Node::Layer {
+                    layer: Box::new(LayerSpec::default()),
+                    bounds: Some([32.0, 32.0, 96.0, 96.0]),
+                    transform: Transform::default(),
+                    children: Vec::new(),
+                },
+            ],
+        ),
+        plate_tree(
+            "basic/save-layer-filters-scale-with-transform",
+            // The same layer twice, once at unit scale and once at three
+            // times it, each blurring what it captured. Upstream draws it to
+            // say that a filter on a save layer is stated in the space of the
+            // caller rather than in device pixels, so the second copy's blur
+            // is three times as wide on screen as the first's.
+            //
+            // Which is the decision recorded in `docs/architecture.md`: a blur
+            // sigma is local, and the conversion to device happens where the
+            // layer opens. A renderer that took the sigma as already-device
+            // would draw both copies with the same soft edge, and the two
+            // panels here would then differ only in size.
+            vec![
+                Node::Layer {
+                    layer: Box::new(LayerSpec::default().with_blur(2.0)),
+                    bounds: None,
+                    transform: Transform::translate(6.0, 6.0),
+                    children: vec![Node::Draw(Box::new(Item::fill(
+                        Shape::Rect {
+                            min: [0.0, 0.0],
+                            max: [20.0, 20.0],
+                        },
+                        WHITE,
+                    )))],
+                },
+                Node::Layer {
+                    layer: Box::new(LayerSpec::default().with_blur(2.0)),
+                    bounds: None,
+                    transform: Transform {
+                        scale: [3.0, 3.0],
+                        translate: [44.0, 44.0],
+                        ..Transform::default()
+                    },
+                    children: vec![Node::Draw(Box::new(Item::fill(
+                        Shape::Rect {
+                            min: [0.0, 0.0],
+                            max: [20.0, 20.0],
+                        },
+                        WHITE,
+                    )))],
+                },
+            ],
+        ),
+        plate(
             "basic/can-render-wide-stroked-rect-without-overlap",
             wide_stroked_rects(false),
         ),
@@ -1332,34 +1467,11 @@ fn basic() -> Vec<Scene> {
         ),
         plate(
             "basic/filled-round-rects-render-correctly",
-            vec![
-                Item::fill(
-                    Shape::RoundedRect {
-                        min: [10.0, 10.0],
-                        max: [60.0, 50.0],
-                        radius: 4.0,
-                    },
-                    RED,
-                ),
-                Item::fill(
-                    Shape::RoundedRect {
-                        min: [68.0, 10.0],
-                        max: [118.0, 50.0],
-                        radius: 20.0,
-                    },
-                    GREEN,
-                ),
-                // Asked for more than half the shorter side, so it becomes a
-                // stadium rather than an outline that crosses itself.
-                Item::fill(
-                    Shape::RoundedRect {
-                        min: [10.0, 62.0],
-                        max: [118.0, 118.0],
-                        radius: 64.0,
-                    },
-                    BLUE,
-                ),
-            ],
+            filled_round_rects(false),
+        ),
+        plate(
+            "basic/filled-round-rect-paths-render-correctly",
+            filled_round_rects(true),
         ),
         plate(
             "basic/can-render-rounded-rect-with-uniform-radii",
