@@ -851,3 +851,52 @@ fn a_shape_clip_cuts_a_circle_through_its_center() {
         "a quarter of the circle should survive the clip; {drawn} pixels did"
     );
 }
+
+#[test]
+fn an_identity_matrix_filter_changes_nothing_it_passes_through() {
+    // Upstream draws the same filtered image twice, once with an identity
+    // matrix image filter on it, and keeps them side by side for a reader to
+    // see that they agree. It puts the filter there to take the draw off its
+    // atlas fast path; there is no such path here, so what the pair says
+    // instead is the claim that survives the translation: an identity matrix
+    // filter routes the draw through an offscreen and resamples it on the way
+    // back, and must come out the same anyway.
+    //
+    // That is not free of ways to fail. A half-texel offset in the resample, a
+    // target sized to the wrong bounds, a color filter applied on the way in
+    // rather than on the way out -- each would show here and in nothing else.
+    let Ok(mut ctx) = Validated::new(DevicePreference::Auto) else {
+        eprintln!("skipping: no Vulkan device");
+        return;
+    };
+    for name in [
+        "atlas/draw-image-rect-with-blend-color-filter",
+        "atlas/draw-image-rect-with-matrix-color-filter",
+    ] {
+        let scene = catalog()
+            .into_iter()
+            .find(|s| s.name == name)
+            .unwrap_or_else(|| panic!("{name} is not in the catalog"));
+        let img = render::<VulkanHal>(&mut ctx, &scene);
+        // The two panels are fifty-six wide, one at four and one at
+        // sixty-eight, so the same offset into each is sixty-four apart.
+        let mut differing = 0usize;
+        let mut worst = 0u8;
+        for y in 36..92u32 {
+            for x in 4..60u32 {
+                let (a, b) = (img.pixel(x, y), img.pixel(x + 64, y));
+                let apart = (0..4).map(|c| a[c].abs_diff(b[c])).max().unwrap_or(0);
+                worst = worst.max(apart);
+                if apart > 2 {
+                    differing += 1;
+                }
+            }
+        }
+        assert!(
+            differing * 100 < 56 * 56,
+            "{name}: {differing} of {} pixels differ between the filtered draw \
+             and the plain one, worst by {worst}",
+            56 * 56
+        );
+    }
+}

@@ -161,14 +161,14 @@ column is right and the obvious way to check it is wrong.
 | `aiks_dl_blend_unittests.cc` | ~79 | 40 | capability injection and subpass collapse, for two of them; see below |
 | `aiks_dl_blur_unittests.cc` | ~59 | 41 | nothing; see below |
 | `aiks_dl_vertices_unittests.cc` | ~16 | 20 | a shader other than an image cannot be read at a mesh's texture coordinates, for two of them; see below |
-| `aiks_dl_atlas_unittests.cc` | ~11 | 9 | nothing; see below |
+| `aiks_dl_atlas_unittests.cc` | ~11 | 12 | nothing; see below |
 | `aiks_dl_shadow_unittests.cc` | ~30 | 13 | a convex-shadow optimization this renderer does not have; see below |
 | `aiks_dl_primitive_shape_unittests.cc` | ~2 | 0 | one is a playground harness, one wants a stroke width of zero to mean a hairline |
 | `aiks_dl_text_unittests.cc` | — | 7 | shaping and font parsing, which are out of scope; glyph rendering is not, and these use synthetic coverage |
 | `aiks_dl_runtime_effect_unittests.cc` | — | 12 | nothing; see below |
 | `aiks_dl_unittests.cc` | ~36 | 13 | subpass collapse, for five of them; see below |
 
-The catalog holds three hundred and thirty scenes of roughly four hundred,
+The catalog holds three hundred and thirty-three scenes of roughly four hundred,
 and the proportion is less interesting than which ones: the arithmetic of drawing is largely covered, and
 what is missing is either a capability this renderer does not have or a thing
 the scene model cannot describe.
@@ -400,16 +400,42 @@ playground at all: they build an atlas geometry and assert on its flags and its
 vertex buffer, `EXPECT_TRUE(geom.ShouldSkip())` and the like. They are unit
 tests that happen to live in the playground file, and counting them as scenes
 made the chapter look a third emptier than it is. So the count beside it is
-eleven, and the nine here are nine of eleven.
+eleven.
 
-Of the two that are neither mirrored nor unit tests, plus the four advanced ones
-that are: three need advanced blending, which nothing on the machines this was
-written on has, so they would be reported as gaps rather than compared; one is
-`Plus` into a wide-gamut target, which §4 of `docs/non-parity.md` covers; and
-two compare upstream's conversion of `drawImageRect` into a `drawAtlas` against
-the unconverted path. That conversion is an optimization with no counterpart
-here, and the picture the pair would contribute -- an image under a color filter
--- is already `basic/can-render-inverted-image-with-color-filter`.
+Of the rest: one is `Plus` into a wide-gamut target, which §4 of
+`docs/non-parity.md` covers, and one is a four-color modulate that is the plate
+already here under `draw-atlas-with-color-simple` -- the same four sprites, the
+same mode, a different name upstream. The other three went in.
+
+Two of those three are the pair that compares upstream's conversion of
+`drawImageRect` into a `drawAtlas` against the unconverted path, and the
+reasoning that had them declined was wrong in an instructive way. It said the
+picture the pair would contribute is already elsewhere -- an image under a color
+filter -- and that is true and beside the point. The pair is not there for the
+picture. It is there because the two draws must agree, and upstream takes the
+left one off its fast path by putting an identity matrix image filter on it.
+
+There is no such fast path here, so what survives the translation is the other
+half of the same claim: an identity matrix filter routes a draw through an
+offscreen and resamples it on the way back, and has to come out the same
+anyway. That is not free of ways to fail -- a half-texel offset in the resample,
+a target sized to the wrong bounds, a color filter applied on the way in rather
+than on the way out -- and none of them are checked anywhere else. Asserted
+rather than looked at, and checked by moving the filter two pixels, which puts
+seventy-one per cent of the panel out.
+
+The pair collided with a rule this suite already had, which is the interesting
+part. Every scene carrying a feature is rendered again with the feature stripped
+and has to come out different, on the reasoning that a feature which changes
+nothing is a feature that is not reaching the picture. An identity matrix filter
+is the one feature for which that is exactly backwards. So the two are exempt by
+name -- and the exemption asserts the opposite rather than skipping them, since
+an exemption that asserts nothing is a hole with a comment on it.
+
+The third is `ColorBurn` over four greys running black to white. The plate
+beside it uses `Difference` with one color and says the tint setting is read at
+all; this says the arithmetic is right, because a burn done as a multiply would
+still darken and would darken wrong.
 
 This is the one place the counting caveat above cuts the other way. The "Scenes
 there" column is in scenes and not tests, which is why the blend row's eighty

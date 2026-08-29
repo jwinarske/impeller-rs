@@ -5504,6 +5504,98 @@ fn atlas_scenes() -> Vec<Scene> {
                 alpha: 1.0,
             },
         ),
+        atlas(
+            "atlas/draw-atlas-with-color-burn",
+            // Four greys running black to white against a mode that divides by
+            // what it is given: `ColorBurn` leaves the destination alone at
+            // white and takes it to black at black, so the four sprites make a
+            // sweep from untouched to erased over the same texels. The plate
+            // beside this one uses `Difference` with one color, which says the
+            // setting is read; this says the arithmetic is right, because a
+            // burn done as a multiply would still darken and would darken
+            // wrong.
+            AtlasSpec {
+                tint_blend: BlendMode::ColorBurn,
+                sprites: (0..4)
+                    .map(|i| {
+                        let (sx, sy) = ((i % 2) as f32 * 4.0, (i / 2) as f32 * 4.0);
+                        let level = i as f32 / 3.0;
+                        SpriteSpec {
+                            source: [sx, sy, sx + 4.0, sy + 4.0],
+                            rotate: 0.0,
+                            scale: 7.0,
+                            translate: [12.0 + i as f32 * 26.0, 46.0],
+                            color: [level, level, level, 1.0],
+                        }
+                    })
+                    .collect(),
+                blend: BlendMode::SrcOver,
+                alpha: 1.0,
+            },
+        ),
+        plate_tree(
+            "atlas/draw-image-rect-with-blend-color-filter",
+            image_rect_filtered(
+                ColorFilter::blend([1.0, 0.0, 0.0, 0.4], BlendMode::SrcOver)
+                    .expect("a source-over tint is affine"),
+            ),
+        ),
+        plate_tree(
+            "atlas/draw-image-rect-with-matrix-color-filter",
+            image_rect_filtered(ColorFilter::matrix([
+                -1.0, 0.0, 0.0, 1.0, 0.0, //
+                0.0, -1.0, 0.0, 1.0, 0.0, //
+                0.0, 0.0, -1.0, 1.0, 0.0, //
+                1.0, 1.0, 1.0, 1.0, 0.0,
+            ])),
+        ),
+    ]
+}
+
+/// Upstream's pair of image draws, the same but for a filter that should not
+/// change anything.
+///
+/// Both carry the same color filter. The left one also carries an identity
+/// matrix image filter, which upstream puts there to take the draw off its
+/// atlas fast path -- and which, being the identity, sends the draw through an
+/// offscreen and resamples it on the way back. So the two are a fast route and
+/// a slow one, and upstream keeps them side by side for a reader to see that
+/// they agree.
+///
+/// The claim survives the translation even though the fast path does not: an
+/// identity matrix filter must be invisible, and a filter that resamples
+/// through a target has every opportunity not to be.
+fn image_rect_filtered(filter: ColorFilter) -> Vec<Node> {
+    let panel = |x: f32| {
+        Item::filled(
+            Shape::Rect {
+                min: [x, 36.0],
+                max: [x + 56.0, 92.0],
+            },
+            sheet(
+                [x, 36.0, x + 56.0, 92.0],
+                ALL,
+                TileMode::Clamp,
+                Sampling::Linear,
+            ),
+        )
+        .with_color_filter(filter)
+        .with_blend(BlendMode::SrcOver)
+    };
+    vec![
+        Node::Paint(Box::new(PaintSpec {
+            color: WHITE,
+            blend: BlendMode::Src,
+            clip: None,
+            clip_out: None,
+            transform: Transform::default(),
+        })),
+        Node::Draw(Box::new(panel(4.0).with_image_filter(
+            ImageFilter::Matrix {
+                transform: impeller_core::Transform2D::IDENTITY,
+            },
+        ))),
+        Node::Draw(Box::new(panel(68.0))),
     ]
 }
 
