@@ -82,6 +82,7 @@ pub fn catalog() -> Vec<Scene> {
     scenes.extend(basic_pictures());
     scenes.extend(rounded_rect_radii());
     scenes.extend(save_layer_pictures());
+    scenes.extend(extreme_strokes());
     scenes.extend(layers());
     scenes.extend(runtime_effect());
     scenes.extend(backdrops());
@@ -2975,6 +2976,88 @@ fn sheet(rect: [f32; 4], source: [f32; 4], tile: TileMode, sampling: Sampling) -
         alpha: 1.0,
         tint: WHITE,
     }
+}
+
+/// The two stroke plates that put a circle's outline somewhere extreme.
+///
+/// Upstream draws each as four quadrants of the same shape -- filled, stroked,
+/// both, and a filled circle of `radius + width / 2` beside them. That last one
+/// is the assertion: a stroke's *outer* edge is a circle of exactly that
+/// radius, so the two quadrants agree or the stroker is offsetting wrongly.
+///
+/// Upstream builds its circle as a path of four cubics, deliberately, so the
+/// general stroker sees it. Here the same shape takes the fragment-evaluated
+/// route instead, and that is worth having rather than working around: the
+/// tessellated stroker is already covered by the corpus, and what these two
+/// plates then say is that the *field* holds up where the numbers are hard --
+/// a stroke half a device pixel wide under a twentyfold zoom, and one five
+/// times wider than the shape it outlines.
+fn extreme_strokes() -> Vec<Scene> {
+    let quadrant =
+        |cx: f32, cy: f32, zoom: f32, radius: f32, width: f32, items: &[(bool, [f32; 4])]| {
+            items
+                .iter()
+                .map(|(stroked, color)| {
+                    let shape = Shape::Circle {
+                        center: [0.0, 0.0],
+                        radius,
+                    };
+                    let item = if *stroked {
+                        Item::stroke(shape, StrokeSpec::new(width), *color)
+                    } else {
+                        Item::fill(shape, *color)
+                    };
+                    Node::Draw(Box::new(item.with_transform(Transform {
+                        scale: [zoom, zoom],
+                        translate: [cx, cy],
+                        ..Transform::default()
+                    })))
+                })
+                .collect::<Vec<_>>()
+        };
+
+    vec![
+        // A twentyfold zoom on a shape one unit across, so the stroke lands at
+        // half a device pixel: below one, which is where a stroke is widened to
+        // a pixel and dimmed to pay for it. That interaction is the reason this
+        // plate is worth drawing at this zoom rather than a gentler one.
+        Scene::tree(
+            "basic/zoomed-stroked-path-renders-correctly",
+            [
+                quadrant(
+                    34.0,
+                    34.0,
+                    20.0,
+                    1.0,
+                    0.025,
+                    &[(false, BLUE), (true, GREEN)],
+                ),
+                quadrant(94.0, 34.0, 20.0, 1.0, 0.025, &[(false, BLUE)]),
+                quadrant(34.0, 94.0, 20.0, 1.0, 0.025, &[(true, GREEN)]),
+                // The comparison: a filled circle of the outer radius, which
+                // the stroke's outer edge has to land on.
+                quadrant(94.0, 94.0, 20.0, 1.0125, 0.0, &[(false, BLUE)]),
+            ]
+            .concat(),
+        )
+        .with_background(WHITE)
+        .with_samples(4),
+        // The other extreme: a stroke five times wider than the radius, so the
+        // band's inner edge would be at a negative radius and the outline is a
+        // disc with a hole that closed.
+        Scene::tree(
+            "basic/stroked-path-with-large-stroke-width-renders-correctly",
+            [
+                quadrant(34.0, 34.0, 1.0, 8.0, 40.0, &[(false, BLUE), (true, GREEN)]),
+                quadrant(94.0, 34.0, 1.0, 8.0, 40.0, &[(false, BLUE)]),
+                quadrant(34.0, 94.0, 1.0, 8.0, 40.0, &[(true, GREEN)]),
+                quadrant(94.0, 94.0, 1.0, 28.0, 0.0, &[(false, BLUE)]),
+            ]
+            .concat(),
+        )
+        .with_background(WHITE)
+        .with_samples(4),
+    ]
 }
 
 /// The save-layer plates from `aiks_dl_basic_unittests.cc`.

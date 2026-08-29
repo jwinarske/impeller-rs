@@ -142,7 +142,7 @@ column is right and the obvious way to check it is wrong.
 
 | File | Scenes there | Here | Blocked on |
 |---|---|---|---|
-| `aiks_dl_basic_unittests.cc` | ~85 | 73 | subpass optimizations; see below |
+| `aiks_dl_basic_unittests.cc` | ~85 | 75 | subpass optimizations; see below |
 | `aiks_dl_path_unittests.cc` | ~30 | 21 | nothing; see below |
 | `aiks_dl_gradient_unittests.cc` | ~40 | 31 | nothing; see below |
 | `aiks_dl_clip_unittests.cc` | ~5 | 7 | nothing; this file is covered |
@@ -157,7 +157,7 @@ column is right and the obvious way to check it is wrong.
 | `aiks_dl_runtime_effect_unittests.cc` | — | 12 | nothing; see below |
 | `aiks_dl_unittests.cc` | ~36 | 13 | subpass collapse, for five of them; see below |
 
-The catalog holds two hundred and eighty-nine scenes of roughly four hundred,
+The catalog holds two hundred and ninety-one scenes of roughly four hundred,
 and the proportion is less interesting than which ones: the arithmetic of drawing is largely covered, and
 what is missing is either a capability this renderer does not have or a thing
 the scene model cannot describe.
@@ -457,6 +457,22 @@ What must not darken is the run between them, and that is asserted rather than
 looked at: three windows away from the ends carry a single cover and no pixel
 darker, and a fourth window over the caps has to find the doubling, so the first
 three cannot pass by the arc having missed them.
+
+Two stroke plates went in after those, and they are the two that put a
+circle's outline somewhere extreme: a stroke half a device pixel wide under a
+twentyfold zoom, and one five times wider than the shape it outlines. Each is
+upstream's four quadrants -- filled, stroked, both, and a filled circle of the
+outer radius beside them -- and that fourth quadrant is the assertion, made by
+eye: a stroke's outer edge is a circle of exactly `radius + width / 2`.
+Measured while writing them, the zoomed pair agree exactly at twenty pixels of
+reach and the wide pair to within one, which is an antialiased edge falling
+either side of a threshold rather than a difference in the geometry.
+
+Upstream builds its circle as a path of four cubics so the general stroker sees
+it; here the same shape takes the fragment-evaluated route. That is the reason
+to have them rather than an obstacle to it -- the tessellated stroker is
+already covered by the corpus, and what these say is that the *field* holds up
+where the numbers are hard.
 
 Four scenes were filed under the wrong chapter, which is worth recording
 because of how it was found rather than because of the four. Writing the
