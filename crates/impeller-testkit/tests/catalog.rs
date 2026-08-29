@@ -678,3 +678,91 @@ fn the_same_thin_line_said_four_ways_says_what_it_should() {
         );
     }
 }
+
+#[test]
+fn a_tile_mode_family_draws_four_different_pictures() {
+    // Eight plates say the same seven-stop ramp under the four tile modes,
+    // linear and swept, and the whole of what they are for is the difference
+    // between them: the ramp covers a third of the shape, so what fills the
+    // rest is the tile mode and nothing else. A renderer that quietly treated
+    // one mode as another -- decal as clamp is the easy mistake, since both
+    // leave the ramp's end color at the boundary -- would draw two of these
+    // identically and pass every other test here.
+    //
+    // Pairwise rather than against a reference, because there is no reference:
+    // no mode is the "right" one to compare the others to, and what is being
+    // asserted is that four distinct things happened.
+    let Ok(mut ctx) = Validated::new(DevicePreference::Auto) else {
+        eprintln!("skipping: no Vulkan device");
+        return;
+    };
+    for family in ["linear-gradient-many-colors", "sweep-gradient-many-colors"] {
+        let imgs: Vec<(&str, Image)> = ["clamp", "repeat", "mirror", "decal"]
+            .into_iter()
+            .map(|tile| {
+                let name = format!("gradient/can-render-{family}-{tile}");
+                let scene = catalog()
+                    .into_iter()
+                    .find(|s| s.name == name)
+                    .unwrap_or_else(|| panic!("{name} is not in the catalog"));
+                (tile, render::<VulkanHal>(&mut ctx, &scene))
+            })
+            .collect();
+        for i in 0..imgs.len() {
+            for j in i + 1..imgs.len() {
+                let diff = compare(&imgs[i].1, &imgs[j].1).expect("same size");
+                assert!(
+                    !accepts(&diff, CATALOG),
+                    "{family}: {} and {} are the same picture, so one of the two \
+                     tile modes is not being applied: {diff:?}",
+                    imgs[i].0,
+                    imgs[j].0
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn reversing_a_gradient_reverses_the_picture() {
+    // Upstream keeps each axis-aligned gradient in both directions, and its
+    // `VerifyNonOptimizedGradient` beside them with the endpoints pulled inside
+    // the shape so that whatever fast route the others may take, that one must
+    // not. The stops are bunched at one end -- nought, a tenth, and one -- so
+    // the picture is lopsided and a reversal is not a symmetry.
+    //
+    // What this catches is a fast path keyed on the axis that forgot the
+    // direction, which would draw the forward and reversed plates the same and
+    // is exactly the kind of thing a per-draw optimization gets wrong.
+    let Ok(mut ctx) = Validated::new(DevicePreference::Auto) else {
+        eprintln!("skipping: no Vulkan device");
+        return;
+    };
+    let mut shot = |name: String| {
+        let scene = catalog()
+            .into_iter()
+            .find(|s| s.name == name)
+            .unwrap_or_else(|| panic!("{name} is not in the catalog"));
+        render::<VulkanHal>(&mut ctx, &scene)
+    };
+    for axis in ["horizontal", "vertical"] {
+        let forward = shot(format!("gradient/fast-gradient-test-{axis}"));
+        let back = shot(format!("gradient/fast-gradient-test-{axis}-reversed"));
+        let diff = compare(&forward, &back).expect("same size");
+        assert!(
+            !accepts(&diff, CATALOG),
+            "the {axis} gradient draws the same forward and reversed, so the \
+             direction is being dropped: {diff:?}"
+        );
+    }
+    // And the one that must not take the fast route differs from the one that
+    // may, which is what says the condition was tested rather than assumed.
+    let plain = shot("gradient/fast-gradient-test-vertical".to_string());
+    let inset = shot("gradient/verify-non-optimized-gradient".to_string());
+    let diff = compare(&plain, &inset).expect("same size");
+    assert!(
+        !accepts(&diff, CATALOG),
+        "a gradient inset within its shape and repeating draws the same as one \
+         spanning it and clamping: {diff:?}"
+    );
+}

@@ -144,7 +144,7 @@ column is right and the obvious way to check it is wrong.
 |---|---|---|---|
 | `aiks_dl_basic_unittests.cc` | ~85 | 82 | subpass optimizations; see below |
 | `aiks_dl_path_unittests.cc` | ~30 | 30 | nothing; see below |
-| `aiks_dl_gradient_unittests.cc` | ~40 | 31 | nothing; see below |
+| `aiks_dl_gradient_unittests.cc` | ~40 | 46 | nothing; see below |
 | `aiks_dl_clip_unittests.cc` | ~5 | 7 | nothing; this file is covered |
 | `aiks_dl_opacity_unittests.cc` | ~3 | 3 | nothing; this file is covered |
 | `aiks_dl_blend_unittests.cc` | ~79 | 40 | capability injection and subpass collapse, for two of them; see below |
@@ -157,7 +157,7 @@ column is right and the obvious way to check it is wrong.
 | `aiks_dl_runtime_effect_unittests.cc` | — | 12 | nothing; see below |
 | `aiks_dl_unittests.cc` | ~36 | 13 | subpass collapse, for five of them; see below |
 
-The catalog holds three hundred and seven scenes of roughly four hundred,
+The catalog holds three hundred and twenty-two scenes of roughly four hundred,
 and the proportion is less interesting than which ones: the arithmetic of drawing is largely covered, and
 what is missing is either a capability this renderer does not have or a thing
 the scene model cannot describe.
@@ -188,6 +188,43 @@ that nothing in the file was blocked at all. Eight scenes went in: the four
 dithering plates the cell was named for, the incomplete-stops scene for the
 three gradient kinds that were missing the one the linear kind already had, and
 a gradient under a mask blur.
+
+Counting it again, name by name against the file at tip of tree, found fifteen
+more and no obstacle among them either. Eight are one family: upstream's
+seven-stop ramp under each of the four tile modes, drawn linearly and then
+swept. Seven stops is the number that matters -- four fit in the paint block and
+are interpolated by the shader, a fifth sends the gradient to an uploaded ramp
+texture instead, and `docs/non-parity.md` records that fork as a difference from
+upstream worth watching. So these are the scenes that take the second route, and
+they take it under every tiling rule.
+
+The ramp covers a third of the shape in all eight, so what fills the rest is the
+tile mode and nothing else, and the twelve pairs are asserted to be twelve
+different pictures. They differ by between forty-four and sixty-nine per cent of
+the frame. The mistake that would make: treating a decal as a clamp, which is
+easy because both leave the ramp's end color at the boundary, and which every
+other test here would let through.
+
+The plate that was already under the clamp name has been given the same
+geometry as its three new siblings. It spanned the whole shape, so there was
+nothing outside the ramp for the mode to act on and it could not have shown
+clamping if it had wanted to.
+
+Five more are upstream's fast-gradient set: the same axis-aligned ramp
+horizontally, vertically, and each of those reversed, drawn on a rectangle and
+on a rounded rectangle beside it -- both shapes, because a per-draw
+optimization is chosen per draw, and a renderer that took it for the rectangle
+and not for its rounded neighbor would show the difference here and nowhere
+else. The fifth pulls the endpoints inside the shape and repeats, which is
+upstream's way of saying the condition has to be tested rather than assumed.
+The stops are bunched at one end, so reversing is not a symmetry and a fast
+path keyed on the axis that forgot the direction is visible.
+
+The last two are a decal gradient recolored by a quarter of green -- where the
+assertion is upstream's own comment, that the green covers the border outside
+the ramp too, because outside a decal what the shader produced is transparent
+rather than absent -- and a gradient blurred as an image, which is the other
+order and a different picture.
 
 The blur row was wrong in a more interesting way, and checking it changed the
 renderer rather than the document. It said "backdrop identity keys", which was

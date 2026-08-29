@@ -288,6 +288,121 @@ fn draw_lines_grid(form: LineForm) -> Vec<Node> {
     nodes
 }
 
+/// The warm and cool ends upstream's gradient scenes are drawn between.
+const WARM: [f32; 4] = [0.9568, 0.2627, 0.2118, 1.0];
+const COOL: [f32; 4] = [0.1294, 0.5882, 0.9529, 1.0];
+/// The same cool end, transparent, which is what makes a decal's edge and an
+/// image filter's spread visible rather than merely present.
+const COOL_CLEAR: [f32; 4] = [0.1294, 0.5882, 0.9529, 0.0];
+
+/// Upstream's seven-stop ramp, which four of its linear scenes and four of its
+/// sweep scenes share and which differ only in the tile mode.
+///
+/// Seven matters. Four stops fit in the paint block and are interpolated by the
+/// shader; a fifth sends the gradient to an uploaded ramp texture instead, and
+/// `docs/non-parity.md` records that fork as a difference from upstream worth
+/// watching. These are the scenes that take the second route.
+fn seven_stops() -> Vec<Stop> {
+    [
+        [0x1f as f32 / 255.0, 0.0, 0x5c as f32 / 255.0, 1.0],
+        [0x5b as f32 / 255.0, 0.0, 0x60 as f32 / 255.0, 1.0],
+        [
+            0x87 as f32 / 255.0,
+            0x01 as f32 / 255.0,
+            0x60 as f32 / 255.0,
+            1.0,
+        ],
+        [
+            0xac as f32 / 255.0,
+            0x25 as f32 / 255.0,
+            0x53 as f32 / 255.0,
+            1.0,
+        ],
+        [
+            0xe1 as f32 / 255.0,
+            0x6b as f32 / 255.0,
+            0x5c as f32 / 255.0,
+            1.0,
+        ],
+        [
+            0xf3 as f32 / 255.0,
+            0x90 as f32 / 255.0,
+            0x60 as f32 / 255.0,
+            1.0,
+        ],
+        [1.0, 0xb5 as f32 / 255.0, 0x6b as f32 / 255.0, 1.0],
+    ]
+    .into_iter()
+    .enumerate()
+    .map(|(i, color)| Stop::new(color, i as f32 / 6.0))
+    .collect()
+}
+
+/// The seven-stop ramp across a third of the shape, so every tile mode has
+/// something outside it to act on.
+fn many_colors(tile: TileMode) -> Fill {
+    Fill::LinearGradient {
+        start: [4.0, 4.0],
+        end: [44.0, 44.0],
+        stops: seven_stops(),
+        tile,
+    }
+}
+
+/// The same ramp swept through ninety degrees about the middle of the plate,
+/// which leaves three quarters of the turn for the tile mode to fill.
+fn sweep_many_colors(tile: TileMode) -> Fill {
+    Fill::SweepGradient {
+        center: [64.0, 64.0],
+        start_angle: std::f32::consts::FRAC_PI_4,
+        end_angle: std::f32::consts::FRAC_PI_4 * 3.0,
+        stops: seven_stops(),
+        tile,
+    }
+}
+
+/// Upstream's fast-gradient plates: the same axis-aligned ramp on a rectangle
+/// and on a rounded rectangle beside it.
+///
+/// Both shapes rather than one, because the fast route a gradient may take is
+/// chosen per draw and the two draws are different geometry. A renderer that
+/// took it for the rectangle and not for its rounded neighbor would show the
+/// difference here and nowhere else.
+///
+/// The three stops are bunched at one end -- nought, a tenth, and one -- so an
+/// implementation that spaced them evenly would be obvious rather than subtle.
+fn fast_gradient(start: [f32; 2], end: [f32; 2], tile: TileMode) -> Vec<Item> {
+    let fill = |()| Fill::LinearGradient {
+        start,
+        end,
+        stops: vec![
+            Stop::new(RED, 0.0),
+            Stop::new(BLUE, 0.1),
+            Stop::new(GREEN, 1.0),
+        ],
+        tile,
+    };
+    vec![
+        Item::filled(
+            Shape::Rect {
+                min: [0.0, 0.0],
+                max: [56.0, 120.0],
+            },
+            fill(()),
+        )
+        .with_transform(Transform::translate(4.0, 4.0)),
+        Item::filled(
+            Shape::RoundedRect {
+                min: [0.0, 0.0],
+                max: [56.0, 120.0],
+                radius: 4.0,
+            },
+            fill(()),
+        )
+        .with_transform(Transform::translate(68.0, 4.0)),
+    ]
+}
+
 /// Upstream's `MakeWideStrokedRects`, which two of its scenes draw and differ
 /// only in how they say the rectangle.
 ///
@@ -2278,15 +2393,139 @@ fn gradient() -> Vec<Scene> {
         ),
         plate(
             "gradient/can-render-linear-gradient-many-colors-clamp",
+            vec![Item::filled(band.clone(), many_colors(TileMode::Clamp))],
+        ),
+        plate(
+            "gradient/can-render-linear-gradient-many-colors-repeat",
+            vec![Item::filled(band.clone(), many_colors(TileMode::Repeat))],
+        ),
+        plate(
+            "gradient/can-render-linear-gradient-many-colors-mirror",
+            vec![Item::filled(band.clone(), many_colors(TileMode::Mirror))],
+        ),
+        plate(
+            "gradient/can-render-linear-gradient-many-colors-decal",
+            vec![Item::filled(band.clone(), many_colors(TileMode::Decal))
+                // Composited, because a decal draws nothing outside its ramp
+                // and "nothing" written by a mode that replaces is a hole
+                // rather than an absence.
+                .with_blend(BlendMode::SrcOver)],
+        ),
+        plate(
+            "gradient/can-render-sweep-gradient-many-colors-clamp",
+            vec![Item::filled(
+                band.clone(),
+                sweep_many_colors(TileMode::Clamp),
+            )],
+        ),
+        plate(
+            "gradient/can-render-sweep-gradient-many-colors-repeat",
+            vec![Item::filled(
+                band.clone(),
+                sweep_many_colors(TileMode::Repeat),
+            )],
+        ),
+        plate(
+            "gradient/can-render-sweep-gradient-many-colors-mirror",
+            vec![Item::filled(
+                band.clone(),
+                sweep_many_colors(TileMode::Mirror),
+            )],
+        ),
+        plate(
+            "gradient/can-render-sweep-gradient-many-colors-decal",
+            vec![
+                Item::filled(band.clone(), sweep_many_colors(TileMode::Decal))
+                    .with_blend(BlendMode::SrcOver),
+            ],
+        ),
+        plate(
+            "gradient/can-render-linear-gradient-with-overlapping-stops-clamp",
+            // Two pairs of stops, each pair the same color and the second pair
+            // starting where the first ends. A ramp built by interpolating
+            // between neighbors has to cope with two stops at one offset, and
+            // what it should produce is a hard edge down the diagonal rather
+            // than a division by the zero distance between them.
             vec![Item::filled(
                 band.clone(),
                 Fill::LinearGradient {
-                    start: [8.0, 0.0],
-                    end: [120.0, 0.0],
-                    stops: many(9),
+                    start: [4.0, 4.0],
+                    end: [124.0, 124.0],
+                    stops: vec![
+                        Stop::new(WARM, 0.0),
+                        Stop::new(WARM, 0.5),
+                        Stop::new(COOL, 0.5),
+                        Stop::new(COOL, 1.0),
+                    ],
                     tile: TileMode::Clamp,
                 },
             )],
+        ),
+        plate(
+            "gradient/can-render-linear-gradient-decal-with-color-filter",
+            // A decal gradient whose far stop is transparent, recolored by a
+            // quarter of green composited over it. Upstream's comment is the
+            // assertion: the green covers the whole rectangle, including the
+            // border outside the ramp where the decal drew nothing -- a filter
+            // applies to what the shader produced, and outside a decal what it
+            // produced is transparent rather than absent.
+            vec![Item::filled(
+                band.clone(),
+                Fill::LinearGradient {
+                    start: [4.0, 4.0],
+                    end: [44.0, 44.0],
+                    stops: vec![Stop::new(WARM, 0.0), Stop::new(COOL_CLEAR, 1.0)],
+                    tile: TileMode::Decal,
+                },
+            )
+            .with_color_filter(
+                ColorFilter::blend([0.0, 1.0, 0.0, 64.0 / 255.0], BlendMode::SrcOver)
+                    .expect("a source-over tint is affine"),
+            )
+            .with_blend(BlendMode::SrcOver)],
+        ),
+        plate(
+            "gradient/can-render-linear-gradient-with-image-filter",
+            // The filter applies to what the draw produced rather than to the
+            // color it computed, so the gradient is blurred as an image and its
+            // edges leave the shape. The far stop is transparent, which is what
+            // makes the difference between the two orders visible at all.
+            vec![Item::filled(
+                band.clone(),
+                Fill::LinearGradient {
+                    start: [4.0, 4.0],
+                    end: [44.0, 44.0],
+                    stops: vec![Stop::new(WARM, 0.0), Stop::new(COOL_CLEAR, 1.0)],
+                    tile: TileMode::Clamp,
+                },
+            )
+            .with_image_filter(ImageFilter::Blur { sigma: 6.0 })
+            .with_blend(BlendMode::SrcOver)],
+        ),
+        plate(
+            "gradient/fast-gradient-test-horizontal",
+            fast_gradient([0.0, 0.0], [56.0, 0.0], TileMode::Clamp),
+        ),
+        plate(
+            "gradient/fast-gradient-test-horizontal-reversed",
+            fast_gradient([56.0, 0.0], [0.0, 0.0], TileMode::Clamp),
+        ),
+        plate(
+            "gradient/fast-gradient-test-vertical",
+            fast_gradient([0.0, 0.0], [0.0, 120.0], TileMode::Clamp),
+        ),
+        plate(
+            "gradient/fast-gradient-test-vertical-reversed",
+            fast_gradient([0.0, 120.0], [0.0, 0.0], TileMode::Clamp),
+        ),
+        plate(
+            "gradient/verify-non-optimized-gradient",
+            // The same two shapes, with the endpoints pulled inside the shape
+            // and reversed, and repeating. Upstream's comment says what it is
+            // for: whatever fast route an axis-aligned gradient spanning its
+            // shape may take, this one must not take it, and the picture says
+            // whether the condition was tested or assumed.
+            fast_gradient([0.0, 90.0], [0.0, 60.0], TileMode::Repeat),
         ),
         plate(
             "gradient/can-render-linear-gradient-way-many-colors-clamp",
