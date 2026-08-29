@@ -1683,6 +1683,109 @@ fn path() -> Vec<Scene> {
             draw_lines_grid(LineForm::RoundRect),
         ),
         plate(
+            "path/two-contour-path-with-single-point-contour",
+            // Two contours in one path: a segment, and a contour holding a
+            // single point. The second has no direction, so nothing but the
+            // cap gives it a shape -- with a round cap it is a dot of the
+            // stroke's width, and with any other it is nothing at all.
+            //
+            // What it is really asking is whether the two contours stayed
+            // apart. A renderer that ran them together would draw a line from
+            // the end of the first to the point, which is a diagonal across
+            // half the plate and impossible to miss.
+            vec![Item::stroke(
+                Shape::Contours(vec![
+                    vec![[24.0, 24.0], [56.0, 56.0]],
+                    vec![[96.0, 96.0], [96.0, 96.0]],
+                ]),
+                StrokeSpec {
+                    cap: LineCap::Round,
+                    ..StrokeSpec::new(12.0)
+                },
+                RED,
+            )],
+        ),
+        plate_tree(
+            "path/two-contour-path-with-connecting-lines",
+            // Two contours that meet at a point, drawn three times for the
+            // three joins. The join is the thing being watched and it should
+            // never appear: the contours end at the same place but they are
+            // separate, so what belongs there is two caps, and a mitered spike
+            // at the apex would say the renderer joined them.
+            [LineJoin::Miter, LineJoin::Round, LineJoin::Bevel]
+                .into_iter()
+                .enumerate()
+                .map(|(i, join)| {
+                    let y = i as f32 * 40.0 + 12.0;
+                    Node::Draw(Box::new(Item::stroke(
+                        Shape::Contours(vec![
+                            vec![[24.0, y], [48.0, y + 24.0]],
+                            vec![[48.0, y + 24.0], [72.0, y]],
+                        ]),
+                        StrokeSpec {
+                            join,
+                            ..StrokeSpec::new(8.0)
+                        },
+                        RED,
+                    )))
+                })
+                .collect(),
+        ),
+        plate(
+            "path/can-render-quadratic-stroke-with-instant-turn",
+            // A quadratic whose ends are the same point: it goes out to the
+            // control point and comes straight back, so the stroke is a pill
+            // laid along the diagonal. Flat at either end means the turn was
+            // treated as the curve ending rather than as the curve reversing.
+            vec![Item::stroke(
+                Shape::Conic {
+                    start: [96.0, 96.0],
+                    ctrl: [32.0, 32.0],
+                    end: [96.0, 96.0],
+                    weight: 1.0,
+                },
+                StrokeSpec {
+                    cap: LineCap::Round,
+                    ..StrokeSpec::new(24.0)
+                },
+                RED,
+            )],
+        ),
+        plate(
+            "path/can-render-stroke-path-with-cubic-line",
+            // A cubic whose control points lie outside the band its ends
+            // define, so the curve crosses its own chord twice and the stroke
+            // has to widen around three inflections rather than one.
+            vec![Item::stroke(
+                Shape::Cubic {
+                    start: [8.0, 64.0],
+                    c0: [24.0, 120.0],
+                    c1: [104.0, 8.0],
+                    end: [120.0, 64.0],
+                },
+                StrokeSpec::new(8.0),
+                RED,
+            )],
+        ),
+        plate(
+            "path/can-draw-an-open-path-that-isnt-a-rect",
+            // Four points closed into a quadrilateral that is nothing like a
+            // rectangle. Upstream draws it to check that closing a path does
+            // not send it down whatever fast route a rectangle gets, and the
+            // shape is chosen so that route would be obvious: its bounding box
+            // is half again the area of the shape itself.
+            vec![Item::stroke(
+                Shape::Polygon(vec![
+                    [12.0, 12.0],
+                    [120.0, 28.0],
+                    [70.0, 72.0],
+                    [24.0, 12.0],
+                ]),
+                StrokeSpec::new(6.0),
+                RED,
+            )],
+        ),
+        plate(
             "path/can-render-curved-strokes",
             vec![Item::stroke(
                 Shape::Cubic {

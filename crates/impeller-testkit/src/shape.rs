@@ -42,6 +42,21 @@ pub enum Shape {
     /// join everywhere instead, which is why a corpus of closed shapes could
     /// not exercise a cap however many strokes it contained.
     Polyline(Vec<[f32; 2]>),
+    /// Several open runs of line segments in one path.
+    ///
+    /// A path may hold more than one contour, and a stroke treats each
+    /// separately: the ends of one are caps rather than a join onto the next,
+    /// however close together they are. Upstream keeps two scenes on this,
+    /// and both are cases where the difference is easy to lose -- two contours
+    /// meeting at a point, where a renderer that joined them would draw a
+    /// mitered corner instead of two round caps, and a contour holding a
+    /// single point, which has no direction and is drawn only because a round
+    /// cap has a shape without one.
+    ///
+    /// Open rather than closed, and separate from [`Self::Polyline`] rather
+    /// than a field on it, because every use of it so far is upstream's and
+    /// upstream's are all open.
+    Contours(Vec<Vec<[f32; 2]>>),
     /// A closed polygon filled by a stated rule.
     ///
     /// Separate from [`Self::Polygon`] rather than a field on it, because the
@@ -195,6 +210,17 @@ impl Shape {
             }
             Self::Line { from, to } => {
                 b.move_to(Vec2::from(*from)).line_to(Vec2::from(*to));
+            }
+            Self::Contours(contours) => {
+                for points in contours {
+                    let mut points = points.iter();
+                    if let Some(first) = points.next() {
+                        b.move_to(Vec2::from(*first));
+                        for p in points {
+                            b.line_to(Vec2::from(*p));
+                        }
+                    }
+                }
             }
             Self::Polyline(points) => {
                 trace(&mut b, points);

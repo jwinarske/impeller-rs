@@ -143,7 +143,7 @@ column is right and the obvious way to check it is wrong.
 | File | Scenes there | Here | Blocked on |
 |---|---|---|---|
 | `aiks_dl_basic_unittests.cc` | ~85 | 82 | subpass optimizations; see below |
-| `aiks_dl_path_unittests.cc` | ~30 | 25 | nothing; see below |
+| `aiks_dl_path_unittests.cc` | ~30 | 30 | nothing; see below |
 | `aiks_dl_gradient_unittests.cc` | ~40 | 31 | nothing; see below |
 | `aiks_dl_clip_unittests.cc` | ~5 | 7 | nothing; this file is covered |
 | `aiks_dl_opacity_unittests.cc` | ~3 | 3 | nothing; this file is covered |
@@ -157,7 +157,7 @@ column is right and the obvious way to check it is wrong.
 | `aiks_dl_runtime_effect_unittests.cc` | — | 12 | nothing; see below |
 | `aiks_dl_unittests.cc` | ~36 | 13 | subpass collapse, for five of them; see below |
 
-The catalog holds three hundred and two scenes of roughly four hundred,
+The catalog holds three hundred and seven scenes of roughly four hundred,
 and the proportion is less interesting than which ones: the arithmetic of drawing is largely covered, and
 what is missing is either a capability this renderer does not have or a thing
 the scene model cannot describe.
@@ -720,6 +720,35 @@ line a device can draw; this renderer refuses, which is the one part of the rule
 not taken and is recorded as a row of `docs/parity.md`. So the column is empty
 in all four plates, and they are the only place that decision can be seen rather
 than read about.
+
+Five more after those, and they close the chapter. Four are shapes that had no
+plate and needed no new capability: a quadratic whose ends are the same point,
+so the stroke goes out and comes straight back and should be a pill rather than
+anything flat-ended; a cubic whose controls lie outside the band its ends
+define, so the curve crosses its own chord twice; and a quadrilateral closed
+into something no rectangle route could mistake for one. The fifth pair needed
+a `Shape::Contours`, because a path may hold more than one contour and nothing
+in either collection could say so. Both of upstream's scenes on that are cases
+where the difference is easy to lose: two contours meeting at a point, where a
+renderer that ran them together would draw a mitered corner instead of two round
+caps, and a contour holding a single point, which has no direction and is drawn
+only because a round cap has a shape without one.
+
+That leaves the file's `ArcWithZeroSweepAndBlur`, which is not a catalog scene
+and should not become one. Upstream builds it and stops, with the comment that
+an empty picture has to be creatable without crashing, and it draws nothing --
+so it fails this collection's own rule that every scene draws something, and it
+would fail the mask-blur check above for the same reason. It is already covered,
+by `an_arc_that_sweeps_nothing_survives_a_mask_blur_and_a_sweep_gradient`, which
+asserts the whole frame is untouched.
+
+Writing it up found the one thing in this round that looked like a defect and
+was not. A degenerate shape given a mask blur appeared to draw a disc of
+transparent pixels where it should have drawn nothing. It is the blend: an empty
+layer still has bounds, and this collection's items replace by default, so `Src`
+clears those bounds to transparent -- correct, and the same behavior a plate in
+the basic chapter exists to show. Composited as upstream composites, the frame
+comes back untouched.
 
 Dithering was not the small feature its one-word entry suggested, and the reason
 is worth keeping even though the difficulty has since evaporated. Breaking up a
