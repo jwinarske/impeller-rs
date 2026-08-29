@@ -21,6 +21,20 @@ pub enum Shape {
     },
     /// A closed polygon through the given points.
     Polygon(Vec<[f32; 2]>),
+    /// A single segment, drawn through `Canvas::draw_line`.
+    ///
+    /// Distinct from a two-point [`Self::Polyline`] in the same way a
+    /// rectangle is distinct from its path: the API offers a call for it, and
+    /// a scene naming this one gets that call. Upstream keeps a whole family
+    /// of scenes drawing the same thin lines four ways -- as a line, as a
+    /// stroked path, as a filled rectangle and as a filled rounded one --
+    /// because a renderer may specialize any of them, and a specialization
+    /// that disagrees with the general route is a bug nobody sees until the
+    /// two are put side by side.
+    Line {
+        from: [f32; 2],
+        to: [f32; 2],
+    },
     /// An open run of line segments.
     ///
     /// Distinct from [`Self::Polygon`] in the one way that matters to a
@@ -178,6 +192,9 @@ impl Shape {
             Self::Polygon(points) => {
                 trace(&mut b, points);
                 b.close();
+            }
+            Self::Line { from, to } => {
+                b.move_to(Vec2::from(*from)).line_to(Vec2::from(*to));
             }
             Self::Polyline(points) => {
                 trace(&mut b, points);

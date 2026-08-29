@@ -621,3 +621,60 @@ fn an_empty_layer_composites_nothing_at_all() {
         "the frame should be the paint's red"
     );
 }
+
+#[test]
+fn the_same_thin_line_said_four_ways_says_what_it_should() {
+    // Upstream draws its thin-line grid four times -- as a line, as a stroked
+    // path, as a filled rectangle and as a filled rounded one -- because a
+    // renderer may specialize any of them and a specialization that disagrees
+    // with the general route is a bug nobody sees until the two are side by
+    // side. Two claims here, and neither is the same as "they all agree".
+    //
+    // The line and the path are the same picture to the byte, because
+    // `Canvas::draw_line` builds a two-point path and hands it to
+    // `draw_path`. That is worth pinning rather than assuming: if the line
+    // ever gains a route of its own, this is what says so, and the plates are
+    // already there to look at.
+    //
+    // The filled forms are not the same picture, and should not be. A stroke
+    // narrower than a device pixel is widened to one and dimmed to match,
+    // which is upstream's rule and is copied constant for constant; a filled
+    // rectangle a third of a pixel tall gets a third of a pixel of coverage
+    // and nothing else. So the middle column of the grid is where the two
+    // families part, and this asserts that they do -- a renderer that had
+    // dropped the thin-stroke rule would make all four agree and would look,
+    // from any other test here, entirely well.
+    let Ok(mut ctx) = Validated::new(DevicePreference::Auto) else {
+        eprintln!("skipping: no Vulkan device");
+        return;
+    };
+    let mut get = |n: &str| {
+        let scene = catalog()
+            .into_iter()
+            .find(|s| s.name == n)
+            .unwrap_or_else(|| panic!("{n} is not in the catalog"));
+        render::<VulkanHal>(&mut ctx, &scene)
+    };
+
+    let line = get("path/draw-lines-with-draw-line");
+    let path = get("path/draw-lines-with-path");
+    let diff = compare(&line, &path).expect("the two renders are the same size");
+    assert_eq!(
+        diff.differing, 0,
+        "draw_line and a two-point stroked path should be the same picture \
+         while the first is written in terms of the second: {diff:?}"
+    );
+
+    for name in [
+        "path/draw-lines-with-filled-rects",
+        "path/draw-lines-with-filled-round-rects",
+    ] {
+        let filled = get(name);
+        let diff = compare(&line, &filled).expect("the two renders are the same size");
+        assert!(
+            !accepts(&diff, CATALOG),
+            "{name} renders the same as the stroked line, so the widening a \
+             sub-pixel stroke gets is not being applied: {diff:?}"
+        );
+    }
+}

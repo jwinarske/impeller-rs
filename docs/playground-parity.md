@@ -143,7 +143,7 @@ column is right and the obvious way to check it is wrong.
 | File | Scenes there | Here | Blocked on |
 |---|---|---|---|
 | `aiks_dl_basic_unittests.cc` | ~85 | 82 | subpass optimizations; see below |
-| `aiks_dl_path_unittests.cc` | ~30 | 21 | nothing; see below |
+| `aiks_dl_path_unittests.cc` | ~30 | 25 | nothing; see below |
 | `aiks_dl_gradient_unittests.cc` | ~40 | 31 | nothing; see below |
 | `aiks_dl_clip_unittests.cc` | ~5 | 7 | nothing; this file is covered |
 | `aiks_dl_opacity_unittests.cc` | ~3 | 3 | nothing; this file is covered |
@@ -157,7 +157,7 @@ column is right and the obvious way to check it is wrong.
 | `aiks_dl_runtime_effect_unittests.cc` | — | 12 | nothing; see below |
 | `aiks_dl_unittests.cc` | ~36 | 13 | subpass collapse, for five of them; see below |
 
-The catalog holds two hundred and ninety-eight scenes of roughly four hundred,
+The catalog holds three hundred and two scenes of roughly four hundred,
 and the proportion is less interesting than which ones: the arithmetic of drawing is largely covered, and
 what is missing is either a capability this renderer does not have or a thing
 the scene model cannot describe.
@@ -689,6 +689,37 @@ of those scenes actually build a perspective matrix. So the path row now says
 nothing is named rather than that nothing is left, which is the honest state of
 it: the obstacle that was written down is gone, and what holds up the rest has
 not been examined.
+
+It has been examined since, against the file at tip of tree, and the chapter is
+four longer for it. Upstream draws the same thin-line grid four times -- as a
+line, as a stroked path, as a filled rectangle and as a filled rounded one --
+and it is the one family in that file worth having whole, because what it is
+for is the disagreement between the four rather than any one picture. Three
+columns of stroke width against five rows of angle, four parallel lines to a
+cell, each a quarter of a pixel further off the sample grid than the last.
+
+Saying the first of the four needed a `Shape::Line`, which the catalog did not
+have: `Canvas::draw_line` is a public entry point and nothing in either
+collection reached it. Having it says something immediately. The line and the
+stroked path come out identical to the byte, because `draw_line` builds a
+two-point path and hands it to `draw_path` -- so upstream's pair, which exists
+to catch a specialized line renderer disagreeing with the general one, is one
+picture here. That is pinned rather than assumed, so a route of its own would
+be visible the day it appears.
+
+The filled forms are a different picture, and should be. A stroke narrower than
+a device pixel is widened to one and dimmed to match, which is upstream's rule
+copied constant for constant; a filled rectangle a third of a pixel tall gets a
+third of a pixel of coverage and nothing more. The middle column is where the
+two families part, by eleven per cent of the frame, and that difference is
+asserted -- a renderer that had quietly dropped the thin-stroke rule would make
+all four agree and would look, from every other test here, entirely well.
+
+The first column asks for a width of zero. Upstream widens that to the thinnest
+line a device can draw; this renderer refuses, which is the one part of the rule
+not taken and is recorded as a row of `docs/parity.md`. So the column is empty
+in all four plates, and they are the only place that decision can be seen rather
+than read about.
 
 Dithering was not the small feature its one-word entry suggested, and the reason
 is worth keeping even though the difficulty has since evaporated. Breaking up a

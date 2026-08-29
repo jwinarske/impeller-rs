@@ -444,6 +444,9 @@ fn record_node(canvas: &mut Canvas, node: &Node, anti_alias: bool) -> Result<()>
                 // A circle goes through its own call for the same reason: that
                 // is where the choice between a distance field and four cubics
                 // is made, and handing over a path would decide it here.
+                Shape::Line { from, to } => {
+                    canvas.draw_line(Vec2::from(*from), Vec2::from(*to), &paint)?;
+                }
                 Shape::Rect { min, max } => {
                     canvas.draw_rect(Rect::new(min[0], min[1], max[0], max[1]), &paint)?;
                 }

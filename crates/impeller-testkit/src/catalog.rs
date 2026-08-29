@@ -188,6 +188,106 @@ fn filled_round_rects(as_path: bool) -> Vec<Item> {
     .collect()
 }
 
+/// Which of the four ways upstream says the same thin line.
+#[derive(Clone, Copy)]
+enum LineForm {
+    /// Through `Canvas::draw_line`.
+    Line,
+    /// As a stroked two-point path.
+    Path,
+    /// As a filled rectangle the width of the stroke.
+    Rect,
+    /// As a filled rounded rectangle, its radius half the stroke width, which
+    /// is what a round cap on the line would have drawn.
+    RoundRect,
+}
+
+/// Upstream's `DrawLinesTest`, which four of its scenes share and differ only
+/// in how the line is said.
+///
+/// Three columns of stroke width against five rows of angle, and in each cell
+/// four parallel lines a quarter of a pixel further off the grid than the last.
+/// The subpixel offsets are the point and are kept in device pixels rather
+/// than scaled with the rest: what the family is for is how a line a third of a
+/// pixel wide lands on a sample grid, and upstream says as much in a comment --
+/// these are the scenes that deliberately do not scale with the display.
+///
+/// The first column asks for a width of zero, which upstream's rule widens to
+/// the thinnest line a device can draw and this renderer refuses. So that
+/// column is empty here, on purpose and by a decision `docs/parity.md` records,
+/// and the plate is the one place it can be seen rather than read about.
+fn draw_lines_grid(form: LineForm) -> Vec<Node> {
+    let mut nodes = vec![Node::Paint(Box::new(PaintSpec {
+        // Upstream's own ground for this family, which is darker than the one
+        // the rest of the catalog clears to: a line a third of a pixel wide
+        // arrives as a few levels of gray, and it needs somewhere dark to
+        // arrive on.
+        color: [
+            0x11 as f32 / 255.0,
+            0x11 as f32 / 255.0,
+            0x11 as f32 / 255.0,
+            1.0,
+        ],
+        blend: BlendMode::Src,
+        clip: None,
+        clip_out: None,
+        transform: Transform::default(),
+    }))];
+    const LENGTH: f32 = 24.0;
+    for (col, width) in [0.0f32, 0.3, 1.0].into_iter().enumerate() {
+        let cx = (col as f32 + 0.5) * (128.0 / 3.0);
+        for (row, degrees) in [0.0f32, 3.0, 45.0, 87.0, 90.0].into_iter().enumerate() {
+            let cy = (row as f32 + 0.5) * (128.0 / 5.0);
+            let transform = Transform {
+                rotate: degrees.to_radians(),
+                translate: [cx, cy],
+                ..Transform::default()
+            };
+            for i in 0..4 {
+                // Four lines three and a half pixels apart, each a further
+                // quarter of a pixel off the grid than the one before it.
+                let y = i as f32 * 3.5 - 5.25 + i as f32 * 0.25;
+                let (half_l, half_w) = (LENGTH / 2.0, width / 2.0);
+                let item = match form {
+                    LineForm::Line => Item::stroke(
+                        Shape::Line {
+                            from: [-half_l, y],
+                            to: [half_l, y],
+                        },
+                        StrokeSpec::new(width),
+                        WHITE,
+                    ),
+                    LineForm::Path => Item::stroke(
+                        Shape::Polyline(vec![[-half_l, y], [half_l, y]]),
+                        StrokeSpec::new(width),
+                        WHITE,
+                    ),
+                    LineForm::Rect => Item::fill(
+                        Shape::Rect {
+                            min: [-half_l, y - half_w],
+                            max: [half_l, y + half_w],
+                        },
+                        WHITE,
+                    ),
+                    LineForm::RoundRect => Item::fill(
+                        Shape::RoundedRect {
+                            min: [-half_l, y - half_w],
+                            max: [half_l, y + half_w],
+                            radius: half_w,
+                        },
+                        WHITE,
+                    ),
+                };
+                nodes.push(Node::Draw(Box::new(
+                    item.with_transform(transform)
+                        .with_blend(BlendMode::SrcOver),
+                )));
+            }
+        }
+    }
+    nodes
+}
+
 /// Upstream's `MakeWideStrokedRects`, which two of its scenes draw and differ
 /// only in how they say the rectangle.
 ///
@@ -1569,6 +1669,19 @@ fn ramp() -> Fill {
 /// `aiks_dl_path_unittests.cc` -- curves, strokes and contours.
 fn path() -> Vec<Scene> {
     vec![
+        plate_tree(
+            "path/draw-lines-with-draw-line",
+            draw_lines_grid(LineForm::Line),
+        ),
+        plate_tree("path/draw-lines-with-path", draw_lines_grid(LineForm::Path)),
+        plate_tree(
+            "path/draw-lines-with-filled-rects",
+            draw_lines_grid(LineForm::Rect),
+        ),
+        plate_tree(
+            "path/draw-lines-with-filled-round-rects",
+            draw_lines_grid(LineForm::RoundRect),
+        ),
         plate(
             "path/can-render-curved-strokes",
             vec![Item::stroke(
