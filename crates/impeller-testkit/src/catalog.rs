@@ -7287,6 +7287,58 @@ fn runtime_effect() -> Vec<Scene> {
             )],
         ),
         plate(
+            "effect/can-render-clipped-runtime-effects",
+            // A caller's program filling a rectangle, cut to a rounded one. A
+            // program replaces this renderer's fragment shader outright, so
+            // the clip cannot be arithmetic inside it and has to come from the
+            // stencil -- which makes this the plate that says a program's draw
+            // is clipped like any other rather than being a special case that
+            // escaped the machinery around it.
+            vec![Item::filled(
+                Shape::Rect {
+                    min: [0.0, 0.0],
+                    max: [128.0, 128.0],
+                },
+                effect(0.0),
+            )
+            .with_clip_shape(Shape::RoundedRect {
+                min: [8.0, 8.0],
+                max: [120.0, 120.0],
+                radius: 24.0,
+            })],
+        ),
+        plate(
+            "effect/runtime-effect-image-filter-rotated",
+            // The program used as an image filter, on content that is turned.
+            // A filter acts on what the draw produced, and what the draw
+            // produced is already in the frame's space -- so the program reads
+            // an upright image of a turned shape, and the tint it applies does
+            // not turn with the shape. Upstream draws this one at forty-five
+            // degrees for that reason.
+            vec![Item::filled(
+                Shape::Rect {
+                    min: [-40.0, -28.0],
+                    max: [40.0, 28.0],
+                },
+                sheet(
+                    [-40.0, -28.0, 40.0, 28.0],
+                    ALL,
+                    TileMode::Clamp,
+                    Sampling::Linear,
+                ),
+            )
+            .with_image_filter(ImageFilter::Runtime {
+                program: 2,
+                uniforms: crate::fixture::tint_uniforms([0.2, 0.9, 0.5, 1.0]),
+            })
+            .with_transform(Transform {
+                rotate: std::f32::consts::FRAC_PI_4,
+                translate: [64.0, 64.0],
+                ..Transform::default()
+            })
+            .with_blend(BlendMode::SrcOver)],
+        ),
+        plate(
             "effect/runtime-effect-can-precompile",
             vec![Item::filled(
                 // A shape rather than the frame, so what is outside it shows

@@ -165,10 +165,10 @@ column is right and the obvious way to check it is wrong.
 | `aiks_dl_shadow_unittests.cc` | ~30 | 13 | a convex-shadow optimization this renderer does not have; see below |
 | `aiks_dl_primitive_shape_unittests.cc` | ~2 | 0 | one is a playground harness, one wants a stroke width of zero to mean a hairline |
 | `aiks_dl_text_unittests.cc` | — | 7 | shaping and font parsing, which are out of scope; glyph rendering is not, and these use synthetic coverage |
-| `aiks_dl_runtime_effect_unittests.cc` | — | 12 | nothing; see below |
+| `aiks_dl_runtime_effect_unittests.cc` | — | 14 | a drawPaint with a program, and a sampler bound to something that is not a texture, for one each; see below |
 | `aiks_dl_unittests.cc` | ~36 | 13 | subpass collapse, for five of them; see below |
 
-The catalog holds three hundred and forty-six scenes of roughly four hundred,
+The catalog holds three hundred and forty-eight scenes of roughly four hundred,
 and the proportion is less interesting than which ones: the arithmetic of drawing is largely covered, and
 what is missing is either a capability this renderer does not have or a thing
 the scene model cannot describe.
@@ -393,6 +393,26 @@ both ways round. The pair is the point rather than either half -- composing is
 the one thing a program used as a filter can do that a program used as a paint
 cannot, and the two orders come out thirty-six per cent apart, which is what
 says the order is carried rather than collapsed.
+
+Two more since, and the file's remainder is named. A program filling a rectangle
+cut to a rounded one: a program replaces this renderer's fragment shader
+outright, so the clip cannot be arithmetic inside it and has to come from the
+stencil -- which makes the plate say that a program's draw is clipped like any
+other rather than being a special case that escaped the machinery around it. And
+a program used as an image filter on content that is turned, where the filter
+acts on what the draw produced and what the draw produced is already in the
+frame's space, so the tint does not turn with the shape.
+
+Three of upstream's are left. `DrawPaintTransformsBounds` fills with a program
+through `drawPaint`, and a scene here says `drawPaint` as a node carrying a
+color rather than a fill -- so the scene format is what stops it, not the
+renderer, which is the same shape of obstacle the difference-of-rounded-rects
+row had. `RuntimeEffectWithInvalidSamplerDoesNotCrash` binds a gradient where a
+sampler is expected; a scene names its images as slots into a table the executor
+uploads, and there is no way to name something that is not a texture. And
+`RuntimeEffectVectorArray` wants a program with a vector-array uniform, which
+would mean a third fixture shader -- the two here already pass vectors, so what
+it would add is the array rather than the vector.
 
 The plates fill with a gradient where a flat color would have been easier, and
 the reason is a mutation that passed. Where a texture binding names nothing the
