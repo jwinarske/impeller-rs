@@ -176,10 +176,19 @@ read as a divergence until both sides were measured: upstream's blur sigma is in
 *local* space — `gaussian_blur_filter_contents.cc` multiplies it by
 `ExtractScale(entity.GetTransform().Basis())` — so that division exists to
 cancel the multiplication and leave the shadow's softness fixed in device
-pixels. This renderer's mask blur sigma is already in device space, measured at
-a seventeen-pixel tail under both a unit scale and a doubled one, so it arrives
-at the same behavior by a shorter route. Copying the division would not add
-parity; it would break it, by shrinking a shadow as the canvas grows.
+pixels.
+
+That entry used to end here by saying this renderer's sigma was already in
+device space and reached the same behavior without dividing, and that copying
+the division would break parity rather than add it. Both halves were true of
+the convention then in force and neither is now: the sigma is in the space the
+drawing is in, as `dart:ui` states it and upstream honors it, so the
+multiplication the division exists to cancel is here too and the division is
+here with it. `docs/architecture.md` has the change and what caught the half of
+it that was not designed. The behavior a caller sees is unchanged — a shadow's
+softness is fixed in device pixels, measured at a five-pixel tail under a unit
+scale and a doubled one — which is the point of both arrangements and the
+reason this paragraph is a correction rather than a new entry.
 
 Worth recording how the blur width was wrong, since the shape of the mistake is
 more useful than the number. Elevation gives a kernel *radius*, and the blur
