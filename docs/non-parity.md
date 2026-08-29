@@ -531,69 +531,43 @@ visible rather than subtle: the smear points the wrong way.
 drawn as a layer: the shape goes into a target, the target is blurred, and the
 layer is composited onto the frame with the caller's blend. That composite
 covers the layer's *bounds*, and a mode that writes where its source is
-transparent writes across all of them. So a blurred circle drawn with `Clear`
-clears a rectangle where upstream clears a soft disc.
+transparent writes across all of them -- so the shape becomes its bounding
+rectangle.
 
-Measured, on a circle of radius thirty-six at the middle of a 128-pixel frame
-over an opaque fill. Sharp, it erases 4052 pixels against a disc's 4071 -- the
-circle, correctly. Blurred at a deviation of seven it erases 9216, which is
-96 by 96 exactly: the circle's bounds outset by the blur's reach, to the pixel.
+Seven of `dart:ui`'s modes ignore coverage in that sense: the ones whose
+destination factor is neither `One` nor `OneMinusSrcAlpha` -- `Clear`, `Src`,
+`SrcIn`, `SrcOut`, `DstIn`, `DstATop` and `Modulate`. Every other mode,
+`SrcOver` and all the advanced ones included, is unaffected at any deviation.
 
-The renderer already knows the shape of this mistake. `analytic_style_blur`
-refuses a mode that does not respect coverage, and the comment says why -- a
-fragment is emitted across a quad larger than the shape, so a mode that touches
-the destination where the source is transparent erases what is behind it in the
-gap. The layer route has the same gap and no such guard, which is why the
-analytic half of the same feature is right and this half is not.
+**`Clear` is fixed, and the other six are not.** That split is upstream's and
+not an arbitrary stopping point. `Clear` is the one mode that can be admitted to
+the *evaluated* blur anyway, because on a coverage it is not what its factors
+say: clearing by an amount `c` is `dst * (1 - c)`, which is `DstOut` against a
+white source -- and white is exact rather than approximate, since `Clear`
+discards the source color by definition and cannot care which one it had. So the
+guard that refuses a coverage-ignoring mode admits `Clear`, substituting white
+and `DstOut`, and a blurred circle drawn to clear now erases by its falloff:
+alpha climbs monotonically out of the hole, and a corner of what the bounds
+would have been is untouched.
 
-Seven of `dart:ui`'s modes are affected: the ones whose destination factor is
-neither `One` nor `OneMinusSrcAlpha` -- `Clear`, `Src`, `SrcIn`, `SrcOut`,
-`DstIn`, `DstATop` and `Modulate`. Every other mode, `SrcOver` and all the
-advanced ones included, is unaffected at any deviation.
+Upstream does exactly this and no more.
+`SolidRRectLikeBlurContents::Render` checks for `BlendMode::kClear`, forces the
+color to white, and sets a flag that turns the pipeline's blend into a reverse
+subtraction -- destination factor `One`, source factor `DestinationColor`, so
+`dst - src * dst`. Same arithmetic; upstream reaches it by subtraction because
+its fragment writes coverage directly, and this reaches it by naming the mode
+that already means it. The other six have no such reading, upstream does not
+generalize the case, and neither does this.
 
-**What upstream does** is narrower than either way out this entry first
-proposed, and it settles the question. `SolidRRectLikeBlurContents::Render`
-checks the entity's blend mode, and for `kClear` alone it forces the color to
-white and sets a pipeline flag:
+**What is left.** Two residues, and both are the layer route rather than the
+evaluated one. The other six modes over any mask blur. And `Clear` over a shape
+that is not rounded-rectangle-like -- a polygon, a curve -- which has no
+evaluated blur to be admitted to and falls through to the layer as before.
+Fixing either means treating a layer's alpha as coverage rather than as an
+image, `mix(dst, M(src, dst), src_alpha)` per mode, which is a table nobody
+upstream has derived either.
 
-    if (entity.GetBlendMode() == BlendMode::kClear) {
-      opts.is_for_rrect_blur_clear = true;
-      color = Color::White();
-    }
-
-which `content_context.cc` turns into a reverse-subtract rather than the usual
-`Clear` factors: destination factor `One`, source factor `DestinationColor`,
-operation `ReverseSubtract`. That is `dst - src * dst`, which for a white source
-premultiplied by the blurred coverage is `dst * (1 - coverage)` -- a soft erase.
-
-Two things follow. The arithmetic this entry guessed at is right: `Clear` on a
-coverage is `DstOut`, and upstream reaches it by subtraction because its
-fragment writes coverage directly. And upstream does *not* solve the general
-case either -- it special-cases one mode on one path, the analytic
-rounded-rect-like blur, which is the path its `ClearBlendWithBlur` takes because
-a circle is rrect-like.
-
-So the fix here is upstream's fix, and it is small. This renderer's analytic
-blur route refuses `Clear` at the coverage guard and falls through to the layer
-route, which is where the rectangle comes from. Letting `Clear` past that guard,
-drawing white, and compositing the quad with `DstOut` is the same thing
-upstream does and needs no new blend operation, since `DstOut` is already a mode
-here. The general table is not needed and should not be attempted: the other six
-modes stay refused or wrong exactly as they are upstream.
-
-Left undone rather than done in passing because relaxing a guard that exists to
-stop a quad erasing what is behind it deserves its own change and its own test,
-and because it was written down before it was understood. Pinned by
-`a_mask_blur_under_a_mode_that_ignores_coverage_erases_its_whole_bounds`.
-
-Upstream's `ClearBlendWithBlur` is that scene by name, and it is the one
-picture of its file left unmirrored for this reason: a plate under upstream's
-name that draws a rectangle where upstream draws a soft hole would report the
-chapter as covered while showing the wrong thing.
-
-**Impact.** Confined to a mask blur combined with one of those seven modes.
-`SrcOver` is what nearly every blurred draw uses and is unaffected, as is every
-mask blur on a rectangle, rounded rectangle or circle with a solid color under a
-mode that does respect coverage -- those are evaluated in the fragment stage and
-never open a layer at all. Where it does bite it is loud rather than subtle: a
-rectangle appears where a soft shape was asked for.
+**Impact.** Confined to a mask blur combined with one of those six modes, or to
+`Clear` on a shape with no analytic form. `SrcOver` is what nearly every blurred
+draw uses. Where it does bite it is loud rather than subtle: a rectangle appears
+where a soft shape was asked for.

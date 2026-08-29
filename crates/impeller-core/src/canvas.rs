@@ -1916,8 +1916,9 @@ impl Canvas {
         // the general route however round it is.
         if let Some((bounds, radius)) = path.as_rounded_rect() {
             let rect = Rect::new(bounds.min.x, bounds.min.y, bounds.max.x, bounds.max.y);
-            if let Some((material, pad)) = self.analytic_rrect_blur(rect, radius, paint) {
-                return self.draw_analytic(rect.outset(pad), material, paint);
+            if let Some((material, pad, drawn)) = self.analytic_rrect_blur_draw(rect, radius, paint)
+            {
+                return self.draw_analytic(rect.outset(pad), material, &drawn);
             }
         }
         // A color filter is normally arithmetic in this renderer's own fragment
@@ -2888,8 +2889,8 @@ impl Canvas {
         // Before the sharp field, because that one refuses a mask blur and this
         // is what answers it: the blur is folded into the expression rather
         // than run as passes around the draw.
-        if let Some((material, pad)) = self.analytic_rrect_blur(rect, radius, paint) {
-            return self.draw_analytic(rect.outset(pad), material, paint);
+        if let Some((material, pad, drawn)) = self.analytic_rrect_blur_draw(rect, radius, paint) {
+            return self.draw_analytic(rect.outset(pad), material, &drawn);
         }
         if let Some(material) = self.analytic_rrect(rect, radius, paint) {
             return self.draw_analytic(rect, material, paint);
@@ -2975,6 +2976,65 @@ impl Canvas {
     /// deviations was tried and left a cutoff on large blurs.
     fn pad_for_sigma(sigma: f32) -> f32 {
         sigma * (sigma / 47.6 + 2.5).min(3.5)
+    }
+
+    /// The gate above, with the one substitution upstream makes, and the paint
+    /// to draw the result with.
+    ///
+    /// Three shapes reach the evaluated blur -- a rounded-rectangle path,
+    /// `draw_rrect` and `draw_circle` -- and all three share this. The fourth
+    /// caller of [`Self::analytic_rrect_blur`] deliberately does not: it is
+    /// building the blurred *ingredient* of a style that combines it with the
+    /// sharp shape inside a layer, and a substitution good for a whole draw is
+    /// not good for one operand of a combination.
+    fn analytic_rrect_blur_draw(
+        &mut self,
+        rect: Rect,
+        radius: f32,
+        paint: &Paint,
+    ) -> Option<(Material, f32, Paint)> {
+        let drawn = Self::erasing_blur_paint(paint);
+        let (material, pad) = self.analytic_rrect_blur(rect, radius, &drawn)?;
+        Some((material, pad, drawn))
+    }
+
+    /// `Clear` on a blurred shape, expressed as a mode that respects coverage.
+    ///
+    /// The gate below refuses a mode that writes where its source is
+    /// transparent, and it is right to: the field is evaluated across a quad
+    /// larger than the shape, so such a mode erases what is behind it in the
+    /// gap. `Clear` is the one mode that can be admitted anyway, because on a
+    /// coverage it is not what its factors say. Clearing by an amount `c` is
+    /// `dst * (1 - c)`, which is `DstOut` against a white source -- and white
+    /// is exact rather than approximate, since `Clear` discards the source
+    /// color by definition and cannot care which one it had.
+    ///
+    /// This is upstream's own special case, in upstream's own one place.
+    /// `SolidRRectLikeBlurContents::Render` checks for `BlendMode::kClear`,
+    /// forces the color to white, and sets a flag that turns the pipeline's
+    /// blend into a reverse subtraction -- destination factor `One`, source
+    /// factor `DestinationColor`, so `dst - src * dst`. The arithmetic is the
+    /// same; upstream reaches it by subtraction because its fragment writes
+    /// coverage directly, and this reaches it by naming the mode that already
+    /// means it.
+    ///
+    /// Only `Clear`. Upstream does not generalize this and neither does this:
+    /// the other six modes that ignore coverage have no such reading and stay
+    /// on the route that gets them wrong, which is `docs/non-parity.md`
+    /// section 16.
+    fn erasing_blur_paint(paint: &Paint) -> Paint {
+        if paint.blend != BlendMode::Clear {
+            return paint.clone();
+        }
+        paint
+            .clone()
+            .with_shader(Shader::Solid(Color::WHITE))
+            .with_blend(BlendMode::DstOut)
+            // Dropped rather than carried, because it provably cannot matter:
+            // a color filter transforms the source color and `Clear` discards
+            // it. Carried into the substitution it would stop being a no-op
+            // and start changing how much is erased.
+            .with_color_filter(ColorFilter::None)
     }
 
     /// Draw a blurred rounded rectangle without a blur pass, if this one can be.
@@ -3370,8 +3430,8 @@ impl Canvas {
         // A circle is a rounded rectangle whose corners are half its side, which
         // is how the line below already treats it and how upstream states it:
         // `DrawOval` on a square sends `RRectBlurShape(rect, width * 0.5)`.
-        if let Some((material, pad)) = self.analytic_rrect_blur(bounds, radius, paint) {
-            return self.draw_analytic(bounds.outset(pad), material, paint);
+        if let Some((material, pad, drawn)) = self.analytic_rrect_blur_draw(bounds, radius, paint) {
+            return self.draw_analytic(bounds.outset(pad), material, &drawn);
         }
         if let Some(material) = self.analytic_rrect(bounds, radius, paint) {
             return self.draw_analytic(bounds, material, paint);

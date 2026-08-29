@@ -159,7 +159,7 @@ column is right and the obvious way to check it is wrong.
 | `aiks_dl_clip_unittests.cc` | ~5 | 7 | nothing; this file is covered |
 | `aiks_dl_opacity_unittests.cc` | ~3 | 3 | nothing; this file is covered |
 | `aiks_dl_blend_unittests.cc` | ~79 | 40 | capability injection and subpass collapse, for two of them; see below |
-| `aiks_dl_blur_unittests.cc` | ~59 | 54 | a blur does not turn with a rotation, and a mask blur under a mode that ignores coverage erases its bounds, for one of them each; see below |
+| `aiks_dl_blur_unittests.cc` | ~59 | 55 | a blur does not turn with a rotation, for one of them; see below |
 | `aiks_dl_vertices_unittests.cc` | ~16 | 20 | a shader other than an image cannot be read at a mesh's texture coordinates, for two of them; see below |
 | `aiks_dl_atlas_unittests.cc` | ~11 | 12 | nothing; see below |
 | `aiks_dl_shadow_unittests.cc` | ~30 | 13 | a convex-shadow optimization this renderer does not have; see below |
@@ -168,7 +168,7 @@ column is right and the obvious way to check it is wrong.
 | `aiks_dl_runtime_effect_unittests.cc` | — | 14 | a drawPaint with a program, and a sampler bound to something that is not a texture, for one each; see below |
 | `aiks_dl_unittests.cc` | ~36 | 13 | subpass collapse, for five of them; see below |
 
-The catalog holds three hundred and forty-eight scenes of roughly four hundred,
+The catalog holds three hundred and forty-nine scenes of roughly four hundred,
 and the proportion is less interesting than which ones: the arithmetic of drawing is largely covered, and
 what is missing is either a capability this renderer does not have or a thing
 the scene model cannot describe.
@@ -294,21 +294,25 @@ leave one plate a recolored sharp circle and the other a blurred green one, and
 nothing else here would notice. Dropping the inner one instead is caught by the
 rule that a scene carrying a filter has to render differently without it.
 
-The fifth was `ClearBlendWithBlur`, and it is not here. A mask blur that cannot
-be evaluated in the fragment stage is drawn as a layer, and the layer is
-composited with the caller's blend -- across the layer's *bounds*. A mode that
-writes where its source is transparent writes across all of them, so a blurred
-circle drawn with `Clear` clears a rectangle: 9216 pixels, which is 96 by 96 to
-the pixel, where the sharp version correctly erases 4052 against a disc's 4071.
+The fifth was `ClearBlendWithBlur`, and writing it found a defect that has since
+been fixed. A mask blur that cannot be evaluated in the fragment stage is drawn
+as a layer, and the layer is composited with the caller's blend -- across the
+layer's *bounds*. A mode that writes where its source is transparent writes
+across all of them, so a blurred circle drawn with `Clear` cleared a rectangle:
+9216 pixels, 96 by 96 to the pixel, where the sharp version correctly erased
+4052 against a disc's 4071.
 
-The renderer already knows the shape of that mistake -- the analytic route
-refuses a mode that does not respect coverage, and says why in those words --
-so the analytic half of the feature is right and the layer half is not. It is
-`docs/non-parity.md` section 16, which has since been read against upstream and
-is narrower than it looked: upstream special-cases `Clear` alone on the analytic
-path, forcing white and compositing by subtraction, which is `DstOut` on a
-coverage. The general table this entry once called for is not needed. A plate under upstream's name drawing a rectangle would report the
-chapter as covered while showing the wrong thing, so there is none.
+Reading upstream settled what to do, and the answer was narrower than either
+option first written down. `Clear` is the one coverage-ignoring mode that can be
+admitted to the *evaluated* blur anyway, because on a coverage it is not what
+its factors say: clearing by an amount is `dst * (1 - c)`, which is `DstOut`
+against a white source -- and white is exact rather than approximate, since
+`Clear` discards the source color by definition.
+`SolidRRectLikeBlurContents::Render` does exactly that, forcing white and
+switching the pipeline to a reverse subtraction, and does no more. The plate is
+here now, and the hole's alpha climbs monotonically out of the middle with a
+corner of its old bounding box untouched -- which is the assertion that tells
+the fix from the defect.
 
 Four more after that. The periphery plate's twin, turned: a strip down the
 middle running to the top and bottom edges, so the kernel reaches past the
@@ -350,14 +354,14 @@ contour cannot be recognized as a rounded rectangle, so the blur cannot be
 evaluated in the fragment stage and takes the general route -- on a target sized
 for a shape most of which is not there.
 
-What is left of the file is eight scenes and each has a reason. Three are
+What is left of the file is seven scenes and each has a reason. Three are
 interactive harnesses with sliders. Two are unit tests that build a texture and
 assert it exists rather than opening a playground, in the way four of the atlas
 file's are. One is `MaskBlurOnZeroDimensionIsSkippedWideGamut`, which needs a
 wide-gamut target to present and is §4. One is
 `CanRenderForegroundAdvancedBlendWithMaskBlur`, whose color filter is a blend in
 a non-separable mode -- a color filter here is an affine map, and `Color` is not
-one. And one is `ClearBlendWithBlur`, which is §16 above.
+one.
 
 The default style blurs coverage and fills through it, which works for any
 fill. The three that combine a blurred mask with a sharp one -- solid, outer,

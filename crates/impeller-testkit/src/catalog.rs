@@ -6931,6 +6931,36 @@ fn blur_variants() -> Vec<Scene> {
         .with_blend(BlendMode::SrcOver)],
     ));
 
+    scenes.push(plate(
+        "blur/clear-blend-with-blur",
+        // A blurred shape drawn with a mode that discards its destination,
+        // so what the blur produces is not color but how much is taken
+        // away. The hole's edge is the blur's falloff read as erasure.
+        //
+        // This plate could not exist until `Clear` was let past the
+        // evaluated blur's coverage guard: on the route it used to take,
+        // the layer's composite covered the layer's bounds and cleared a
+        // rectangle.
+        vec![
+            Item::fill(
+                Shape::Rect {
+                    min: [0.0, 0.0],
+                    max: [128.0, 128.0],
+                },
+                BLUE,
+            ),
+            Item::fill(
+                Shape::Circle {
+                    center: [64.0, 64.0],
+                    radius: 36.0,
+                },
+                WHITE,
+            )
+            .with_mask_blur(7.0)
+            .with_blend(BlendMode::Clear),
+        ],
+    ));
+
     // A deviation per axis, which `dart:ui` states and this renderer now
     // carries. Two squares, one blurred along x alone and one along y, so
     // either plate on its own says the sigma arrived and the pair says which

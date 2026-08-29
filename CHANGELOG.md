@@ -22,6 +22,16 @@ duplication the paragraph above rules out. `docs/parity.md` says what is built,
 a test checks that it says so truly, and a copy of that claim kept by hand here
 is the same claim without the check. So there is no list.
 
+A mask blur drawn with `BlendMode::Clear` erases by the blur's falloff rather
+than clearing the layer's bounding rectangle, where the shape is a rounded
+rectangle, a circle or an oval. `Clear` is the one coverage-ignoring mode the
+evaluated blur admits, because on a coverage it means `dst * (1 - c)` --
+`DstOut` against a white source, exact because `Clear` discards the source color
+by definition. Upstream makes the same special case in the same one place. The
+other six such modes, and `Clear` over a shape with no evaluated blur, still
+take the layer route and still clear their bounds: §16 of
+`docs/non-parity.md`.
+
 `ImageFilter::Blur` carries `sigma_x` and `sigma_y` where it carried one
 `sigma`, because `dart:ui`'s `ImageFilter.blur` takes both and upstream passes
 both through. `ImageFilter::blur(sigma)` is the isotropic case and is what every

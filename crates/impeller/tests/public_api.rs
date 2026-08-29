@@ -15778,22 +15778,21 @@ fn a_blur_scales_with_the_transform() {
 }
 
 #[test]
-fn a_mask_blur_under_a_mode_that_ignores_coverage_erases_its_whole_bounds() {
-    // A defect, pinned rather than fixed, so that fixing it is a test that
-    // changes rather than a behavior nobody had noticed. `docs/non-parity.md`
-    // section 16 has the reasoning and the two ways out.
+fn a_blurred_clear_erases_by_its_falloff_rather_than_by_its_bounds() {
+    // `Clear` is the one mode that ignores coverage and can be admitted to the
+    // evaluated blur anyway, because on a coverage it is not what its factors
+    // say: clearing by an amount `c` is `dst * (1 - c)`, which is `DstOut`
+    // against a white source. White is exact rather than approximate, since
+    // `Clear` discards the source color by definition.
     //
-    // A mask blur that cannot be evaluated in the fragment stage is drawn as a
-    // layer: the shape goes into a target, the target is blurred, and the
-    // layer is composited with the caller's blend. That composite covers the
-    // layer's bounds, and a mode that writes where its source is transparent
-    // writes across all of them -- so `Clear` on a blurred circle clears a
-    // rectangle instead of a soft disc.
+    // This is upstream's special case in upstream's one place --
+    // `SolidRRectLikeBlurContents::Render` forces white and switches the
+    // pipeline to a reverse subtraction, `dst - src * dst` -- and it is the
+    // same arithmetic reached by naming the mode that already means it.
     //
-    // The analytic route refuses exactly this, and says why: a fragment is
-    // emitted across a quad larger than the shape, so a mode that touches the
-    // destination where the source is transparent erases what is behind it in
-    // the gap. The layer route has the same gap and no such guard.
+    // Before it, the draw fell through to the layer route and the layer's
+    // composite covered the layer's *bounds*: a blurred circle cleared a
+    // rectangle of 9216 pixels, 96 by 96 to the pixel.
     let Some(mut ctx) = context() else { return };
 
     let shot = |ctx: &mut Context, sigma: f32| {
@@ -15816,26 +15815,54 @@ fn a_mask_blur_under_a_mode_that_ignores_coverage_erases_its_whole_bounds() {
             .expect("a blurred hole");
         render(ctx, canvas)
     };
+    let alpha = |pixels: &[u8], x: usize, y: usize| pixels[(y * 128 + x) * 4 + 3];
 
-    let erased = |pixels: &[u8]| pixels.chunks_exact(4).filter(|p| p[3] == 0).count();
-
-    // Sharp, and correct: the hole is the circle, so its area is about pi r
+    // Sharp, and unchanged: the hole is the circle, so its area is about pi r
     // squared and nothing like the quad the field is evaluated on.
-    let sharp = erased(&shot(&mut ctx, 0.0));
+    let sharp = shot(&mut ctx, 0.0);
+    let cut = sharp.chunks_exact(4).filter(|p| p[3] == 0).count();
     let disc = (std::f32::consts::PI * 36.0 * 36.0) as usize;
     assert!(
-        sharp.abs_diff(disc) < disc / 20,
-        "a sharp clear should erase the circle: {sharp} against about {disc}"
+        cut.abs_diff(disc) < disc / 20,
+        "a sharp clear should erase the circle: {cut} against about {disc}"
     );
 
-    // Blurred, and not: ninety-six by ninety-six exactly, which is the
-    // circle's bounds outset by the blur's reach and is a rectangle.
-    let blurred = erased(&shot(&mut ctx, 7.0));
+    let blurred = shot(&mut ctx, 7.0);
+
+    // The middle goes to nothing, and the corner of the frame is well outside
+    // the blur's reach and keeps the fill.
     assert_eq!(
-        blurred,
-        96 * 96,
-        "this pins a known defect: a blurred clear erases its layer's bounds \
-         rather than the blurred coverage. If this now fails because the count \
-         changed, section 16 of docs/non-parity.md is what to read"
+        alpha(&blurred, 64, 64),
+        0,
+        "the middle should be erased outright"
+    );
+    assert_eq!(
+        alpha(&blurred, 2, 2),
+        255,
+        "the corner is outside the reach"
+    );
+
+    // The corner of what the bounds *would* have been. This is the assertion
+    // that tells the fix from the defect: it sits inside the rectangle the old
+    // route cleared and outside the disc, so it was transparent before and has
+    // to be untouched now.
+    assert_eq!(
+        alpha(&blurred, 18, 18),
+        255,
+        "the erased region has to be round; this is a corner of its bounding box"
+    );
+
+    // And the edge is a falloff rather than a step: alpha climbs from nothing
+    // to the full fill along the radius and never goes back down.
+    let ramp: Vec<u8> = (64..128).map(|x| alpha(&blurred, x, 64)).collect();
+    assert!(
+        ramp.windows(2).all(|w| w[0] <= w[1]),
+        "alpha should climb monotonically out of the hole: {ramp:?}"
+    );
+    let partial = ramp.iter().filter(|a| (8..248).contains(*a)).count();
+    assert!(
+        partial >= 12,
+        "the hole's edge should fade over many pixels; {partial} of the radius \
+         carried a partial alpha"
     );
 }
