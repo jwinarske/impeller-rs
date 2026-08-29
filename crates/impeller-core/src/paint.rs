@@ -229,8 +229,17 @@ pub enum MaskBlurStyle {
 pub enum ImageFilter {
     #[default]
     None,
-    /// Blur what was drawn, by a standard deviation in device pixels.
-    Blur { sigma: f32 },
+    /// Blur what was drawn, by a standard deviation per axis in device pixels.
+    ///
+    /// Two, because `dart:ui`'s `ImageFilter.blur` takes `sigmaX` and
+    /// `sigmaY` separately and upstream's `MakeBlur` passes both through. A
+    /// blur is two separable passes here already, one along each axis, so the
+    /// second deviation costs nothing but the field: each pass uses its own,
+    /// and a pass whose deviation is zero is skipped rather than run as an
+    /// identity that would resample for no reason.
+    ///
+    /// [`Self::blur`] is the isotropic case, which is nearly every use.
+    Blur { sigma_x: f32, sigma_y: f32 },
     /// Move what was drawn, in device pixels, by resampling it.
     ///
     /// Not the same as drawing under the transform, which is what the canvas's
@@ -303,6 +312,29 @@ pub enum ImageFilter {
 }
 
 impl ImageFilter {
+    /// A blur of the same deviation along both axes, which is nearly every use.
+    pub fn blur(sigma: f32) -> Self {
+        Self::Blur {
+            sigma_x: sigma,
+            sigma_y: sigma,
+        }
+    }
+
+    /// A blur with a deviation per axis, as `dart:ui`'s `ImageFilter.blur`
+    /// states one.
+    pub fn blur_xy(sigma_x: f32, sigma_y: f32) -> Self {
+        Self::Blur { sigma_x, sigma_y }
+    }
+
+    /// Whether a deviation describes a blur at all.
+    ///
+    /// Stated positively rather than as a negated comparison, which reads
+    /// badly on a type where two values can be incomparable: a sigma that is
+    /// not finite is not a blur, and neither is one that is zero or less.
+    pub(crate) fn blurs(sigma: f32) -> bool {
+        sigma.is_finite() && sigma > 0.0
+    }
+
     /// Whether this would change anything.
     pub fn is_identity(&self) -> bool {
         match self {
@@ -311,7 +343,7 @@ impl ImageFilter {
             // reads badly on a type where two values can be incomparable: a
             // sigma that is not finite is not a blur, and neither is one that
             // is zero or less.
-            Self::Blur { sigma } => !sigma.is_finite() || *sigma <= 0.0,
+            Self::Blur { sigma_x, sigma_y } => !Self::blurs(*sigma_x) && !Self::blurs(*sigma_y),
             // A matrix that changes nothing is one that costs a layer for
             // nothing, so it is worth recognising.
             Self::Matrix { transform } => {
@@ -403,8 +435,14 @@ impl ImageFilter {
             // effect is the same on the side that matters here: it may read
             // anywhere in its input, and it writes only where the pass covers.
             Self::None | Self::Erode { .. } | Self::Color(_) | Self::Runtime { .. } => (min, max),
-            Self::Blur { sigma } => {
-                let reach = Vec2::splat(crate::canvas::blur_reach(*sigma));
+            Self::Blur { sigma_x, sigma_y } => {
+                // Per axis, which is the whole reason a filter states two: a
+                // blur along one axis alone must not widen the other, or the
+                // target holding it is bigger than the picture in it.
+                let reach = Vec2::new(
+                    crate::canvas::blur_reach(*sigma_x),
+                    crate::canvas::blur_reach(*sigma_y),
+                );
                 (min - reach, max + reach)
             }
             Self::Dilate { radius_x, radius_y } => {

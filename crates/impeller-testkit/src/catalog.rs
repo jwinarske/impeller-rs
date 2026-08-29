@@ -2681,7 +2681,7 @@ fn gradient() -> Vec<Scene> {
                     tile: TileMode::Clamp,
                 },
             )
-            .with_image_filter(ImageFilter::Blur { sigma: 6.0 })
+            .with_image_filter(ImageFilter::blur(6.0))
             .with_blend(BlendMode::SrcOver)],
         ),
         plate(
@@ -4865,7 +4865,7 @@ fn vertices() -> Vec<Scene> {
             // agree about where a dilation ends and still disagree about how a
             // blur falls off.
             MeshSpec {
-                image_filter: ImageFilter::Blur { sigma: 6.0 },
+                image_filter: ImageFilter::blur(6.0),
                 ..mesh_of(
                     vec![[34.0, 88.0], [64.0, 30.0], [94.0, 88.0]],
                     Fill::Solid(GREEN),
@@ -6242,7 +6242,7 @@ fn blur_variants() -> Vec<Scene> {
                         Sampling::Linear,
                     ),
                 )
-                .with_image_filter(ImageFilter::Blur { sigma: 4.0 }),
+                .with_image_filter(ImageFilter::blur(4.0)),
                 // Beside it unblurred at the same size, so the plate shows the
                 // blur rather than the image.
                 Item::filled(
@@ -6272,7 +6272,7 @@ fn blur_variants() -> Vec<Scene> {
                         Sampling::Linear,
                     ),
                 )
-                .with_image_filter(ImageFilter::Blur { sigma: 9.0 }),
+                .with_image_filter(ImageFilter::blur_xy(9.0, 0.0)),
             ],
         ),
         plate(
@@ -6629,6 +6629,42 @@ fn blur_variants() -> Vec<Scene> {
         ));
     }
 
+    // A deviation per axis, which `dart:ui` states and this renderer now
+    // carries. Two squares, one blurred along x alone and one along y, so
+    // either plate on its own says the sigma arrived and the pair says which
+    // of the two it was. Upstream's own scene for this turns the whole thing
+    // and is not mirrored -- see `docs/non-parity.md` section 15.
+    for (name, filter) in [
+        ("blur/a-blur-along-one-axis", ImageFilter::blur_xy(9.0, 0.0)),
+        (
+            "blur/a-blur-along-the-other-axis",
+            ImageFilter::blur_xy(0.0, 9.0),
+        ),
+    ] {
+        scenes.push(
+            Scene::tree(
+                name,
+                vec![Node::Layer {
+                    layer: Box::new(LayerSpec {
+                        filter,
+                        ..LayerSpec::default()
+                    }),
+                    bounds: None,
+                    transform: Transform::default(),
+                    children: vec![Node::Draw(Box::new(Item::fill(
+                        Shape::Rect {
+                            min: [48.0, 48.0],
+                            max: [80.0, 80.0],
+                        },
+                        WHITE,
+                    )))],
+                }],
+            )
+            .with_background(DARK)
+            .with_samples(4),
+        );
+    }
+
     scenes.push(
         Scene::tree(
             "blur/gaussian-blur-at-periphery-horizontal",
@@ -6819,7 +6855,7 @@ fn layers() -> Vec<Scene> {
                     1.0, 0.0, 0.0, 0.0, 0.0, //
                     0.0, 0.0, 0.0, 1.0, 0.0,
                 ]),
-                filter: ImageFilter::Blur { sigma: 4.0 },
+                filter: ImageFilter::blur(4.0),
                 ..LayerSpec::default()
             },
             None,
@@ -7059,7 +7095,7 @@ fn runtime_effect() -> Vec<Scene> {
                     program: 2,
                     uniforms: crate::fixture::tint_uniforms([0.2, 0.9, 0.5, 1.0]),
                 },
-                ImageFilter::Blur { sigma: 7.0 },
+                ImageFilter::blur(7.0),
             ))],
         ),
         plate(
@@ -7073,7 +7109,7 @@ fn runtime_effect() -> Vec<Scene> {
             )
             .with_blend(BlendMode::SrcOver)
             .with_image_filter(ImageFilter::compose(
-                ImageFilter::Blur { sigma: 7.0 },
+                ImageFilter::blur(7.0),
                 ImageFilter::Runtime {
                     program: 2,
                     uniforms: crate::fixture::tint_uniforms([0.2, 0.9, 0.5, 1.0]),
@@ -7107,7 +7143,7 @@ fn backdrop_ids() -> Vec<Scene> {
     ];
 
     let panel = |sigma: f32| LayerSpec {
-        backdrop: ImageFilter::Blur { sigma },
+        backdrop: ImageFilter::blur(sigma),
         blend: BlendMode::Src,
         backdrop_id: Some(1),
         ..LayerSpec::default()
@@ -7268,7 +7304,7 @@ fn backdrops() -> Vec<Scene> {
     vec![
         plate(
             "effect/compose-backdrop-runtime-outer-blur-inner",
-            ImageFilter::compose(tint(), ImageFilter::Blur { sigma: 8.0 }),
+            ImageFilter::compose(tint(), ImageFilter::blur(8.0)),
             None,
         ),
         plate(
@@ -7277,12 +7313,12 @@ fn backdrops() -> Vec<Scene> {
             // there, which is upstream's second scene and is not redundant: a
             // composition that dropped its inner half would draw this one
             // correctly and the one above wrongly.
-            ImageFilter::compose(tint(), ImageFilter::Blur { sigma: 2.0 }),
+            ImageFilter::compose(tint(), ImageFilter::blur(2.0)),
             None,
         ),
         plate(
             "effect/clipped-compose-backdrop-runtime-outer-blur-inner-small-sigma",
-            ImageFilter::compose(tint(), ImageFilter::Blur { sigma: 2.0 }),
+            ImageFilter::compose(tint(), ImageFilter::blur(2.0)),
             // Bounded, which for a backdrop is the filtered region rather than
             // an optimization -- so this is a panel and the two above are the
             // whole frame.

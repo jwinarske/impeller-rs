@@ -600,17 +600,23 @@ enum Masked<'a> {
 /// its shader to matter.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Layer {
-    /// Blur the group before compositing it, with this standard deviation in
-    /// device pixels.
+    /// Blur the group before compositing it, with this standard deviation per
+    /// axis in device pixels.
     ///
-    /// Zero for no blur, which is the default and costs nothing: the extra
-    /// passes are only recorded where a caller asked for one.
+    /// Zero on both for no blur, which is the default and costs nothing: the
+    /// extra passes are only recorded where a caller asked for one, and an
+    /// axis whose deviation is zero costs no pass of its own.
+    ///
+    /// Two deviations rather than one because `dart:ui`'s `ImageFilter.blur`
+    /// states `sigmaX` and `sigmaY` separately, and because the blur is two
+    /// separable passes here regardless -- so the second is a field rather
+    /// than a mechanism. [`Self::with_blur`] sets both.
     ///
     /// On the group rather than on a paint, because a blur is a function of a
     /// finished image and a paint describes one shape. Blurring each shape and
     /// compositing the results is a different picture from blurring the
     /// composite, and the second is what a shadow or a frosted panel means.
-    pub blur: f32,
+    pub blur: Vec2,
     /// Scales the whole layer on the way back. This is what makes group opacity
     /// differ from per-shape opacity: two overlapping half-transparent shapes
     /// in a layer show one blended edge, where the same shapes drawn directly
@@ -710,7 +716,7 @@ pub struct Layer {
 impl Default for Layer {
     fn default() -> Self {
         Self {
-            blur: 0.0,
+            blur: Vec2::ZERO,
             alpha: 1.0,
             blend: BlendMode::SrcOver,
             matrix: None,
@@ -798,7 +804,9 @@ impl Layer {
     }
 
     fn reach(&self) -> Vec2 {
-        let blur = Vec2::splat(blur_reach(self.blur));
+        // Per axis. A blur along one axis alone must not widen the other, or
+        // the target holding the result is bigger than the picture in it.
+        let blur = Vec2::new(blur_reach(self.blur.x), blur_reach(self.blur.y));
         match self.morphology {
             Some(m) if m.dilate => blur + Vec2::new(m.radius[0], m.radius[1]),
             _ => blur,
@@ -839,17 +847,31 @@ impl Layer {
         self
     }
 
-    pub fn with_blur(mut self, sigma: f32) -> Self {
+    pub fn with_blur(self, sigma: f32) -> Self {
+        self.with_blur_xy(sigma, sigma)
+    }
+
+    /// Blur the finished group by a deviation per axis, in device pixels.
+    ///
+    /// Two, because `dart:ui`'s `ImageFilter.blur` states `sigmaX` and
+    /// `sigmaY` separately. A blur here is two separable passes already, one
+    /// along each axis, so each simply uses its own -- and a pass whose
+    /// deviation is zero is skipped rather than run, which is what keeps a
+    /// blur along one axis from resampling the other for nothing.
+    pub fn with_blur_xy(mut self, sigma_x: f32, sigma_y: f32) -> Self {
         // Clamped to upstream's `kMaxSigma`, and clamped *after* the check
         // rather than before it: `f32::min` returns the other operand when one
         // is NaN, so clamping first turns a NaN into five hundred and asks for
         // the widest blur there is. The same trap is named at `Rect::outset`,
         // which is where this was learned the first time.
-        self.blur = if sigma.is_finite() && sigma > 0.0 {
-            sigma.min(MAX_SIGMA)
-        } else {
-            0.0
+        let one = |sigma: f32| {
+            if sigma.is_finite() && sigma > 0.0 {
+                sigma.min(MAX_SIGMA)
+            } else {
+                0.0
+            }
         };
+        self.blur = Vec2::new(one(sigma_x), one(sigma_y));
         self
     }
 }
@@ -1316,7 +1338,8 @@ impl Canvas {
         let asked = match backdrop {
             Some(filter) => filter.clone(),
             None if layer.backdrop_blur > 0.0 => ImageFilter::Blur {
-                sigma: layer.backdrop_blur,
+                sigma_x: layer.backdrop_blur,
+                sigma_y: layer.backdrop_blur,
             },
             None => ImageFilter::None,
         };
@@ -2240,7 +2263,9 @@ impl Canvas {
         }
         Some((
             match *filter {
-                ImageFilter::Blur { sigma } => Layer::opacity(1.0).with_blur(sigma),
+                ImageFilter::Blur { sigma_x, sigma_y } => {
+                    Layer::opacity(1.0).with_blur_xy(sigma_x, sigma_y)
+                }
                 ImageFilter::Matrix { transform } => Layer::opacity(1.0).with_matrix(transform),
                 ImageFilter::Dilate { radius_x, radius_y } => {
                     Layer::opacity(1.0).with_morphology(Morphology::dilate(radius_x, radius_y))
@@ -4501,7 +4526,7 @@ impl Canvas {
         // multisampling cannot change.
         self.anti_alias = frame.anti_alias;
         let mut index = self.finished.len() - 1;
-        if frame.paint.blur > 0.0 {
+        if frame.paint.blur.max_element() > 0.0 {
             index = self.blur_passes(index, layer, frame.paint.blur);
         }
         // After the blur, because that is the order the reach above assumes
@@ -4633,7 +4658,9 @@ impl Canvas {
     ) -> Result<usize> {
         Ok(match filter {
             ImageFilter::None => source,
-            ImageFilter::Blur { sigma } => self.blur_passes(source, target, *sigma),
+            ImageFilter::Blur { sigma_x, sigma_y } => {
+                self.blur_passes(source, target, Vec2::new(*sigma_x, *sigma_y))
+            }
             ImageFilter::Dilate { radius_x, radius_y } => {
                 self.morphology_passes(source, target, Morphology::dilate(*radius_x, *radius_y))
             }
@@ -4891,23 +4918,20 @@ impl Canvas {
     ///
     /// A power of two so that every step is an exact halving, which is what
     /// makes the sampler a box filter above.
-    fn blur_downsample(sigma: f32, extent: Extent2D) -> u32 {
+    fn blur_downsample(sigma: f32, extent: u32) -> u32 {
         let mut scale = 1u32;
-        // Stopped once an axis would round to nothing. The extent is floored at
-        // one texel where it is built, so this is not what keeps a target from
-        // having no pixels -- it is what keeps the reduction from spending
+        // Stopped once the axis would round to nothing. The extent is floored
+        // at one texel where it is built, so this is not what keeps a target
+        // from having no pixels -- it is what keeps the reduction from spending
         // passes halving a single texel into itself, which a deviation of a few
         // hundred against a small layer will otherwise ask for.
-        while blur_radius(sigma / scale as f32) > BLUR_MAX_TAPS
-            && extent.width / (scale * 2) >= 1
-            && extent.height / (scale * 2) >= 1
-        {
+        while blur_radius(sigma / scale as f32) > BLUR_MAX_TAPS && extent / (scale * 2) >= 1 {
             scale *= 2;
         }
         scale
     }
 
-    fn blur_passes(&mut self, source: usize, target: Target, sigma: f32) -> usize {
+    fn blur_passes(&mut self, source: usize, target: Target, sigma: Vec2) -> usize {
         // Clip space spans two units and runs upward, so this is the mapping
         // that turns a full-target quad's clip position into the texture
         // coordinates of the pass it samples -- the same pair a layer
@@ -4927,40 +4951,57 @@ impl Canvas {
         // with the image, and the composite that puts the layer back scales it
         // up again -- it maps clip space to a normalized coordinate, so it does
         // not care what resolution answers.
-        let scale = Self::blur_downsample(sigma, target.extent);
-        let blurred = Target {
+        // Per axis, because the deviations are. An axis blurred hard needs its
+        // reduction and an axis blurred not at all must not be reduced with it
+        // -- shrinking and enlarging a sharp axis for the sake of the other one
+        // would soften it, which is the whole difference between a directional
+        // blur and a soft smear.
+        let scale = [
+            Self::blur_downsample(sigma.x, target.extent.width),
+            Self::blur_downsample(sigma.y, target.extent.height),
+        ];
+        let reduced = |by: [u32; 2]| Target {
             origin: target.origin,
             extent: Extent2D::new(
-                (target.extent.width / scale).max(1),
-                (target.extent.height / scale).max(1),
+                (target.extent.width / by[0]).max(1),
+                (target.extent.height / by[1]).max(1),
             ),
         };
-        let sigma = sigma / scale as f32;
+        let blurred = reduced(scale);
+        let sigma = Vec2::new(sigma.x / scale[0] as f32, sigma.y / scale[1] as f32);
 
         let mut source = source;
-        let mut step_scale = 1u32;
-        while step_scale < scale {
-            step_scale *= 2;
-            let into = Target {
-                origin: target.origin,
-                extent: Extent2D::new(
-                    (target.extent.width / step_scale).max(1),
-                    (target.extent.height / step_scale).max(1),
-                ),
-            };
-            source = self.halve_pass(source, into);
+        let mut step_scale = [1u32; 2];
+        while step_scale[0] < scale[0] || step_scale[1] < scale[1] {
+            // Each iteration halves whichever axes are still above their own
+            // target, so every step remains at most a halving per axis and
+            // therefore an exact box filter, which is the property the
+            // reduction rests on.
+            for axis in 0..2 {
+                if step_scale[axis] < scale[axis] {
+                    step_scale[axis] *= 2;
+                }
+            }
+            source = self.halve_pass(source, reduced(step_scale));
         }
 
         // A step of one texel along each axis, in the sampled texture's own
         // coordinates. The shader cannot derive this: it does not know the size
         // of what it is sampling.
         let steps = [
-            [1.0 / blurred.extent.width as f32, 0.0],
-            [0.0, 1.0 / blurred.extent.height as f32],
+            (sigma.x, [1.0 / blurred.extent.width as f32, 0.0]),
+            (sigma.y, [0.0, 1.0 / blurred.extent.height as f32]),
         ];
 
         let mut sampled = source;
-        for step in steps {
+        for (sigma, step) in steps {
+            // Skipped rather than run with a deviation of zero. A zero-sigma
+            // pass is the identity in arithmetic and a resample in fact, and a
+            // blur stated along one axis is exactly the case where the other
+            // pass must leave the image alone.
+            if !ImageFilter::blurs(sigma) {
+                continue;
+            }
             sampled = self.filter_pass(
                 sampled,
                 blurred,

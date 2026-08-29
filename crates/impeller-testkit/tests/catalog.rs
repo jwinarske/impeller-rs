@@ -900,3 +900,65 @@ fn an_identity_matrix_filter_changes_nothing_it_passes_through() {
         );
     }
 }
+
+#[test]
+fn a_blur_along_one_axis_leaves_the_other_alone() {
+    // `dart:ui`'s `ImageFilter.blur` states `sigmaX` and `sigmaY` separately,
+    // and a blur here is two separable passes already -- so the second
+    // deviation is a field rather than a mechanism. What has to be checked is
+    // that it is *used*: a renderer that took one sigma and applied it both
+    // ways would draw a square halo where these draw a band, and a renderer
+    // that skipped the wrong pass would draw the band the wrong way round.
+    //
+    // The pass whose deviation is zero is skipped rather than run as an
+    // identity, which matters beyond the pass it saves: the reduction that
+    // makes a wide blur affordable shrinks the image, so a zero-sigma pass
+    // that still resampled would soften the axis it was supposed to leave
+    // alone. That is checked here as the sharp axis staying the shape's own
+    // width.
+    let Ok(mut ctx) = Validated::new(DevicePreference::Auto) else {
+        eprintln!("skipping: no Vulkan device");
+        return;
+    };
+    let mut extent = |name: &str| {
+        let scene = catalog()
+            .into_iter()
+            .find(|s| s.name == name)
+            .unwrap_or_else(|| panic!("{name} is not in the catalog"));
+        let img = render::<VulkanHal>(&mut ctx, &scene);
+        let lit: Vec<(u32, u32)> = (0..128u32)
+            .flat_map(|y| (0..128u32).map(move |x| (x, y)))
+            .filter(|(x, y)| img.pixel(*x, *y)[0] > 20)
+            .collect();
+        assert!(!lit.is_empty(), "{name} drew nothing");
+        let x = lit.iter().map(|p| p.0).max().unwrap() - lit.iter().map(|p| p.0).min().unwrap();
+        let y = lit.iter().map(|p| p.1).max().unwrap() - lit.iter().map(|p| p.1).min().unwrap();
+        (x, y)
+    };
+    let across = extent("blur/a-blur-along-one-axis");
+    let down = extent("blur/a-blur-along-the-other-axis");
+
+    // The square is thirty-two on a side, so an unblurred axis measures about
+    // thirty-one between its first and last lit pixel and a blurred one runs
+    // well past it.
+    assert!(
+        across.1 <= 33,
+        "the axis with no deviation spread to {} pixels from a square of \
+         thirty-two, so the pass that should have been skipped ran",
+        across.1
+    );
+    assert!(
+        across.0 > across.1 + 12,
+        "the blurred axis measured {} against the sharp one's {}, which is \
+         not a band",
+        across.0,
+        across.1
+    );
+    // And the other plate is the same thing turned, which is what says the two
+    // deviations reached the two passes rather than one reaching both.
+    assert_eq!(
+        (down.1, down.0),
+        (across.0, across.1),
+        "the two plates should be each other transposed"
+    );
+}

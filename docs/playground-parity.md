@@ -159,7 +159,7 @@ column is right and the obvious way to check it is wrong.
 | `aiks_dl_clip_unittests.cc` | ~5 | 7 | nothing; this file is covered |
 | `aiks_dl_opacity_unittests.cc` | ~3 | 3 | nothing; this file is covered |
 | `aiks_dl_blend_unittests.cc` | ~79 | 40 | capability injection and subpass collapse, for two of them; see below |
-| `aiks_dl_blur_unittests.cc` | ~59 | 41 | nothing; see below |
+| `aiks_dl_blur_unittests.cc` | ~59 | 43 | a blur does not turn with a rotation, for one of them; see below |
 | `aiks_dl_vertices_unittests.cc` | ~16 | 20 | a shader other than an image cannot be read at a mesh's texture coordinates, for two of them; see below |
 | `aiks_dl_atlas_unittests.cc` | ~11 | 12 | nothing; see below |
 | `aiks_dl_shadow_unittests.cc` | ~30 | 13 | a convex-shadow optimization this renderer does not have; see below |
@@ -168,7 +168,7 @@ column is right and the obvious way to check it is wrong.
 | `aiks_dl_runtime_effect_unittests.cc` | — | 12 | nothing; see below |
 | `aiks_dl_unittests.cc` | ~36 | 13 | subpass collapse, for five of them; see below |
 
-The catalog holds three hundred and thirty-three scenes of roughly four hundred,
+The catalog holds three hundred and thirty-five scenes of roughly four hundred,
 and the proportion is less interesting than which ones: the arithmetic of drawing is largely covered, and
 what is missing is either a capability this renderer does not have or a thing
 the scene model cannot describe.
@@ -246,6 +246,38 @@ two of the file's scenes and there are four, all of them now built along with
 the key itself, so the row says nothing. It was also not what stopped the other
 twenty-one, and writing those scenes is what found the thing that was: a mask
 blur here took a solid color for three of its four styles.
+
+Counting the file again found a second thing it was short of, and this one was
+in the API rather than in the renderer. `dart:ui`'s `ImageFilter.blur` takes
+`sigmaX` and `sigmaY`; this one took a single `sigma`, and `docs/parity.md` said
+of the image filters that all seven kinds upstream offers are here -- true of the
+kinds and not of that one. A blur is two separable passes here already, one
+along each axis, so the second deviation was a field rather than a mechanism:
+each pass uses its own, a pass whose deviation is zero is skipped rather than
+run as an identity that would resample for nothing, and the reduction that makes
+a wide blur affordable became per axis so that a hard blur along x does not
+shrink and enlarge a sharp y.
+
+Nothing in either collection moved, which is what says the reduction change was
+safe: every blur here was isotropic on a square target, where per-axis and
+shared reductions agree.
+
+Two plates went in for it, a square smeared along x and the same square smeared
+along y, asserted to be each other transposed -- either alone would say a
+deviation arrived, and only the pair says which of the two it was. Replacing one
+with an isotropic blur of the same deviation spreads the sharp axis from
+thirty-two pixels to fifty-nine, which is what the assertion was written
+against.
+
+Upstream's own scene for this is `GaussianBlurRotatedNonUniform`, and it is not
+mirrored. The passes run along the target's axes, so a layer turned forty-five
+degrees with a blur along x alone smears along the screen's x rather than along
+the axis the caller stated. Measured: thirty-nine by fifteen upright, forty-five
+by twenty-one turned, which is the same horizontal smear applied to a diamond.
+That is `docs/non-parity.md` section 15, which also says why it was left --
+the pass's step is already a free direction, so the shader is not the problem;
+the layer would have to carry a basis where it carries a scale, and the
+reduction and the bounds follow from that.
 
 The default style blurs coverage and fills through it, which works for any
 fill. The three that combine a blurred mask with a sharp one -- solid, outer,

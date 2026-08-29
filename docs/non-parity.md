@@ -467,3 +467,46 @@ is unaffected and takes the paint exactly as a path does, which is the common
 case: coordinates exist to place an image, and a caller who wanted a gradient
 across a mesh usually states it in the mesh's own space and needs no
 coordinates at all.
+
+## 15. A blur runs along the device's axes, so a rotation does not turn it
+
+**What differs.** `ImageFilter::Blur` now carries a deviation per axis, as
+`dart:ui`'s `ImageFilter.blur` does. The two passes it runs are along the
+target's own axes, which is right while the two agree with the caller's and is
+wrong as soon as they do not: a layer turned forty-five degrees with a blur
+along x alone spreads along the *screen's* x, not along the axis the caller
+stated it in.
+
+Measured. A thirty-two pixel square blurred with a deviation of ten in x and
+none in y covers thirty-nine by fifteen upright. Turned a quarter of a right
+angle it covers forty-five by twenty-one -- which is the same horizontal smear
+applied to a diamond, not a smear that turned with it. Upstream's
+`GaussianBlurRotatedNonUniform` is that case by name, and it is the one scene of
+its file that is not mirrored here for this reason.
+
+An isotropic blur is unaffected, which is why nothing had noticed: a rotation
+takes a circular kernel to a circular kernel, and every blur in this repository
+was circular until the second deviation existed.
+
+The fix is smaller than it sounds and was left undone deliberately. The pass's
+`step` is already a free two-vector rather than an axis flag -- the shader walks
+its taps along whatever direction it is given -- so blurring along a rotated
+axis is a different `step`, not a different shader. What is missing is upstream
+of it: the layer carries the *scale* in force when it opened, `Layer::scaled_by`
+being where a sigma is taken from the caller's space into the device's, and it
+would have to carry a basis instead. Two other things follow from that and are
+the real work: the reduction that makes a wide blur affordable is per axis and
+would need to be per basis vector, and a layer's `reach` would have to become
+the bounding box of a rotated extent rather than a pair of outsets.
+
+There is also a limit past which the answer stops being a rotation. Two
+separable passes are exact only along directions that stay orthogonal, which a
+rotation preserves and a shear does not, so a general transform needs the
+fallback upstream has rather than a turned basis.
+
+**Impact.** Confined to a blur whose two deviations differ *and* which is drawn
+under a rotation. A blur stated with one deviation is unaffected at any
+transform. A blur with two under a translation, a scale or no transform at all
+is correct, which is the case a caller reaching for `sigmaX` and `sigmaY`
+usually has -- a horizontal smear on upright content. Where it does bite it is
+visible rather than subtle: the smear points the wrong way.

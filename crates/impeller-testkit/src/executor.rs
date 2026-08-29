@@ -516,7 +516,7 @@ fn record_node(canvas: &mut Canvas, node: &Node, anti_alias: bool) -> Result<()>
             let backdrop = layer.backdrop.clone();
             let filter = layer.filter.clone();
             let layer = Layer {
-                blur: layer.blur,
+                blur: Vec2::splat(layer.blur),
                 alpha: layer.alpha,
                 blend: layer.blend,
                 // The scene format has no way to say a group is transformed on

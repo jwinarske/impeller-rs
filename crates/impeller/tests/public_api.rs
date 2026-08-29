@@ -7638,7 +7638,7 @@ fn an_image_filter_blur_of_a_solid_agrees_with_the_mask_blur_of_the_same_shape()
     canvas
         .draw_path(
             &shape(),
-            &Paint::fill(color).with_image_filter(ImageFilter::Blur { sigma: 6.0 }),
+            &Paint::fill(color).with_image_filter(ImageFilter::blur(6.0)),
         )
         .expect("image filter");
     let filtered = render(&mut ctx, canvas);
@@ -7688,10 +7688,7 @@ fn an_image_filter_blurs_the_result_where_a_mask_blur_blurs_the_mask() {
     let mut canvas = Canvas::new(SIZE);
     canvas.clear(Color::BLACK);
     canvas
-        .draw_rect(
-            area,
-            &gradient().with_image_filter(ImageFilter::Blur { sigma: 6.0 }),
-        )
+        .draw_rect(area, &gradient().with_image_filter(ImageFilter::blur(6.0)))
         .expect("image filter");
     let pixels = render(&mut ctx, canvas);
 
@@ -8608,7 +8605,7 @@ fn a_runtime_effect_can_filter_what_was_drawn_rather_than_fill_it() {
     // tinted too, so both halves ran.
     let composed = shot(
         &mut ctx,
-        ImageFilter::compose(tint(1.0, 0.4, 0.0), ImageFilter::Blur { sigma: 6.0 }),
+        ImageFilter::compose(tint(1.0, 0.4, 0.0), ImageFilter::blur(6.0)),
     );
     let halo = pixel(&composed, 28, 64);
     assert!(
@@ -9546,7 +9543,7 @@ fn composing_with_a_filter_that_does_nothing_is_the_other_filter() {
     // changes nothing is a copy nobody asked for. The pair is folded when
     // either half is an identity, which also means a caller composing in a loop
     // does not build a chain of them.
-    let plain = ImageFilter::Blur { sigma: 4.0 };
+    let plain = ImageFilter::blur(4.0);
     assert_eq!(
         ImageFilter::compose(plain.clone(), ImageFilter::None),
         plain,
@@ -10475,7 +10472,7 @@ fn a_color_filter_can_be_half_of_an_image_filter_composition() {
         render(ctx, canvas)
     };
     let gamma = || ImageFilter::Color(ColorFilter::srgb_to_linear());
-    let blur = || ImageFilter::Blur { sigma: 6.0 };
+    let blur = || ImageFilter::blur(6.0);
     let at = |p: &[u8], x: u32, y: u32| pixel(p, x, y);
 
     // It does something, which is the first thing to establish: a filter
@@ -10652,8 +10649,7 @@ fn a_filter_blends_where_it_meets_the_frame_not_inside_its_own_layer() {
     for (what, paint) in [
         (
             "a blur",
-            base.clone()
-                .with_image_filter(ImageFilter::Blur { sigma: 3.0 }),
+            base.clone().with_image_filter(ImageFilter::blur(3.0)),
         ),
         (
             "a dilation",
@@ -10742,10 +10738,7 @@ fn an_image_filter_applies_to_a_mesh_as_it_does_to_a_shape() {
         "a dilation of ten should reach ten further each way. The mesh's own \
          span means the filter was dropped"
     );
-    let (left, right) = draw(
-        &mut ctx,
-        base.with_image_filter(ImageFilter::Blur { sigma: 6.0 }),
-    );
+    let (left, right) = draw(&mut ctx, base.with_image_filter(ImageFilter::blur(6.0)));
     assert!(
         left < 34 && right > 93,
         "a blur should carry color past the mesh, but it spans {left}..{right}"
@@ -11039,7 +11032,7 @@ fn every_draw_that_takes_a_paint_honours_its_image_filter() {
         255,
         "unfiltered, the fill meets the clip as a wall"
     );
-    let blurred = edge(&mut ctx, ImageFilter::Blur { sigma: 6.0 });
+    let blurred = edge(&mut ctx, ImageFilter::blur(6.0));
     assert!(
         blurred < 200,
         "a blurred paint should soften on the inside of its clip, but the pixel \
@@ -11891,7 +11884,7 @@ fn a_glyph_run_takes_an_image_filter() {
 
     let blurred = span(
         &mut ctx,
-        &Paint::fill(red).with_image_filter(ImageFilter::Blur { sigma: 5.0 }),
+        &Paint::fill(red).with_image_filter(ImageFilter::blur(5.0)),
     );
     assert!(
         blurred.0 < 48 && blurred.1 > 55,
@@ -13988,7 +13981,7 @@ fn a_filtered_layer_with_no_bounds_is_sized_by_what_the_filter_reaches() {
     let mut filtered = Canvas::new(SIZE);
     filtered.clear(Color::BLACK);
     filtered
-        .save_layer_filtered(Layer::opacity(1.0), None, &ImageFilter::Blur { sigma })
+        .save_layer_filtered(Layer::opacity(1.0), None, &ImageFilter::blur(sigma))
         .expect("a blur filters a group");
     filtered
         .draw_circle(at, radius, &Paint::fill(Color::WHITE))
