@@ -274,10 +274,10 @@ mirrored. The passes run along the target's axes, so a layer turned forty-five
 degrees with a blur along x alone smears along the screen's x rather than along
 the axis the caller stated. Measured: thirty-nine by fifteen upright, forty-five
 by twenty-one turned, which is the same horizontal smear applied to a diamond.
-That is `docs/non-parity.md` section 15, which also says why it was left --
-the pass's step is already a free direction, so the shader is not the problem;
-the layer would have to carry a basis where it carries a scale, and the
-reduction and the bounds follow from that.
+That is `docs/non-parity.md` section 15, which has since been corrected against
+upstream: it does not turn the blur either. It removes the rotation from the
+space the blur happens in, blurs axis-aligned there, and applies the rotation to
+the *result*.
 
 Four more plates from that file, and a second defect found by writing a fifth.
 The four: a blurred circle whose clip cuts it *after* the blur, so the halo
@@ -304,10 +304,10 @@ the pixel, where the sharp version correctly erases 4052 against a disc's 4071.
 The renderer already knows the shape of that mistake -- the analytic route
 refuses a mode that does not respect coverage, and says why in those words --
 so the analytic half of the feature is right and the layer half is not. It is
-`docs/non-parity.md` section 16, which sets out the two ways out and why
-neither was taken in passing: refusing withdraws seven modes from a feature
-upstream supports, and compositing correctly means a per-mode table nobody has
-derived. A plate under upstream's name drawing a rectangle would report the
+`docs/non-parity.md` section 16, which has since been read against upstream and
+is narrower than it looked: upstream special-cases `Clear` alone on the analytic
+path, forcing white and compositing by subtraction, which is `DstOut` on a
+coverage. The general table this entry once called for is not needed. A plate under upstream's name drawing a rectangle would report the
 chapter as covered while showing the wrong thing, so there is none.
 
 Four more after that. The periphery plate's twin, turned: a strip down the

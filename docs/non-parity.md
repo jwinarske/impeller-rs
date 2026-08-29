@@ -488,21 +488,35 @@ An isotropic blur is unaffected, which is why nothing had noticed: a rotation
 takes a circular kernel to a circular kernel, and every blur in this repository
 was circular until the second deviation existed.
 
-The fix is smaller than it sounds and was left undone deliberately. The pass's
-`step` is already a free two-vector rather than an axis flag -- the shader walks
-its taps along whatever direction it is given -- so blurring along a rotated
-axis is a different `step`, not a different shader. What is missing is upstream
-of it: the layer carries the *scale* in force when it opened, `Layer::scaled_by`
-being where a sigma is taken from the caller's space into the device's, and it
-would have to carry a basis instead. Two other things follow from that and are
-the real work: the reduction that makes a wide blur affordable is per axis and
-would need to be per basis vector, and a layer's `reach` would have to become
-the bounding box of a rotated extent rather than a pair of outsets.
+**What upstream does**, read at tip of tree in
+`impeller/entity/contents/filters/gaussian_blur_filter_contents.cc`, and it is
+not what a first guess suggests. It does not turn the blur. It removes the
+rotation from the space the blur happens in and puts it back afterwards:
 
-There is also a limit past which the answer stops being a rotation. Two
-separable passes are exact only along directions that stay orthogonal, which a
-rotation preserves and a shear does not, so a general transform needs the
-fallback upstream has rather than a turned basis.
+    // Source space here is scaled by the entity's transform. [...] You can
+    // think of this as "scaled source space" or "un-rotated local space". The
+    // entity's rotation is applied to the result of the blur as part of the
+    // result's transform.
+
+`ExtractScale` takes the *lengths* of the transformed basis vectors, so a
+rotation contributes nothing to it; the input is then re-rendered under
+`MakeTranslation(offset) * MakeScale(scale)` alone, blurred along that space's
+own axes with a sigma per axis, and the finished image is drawn back under the
+full transform, rotation included. A `FML_DCHECK` on the snapshot's transform
+being translation-and-scale only holds the invariant in place.
+
+So the blur is always axis-aligned, and the rotation is a resample of the
+blurred result. That is a quality decision as much as an implementation one --
+the content is rasterized un-rotated and then turned -- and it is why upstream
+needs no separable-blur-along-a-rotated-basis and no fallback for a shear.
+
+An earlier version of this entry said the fix was for the layer to carry a
+basis where it carries a scale. That was a guess and it was wrong in kind. What
+this renderer would need is upstream's arrangement: a layer opened under a
+rotation would have to take its target in the un-rotated space -- scale and
+translation only, which is already what `Layer::scaled_by` extracts -- draw its
+contents there, and carry the rotation to the composite instead. The pass's
+`step` staying axis-aligned is then correct rather than a limitation.
 
 **Impact.** Confined to a blur whose two deviations differ *and* which is drawn
 under a rotation. A blur stated with one deviation is unaffected at any
@@ -537,16 +551,39 @@ neither `One` nor `OneMinusSrcAlpha` -- `Clear`, `Src`, `SrcIn`, `SrcOut`,
 `DstIn`, `DstATop` and `Modulate`. Every other mode, `SrcOver` and all the
 advanced ones included, is unaffected at any deviation.
 
-**Two ways out, and neither is taken here.** Refusing, as the analytic route
-does, would turn a wrong picture into an error and matches this repository's
-stated position that substituting something produces a picture nobody can debug
-from -- but it withdraws seven modes from a feature upstream supports, which is
-a decision about the API rather than a bug fix. Compositing correctly is the
-other, and it means treating the layer's alpha as coverage rather than as an
-image: `mix(dst, M(src, dst), src_alpha)` for each mode, which for `Clear` is
-exactly `DstOut` and for the rest is a table nobody has derived. Both are
-larger than the defect and neither should be chosen in passing, so this is
-written down instead, and pinned by
+**What upstream does** is narrower than either way out this entry first
+proposed, and it settles the question. `SolidRRectLikeBlurContents::Render`
+checks the entity's blend mode, and for `kClear` alone it forces the color to
+white and sets a pipeline flag:
+
+    if (entity.GetBlendMode() == BlendMode::kClear) {
+      opts.is_for_rrect_blur_clear = true;
+      color = Color::White();
+    }
+
+which `content_context.cc` turns into a reverse-subtract rather than the usual
+`Clear` factors: destination factor `One`, source factor `DestinationColor`,
+operation `ReverseSubtract`. That is `dst - src * dst`, which for a white source
+premultiplied by the blurred coverage is `dst * (1 - coverage)` -- a soft erase.
+
+Two things follow. The arithmetic this entry guessed at is right: `Clear` on a
+coverage is `DstOut`, and upstream reaches it by subtraction because its
+fragment writes coverage directly. And upstream does *not* solve the general
+case either -- it special-cases one mode on one path, the analytic
+rounded-rect-like blur, which is the path its `ClearBlendWithBlur` takes because
+a circle is rrect-like.
+
+So the fix here is upstream's fix, and it is small. This renderer's analytic
+blur route refuses `Clear` at the coverage guard and falls through to the layer
+route, which is where the rectangle comes from. Letting `Clear` past that guard,
+drawing white, and compositing the quad with `DstOut` is the same thing
+upstream does and needs no new blend operation, since `DstOut` is already a mode
+here. The general table is not needed and should not be attempted: the other six
+modes stay refused or wrong exactly as they are upstream.
+
+Left undone rather than done in passing because relaxing a guard that exists to
+stop a quad erasing what is behind it deserves its own change and its own test,
+and because it was written down before it was understood. Pinned by
 `a_mask_blur_under_a_mode_that_ignores_coverage_erases_its_whole_bounds`.
 
 Upstream's `ClearBlendWithBlur` is that scene by name, and it is the one
