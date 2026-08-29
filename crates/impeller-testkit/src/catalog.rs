@@ -1798,6 +1798,188 @@ fn path() -> Vec<Scene> {
             draw_lines_grid(LineForm::RoundRect),
         ),
         plate(
+            "path/can-render-strokes",
+            // A single thick segment, said as a path. Upstream's whole scene,
+            // and the plainest stroke in the file: two ends, no join, and a
+            // width wide enough that the caps are a sixth of the picture.
+            vec![Item::stroke(
+                Shape::Polyline(vec![[16.0, 64.0], [112.0, 64.0]]),
+                StrokeSpec::new(16.0),
+                RED,
+            )],
+        ),
+        plate(
+            "path/draw-rect-strokes-render-correctly",
+            // A rectangle stroked through its path rather than through
+            // `draw_rect`, which is where the corner is a join the tessellator
+            // has to build rather than a field the shader evaluates.
+            vec![Item::stroke(
+                Shape::Rect {
+                    min: [24.0, 24.0],
+                    max: [104.0, 104.0],
+                },
+                StrokeSpec::new(10.0),
+                RED,
+            )
+            .as_path()],
+        ),
+        plate(
+            "path/draw-rect-strokes-with-bevel-join-render-correctly",
+            // The same rectangle with the corner cut off instead of carried to
+            // a point. Upstream keeps the pair, and the difference is four
+            // small triangles -- which is exactly the size of difference a
+            // join that fell back to the default would hide.
+            vec![Item::stroke(
+                Shape::Rect {
+                    min: [24.0, 24.0],
+                    max: [104.0, 104.0],
+                },
+                StrokeSpec {
+                    join: LineJoin::Bevel,
+                    ..StrokeSpec::new(10.0)
+                },
+                RED,
+            )
+            .as_path()],
+        ),
+        plate_tree(
+            "path/fat-stroke-arc",
+            // An arc stroked wider than the shape it is inscribed in, with the
+            // shape drawn under it and a line at the frontier its outer edge
+            // must reach and not pass: the rectangle's right side plus half the
+            // stroke. Upstream draws that line for a reader to check by eye,
+            // and it is checked here instead.
+            vec![
+                Node::Paint(Box::new(PaintSpec {
+                    color: [
+                        0x11 as f32 / 255.0,
+                        0x11 as f32 / 255.0,
+                        0x11 as f32 / 255.0,
+                        1.0,
+                    ],
+                    blend: BlendMode::Src,
+                    clip: None,
+                    clip_out: None,
+                    transform: Transform::default(),
+                })),
+                Node::Draw(Box::new(Item::fill(
+                    Shape::Rect {
+                        min: [20.0, 20.0],
+                        max: [60.0, 60.0],
+                    },
+                    RED,
+                ))),
+                Node::Draw(Box::new(
+                    Item::stroke(
+                        Shape::Arc {
+                            center: [40.0, 40.0],
+                            radii: [20.0, 20.0],
+                            start: 0.0,
+                            sweep: std::f32::consts::FRAC_PI_2,
+                            through_center: false,
+                        },
+                        StrokeSpec::new(48.0),
+                        WHITE,
+                    )
+                    .with_blend(BlendMode::SrcOver),
+                )),
+                // The frontier: sixty plus half of forty-eight.
+                Node::Draw(Box::new(
+                    Item::stroke(
+                        Shape::Line {
+                            from: [84.0, 0.0],
+                            to: [84.0, 100.0],
+                        },
+                        StrokeSpec::new(1.0),
+                        RED,
+                    )
+                    .with_blend(BlendMode::SrcOver),
+                )),
+            ],
+        ),
+        plate(
+            "path/blurred-circle-with-stroke-width",
+            // A stroked circle under a mask blur. The two halves of it are
+            // routed separately here -- a circle is a field the shader
+            // evaluates, and a blurred one is a different field again -- so a
+            // stroked circle that is also blurred is the case where a renderer
+            // has to decide which of the two it is, and the answer is neither:
+            // it is a ring, blurred.
+            vec![Item::stroke(
+                Shape::Circle {
+                    center: [64.0, 64.0],
+                    radius: 32.0,
+                },
+                StrokeSpec::new(10.0),
+                GREEN,
+            )
+            .with_mask_blur(3.0)
+            .with_blend(BlendMode::SrcOver)],
+        ),
+        plate(
+            "path/rotate-color-filtered-path",
+            // An arrow in two contours, stroked, recolored by a filter that
+            // keeps only the filter's own color where the stroke covered, and
+            // the whole thing turned a quarter turn. Upstream's point is the
+            // order: the filter applies in the shape's own space and the
+            // rotation applies to the result, so a renderer that filtered after
+            // transforming would still draw an arrow and still draw it the
+            // right color.
+            //
+            // What it can catch is a filter dropped on a transformed draw, and
+            // the color chosen makes that loud -- the paint underneath is
+            // black, so losing the filter loses the arrow into the ground.
+            [
+                vec![[60.0, 95.0], [60.0, 25.0]],
+                vec![[25.0, 60.0], [60.0, 95.0], [95.0, 60.0]],
+            ]
+            .into_iter()
+            .map(|points| {
+                Item::stroke(
+                    Shape::Polyline(points),
+                    StrokeSpec {
+                        cap: LineCap::Round,
+                        join: LineJoin::Round,
+                        ..StrokeSpec::new(8.0)
+                    },
+                    BLACK,
+                )
+                .with_color_filter(
+                    // Alice blue, which is upstream's, kept only where the
+                    // stroke put coverage.
+                    ColorFilter::blend([240.0 / 255.0, 248.0 / 255.0, 1.0, 1.0], BlendMode::SrcIn)
+                        .expect("a source-in tint is affine"),
+                )
+                .with_transform(Transform {
+                    rotate: std::f32::consts::FRAC_PI_2,
+                    translate: [120.0, 16.0],
+                    ..Transform::default()
+                })
+                .with_blend(BlendMode::SrcOver)
+            })
+            .collect(),
+        ),
+        plate(
+            "path/can-render-clips",
+            // The clip cuts exactly through the circle's center, as upstream's
+            // does, so what is left is one quarter and two straight edges
+            // meeting at the middle of what was a curve. Clipped by a shape
+            // rather than by a rectangle field, which is the stencil route:
+            // upstream says it with `ClipPath`, and a scissor could express
+            // this one and would be exercising something else.
+            vec![Item::fill(
+                Shape::Circle {
+                    center: [64.0, 64.0],
+                    radius: 44.0,
+                },
+                [1.0, 0.0, 1.0, 1.0],
+            )
+            .with_clip_shape(Shape::Rect {
+                min: [0.0, 0.0],
+                max: [64.0, 64.0],
+            })],
+        ),
+        plate(
             "path/two-contour-path-with-single-point-contour",
             // Two contours in one path: a segment, and a contour holding a
             // single point. The second has no direction, so nothing but the

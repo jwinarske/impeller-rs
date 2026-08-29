@@ -143,7 +143,7 @@ column is right and the obvious way to check it is wrong.
 | File | Scenes there | Here | Blocked on |
 |---|---|---|---|
 | `aiks_dl_basic_unittests.cc` | ~85 | 82 | subpass optimizations; see below |
-| `aiks_dl_path_unittests.cc` | ~30 | 30 | nothing; see below |
+| `aiks_dl_path_unittests.cc` | ~30 | 37 | nothing; see below |
 | `aiks_dl_gradient_unittests.cc` | ~40 | 46 | nothing; see below |
 | `aiks_dl_clip_unittests.cc` | ~5 | 7 | nothing; this file is covered |
 | `aiks_dl_opacity_unittests.cc` | ~3 | 3 | nothing; this file is covered |
@@ -157,7 +157,7 @@ column is right and the obvious way to check it is wrong.
 | `aiks_dl_runtime_effect_unittests.cc` | — | 12 | nothing; see below |
 | `aiks_dl_unittests.cc` | ~36 | 13 | subpass collapse, for five of them; see below |
 
-The catalog holds three hundred and twenty-two scenes of roughly four hundred,
+The catalog holds three hundred and twenty-nine scenes of roughly four hundred,
 and the proportion is less interesting than which ones: the arithmetic of drawing is largely covered, and
 what is missing is either a capability this renderer does not have or a thing
 the scene model cannot describe.
@@ -758,7 +758,7 @@ not taken and is recorded as a row of `docs/parity.md`. So the column is empty
 in all four plates, and they are the only place that decision can be seen rather
 than read about.
 
-Five more after those, and they close the chapter. Four are shapes that had no
+Five more after those. Four are shapes that had no
 plate and needed no new capability: a quadratic whose ends are the same point,
 so the stroke goes out and comes straight back and should be a pill rather than
 anything flat-ended; a cubic whose controls lie outside the band its ends
@@ -786,6 +786,41 @@ layer still has bounds, and this collection's items replace by default, so `Src`
 clears those bounds to transparent -- correct, and the same behavior a plate in
 the basic chapter exists to show. Composited as upstream composites, the frame
 comes back untouched.
+
+Calling that the end of the chapter was wrong, and the way it was wrong is worth
+the sentence. The count had reached the number in the table, and the number in
+the table is a count of scenes filed under `path/` rather than of upstream tests
+mirrored -- nine of the scenes there are this repository's own. So the two
+numbers met while nine of upstream's were still missing. The diff that had said
+otherwise was splitting runs of capitals, which made `UVPositionData` into
+`u-v-position-data` and reported three scenes missing that were already there
+under `uv`. Both halves of that mistake are the same mistake: a count is not a
+name-by-name check, and a name-by-name check is only as good as the rule that
+makes the names.
+
+Seven more went in on the second pass. A plain thick segment; a rectangle
+stroked through its path with a miter and then with a bevel, where the
+difference is four small triangles and is exactly the size a join that fell back
+to the default would hide; a stroked circle under a mask blur, which is the case
+where a renderer has to decide whether it is drawing a field or a ring and the
+answer is neither; and an arrow stroked, recolored by a filter that keeps only
+the filter's color, and turned a quarter turn -- where the paint underneath is
+black, so a filter dropped on a transformed draw loses the arrow into the
+ground.
+
+The last two are measured rather than looked at. Upstream's fat stroke draws an
+arc at a width wider than the shape's radius, with a line at the frontier its
+outer edge must reach and not pass, and leaves a reader to check. The stroke's
+inner offset has crossed the center there, so the outline self-intersects, and
+that is where a stroker either clamps and falls short or runs away. It reaches a
+full cover one pixel inside the frontier, touches the pixel the frontier passes
+through, and puts nothing beyond -- which took one correction to establish, since
+the marker line was two pixels wide and covering the edge it marked.
+
+And a clip whose corner is the circle's center, so one quarter survives: two
+straight edges meeting where a curve used to be. Said as a shape rather than as
+a rectangle, which is the stencil route and is what upstream's `ClipPath` means;
+a scissor could express this one and would be exercising something else.
 
 Dithering was not the small feature its one-word entry suggested, and the reason
 is worth keeping even though the difficulty has since evaporated. Breaking up a

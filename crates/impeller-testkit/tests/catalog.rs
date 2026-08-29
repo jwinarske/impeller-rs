@@ -766,3 +766,88 @@ fn reversing_a_gradient_reverses_the_picture() {
          spanning it and clamping: {diff:?}"
     );
 }
+
+#[test]
+fn a_stroke_wider_than_its_arc_stops_exactly_at_the_frontier() {
+    // Upstream draws a line at the rectangle's right side plus half the stroke
+    // width and leaves a reader to check that the fat white arc reaches it and
+    // does not pass it. The plate keeps the line, and this does the checking.
+    //
+    // It is worth checking rather than looking at because the stroke is wider
+    // than the shape's radius -- half of forty-eight against twenty -- so the
+    // inner offset has crossed the center and the outline self-intersects.
+    // That is where a stroker either clamps, and falls short, or runs away, and
+    // the frontier is the only place the difference is a number.
+    let Ok(mut ctx) = Validated::new(DevicePreference::Auto) else {
+        eprintln!("skipping: no Vulkan device");
+        return;
+    };
+    // Without the marker, which would otherwise cover the edge it marks.
+    let mut scene = catalog()
+        .into_iter()
+        .find(|s| s.name == "path/fat-stroke-arc")
+        .expect("the plate is in the catalog");
+    let marker = scene.items.pop();
+    assert!(
+        marker.is_some(),
+        "the plate should end with its frontier line"
+    );
+    let img = render::<VulkanHal>(&mut ctx, &scene);
+
+    let white_in = |x: u32| (0..128u32).map(|y| img.pixel(x, y)[1]).max().unwrap_or(0);
+    // The frontier is at eighty-four, so the last pixel the arc may touch is
+    // the one spanning eighty-three to eighty-four, and it is touched
+    // partially. Eighty-two is inside and has to be covered outright.
+    assert_eq!(
+        white_in(82),
+        255,
+        "the arc should reach a full cover one pixel inside the frontier"
+    );
+    assert!(
+        white_in(83) > 0x11,
+        "the arc should reach into the pixel the frontier passes through"
+    );
+    for x in 85..128 {
+        assert_eq!(
+            white_in(x),
+            0x11,
+            "the arc put white at x={x}, past a frontier at eighty-four"
+        );
+    }
+}
+
+#[test]
+fn a_shape_clip_cuts_a_circle_through_its_center() {
+    // The clip's corner is the circle's center, so what survives is one
+    // quarter: two straight edges meeting where a curve used to be. A clip
+    // that had been applied as the shape's bounding box would leave the whole
+    // circle, and one applied a pixel out would show along two straight edges
+    // forty pixels long, which is the easiest kind of difference to measure.
+    let Ok(mut ctx) = Validated::new(DevicePreference::Auto) else {
+        eprintln!("skipping: no Vulkan device");
+        return;
+    };
+    let scene = catalog()
+        .into_iter()
+        .find(|s| s.name == "path/can-render-clips")
+        .expect("the plate is in the catalog");
+    let img = render::<VulkanHal>(&mut ctx, &scene);
+    let ground = img.pixel(0, 0);
+    let mut drawn = 0usize;
+    for y in 0..128u32 {
+        for x in 0..128u32 {
+            if img.pixel(x, y) != ground {
+                assert!(
+                    x < 64 && y < 64,
+                    "({x}, {y}) is outside a clip that ends at sixty-four"
+                );
+                drawn += 1;
+            }
+        }
+    }
+    // A quarter of a disc of radius forty-four is about fifteen hundred.
+    assert!(
+        (1400..1700).contains(&drawn),
+        "a quarter of the circle should survive the clip; {drawn} pixels did"
+    );
+}
