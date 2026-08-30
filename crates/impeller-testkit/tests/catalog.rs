@@ -1363,3 +1363,52 @@ fn every_plate_that_asks_for_an_advanced_blend_can_show_one() {
          fewer than the catalog has and means the walk missed some"
     );
 }
+
+#[test]
+fn a_points_size_is_its_width_times_the_scale_at_either_extreme() {
+    // Upstream keeps the pair and the pair is the point. One plate is a point a
+    // ten-thousandth of a unit wide under a millionfold scale; the other is a
+    // hundred million units wide under a millionth of one. The product is the
+    // same hundred device pixels both times, so the two have to draw the same
+    // disc -- and the two ways of getting it wrong are opposite. Sizing the
+    // point in device pixels from the width alone draws nothing in the first
+    // and fills the frame in the second.
+    //
+    // Which makes this a test about where the multiplication happens rather
+    // than about points: any single plate could be passed by a renderer that
+    // had the arithmetic backwards.
+    let Ok(mut ctx) = Validated::new(DevicePreference::Auto) else {
+        eprintln!("skipping: no Vulkan device");
+        return;
+    };
+    let mut disc = |name: &str| {
+        let scene = catalog()
+            .into_iter()
+            .find(|s| s.name == name)
+            .unwrap_or_else(|| panic!("{name} is not in the catalog"));
+        let img = render::<VulkanHal>(&mut ctx, &scene);
+        let ground = img.pixel(0, 0);
+        (0..128u32)
+            .flat_map(|y| (0..128u32).map(move |x| (x, y)))
+            .filter(|(x, y)| img.pixel(*x, *y) != ground)
+            .count()
+    };
+    let large = disc("dl/can-draw-scaled-points-large-scale-small-radius");
+    let small = disc("dl/can-draw-scaled-points-small-scale-large-radius");
+
+    // A disc of radius fifty is about seven thousand nine hundred pixels, and
+    // the frame is sixteen thousand -- so neither "nothing" nor "everything"
+    // is anywhere near it.
+    for (label, count) in [("large scale", large), ("small scale", small)] {
+        assert!(
+            (7000..9000).contains(&count),
+            "{label} should draw a disc of radius fifty, about seven thousand \
+             nine hundred pixels; it drew {count}"
+        );
+    }
+    assert!(
+        large.abs_diff(small) * 50 < large,
+        "the two extremes are the same width times the same scale and should \
+         draw the same disc: {large} against {small}"
+    );
+}

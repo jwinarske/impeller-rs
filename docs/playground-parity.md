@@ -166,9 +166,9 @@ column is right and the obvious way to check it is wrong.
 | `aiks_dl_primitive_shape_unittests.cc` | ~2 | 0 | one is a playground harness, one wants a stroke width of zero to mean a hairline |
 | `aiks_dl_text_unittests.cc` | — | 7 | shaping and font parsing, which are out of scope; glyph rendering is not, and these use synthetic coverage |
 | `aiks_dl_runtime_effect_unittests.cc` | — | 14 | a drawPaint with a program, and a sampler bound to something that is not a texture, for one each; see below |
-| `aiks_dl_unittests.cc` | ~36 | 13 | subpass collapse, for five of them; see below |
+| `aiks_dl_unittests.cc` | ~36 | 16 | subpass collapse, for five of them; see below |
 
-The catalog holds three hundred and fifty-seven scenes of roughly four hundred,
+The catalog holds three hundred and sixty scenes of roughly four hundred,
 and the proportion is less interesting than which ones: the arithmetic of drawing is largely covered, and
 what is missing is either a capability this renderer does not have or a thing
 the scene model cannot describe.
@@ -533,8 +533,24 @@ against twelve here. Five of the twenty-four missing are subpass collapse and
 are named for it; the rest are pictures, and the largest family among them is
 eight translucent save layers, each with a different filter on it.
 
-Five of those eight are here now, and the family divides in two once a group
-can be filtered as a whole. Two recolor the group on its way out, two run a
+The points family went in since, three of it: upstream's set of seven drawn
+twice, once with a round cap and once with a square one -- which is the whole of
+what a cap means to a point, there being no direction for one to extend along --
+and its pair of scale extremes.
+
+That pair is the one worth the words, and it is a test about where a
+multiplication happens rather than about points. One plate is a point a
+ten-thousandth of a unit wide under a millionfold scale; the other is a hundred
+million units wide under a millionth of one. The product is the same hundred
+device pixels both times, so the two have to draw the same disc, and the two
+ways of getting it wrong are opposite -- sizing the point in device pixels from
+the width alone draws nothing in the first and fills the frame in the second.
+Either plate alone would be passed by a renderer that had the arithmetic
+backwards. They measure eight thousand and thirteen pixels against eight
+thousand, on a disc of about seven thousand nine hundred.
+
+Five of the eight translucent save layers are here now, and the family divides
+in two once a group can be filtered as a whole. Two recolor the group on its way out, two run a
 filter over the finished group, and one does both -- and the two halves are not
 two spellings of one thing: the same blend against a constant, put one way and
 then the other, differs across the whole frame.

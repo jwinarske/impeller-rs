@@ -6173,6 +6173,88 @@ fn pictures() -> Vec<Scene> {
         ]
     };
     vec![
+        {
+            // Upstream's point set drawn twice, once with a round cap and once
+            // with a square one -- which is the whole of what a cap means to a
+            // point, there being no direction for one to extend along. Two of
+            // the seven points are the same point and two more are close
+            // together, and the color is translucent, so where they land on
+            // each other the ink doubles.
+            let points = vec![
+                [0.0, 0.0],
+                [26.0, 26.0],
+                [26.0, 0.0],
+                [0.0, 26.0],
+                [0.0, 0.0],
+                [12.0, 12.0],
+                [14.0, 14.0],
+            ];
+            let field = |cap: LineCap, x: f32| PointsSpec {
+                mode: PointMode::Points,
+                points: points.clone(),
+                stroke: StrokeSpec {
+                    cap,
+                    ..StrokeSpec::new(7.0)
+                },
+                color: [1.0, 1.0, 0.2, 0.5],
+                blend: BlendMode::SrcOver,
+                transform: Transform::translate(x, 50.0),
+            };
+            Scene::tree(
+                "dl/can-draw-points",
+                vec![
+                    Node::Points(Box::new(field(LineCap::Round, 16.0))),
+                    Node::Points(Box::new(field(LineCap::Square, 76.0))),
+                ],
+            )
+            .with_background(DARK)
+            .with_samples(4)
+        },
+        points_plate(
+            "dl/can-draw-scaled-points-large-scale-small-radius",
+            // A point a ten-thousandth of a unit wide under a millionfold
+            // scale, which is upstream's and is a hundred device pixels. A
+            // renderer that sized the point in device pixels from the width
+            // alone would draw nothing at all.
+            PointsSpec {
+                mode: PointMode::Points,
+                points: vec![[0.0, 0.0]],
+                stroke: StrokeSpec {
+                    cap: LineCap::Round,
+                    ..StrokeSpec::new(100.0 * 0.000_001)
+                },
+                color: RED,
+                blend: BlendMode::SrcOver,
+                transform: Transform {
+                    scale: [1_000_000.0, 1_000_000.0],
+                    translate: [64.0, 64.0],
+                    ..Transform::default()
+                },
+            },
+        ),
+        points_plate(
+            "dl/can-draw-scaled-points-small-scale-large-radius",
+            // The same product the other way round, which catches the opposite
+            // mistake: a hundred million units wide under a millionth of a
+            // scale is the same hundred device pixels, and a renderer that
+            // clamped the width before applying the transform would fill the
+            // frame.
+            PointsSpec {
+                mode: PointMode::Points,
+                points: vec![[0.0, 0.0]],
+                stroke: StrokeSpec {
+                    cap: LineCap::Round,
+                    ..StrokeSpec::new(100.0 * 1_000_000.0)
+                },
+                color: RED,
+                blend: BlendMode::SrcOver,
+                transform: Transform {
+                    scale: [0.000_001, 0.000_001],
+                    translate: [64.0, 64.0],
+                    ..Transform::default()
+                },
+            },
+        ),
         picture(
             "dl/draw-picture-at-its-own-scale",
             // A picture placed by the transform and nothing else. It has no
