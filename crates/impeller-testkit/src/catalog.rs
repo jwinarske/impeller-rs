@@ -3612,6 +3612,90 @@ fn blend() -> Vec<Scene> {
         .collect();
 
     scenes.push(plate(
+        "blend/paint-blend-mode-is-respected",
+        // Two groups in one list, and the point is that the mode belongs to the
+        // paint rather than to the canvas: the first pair composites and the
+        // second adds, so where the first pair overlaps it darkens toward the
+        // ground and where the second overlaps it runs to white. A renderer
+        // holding the mode as state rather than per draw would give the whole
+        // plate one of the two behaviors.
+        vec![
+            Item::fill(
+                Shape::Circle {
+                    center: [34.0, 40.0],
+                    radius: 22.0,
+                },
+                [1.0, 0.0, 0.0, 0.5],
+            )
+            .with_blend(BlendMode::SrcOver),
+            Item::fill(
+                Shape::Circle {
+                    center: [58.0, 40.0],
+                    radius: 22.0,
+                },
+                [0.0, 1.0, 0.0, 0.5],
+            )
+            .with_blend(BlendMode::SrcOver),
+            Item::fill(
+                Shape::Circle {
+                    center: [84.0, 96.0],
+                    radius: 18.0,
+                },
+                RED,
+            )
+            .with_blend(BlendMode::Plus),
+            Item::fill(
+                Shape::Circle {
+                    center: [108.0, 96.0],
+                    radius: 18.0,
+                },
+                GREEN,
+            )
+            .with_blend(BlendMode::Plus),
+            Item::fill(
+                Shape::Circle {
+                    center: [96.0, 74.0],
+                    radius: 18.0,
+                },
+                BLUE,
+            )
+            .with_blend(BlendMode::Plus),
+        ],
+    ));
+
+    scenes.push(plate(
+        "blend/foreground-pipeline-blend-applies-transform-correctly",
+        // An image recolored by a filter that is itself a blend, drawn under a
+        // rotation. A color filter acts on what the material produced, in the
+        // material's own space, and the transform then places the result -- so
+        // the tint has to arrive on the turned rectangle rather than on an
+        // upright one. Upstream keeps this and an advanced-mode twin; the twin
+        // is refused here, which `docs/non-parity.md` records.
+        vec![Item::filled(
+            Shape::Rect {
+                min: [-40.0, -28.0],
+                max: [40.0, 28.0],
+            },
+            sheet(
+                [-40.0, -28.0, 40.0, 28.0],
+                ALL,
+                TileMode::Clamp,
+                Sampling::Linear,
+            ),
+        )
+        .with_color_filter(
+            ColorFilter::blend([1.0, 165.0 / 255.0, 0.0, 1.0], BlendMode::SrcIn)
+                .expect("a source-in tint is affine"),
+        )
+        .with_transform(Transform {
+            rotate: 30.0f32.to_radians(),
+            translate: [64.0, 64.0],
+            ..Transform::default()
+        })
+        .with_blend(BlendMode::SrcOver)],
+    ));
+
+    scenes.push(plate(
         "blend/blend-mode-should-cover-whole-screen",
         vec![
             Item::fill(

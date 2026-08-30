@@ -158,7 +158,7 @@ column is right and the obvious way to check it is wrong.
 | `aiks_dl_gradient_unittests.cc` | ~40 | 46 | nothing; see below |
 | `aiks_dl_clip_unittests.cc` | ~5 | 7 | nothing; this file is covered |
 | `aiks_dl_opacity_unittests.cc` | ~3 | 3 | nothing; this file is covered |
-| `aiks_dl_blend_unittests.cc` | ~79 | 40 | capability injection and subpass collapse, for two of them; see below |
+| `aiks_dl_blend_unittests.cc` | ~79 | 42 | capability injection and subpass collapse, and a blend color filter in a mode that is not affine; see below |
 | `aiks_dl_blur_unittests.cc` | ~59 | 56 | nothing; see below |
 | `aiks_dl_vertices_unittests.cc` | ~16 | 20 | a shader other than an image cannot be read at a mesh's texture coordinates, for two of them; see below |
 | `aiks_dl_atlas_unittests.cc` | ~11 | 12 | nothing; see below |
@@ -168,7 +168,7 @@ column is right and the obvious way to check it is wrong.
 | `aiks_dl_runtime_effect_unittests.cc` | — | 14 | a drawPaint with a program, and a sampler bound to something that is not a texture, for one each; see below |
 | `aiks_dl_unittests.cc` | ~36 | 13 | subpass collapse, for five of them; see below |
 
-The catalog holds three hundred and fifty scenes of roughly four hundred,
+The catalog holds three hundred and fifty-two scenes of roughly four hundred,
 and the proportion is less interesting than which ones: the arithmetic of drawing is largely covered, and
 what is missing is either a capability this renderer does not have or a thing
 the scene model cannot describe.
