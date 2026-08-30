@@ -1229,3 +1229,137 @@ fn a_blur_turns_with_the_transform_it_was_stated_under() {
          of the turned one, so the blur did not turn with the layer"
     );
 }
+
+#[test]
+fn an_emulated_advanced_blend_leaves_the_clip_in_force() {
+    // A mode the hardware cannot do directly is emulated with a pass of its
+    // own, and the failure upstream keeps this scene for is that pass leaving
+    // the clip behind. The blue rectangle sits entirely outside the clip: if it
+    // appears, the clip did not survive the draw before it.
+    //
+    // Checked by color rather than by area, because the thing that would go
+    // wrong shows as a specific twenty-six pixel square in a specific corner
+    // and nothing else in the plate is blue.
+    let scene = catalog()
+        .into_iter()
+        .find(|s| s.name == "blend/emulated-advanced-blend-restore")
+        .expect("the plate is in the catalog");
+    // The preferred device is not necessarily the one that can draw this.
+    // Advanced blending is an extension a discrete or integrated GPU can lack
+    // while the software rasterizer beside it has it, which is the trap
+    // `every_catalog_scene_draws_something` records having fallen into.
+    let Some(mut ctx) = [DevicePreference::Auto, DevicePreference::Software]
+        .into_iter()
+        .filter_map(|preference| Validated::new(preference).ok())
+        .find(|ctx| scene.supported_by(ctx.capabilities()))
+    else {
+        eprintln!("skipping: no device here has advanced blending");
+        return;
+    };
+    let img = render::<VulkanHal>(&mut ctx, &scene);
+
+    let blue = (0..128u32)
+        .flat_map(|y| (0..128u32).map(move |x| (x, y)))
+        .filter(|(x, y)| {
+            let p = img.pixel(*x, *y);
+            p[2] > 150 && p[0] < 100 && p[1] < 120
+        })
+        .count();
+    assert_eq!(
+        blue, 0,
+        "{blue} pixels are the blue that sits outside the clip, so the clip was \
+         lost across the emulated blend"
+    );
+    // And the advanced draw did land, or the check above passes on an empty
+    // plate: the difference against white inside the clip is not white.
+    assert_ne!(
+        img.pixel(64, 50),
+        [255, 255, 255, 255],
+        "the difference blend should have darkened the middle of the clip"
+    );
+}
+
+/// Drop every draw carrying an advanced blend, and say how many went.
+fn without_advanced_blends(nodes: &mut Vec<impeller_testkit::Node>) -> usize {
+    let mut removed = 0;
+    nodes.retain(|node| match node {
+        impeller_testkit::Node::Draw(item) => {
+            let keep = !item.blend.is_advanced();
+            removed += usize::from(!keep);
+            keep
+        }
+        _ => true,
+    });
+    for node in nodes.iter_mut() {
+        if let impeller_testkit::Node::Layer { children, .. } = node {
+            removed += without_advanced_blends(children);
+        }
+    }
+    removed
+}
+
+#[test]
+fn every_plate_that_asks_for_an_advanced_blend_can_show_one() {
+    // The failure this exists for was found by hand and was wide: seventeen
+    // plates rendered identically to themselves with the blended draw deleted,
+    // while the catalog counted every one of them as coverage of a mode.
+    //
+    // Two separate causes, which is why the check is against *deletion* rather
+    // than against substituting a plain mode. Substituting source-over draws
+    // the shape, so a dropped advanced draw and a working one both differ from
+    // it and the comparison says nothing; deleting the draw is the only version
+    // that can tell "this mode did something" from "this mode did nothing".
+    //
+    // The first cause was the driver. On this machine's Vulkan software
+    // rasterizer an advanced blend under multisampling produces no output at
+    // all -- correct at one sample, and correct at both on GLES, which is the
+    // same Mesa through a different extension. The plates are single-sampled
+    // now, which costs them nothing: their subject is what a blend computes,
+    // not where an edge falls.
+    //
+    // The second was two plates that could not have shown their mode on any
+    // device. Hue and saturation over a gray backdrop collapse to the backdrop,
+    // gray having no saturation to exchange, so the family's gradient is
+    // colored now.
+    let mut devices: Vec<Validated> = Vec::new();
+    for preference in [DevicePreference::Auto, DevicePreference::Software] {
+        if let Ok(ctx) = Validated::new(preference) {
+            let name = ctx.capabilities().device_name.clone();
+            if devices.iter().all(|d| d.capabilities().device_name != name) {
+                devices.push(ctx);
+            }
+        }
+    }
+    let mut checked = 0usize;
+    for scene in catalog() {
+        let mut without = scene.clone();
+        if without_advanced_blends(&mut without.items) == 0 {
+            continue;
+        }
+        let Some(ctx) = devices
+            .iter_mut()
+            .find(|ctx| scene.supported_by(ctx.capabilities()))
+        else {
+            continue;
+        };
+        let with = render::<VulkanHal>(ctx, &scene);
+        let plain = render::<VulkanHal>(ctx, &without);
+        let diff = compare(&with, &plain).expect("the two renders are the same size");
+        assert_ne!(
+            diff.differing, 0,
+            "{} renders the same with its advanced blends deleted, so whatever \
+             mode it is named for is not reaching the picture",
+            scene.name
+        );
+        checked += 1;
+    }
+    if checked == 0 {
+        eprintln!("skipping: no device here has advanced blending");
+        return;
+    }
+    assert!(
+        checked >= 21,
+        "only {checked} plates were found to carry an advanced blend, which is \
+         fewer than the catalog has and means the walk missed some"
+    );
+}

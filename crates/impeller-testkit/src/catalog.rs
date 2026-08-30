@@ -129,6 +129,17 @@ fn plate(name: &'static str, items: Vec<Item>) -> Scene {
         .with_samples(4)
 }
 
+/// A plate drawn without multisampling.
+///
+/// For the scenes whose subject is what a blend computes rather than where an
+/// edge falls. See the note at the blend family for why that distinction had to
+/// be made rather than assumed.
+fn single_sampled_plate(name: &'static str, items: Vec<Item>) -> Scene {
+    Scene::new(name, items)
+        .with_background(DARK)
+        .with_samples(1)
+}
+
 /// A plate whose scene is a tree rather than a flat run of items.
 ///
 /// The same background and sample count as [`plate`]; the difference is only
@@ -3318,7 +3329,7 @@ fn clip() -> Vec<Scene> {
                 }),
             ],
         ),
-        plate(
+        single_sampled_plate(
             "clip/framebuffer-blends-respect-clips",
             // An advanced blend confined to a clip. The mode is the subject
             // rather than the shape: a separable mode is a fixed-function
@@ -3598,13 +3609,40 @@ fn blend() -> Vec<Scene> {
     let mut scenes: Vec<Scene> = MODES
         .iter()
         .map(|(mode, name)| {
-            plate(
+            // Single-sampled, and not by preference. Measured on this machine's
+            // Vulkan software rasterizer: an advanced blend under multisampling
+            // produces nothing at all -- the draw is silently dropped, and
+            // seventeen plates of this catalog rendered identically to
+            // themselves with the blended draw deleted. The same scenes are
+            // correct at one sample, and correct at both sample counts on GLES,
+            // which is the same Mesa through a different extension. So it is
+            // the driver rather than this renderer, and the answer is not to
+            // work around it but to stop asking: these plates are about color
+            // arithmetic rather than edges, and multisampling was never buying
+            // them anything.
+            //
+            // The `blend_modes.rs` suite checks the arithmetic of every mode
+            // against its equation and is unaffected either way; what these
+            // recover is the end-to-end picture, which is what the catalog is
+            // for.
+            single_sampled_plate(
                 name,
                 vec![
                     // A destination with structure rather than a flat color:
                     // dodge, burn and the two contrast modes are functions of
                     // what is underneath, and a flat backdrop would exercise
                     // one point of each curve.
+                    //
+                    // Colored rather than gray, which took a measurement to
+                    // find. The backdrop used to run dark gray to light, and
+                    // two of the modes cannot say anything against gray: hue
+                    // is `set_lum(set_sat(cs, sat(cb)), lum(cb))`, and a gray
+                    // backdrop has no saturation, so the whole expression
+                    // collapses to the backdrop. Both plates rendered
+                    // identically to themselves with the blended circle
+                    // deleted. A range of value *and* of hue keeps the
+                    // contrast modes exercised and gives the non-separable
+                    // ones something to exchange.
                     Item::filled(
                         Shape::Rect {
                             min: [8.0, 8.0],
@@ -3614,8 +3652,8 @@ fn blend() -> Vec<Scene> {
                             start: [8.0, 8.0],
                             end: [120.0, 120.0],
                             stops: vec![
-                                Stop::new([0.1, 0.1, 0.1, 1.0], 0.0),
-                                Stop::new([0.95, 0.95, 0.95, 1.0], 1.0),
+                                Stop::new([0.08, 0.12, 0.5, 1.0], 0.0),
+                                Stop::new([0.95, 0.82, 0.2, 1.0], 1.0),
                             ],
                             tile: TileMode::Clamp,
                         },
@@ -3789,7 +3827,184 @@ fn blend() -> Vec<Scene> {
             .collect(),
     ));
 
-    scenes.push(plate(
+    scenes.push(
+        Scene::tree(
+            "blend/can-render-advanced-blend-color-filter-with-save-layer",
+            // The filter on a group rather than on a draw. What it acts on is
+            // the finished layer, so the black ground and the white rectangle
+            // inside it are one image by the time the mode sees them -- and
+            // `Difference` against a half-alpha green gives two different
+            // answers on the two, which is what says the filter ran on the
+            // composite rather than on each draw.
+            vec![Node::Layer {
+                layer: Box::new(LayerSpec {
+                    color_filter: ColorFilter::blend([0.0, 1.0, 0.0, 0.5], BlendMode::Difference)
+                        .expect("difference is a filter"),
+                    ..LayerSpec::default()
+                }),
+                bounds: Some([0.0, 0.0, 128.0, 128.0]),
+                transform: Transform::default(),
+                children: vec![
+                    Node::Draw(Box::new(Item::fill(
+                        Shape::Rect {
+                            min: [0.0, 0.0],
+                            max: [128.0, 128.0],
+                        },
+                        BLACK,
+                    ))),
+                    Node::Draw(Box::new(Item::fill(
+                        Shape::Rect {
+                            min: [26.0, 26.0],
+                            max: [102.0, 102.0],
+                        },
+                        WHITE,
+                    ))),
+                ],
+            }],
+        )
+        .with_background(DARK)
+        .with_samples(4),
+    );
+
+    scenes.push(
+        Scene::tree(
+            "blend/advanced-blend-color-filter-with-destination-opacity",
+            // A group carrying both an advanced color filter and an opacity, so
+            // the two have to compose in the order the layer states them: the
+            // filter acts on the group's own colors and the opacity scales what
+            // the filter produced. Applied the other way round, a filter reading
+            // a faded input gives a different answer for every mode that is not
+            // linear -- and `Saturation` is not.
+            //
+            // The filter's source is transparent, which is upstream's and is the
+            // case a non-separable mode is least likely to survive: it has to
+            // take the saturation of a color that has none.
+            vec![
+                Node::Draw(Box::new(Item::fill(
+                    Shape::Rect {
+                        min: [0.0, 0.0],
+                        max: [128.0, 128.0],
+                    },
+                    WHITE,
+                ))),
+                Node::Layer {
+                    layer: Box::new(LayerSpec {
+                        alpha: 0.3,
+                        color_filter: ColorFilter::blend(
+                            [0.0, 0.0, 0.0, 0.0],
+                            BlendMode::Saturation,
+                        )
+                        .expect("saturation is a filter"),
+                        ..LayerSpec::default()
+                    }),
+                    bounds: None,
+                    transform: Transform::default(),
+                    children: vec![
+                        Node::Draw(Box::new(
+                            Item::fill(
+                                Shape::Rect {
+                                    min: [22.0, 22.0],
+                                    max: [86.0, 86.0],
+                                },
+                                [0.5, 0.0, 0.0, 1.0],
+                            )
+                            .with_blend(BlendMode::SrcOver),
+                        )),
+                        Node::Draw(Box::new(
+                            Item::fill(
+                                Shape::Rect {
+                                    min: [44.0, 44.0],
+                                    max: [108.0, 108.0],
+                                },
+                                BLUE,
+                            )
+                            .with_blend(BlendMode::SrcOver),
+                        )),
+                    ],
+                },
+            ],
+        )
+        .with_background(DARK)
+        .with_samples(4),
+    );
+
+    scenes.push(
+        Scene::tree(
+            "blend/draw-paint-with-advanced-blend-over-filter",
+            // A paint covering everything, in an advanced mode, over a
+            // destination that a mask blur put there. What a paint covers is
+            // the clip rather than any shape, so this is the case where an
+            // advanced mode has to read a destination the renderer built in a
+            // pass of its own rather than one it drew directly.
+            vec![
+                Node::Draw(Box::new(Item::fill(
+                    Shape::Rect {
+                        min: [0.0, 0.0],
+                        max: [128.0, 128.0],
+                    },
+                    WHITE,
+                ))),
+                Node::Draw(Box::new(
+                    Item::fill(
+                        Shape::Circle {
+                            center: [64.0, 64.0],
+                            radius: 42.0,
+                        },
+                        BLACK,
+                    )
+                    .with_mask_blur(12.0)
+                    .with_blend(BlendMode::SrcOver),
+                )),
+                Node::Paint(Box::new(PaintSpec {
+                    color: GREEN,
+                    blend: BlendMode::Screen,
+                    clip: None,
+                    clip_out: None,
+                    transform: Transform::default(),
+                })),
+            ],
+        )
+        .with_background(DARK)
+        .with_samples(4),
+    );
+
+    scenes.push(single_sampled_plate(
+        "blend/emulated-advanced-blend-restore",
+        // An advanced blend inside a clip, followed by a draw the clip must
+        // still cut. A mode the hardware cannot do directly is emulated with a
+        // pass of its own, and the failure this is named for is that pass
+        // leaving the clip behind: the blue rectangle sits entirely outside the
+        // clip and must not appear at all.
+        vec![
+            Item::fill(
+                Shape::Rect {
+                    min: [0.0, 0.0],
+                    max: [128.0, 128.0],
+                },
+                WHITE,
+            ),
+            Item::fill(
+                Shape::Rect {
+                    min: [0.0, 0.0],
+                    max: [102.0, 76.0],
+                },
+                RED,
+            )
+            .with_blend(BlendMode::Difference)
+            .with_clip([26.0, 26.0, 102.0, 76.0]),
+            Item::fill(
+                Shape::Rect {
+                    min: [0.0, 0.0],
+                    max: [26.0, 26.0],
+                },
+                BLUE,
+            )
+            .with_blend(BlendMode::SrcOver)
+            .with_clip([26.0, 26.0, 102.0, 76.0]),
+        ],
+    ));
+
+    scenes.push(single_sampled_plate(
         "blend/blend-mode-should-cover-whole-screen",
         vec![
             Item::fill(

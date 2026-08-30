@@ -431,7 +431,15 @@ fn a_feature_a_scene_asks_for_has_to_change_the_picture() {
             scene.name
         );
 
-        if let Some(ctx) = vulkan.as_mut() {
+        // A scene the device cannot draw is not a scene this can say anything
+        // about. Advanced blending is the case that made this necessary: it is
+        // an extension a device can lack, and a scene carrying both an advanced
+        // mode and a filter reaches here and fails on the render rather than on
+        // the comparison.
+        if let Some(ctx) = vulkan
+            .as_mut()
+            .filter(|ctx| scene.supported_by(ctx.capabilities()))
+        {
             let with = render_scene::<VulkanHal>(ctx, &scene).expect("featured");
             let without = render_scene::<VulkanHal>(ctx, &plain).expect("plain");
             assert_ne!(

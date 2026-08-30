@@ -158,7 +158,7 @@ column is right and the obvious way to check it is wrong.
 | `aiks_dl_gradient_unittests.cc` | ~40 | 46 | nothing; see below |
 | `aiks_dl_clip_unittests.cc` | ~5 | 7 | nothing; this file is covered |
 | `aiks_dl_opacity_unittests.cc` | ~3 | 3 | nothing; this file is covered |
-| `aiks_dl_blend_unittests.cc` | ~79 | 44 | capability injection and subpass collapse, for two of them; see below |
+| `aiks_dl_blend_unittests.cc` | ~79 | 48 | capability injection and subpass collapse, for two of them; see below |
 | `aiks_dl_blur_unittests.cc` | ~59 | 56 | nothing; see below |
 | `aiks_dl_vertices_unittests.cc` | ~16 | 20 | a shader other than an image cannot be read at a mesh's texture coordinates, for two of them; see below |
 | `aiks_dl_atlas_unittests.cc` | ~11 | 12 | nothing; see below |
@@ -168,7 +168,7 @@ column is right and the obvious way to check it is wrong.
 | `aiks_dl_runtime_effect_unittests.cc` | — | 14 | a drawPaint with a program, and a sampler bound to something that is not a texture, for one each; see below |
 | `aiks_dl_unittests.cc` | ~36 | 13 | subpass collapse, for five of them; see below |
 
-The catalog holds three hundred and fifty-four scenes of roughly four hundred,
+The catalog holds three hundred and fifty-eight scenes of roughly four hundred,
 and the proportion is less interesting than which ones: the arithmetic of drawing is largely covered, and
 what is missing is either a capability this renderer does not have or a thing
 the scene model cannot describe.
@@ -394,6 +394,42 @@ quad's own corners rather than from its visible part goes wrong. One that looked
 mirrorable is not -- `TextForegroundShaderWithTransform` puts a gradient over a
 run, and a run here takes a solid color, which `docs/parity.md` says in the
 `maskFilter` row and `docs/non-parity.md` explains.
+
+Four more of the blend file went in once an advanced mode became available as a
+color filter, and writing them found something wider than the four. Upstream's
+`EmulatedAdvancedBlendRestore` draws an advanced blend inside a clip and then a
+shape the clip must still cut, and the plate rendered as a blank white frame:
+the blend had drawn nothing at all.
+
+It was not the clip and it was not this renderer. Measured on both backends at
+both sample counts: on this machine's Vulkan software rasterizer an advanced
+blend under multisampling produces no output, and at one sample it is correct;
+on GLES, which is the same Mesa through a different extension, it is correct at
+both. So it is the driver.
+
+What made it worth chasing is what it had been hiding. Sweeping the whole
+catalog -- every scene carrying an advanced blend, rendered again with those
+draws *deleted* -- found seventeen plates rendering identically either way. The
+catalog counted every one of them as coverage of a mode, and nothing could have
+noticed: the cross-backend comparison skips them, because the device it prefers
+has no advanced-blend extension at all, and "draws something" passes on the
+gradient underneath.
+
+Deleting the draw rather than substituting a plain mode is the part that took a
+second try. Substituting source-over draws the shape, so a dropped advanced
+draw and a working one both differ from it, and the first sweep reported one
+affected plate instead of seventeen.
+
+Two causes, and only one was the driver. Fifteen were multisampling and are
+single-sampled now, which costs those plates nothing -- their subject is what a
+blend computes, not where an edge falls, and the equation suite checks the
+arithmetic separately. The other two could not have shown their mode on any
+device: hue and saturation over a gray backdrop collapse to the backdrop, gray
+having no saturation to exchange. The family's gradient runs through color now
+as well as through value.
+
+All twenty-one are asserted, and putting the sample count back fails the
+assertion.
 
 The runtime-effect row is wrong, and wrong in the way that matters most: it said
 the chapter was "bounded by having two fixture programs rather than by the
