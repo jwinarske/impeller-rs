@@ -166,9 +166,9 @@ column is right and the obvious way to check it is wrong.
 | `aiks_dl_primitive_shape_unittests.cc` | ~2 | 0 | one is a playground harness, one wants a stroke width of zero to mean a hairline |
 | `aiks_dl_text_unittests.cc` | — | 7 | shaping and font parsing, which are out of scope; glyph rendering is not, and these use synthetic coverage |
 | `aiks_dl_runtime_effect_unittests.cc` | — | 14 | a drawPaint with a program, and a sampler bound to something that is not a texture, for one each; see below |
-| `aiks_dl_unittests.cc` | ~36 | 16 | subpass collapse, for five of them; see below |
+| `aiks_dl_unittests.cc` | ~36 | 19 | subpass collapse, for five of them; see below |
 
-The catalog holds three hundred and sixty scenes of roughly four hundred,
+The catalog holds three hundred and sixty-three scenes of roughly four hundred,
 and the proportion is less interesting than which ones: the arithmetic of drawing is largely covered, and
 what is missing is either a capability this renderer does not have or a thing
 the scene model cannot describe.
@@ -548,6 +548,27 @@ the width alone draws nothing in the first and fills the frame in the second.
 Either plate alone would be passed by a renderer that had the arithmetic
 backwards. They measure eight thousand and thirteen pixels against eight
 thousand, on a disc of about seven thousand nine hundred.
+
+Three more went in with the points, and one of them found a defect that had
+been sitting under the other two. Upstream keeps a pair on unbounded contents --
+a group whose contents are a paint, which covers the clip rather than any shape,
+once with bounds stated and once without -- and it draws registration marks
+outside the bounds so a reader can see where the edge should be.
+
+The bounded one came out with a hard edge exactly at the bound where the blur
+should have carried past it. `Layer::with_blur` and an `ImageFilter::Blur`
+handed to `save_layer_filtered` are two spellings of one thing -- `open_layer`
+turns the first into the second so there is one path below it -- and they were
+not one picture. A layer's own sigma is carried into the target's size; a
+filter's spread was not, so with bounds stated the filter's output stopped dead
+at them. Measured: the same blur reached ten pixels past the bound on the layer
+and none as a filter.
+
+Only where bounds were stated, which is why nothing had noticed. An unbounded
+layer is sized by a narrowing that already asks the filter how far it reaches,
+so it was right all along. The two are now asserted against each other, and the
+assertion also checks that both actually spread -- otherwise it is satisfied by
+two pictures each cut off at the bound.
 
 Five of the eight translucent save layers are here now, and the family divides
 in two once a group can be filtered as a whole. Two recolor the group on its way out, two run a

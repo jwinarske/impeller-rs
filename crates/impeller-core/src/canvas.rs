@@ -1812,8 +1812,26 @@ impl Canvas {
         // already transformed, and the passes that do the blurring run on a
         // target. So the conversion happens once, here, where the transform
         // that decides it is still the one the caller drew under.
+        let basis = BlurBasis::of(self.transform);
         let layer = layer.scaled_by(max_scale_of(self.transform));
-        let reach = layer.reach(BlurBasis::of(self.transform));
+        let reach = layer.reach(basis);
+        // A filter given to the layer as a whole reaches past what it is handed
+        // too, and by how much only the filter knows. Asked here rather than
+        // left to the narrowing below, because the narrowing only runs for a
+        // layer that was *not* given bounds: a caller who states bounds gets
+        // the target those bounds describe, and a filter's spread has to be
+        // added to it or the spread is cut off at the bound.
+        //
+        // Missing this made the two spellings of a layer blur disagree. A sigma
+        // on the layer went through `reach` above and spread ten pixels past a
+        // stated bound; the same blur handed over as the layer's filter stopped
+        // dead at it. They are the same picture and the same comment two
+        // functions up says so.
+        let filter_reach = filter.as_ref().map(|filter| {
+            let unit = Vec2::ZERO;
+            let (min, max) = filter.covering(unit, unit, &|sigma| basis.reach(sigma));
+            (-min).max(max)
+        });
         // Opened without seeding, because the seed has to land in the target
         // the content will draw into and that target is decided below. A
         // backdrop drawn into the full-size target and then narrowed would be
@@ -1832,6 +1850,12 @@ impl Canvas {
         // `kKernelRadiusPerSigma`, and `blur_reach` is the one place it is
         // stated.
         let (min, max) = (min - reach, max + reach);
+        // After the layer's own blur and morphology, because that is the order
+        // `finish_layer` applies them in: the filter sees what those produced.
+        let (min, max) = match filter_reach {
+            Some(spread) => (min - spread, max + spread),
+            None => (min, max),
+        };
         let parent = self.target;
         let left = min.x.floor().max(parent.origin.x);
         let top = min.y.floor().max(parent.origin.y);

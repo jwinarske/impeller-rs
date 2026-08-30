@@ -15937,3 +15937,65 @@ fn a_blend_color_filter_in_an_advanced_mode_computes_the_specified_formula() {
         "an opaque draw stays opaque through the filter"
     );
 }
+
+#[test]
+fn a_layers_blur_reaches_past_stated_bounds_however_it_was_spelled() {
+    // `Layer::with_blur` and an `ImageFilter::Blur` handed to
+    // `save_layer_filtered` are two spellings of one thing -- the comment in
+    // `open_layer` says as much, turning the first into the second so there is
+    // one path below it. They have to be one picture too.
+    //
+    // They were not, and only where the caller stated bounds. A layer's own
+    // sigma is carried into the target's size by `reach`; a filter's spread was
+    // not, so a blur handed over as the layer's filter stopped dead at the
+    // bound while the same blur set on the layer spread past it. An unbounded
+    // layer was right either way, because the narrowing that sizes one already
+    // asks the filter how far it reaches -- which is why nothing had noticed.
+    let Some(mut ctx) = context() else { return };
+
+    let square = Rect::new(44.0, 44.0, 84.0, 84.0);
+    let bounds = square;
+    let shot = |ctx: &mut Context, filtered: bool| {
+        let mut canvas = Canvas::new(SIZE);
+        canvas.clear(Color::BLACK);
+        if filtered {
+            canvas
+                .save_layer_filtered(Layer::opacity(1.0), Some(bounds), &ImageFilter::blur(6.0))
+                .expect("a blur is available as a layer filter");
+        } else {
+            canvas.save_layer_bounds(Layer::opacity(1.0).with_blur(6.0), bounds);
+        }
+        canvas
+            .draw_rect(square, &Paint::fill(Color::WHITE))
+            .expect("a square to blur");
+        canvas.restore();
+        render(ctx, canvas)
+    };
+
+    let extent = |pixels: &[u8]| {
+        let lit: Vec<(usize, usize)> = (0..128usize)
+            .flat_map(|y| (0..128usize).map(move |x| (x, y)))
+            .filter(|(x, y)| pixels[(y * 128 + x) * 4] > 8)
+            .collect();
+        assert!(!lit.is_empty(), "the blurred square drew nothing");
+        (
+            lit.iter().map(|p| p.0).min().unwrap(),
+            lit.iter().map(|p| p.0).max().unwrap(),
+        )
+    };
+
+    let on_the_layer = extent(&shot(&mut ctx, false));
+    let as_a_filter = extent(&shot(&mut ctx, true));
+    assert_eq!(
+        as_a_filter, on_the_layer,
+        "the same blur stated two ways should reach the same distance past the \
+         bound; as a filter it reached {as_a_filter:?} and on the layer {on_the_layer:?}"
+    );
+    // And both actually spread, or the equality above is between two pictures
+    // that were each cut off at the bound.
+    assert!(
+        on_the_layer.0 < 44 && on_the_layer.1 > 83,
+        "a blur of six should carry past a bound at forty-four and eighty-four; \
+         it reached {on_the_layer:?}"
+    );
+}

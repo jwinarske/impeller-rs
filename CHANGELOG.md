@@ -22,6 +22,13 @@ duplication the paragraph above rules out. `docs/parity.md` says what is built,
 a test checks that it says so truly, and a copy of that claim kept by hand here
 is the same claim without the check. So there is no list.
 
+A layer given both explicit bounds and an image filter sizes its target for the
+filter's spread. It was sized for the layer's own blur and morphology only, so a
+blur handed over as the layer's filter stopped dead at a stated bound where the
+same blur set on the layer carried ten pixels past it -- two spellings of one
+thing giving two pictures. A layer without stated bounds was always right, being
+sized by a narrowing that already asks the filter how far it reaches.
+
 `ColorFilter::blend` accepts every mode `ColorFilter.mode` takes, where it
 refused the advanced ones. The affine modes still become a `ColorFilter::Matrix`
 and cost the shader nothing beyond the multiply it was already doing; the rest

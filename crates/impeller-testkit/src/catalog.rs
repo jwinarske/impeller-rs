@@ -129,6 +129,26 @@ fn plate(name: &'static str, items: Vec<Item>) -> Scene {
         .with_samples(4)
 }
 
+/// Upstream's registration marks: four white lines just outside a group's
+/// bounds, so a reader can see where its edge should have been.
+fn registration_marks() -> Vec<Node> {
+    [
+        ([26.0f32, 44.0], [102.0f32, 44.0]),
+        ([26.0, 84.0], [102.0, 84.0]),
+        ([44.0, 26.0], [44.0, 102.0]),
+        ([84.0, 26.0], [84.0, 102.0]),
+    ]
+    .into_iter()
+    .map(|(from, to)| {
+        Node::Draw(Box::new(Item::stroke(
+            Shape::Line { from, to },
+            StrokeSpec::new(1.0),
+            WHITE,
+        )))
+    })
+    .collect()
+}
+
 /// A plate drawn without multisampling.
 ///
 /// For the scenes whose subject is what a blend computes rather than where an
@@ -6255,6 +6275,115 @@ fn pictures() -> Vec<Scene> {
                 },
             },
         ),
+        Scene::tree(
+            "dl/translucent-save-layer-with-advanced-blend-mode-draws-correctly",
+            // A group carrying both an alpha and an advanced mode, which have
+            // to compose in that order: the alpha scales what the group drew
+            // and the mode then combines the scaled result with the frame.
+            // Applied the other way round, `Lighten` would compare a full
+            // strength green against the red and take the green outright.
+            vec![
+                Node::Draw(Box::new(Item::fill(
+                    Shape::Rect {
+                        min: [0.0, 0.0],
+                        max: [102.0, 102.0],
+                    },
+                    RED,
+                ))),
+                Node::Layer {
+                    layer: Box::new(LayerSpec {
+                        alpha: 0.5,
+                        blend: BlendMode::Lighten,
+                        ..LayerSpec::default()
+                    }),
+                    bounds: None,
+                    transform: Transform::default(),
+                    children: vec![Node::Draw(Box::new(
+                        Item::fill(
+                            Shape::Circle {
+                                center: [51.0, 51.0],
+                                radius: 26.0,
+                            },
+                            GREEN,
+                        )
+                        .with_blend(BlendMode::SrcOver),
+                    ))],
+                },
+            ],
+        )
+        .with_background(DARK)
+        // Single-sampled: an advanced blend under multisampling draws nothing
+        // on this machine's Vulkan software rasterizer. See the note at the
+        // blend family.
+        .with_samples(1),
+        Scene::tree(
+            "dl/image-filtered-save-layer-with-unbounded-contents",
+            // A bounded group whose contents are a paint, which covers the clip
+            // rather than any shape -- so what the filter is handed is decided
+            // by the group's bounds and nothing else. The white marks are
+            // upstream's and are outside the group: they say where its edge
+            // should be, and the blurred yellow square has to arrive between
+            // them.
+            [
+                registration_marks(),
+                vec![Node::Layer {
+                    layer: Box::new(LayerSpec {
+                        filter: ImageFilter::blur(4.0),
+                        ..LayerSpec::default()
+                    }),
+                    bounds: Some([44.0, 44.0, 84.0, 84.0]),
+                    transform: Transform::default(),
+                    children: vec![Node::Paint(Box::new(PaintSpec {
+                        color: [1.0, 0.95, 0.2, 1.0],
+                        blend: BlendMode::SrcOver,
+                        clip: None,
+                        clip_out: None,
+                        transform: Transform::default(),
+                    }))],
+                }],
+            ]
+            .concat(),
+        )
+        .with_background(DARK)
+        .with_samples(4),
+        Scene::tree(
+            "dl/image-filtered-unbounded-save-layer-with-unbounded-contents",
+            // The same question with the bounds taken away. An unbounded group
+            // whose contents are also unbounded has nothing but the target to
+            // be sized by, so the blur runs over the whole frame -- and the
+            // rectangle inside it is there to show that the interior is blurred
+            // rather than only the edges, which a group sized to its contents
+            // would still manage.
+            vec![Node::Layer {
+                layer: Box::new(LayerSpec {
+                    filter: ImageFilter::blur(6.0),
+                    ..LayerSpec::default()
+                }),
+                bounds: None,
+                transform: Transform::default(),
+                children: vec![
+                    Node::Paint(Box::new(PaintSpec {
+                        color: [1.0, 0.95, 0.2, 1.0],
+                        blend: BlendMode::SrcOver,
+                        clip: None,
+                        clip_out: None,
+                        transform: Transform::default(),
+                    })),
+                    Node::Draw(Box::new(
+                        Item::fill(
+                            Shape::Rect {
+                                min: [50.0, 50.0],
+                                max: [78.0, 78.0],
+                            },
+                            BLUE,
+                        )
+                        .with_blend(BlendMode::SrcOver),
+                    )),
+                ],
+            }],
+        )
+        .with_background(DARK)
+        .with_samples(4),
         picture(
             "dl/draw-picture-at-its-own-scale",
             // A picture placed by the transform and nothing else. It has no
