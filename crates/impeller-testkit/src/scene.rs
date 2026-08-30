@@ -1212,8 +1212,16 @@ impl Node {
         if self.asks_for_perspective() {
             return true;
         }
-        let item_does =
-            |item: &Item| !matches!(item.image_filter, ImageFilter::None) || item.mask_blur > 0.0;
+        // A color filter counts, and did not until a sweep of the advanced
+        // blends found seventeen plates reporting a mode they never drew. That
+        // failure was not about color filters, but it was about this: a scene
+        // asking for something the picture never received, with nothing able to
+        // say so. Every field here is a thing a plate can ask for and not get.
+        let item_does = |item: &Item| {
+            !matches!(item.image_filter, ImageFilter::None)
+                || item.mask_blur > 0.0
+                || item.color_filter != ColorFilter::None
+        };
         match self {
             Self::Draw(item) => item_does(item),
             Self::Mesh(mesh) => {
@@ -1230,6 +1238,7 @@ impl Node {
                 layer.blur > 0.0
                     || layer.backdrop_blur > 0.0
                     || layer.morphology.is_some()
+                    || layer.color_filter != ColorFilter::None
                     || children.iter().any(Node::carries_a_visual_feature)
             }
         }
@@ -1318,6 +1327,7 @@ impl Node {
             Self::Draw(item) => {
                 item.image_filter = ImageFilter::None;
                 item.mask_blur = 0.0;
+                item.color_filter = ColorFilter::None;
             }
             Self::Mesh(mesh) => {
                 mesh.image_filter = ImageFilter::None;
@@ -1333,6 +1343,7 @@ impl Node {
                 layer.blur = 0.0;
                 layer.backdrop_blur = 0.0;
                 layer.morphology = None;
+                layer.color_filter = ColorFilter::None;
                 children.iter_mut().for_each(Node::plain);
             }
         }

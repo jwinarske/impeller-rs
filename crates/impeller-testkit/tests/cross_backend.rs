@@ -388,40 +388,12 @@ fn a_feature_a_scene_asks_for_has_to_change_the_picture() {
         return;
     }
 
-    // Two plates are exempt, by name and for one reason: the feature they carry
-    // is an *identity* matrix image filter, whose whole claim is that it
-    // changes nothing. Upstream puts it there to take a draw off its atlas fast
-    // path, and it must be invisible or that scene would be measuring the
-    // filter rather than the path. So the rule above is exactly inverted for
-    // them, and they are checked that way below rather than skipped -- an
-    // exemption that asserts nothing is a hole with a comment on it.
-    const IDENTICAL_BY_DESIGN: [&str; 2] = [
-        "atlas/draw-image-rect-with-blend-color-filter",
-        "atlas/draw-image-rect-with-matrix-color-filter",
-    ];
-
     let mut checked = 0;
-    let mut exempt = 0;
     for scene in catalog()
         .into_iter()
         .chain(corpus())
         .filter(Scene::carries_a_visual_feature)
     {
-        if IDENTICAL_BY_DESIGN.contains(&scene.name) {
-            let plain = scene.plain();
-            if let Some(ctx) = vulkan.as_mut() {
-                let with = render_scene::<VulkanHal>(ctx, &scene).expect("featured");
-                let without = render_scene::<VulkanHal>(ctx, &plain).expect("plain");
-                assert_eq!(
-                    with.pixels, without.pixels,
-                    "{} carries an identity matrix filter, which is supposed to \
-                     be invisible, and it changed the picture",
-                    scene.name
-                );
-            }
-            exempt += 1;
-            continue;
-        }
         let plain = scene.plain();
         // The stripping has to have done something, or the comparison below is
         // between a scene and itself and proves nothing.
@@ -454,11 +426,6 @@ fn a_feature_a_scene_asks_for_has_to_change_the_picture() {
     assert!(
         checked > 0,
         "no scene in either list carries a feature, which cannot be right"
-    );
-    assert_eq!(
-        exempt,
-        IDENTICAL_BY_DESIGN.len(),
-        "the exemptions above name scenes that are no longer in the catalog"
     );
     eprintln!("checked {checked} scene(s) for a feature that does nothing");
 }

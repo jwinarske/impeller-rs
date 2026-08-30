@@ -158,7 +158,7 @@ column is right and the obvious way to check it is wrong.
 | `aiks_dl_gradient_unittests.cc` | ~40 | 46 | nothing; see below |
 | `aiks_dl_clip_unittests.cc` | ~5 | 7 | nothing; this file is covered |
 | `aiks_dl_opacity_unittests.cc` | ~3 | 3 | nothing; this file is covered |
-| `aiks_dl_blend_unittests.cc` | ~79 | 48 | capability injection and subpass collapse, for two of them; see below |
+| `aiks_dl_blend_unittests.cc` | ~79 | 47 | capability injection and subpass collapse, for two of them; see below |
 | `aiks_dl_blur_unittests.cc` | ~59 | 56 | nothing; see below |
 | `aiks_dl_vertices_unittests.cc` | ~16 | 20 | a shader other than an image cannot be read at a mesh's texture coordinates, for two of them; see below |
 | `aiks_dl_atlas_unittests.cc` | ~11 | 12 | nothing; see below |
@@ -168,7 +168,7 @@ column is right and the obvious way to check it is wrong.
 | `aiks_dl_runtime_effect_unittests.cc` | — | 14 | a drawPaint with a program, and a sampler bound to something that is not a texture, for one each; see below |
 | `aiks_dl_unittests.cc` | ~36 | 13 | subpass collapse, for five of them; see below |
 
-The catalog holds three hundred and fifty-eight scenes of roughly four hundred,
+The catalog holds three hundred and fifty-seven scenes of roughly four hundred,
 and the proportion is less interesting than which ones: the arithmetic of drawing is largely covered, and
 what is missing is either a capability this renderer does not have or a thing
 the scene model cannot describe.
@@ -430,6 +430,31 @@ as well as through value.
 
 All twenty-one are asserted, and putting the sample count back fails the
 assertion.
+
+The rule that found none of that has been widened since, because it should have
+found some of it. A scene is rendered again with its features stripped and has
+to come out different, and "features" meant image filters, mask blurs, tint
+blends and morphologies -- not color filters, which are exactly as capable of
+being asked for and not delivered. They count now.
+
+Widening it caught one scene, and it was one written that same afternoon.
+Upstream's `AdvancedBlendColorFilterWithDestinationOpacity` puts a `Saturation`
+blend against a *transparent* color on a group, and that filter is the identity
+by arithmetic rather than by accident: the compositing formula is
+`cs·(1−ab) + cb·(1−as) + B(cb,cs)·as·ab`, and at a source alpha of zero every
+term but `cb` vanishes. No renderer can draw anything from it. Upstream's own
+comment says the picture "should be solid red as the destructive color filter
+floods the clip", which is not what the formula gives and reads like it was
+copied from the scene above it -- the flood case, which is already here as
+`destructive-blend-color-filter-floods-clip`. So the scene is not mirrored, and
+this is the reason rather than a capability.
+
+Widening the rule also retired an exemption. Two atlas plates carry an identity
+matrix image filter whose whole claim is that it changes nothing, and they had
+to be named and checked backwards. They carry a color filter as well, which the
+rule now sees, so they pass it like anything else -- and the claim about the
+identity filter is asserted where it belongs, by comparing the two panels within
+one frame rather than the frame against itself.
 
 The runtime-effect row is wrong, and wrong in the way that matters most: it said
 the chapter was "bounded by having two fixture programs rather than by the

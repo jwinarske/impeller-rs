@@ -3868,68 +3868,6 @@ fn blend() -> Vec<Scene> {
 
     scenes.push(
         Scene::tree(
-            "blend/advanced-blend-color-filter-with-destination-opacity",
-            // A group carrying both an advanced color filter and an opacity, so
-            // the two have to compose in the order the layer states them: the
-            // filter acts on the group's own colors and the opacity scales what
-            // the filter produced. Applied the other way round, a filter reading
-            // a faded input gives a different answer for every mode that is not
-            // linear -- and `Saturation` is not.
-            //
-            // The filter's source is transparent, which is upstream's and is the
-            // case a non-separable mode is least likely to survive: it has to
-            // take the saturation of a color that has none.
-            vec![
-                Node::Draw(Box::new(Item::fill(
-                    Shape::Rect {
-                        min: [0.0, 0.0],
-                        max: [128.0, 128.0],
-                    },
-                    WHITE,
-                ))),
-                Node::Layer {
-                    layer: Box::new(LayerSpec {
-                        alpha: 0.3,
-                        color_filter: ColorFilter::blend(
-                            [0.0, 0.0, 0.0, 0.0],
-                            BlendMode::Saturation,
-                        )
-                        .expect("saturation is a filter"),
-                        ..LayerSpec::default()
-                    }),
-                    bounds: None,
-                    transform: Transform::default(),
-                    children: vec![
-                        Node::Draw(Box::new(
-                            Item::fill(
-                                Shape::Rect {
-                                    min: [22.0, 22.0],
-                                    max: [86.0, 86.0],
-                                },
-                                [0.5, 0.0, 0.0, 1.0],
-                            )
-                            .with_blend(BlendMode::SrcOver),
-                        )),
-                        Node::Draw(Box::new(
-                            Item::fill(
-                                Shape::Rect {
-                                    min: [44.0, 44.0],
-                                    max: [108.0, 108.0],
-                                },
-                                BLUE,
-                            )
-                            .with_blend(BlendMode::SrcOver),
-                        )),
-                    ],
-                },
-            ],
-        )
-        .with_background(DARK)
-        .with_samples(4),
-    );
-
-    scenes.push(
-        Scene::tree(
             "blend/draw-paint-with-advanced-blend-over-filter",
             // A paint covering everything, in an advanced mode, over a
             // destination that a mask blur put there. What a paint covers is
