@@ -1412,3 +1412,55 @@ fn a_points_size_is_its_width_times_the_scale_at_either_extreme() {
          draw the same disc: {large} against {small}"
     );
 }
+
+#[test]
+fn a_multi_draw_point_mode_is_clipped_all_at_once() {
+    // `Lines` mode makes several draws out of one call, and upstream keeps this
+    // scene because they all have to carry the same depth. A clip is tested
+    // against depth, so draws given different ones would be cut differently --
+    // some segments surviving the circle and some not, out of a single call.
+    //
+    // Stated as "no blue outside the circle" rather than as a pixel count,
+    // because that is the shape the failure would take: a segment that escaped
+    // the clip runs off the frame, and one that was over-cut leaves a gap. Both
+    // are counted.
+    let Ok(mut ctx) = Validated::new(DevicePreference::Auto) else {
+        eprintln!("skipping: no Vulkan device");
+        return;
+    };
+    let scene = catalog()
+        .into_iter()
+        .find(|s| s.name == "dl/depth-values-for-line-mode")
+        .expect("the plate is in the catalog");
+    let img = render::<VulkanHal>(&mut ctx, &scene);
+
+    let (mut inside, mut outside) = (0usize, 0usize);
+    for y in 0..128u32 {
+        for x in 0..128u32 {
+            let p = img.pixel(x, y);
+            if !(p[2] > 150 && p[0] < 120) {
+                continue;
+            }
+            let (dx, dy) = (x as f32 - 64.0, y as f32 - 64.0);
+            // A pixel past the circle's own edge plus the stroke's half width,
+            // so the red outline itself is not counted either way.
+            if dx.hypot(dy) > 54.0 {
+                outside += 1;
+            } else {
+                inside += 1;
+            }
+        }
+    }
+    assert_eq!(
+        outside, 0,
+        "{outside} pixels of the line run escaped the clip, so the draws that \
+         one call produced were not given the same depth"
+    );
+    // And the run is there at all: five segments six wide across a circle of
+    // radius fifty-two cover a good part of it.
+    assert!(
+        inside > 1500,
+        "only {inside} pixels of the line run survived, which is less than five \
+         segments across a circle that size"
+    );
+}

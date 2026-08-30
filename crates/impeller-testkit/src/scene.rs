@@ -223,6 +223,14 @@ pub struct PointsSpec {
     pub color: [f32; 4],
     pub blend: BlendMode,
     pub transform: Transform,
+    /// Confine the whole run to a shape, in the run's own space.
+    ///
+    /// On the run rather than on each point, which is the distinction the
+    /// scene exists for: the modes that join points into lines and polygons
+    /// produce several draws from one call, and a clip has to cut all of them
+    /// the same way. A renderer giving those draws different depths would let
+    /// the clip take some and not others.
+    pub clip_shape: Option<Shape>,
 }
 
 /// A finished recording, drawn into the scene that holds it.
@@ -3088,6 +3096,7 @@ pub fn corpus() -> Vec<Scene> {
                 color: WHITE,
                 blend: BlendMode::SrcOver,
                 transform: Transform::default(),
+                clip_shape: None,
             }))],
         )
         .with_background([0.06, 0.07, 0.10, 1.0])

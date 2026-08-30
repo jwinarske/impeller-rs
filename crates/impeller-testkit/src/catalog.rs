@@ -957,6 +957,7 @@ fn basic() -> Vec<Scene> {
                 color: BLUE,
                 blend: BlendMode::SrcOver,
                 transform: Transform::default(),
+                clip_shape: None,
             },
         ),
         points_plate(
@@ -980,6 +981,7 @@ fn basic() -> Vec<Scene> {
                 color: GREEN,
                 blend: BlendMode::SrcOver,
                 transform: Transform::default(),
+                clip_shape: None,
             },
         ),
         points_plate(
@@ -1004,6 +1006,7 @@ fn basic() -> Vec<Scene> {
                 color: RED,
                 blend: BlendMode::SrcOver,
                 transform: Transform::default(),
+                clip_shape: None,
             },
         ),
         plate_tree(
@@ -6219,6 +6222,7 @@ fn pictures() -> Vec<Scene> {
                 color: [1.0, 1.0, 0.2, 0.5],
                 blend: BlendMode::SrcOver,
                 transform: Transform::translate(x, 50.0),
+                clip_shape: None,
             };
             Scene::tree(
                 "dl/can-draw-points",
@@ -6250,6 +6254,7 @@ fn pictures() -> Vec<Scene> {
                     translate: [64.0, 64.0],
                     ..Transform::default()
                 },
+                clip_shape: None,
             },
         ),
         points_plate(
@@ -6273,6 +6278,7 @@ fn pictures() -> Vec<Scene> {
                     translate: [64.0, 64.0],
                     ..Transform::default()
                 },
+                clip_shape: None,
             },
         ),
         Scene::tree(
@@ -6381,6 +6387,46 @@ fn pictures() -> Vec<Scene> {
                     )),
                 ],
             }],
+        )
+        .with_background(DARK)
+        .with_samples(4),
+        Scene::tree(
+            "dl/depth-values-for-line-mode",
+            // A stroked circle, then a run of lines clipped to that same
+            // circle. `Lines` mode makes several draws out of one call, and
+            // upstream's comment says what the scene is for: they all have to
+            // carry the same depth. A clip is tested against depth, so draws
+            // given different ones would be cut differently -- some segments
+            // surviving the circle and some not, out of a single call.
+            vec![
+                Node::Draw(Box::new(Item::stroke(
+                    Shape::Circle {
+                        center: [64.0, 64.0],
+                        radius: 52.0,
+                    },
+                    StrokeSpec::new(3.0),
+                    RED,
+                ))),
+                Node::Points(Box::new(PointsSpec {
+                    mode: PointMode::Lines,
+                    // Five segments running off both sides of the circle, so
+                    // every one of them meets the clip.
+                    points: (0..5)
+                        .flat_map(|i| {
+                            let y = i as f32 * 26.0 - 26.0;
+                            [[-8.0, y], [136.0, y + 96.0]]
+                        })
+                        .collect(),
+                    stroke: StrokeSpec::new(6.0),
+                    color: BLUE,
+                    blend: BlendMode::SrcOver,
+                    transform: Transform::default(),
+                    clip_shape: Some(Shape::Circle {
+                        center: [64.0, 64.0],
+                        radius: 52.0,
+                    }),
+                })),
+            ],
         )
         .with_background(DARK)
         .with_samples(4),

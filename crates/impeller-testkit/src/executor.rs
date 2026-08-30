@@ -268,6 +268,9 @@ fn record_node(canvas: &mut Canvas, node: &Node, anti_alias: bool) -> Result<()>
         Node::Points(points) => {
             canvas.save();
             canvas.concat(points.transform.to_projective());
+            if let Some(shape) = &points.clip_shape {
+                canvas.clip_path(&shape.to_path())?;
+            }
             let positions: Vec<Vec2> = points.points.iter().copied().map(Vec2::from).collect();
             let mut paint = Paint::stroke(color_of(points.color), points.stroke.width);
             paint.style = Style::Stroke(points.stroke.to_style());

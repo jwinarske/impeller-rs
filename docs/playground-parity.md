@@ -166,9 +166,9 @@ column is right and the obvious way to check it is wrong.
 | `aiks_dl_primitive_shape_unittests.cc` | ~2 | 0 | one is a playground harness, one wants a stroke width of zero to mean a hairline |
 | `aiks_dl_text_unittests.cc` | — | 7 | shaping and font parsing, which are out of scope; glyph rendering is not, and these use synthetic coverage |
 | `aiks_dl_runtime_effect_unittests.cc` | — | 14 | a drawPaint with a program, and a sampler bound to something that is not a texture, for one each; see below |
-| `aiks_dl_unittests.cc` | ~36 | 19 | subpass collapse, for five of them; see below |
+| `aiks_dl_unittests.cc` | ~36 | 20 | subpass collapse, for five of them; see below |
 
-The catalog holds three hundred and sixty-three scenes of roughly four hundred,
+The catalog holds three hundred and sixty-four scenes of roughly four hundred,
 and the proportion is less interesting than which ones: the arithmetic of drawing is largely covered, and
 what is missing is either a capability this renderer does not have or a thing
 the scene model cannot describe.
@@ -569,6 +569,23 @@ layer is sized by a narrowing that already asks the filter how far it reaches,
 so it was right all along. The two are now asserted against each other, and the
 assertion also checks that both actually spread -- otherwise it is satisfied by
 two pictures each cut off at the bound.
+
+The line-mode depth scene went in with them, and needed the one thing a points
+run could not say: a clip. `Lines` and `Polygon` make several draws out of a
+single call, and upstream keeps the scene because they all have to carry the
+same depth -- a clip is tested against depth, so draws given different ones
+would be cut differently, some segments surviving a circle and some not, from
+one call. `PointsSpec` carries a `clip_shape` now, on the run rather than on
+each point, which is the distinction the scene is about.
+
+This one found nothing, which is worth saying: 2082 pixels of the run inside the
+circle and none outside it. Removing the clip puts 1219 outside, so the
+assertion is measuring what it claims to.
+
+`CanDrawPointsWithTextureMap` is the neighbor it cannot join. A points run here
+takes a color and the field that draws it is a solid-color material, so a run
+filled by an image is not expressible -- the scene format and the material would
+both have to grow, and it is the material that decides it.
 
 Five of the eight translucent save layers are here now, and the family divides
 in two once a group can be filtered as a whole. Two recolor the group on its way out, two run a
