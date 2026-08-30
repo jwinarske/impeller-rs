@@ -108,136 +108,136 @@ vec3 srgb_to_linear(vec3 c_1) {
     return (sign(c_1) * mix(high_3, low_3, lessThanEqual(m_1, vec3(0.04045))));
 }
 
-float hard_light(float cb, float cs) {
-    if ((cs <= 0.5)) {
-        return (cb * (2.0 * cs));
+float sat(vec3 c_2) {
+    return (max(c_2.x, max(c_2.y, c_2.z)) - min(c_2.x, min(c_2.y, c_2.z)));
+}
+
+vec3 set_sat(vec3 c_3, float s) {
+    float low_4 = min(c_3.x, min(c_3.y, c_3.z));
+    float high_4 = max(c_3.x, max(c_3.y, c_3.z));
+    if ((high_4 <= low_4)) {
+        return vec3(0.0);
     }
-    float d = ((2.0 * cs) - 1.0);
-    return ((cb + d) - (cb * d));
+    return (((c_3 - vec3(low_4)) * s) / vec3((high_4 - low_4)));
 }
 
-float separable_b(int mode, float cb_1, float cs_1) {
-    switch(mode) {
-        case 14: {
-            return (cb_1 * cs_1);
-        }
-        case 15: {
-            return ((cb_1 + cs_1) - (cb_1 * cs_1));
-        }
-        case 16: {
-            float _e7 = hard_light(cs_1, cb_1);
-            return _e7;
-        }
-        case 17: {
-            return min(cb_1, cs_1);
-        }
-        case 18: {
-            return max(cb_1, cs_1);
-        }
-        case 19: {
-            if ((cb_1 <= 0.0)) {
-                return 0.0;
-            }
-            if ((cs_1 >= 1.0)) {
-                return 1.0;
-            }
-            return min((cb_1 / (1.0 - cs_1)), 1.0);
-        }
-        case 20: {
-            if ((cb_1 >= 1.0)) {
-                return 1.0;
-            }
-            if ((cs_1 <= 0.0)) {
-                return 0.0;
-            }
-            return (1.0 - min(((1.0 - cb_1) / cs_1), 1.0));
-        }
-        case 21: {
-            float _e34 = hard_light(cb_1, cs_1);
-            return _e34;
-        }
-        case 22: {
-            float d_1 = ((cb_1 > 0.25) ? inversesqrt(max(cb_1, 1e-8)) : ((((16.0 * cb_1) - 12.0) * cb_1) + 4.0));
-            float dd = ((cb_1 > 0.25) ? sqrt(max(cb_1, 0.0)) : (d_1 * cb_1));
-            if ((cs_1 <= 0.5)) {
-                return (cb_1 - (((1.0 - (2.0 * cs_1)) * cb_1) * (1.0 - cb_1)));
-            }
-            return (cb_1 + (((2.0 * cs_1) - 1.0) * (dd - cb_1)));
-        }
-        case 23: {
-            return abs((cb_1 - cs_1));
-        }
-        case 24: {
-            return ((cb_1 + cs_1) - ((2.0 * cb_1) * cs_1));
-        }
-        default: {
-            return cs_1;
-        }
-    }
+float lum(vec3 c_4) {
+    return dot(c_4, vec3(0.3, 0.59, 0.11));
 }
 
-float lum(vec3 c_2) {
-    return dot(c_2, vec3(0.3, 0.59, 0.11));
-}
-
-vec3 set_lum(vec3 c_3, float l) {
-    vec3 out_2 = vec3(0.0);
-    float _e2 = lum(c_3);
-    vec3 shifted = (c_3 + vec3((l - _e2)));
-    float low_4 = min(shifted.x, min(shifted.y, shifted.z));
-    float high_4 = max(shifted.x, max(shifted.y, shifted.z));
+vec3 set_lum(vec3 c_5, float l) {
+    vec3 out_1 = vec3(0.0);
+    float _e2 = lum(c_5);
+    vec3 shifted = (c_5 + vec3((l - _e2)));
+    float low_5 = min(shifted.x, min(shifted.y, shifted.z));
+    float high_5 = max(shifted.x, max(shifted.y, shifted.z));
     float _e16 = lum(shifted);
-    out_2 = shifted;
-    if ((low_4 < 0.0)) {
-        vec3 _e20 = out_2;
-        out_2 = (vec3(_e16) + (((_e20 - vec3(_e16)) * _e16) / vec3(max((_e16 - low_4), 1e-8))));
+    out_1 = shifted;
+    if ((low_5 < 0.0)) {
+        vec3 _e20 = out_1;
+        out_1 = (vec3(_e16) + (((_e20 - vec3(_e16)) * _e16) / vec3(max((_e16 - low_5), 1e-8))));
     }
-    if ((high_4 > 1.0)) {
-        vec3 _e33 = out_2;
-        out_2 = (vec3(_e16) + (((_e33 - vec3(_e16)) * (1.0 - _e16)) / vec3(max((high_4 - _e16), 1e-8))));
+    if ((high_5 > 1.0)) {
+        vec3 _e33 = out_1;
+        out_1 = (vec3(_e16) + (((_e33 - vec3(_e16)) * (1.0 - _e16)) / vec3(max((high_5 - _e16), 1e-8))));
     }
-    vec3 _e46 = out_2;
+    vec3 _e46 = out_1;
     return _e46;
 }
 
-float sat(vec3 c_4) {
-    return (max(c_4.x, max(c_4.y, c_4.z)) - min(c_4.x, min(c_4.y, c_4.z)));
-}
-
-vec3 set_sat(vec3 c_5, float s) {
-    float low_5 = min(c_5.x, min(c_5.y, c_5.z));
-    float high_5 = max(c_5.x, max(c_5.y, c_5.z));
-    if ((high_5 <= low_5)) {
-        return vec3(0.0);
-    }
-    return (((c_5 - vec3(low_5)) * s) / vec3((high_5 - low_5)));
-}
-
-vec3 nonseparable_b(int mode_1, vec3 cb_2, vec3 cs_2) {
-    switch(mode_1) {
+vec3 nonseparable_b(int mode, vec3 cb, vec3 cs) {
+    switch(mode) {
         case 25: {
-            float _e3 = sat(cb_2);
-            vec3 _e4 = set_sat(cs_2, _e3);
-            float _e5 = lum(cb_2);
+            float _e3 = sat(cb);
+            vec3 _e4 = set_sat(cs, _e3);
+            float _e5 = lum(cb);
             vec3 _e6 = set_lum(_e4, _e5);
             return _e6;
         }
         case 26: {
-            float _e7 = sat(cs_2);
-            vec3 _e8 = set_sat(cb_2, _e7);
-            float _e9 = lum(cb_2);
+            float _e7 = sat(cs);
+            vec3 _e8 = set_sat(cb, _e7);
+            float _e9 = lum(cb);
             vec3 _e10 = set_lum(_e8, _e9);
             return _e10;
         }
         case 27: {
-            float _e11 = lum(cb_2);
-            vec3 _e12 = set_lum(cs_2, _e11);
+            float _e11 = lum(cb);
+            vec3 _e12 = set_lum(cs, _e11);
             return _e12;
         }
         case 28: {
-            float _e13 = lum(cs_2);
-            vec3 _e14 = set_lum(cb_2, _e13);
+            float _e13 = lum(cs);
+            vec3 _e14 = set_lum(cb, _e13);
             return _e14;
+        }
+        default: {
+            return cs;
+        }
+    }
+}
+
+float hard_light(float cb_1, float cs_1) {
+    if ((cs_1 <= 0.5)) {
+        return (cb_1 * (2.0 * cs_1));
+    }
+    float d = ((2.0 * cs_1) - 1.0);
+    return ((cb_1 + d) - (cb_1 * d));
+}
+
+float separable_b(int mode_1, float cb_2, float cs_2) {
+    switch(mode_1) {
+        case 14: {
+            return (cb_2 * cs_2);
+        }
+        case 15: {
+            return ((cb_2 + cs_2) - (cb_2 * cs_2));
+        }
+        case 16: {
+            float _e7 = hard_light(cs_2, cb_2);
+            return _e7;
+        }
+        case 17: {
+            return min(cb_2, cs_2);
+        }
+        case 18: {
+            return max(cb_2, cs_2);
+        }
+        case 19: {
+            if ((cb_2 <= 0.0)) {
+                return 0.0;
+            }
+            if ((cs_2 >= 1.0)) {
+                return 1.0;
+            }
+            return min((cb_2 / (1.0 - cs_2)), 1.0);
+        }
+        case 20: {
+            if ((cb_2 >= 1.0)) {
+                return 1.0;
+            }
+            if ((cs_2 <= 0.0)) {
+                return 0.0;
+            }
+            return (1.0 - min(((1.0 - cb_2) / cs_2), 1.0));
+        }
+        case 21: {
+            float _e34 = hard_light(cb_2, cs_2);
+            return _e34;
+        }
+        case 22: {
+            float d_1 = ((cb_2 > 0.25) ? inversesqrt(max(cb_2, 1e-8)) : ((((16.0 * cb_2) - 12.0) * cb_2) + 4.0));
+            float dd = ((cb_2 > 0.25) ? sqrt(max(cb_2, 0.0)) : (d_1 * cb_2));
+            if ((cs_2 <= 0.5)) {
+                return (cb_2 - (((1.0 - (2.0 * cs_2)) * cb_2) * (1.0 - cb_2)));
+            }
+            return (cb_2 + (((2.0 * cs_2) - 1.0) * (dd - cb_2)));
+        }
+        case 23: {
+            return abs((cb_2 - cs_2));
+        }
+        case 24: {
+            return ((cb_2 + cs_2) - ((2.0 * cb_2) * cs_2));
         }
         default: {
             return cs_2;

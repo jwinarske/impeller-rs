@@ -3525,6 +3525,30 @@ fn opacity() -> Vec<Scene> {
     ]
 }
 
+/// The fifteen modes upstream lists in its advanced-blend color-filter grid,
+/// in its order.
+///
+/// The twelve separable ones first, then the four non-separable -- which is
+/// upstream's order and not this repository's, and is kept so the plate's
+/// layout can be read against the original's.
+const ADVANCED: &[BlendMode] = &[
+    BlendMode::Screen,
+    BlendMode::Overlay,
+    BlendMode::Darken,
+    BlendMode::Lighten,
+    BlendMode::ColorDodge,
+    BlendMode::ColorBurn,
+    BlendMode::HardLight,
+    BlendMode::SoftLight,
+    BlendMode::Difference,
+    BlendMode::Exclusion,
+    BlendMode::Multiply,
+    BlendMode::Hue,
+    BlendMode::Saturation,
+    BlendMode::Color,
+    BlendMode::Luminosity,
+];
+
 /// Every blend mode, by the name the catalog gives its scene.
 ///
 /// Named here rather than derived from a `Display` implementation because a
@@ -3693,6 +3717,76 @@ fn blend() -> Vec<Scene> {
             ..Transform::default()
         })
         .with_blend(BlendMode::SrcOver)],
+    ));
+
+    scenes.push(plate(
+        "blend/foreground-advanced-blend-applies-transform-correctly",
+        // The twin of the plate above, in a mode a matrix cannot state. The
+        // filter is evaluated per fragment against the constant rather than
+        // folded into the material's arithmetic, and the claim is the same:
+        // the recoloring happens in the material's own space and the transform
+        // places the result.
+        vec![Item::filled(
+            Shape::Rect {
+                min: [-40.0, -28.0],
+                max: [40.0, 28.0],
+            },
+            sheet(
+                [-40.0, -28.0, 40.0, 28.0],
+                ALL,
+                TileMode::Clamp,
+                Sampling::Linear,
+            ),
+        )
+        .with_color_filter(
+            ColorFilter::blend([1.0, 165.0 / 255.0, 0.0, 1.0], BlendMode::ColorDodge)
+                .expect("an advanced mode is a filter the shader evaluates"),
+        )
+        .with_transform(Transform {
+            rotate: 30.0f32.to_radians(),
+            translate: [64.0, 64.0],
+            ..Transform::default()
+        })
+        .with_blend(BlendMode::SrcOver)],
+    ));
+
+    scenes.push(plate(
+        "blend/color-filter-advanced-blend",
+        // Upstream's grid of every advanced mode as a color filter, over a
+        // destination with structure so the piecewise ones show their branches.
+        // Fifteen modes in a five-by-three grid.
+        //
+        // A color filter against a constant is not the same thing as the same
+        // mode on the paint: this one never reads the frame, so it needs no
+        // framebuffer fetch and no extension, and it is available on a device
+        // where the paint's own advanced blending is not.
+        ADVANCED
+            .iter()
+            .enumerate()
+            .map(|(i, mode)| {
+                let (col, row) = ((i % 5) as f32, (i / 5) as f32);
+                let (x, y) = (col * 25.0 + 3.0, row * 42.0 + 3.0);
+                Item::filled(
+                    Shape::Rect {
+                        min: [x, y],
+                        max: [x + 22.0, y + 38.0],
+                    },
+                    Fill::LinearGradient {
+                        start: [x, y],
+                        end: [x + 22.0, y + 38.0],
+                        stops: vec![
+                            Stop::new([0.15, 0.15, 0.15, 1.0], 0.0),
+                            Stop::new([0.9, 0.9, 0.9, 1.0], 1.0),
+                        ],
+                        tile: TileMode::Clamp,
+                    },
+                )
+                .with_color_filter(
+                    ColorFilter::blend([0.95, 0.45, 0.15, 1.0], *mode)
+                        .expect("every advanced mode is a filter"),
+                )
+            })
+            .collect(),
     ));
 
     scenes.push(plate(

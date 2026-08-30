@@ -7225,10 +7225,13 @@ fn a_color_matrix_recolors_a_gradient_which_no_tint_could() {
 }
 
 #[test]
-fn an_advanced_blend_mode_is_refused_as_a_filter_rather_than_approximated() {
+fn an_advanced_blend_mode_is_a_filter_the_shader_evaluates_rather_than_a_matrix() {
     // These are piecewise or exchange components between channels, so no
-    // matrix is equal to them. The paint's own blend mode is the hardware path
-    // for exactly these, and the message says so.
+    // matrix is equal to them, and they were refused outright until the shader
+    // learned to evaluate one. They are not refused now, and what has to hold
+    // is that they did not quietly become a matrix instead: an approximation
+    // is the substitution this renderer does not make, and a matrix that was
+    // nearly right would be exactly that.
     for mode in [
         BlendMode::Overlay,
         BlendMode::HardLight,
@@ -7236,9 +7239,27 @@ fn an_advanced_blend_mode_is_refused_as_a_filter_rather_than_approximated() {
         BlendMode::Hue,
         BlendMode::Luminosity,
     ] {
+        let filter = ColorFilter::blend([1.0, 1.0, 1.0, 1.0], mode)
+            .unwrap_or_else(|e| panic!("{mode:?} should be available as a filter: {e}"));
         assert!(
-            ColorFilter::blend([1.0, 1.0, 1.0, 1.0], mode).is_err(),
-            "{mode:?} is not affine and must not become a matrix"
+            matches!(filter, ColorFilter::Blend { .. }),
+            "{mode:?} is not affine and must not become a matrix: {filter:?}"
+        );
+    }
+
+    // And the affine ones still do become a matrix, which is the half of the
+    // old rule that has not changed. A blend the shader evaluates costs a
+    // branch and a function call that a multiply already in the tail does not.
+    for mode in [
+        BlendMode::SrcOver,
+        BlendMode::SrcIn,
+        BlendMode::Modulate,
+        BlendMode::Plus,
+    ] {
+        let filter = ColorFilter::blend([1.0, 1.0, 1.0, 1.0], mode).expect("affine");
+        assert!(
+            matches!(filter, ColorFilter::Matrix { .. }),
+            "{mode:?} is affine and should stay a matrix: {filter:?}"
         );
     }
 }
@@ -15864,5 +15885,55 @@ fn a_blurred_clear_erases_by_its_falloff_rather_than_by_its_bounds() {
         partial >= 12,
         "the hole's edge should fade over many pixels; {partial} of the radius \
          carried a partial alpha"
+    );
+}
+
+#[test]
+fn a_blend_color_filter_in_an_advanced_mode_computes_the_specified_formula() {
+    // `dart:ui`'s `ColorFilter.mode` takes any blend mode. Most are affine in
+    // the destination once the source is fixed and become a matrix; the
+    // advanced ones are piecewise or exchange components between channels, and
+    // the shader evaluates them against the constant per fragment.
+    //
+    // Checked against the equation rather than against a recorded picture, and
+    // on a mode where a wrong answer is not close to a right one. `Difference`
+    // is |dst - src| per channel, so a filter that had silently fallen back to
+    // the source, to the destination, or to a multiply gives a different number
+    // at every one of the three channels below.
+    //
+    // Note which operand is which: the material is the destination and the
+    // filter's color is the source, which is the way round `dart:ui` states
+    // `ColorFilter.mode` and the way round that makes an icon sheet tinted by
+    // `SrcIn` mean what everyone expects.
+    let Some(mut ctx) = context() else { return };
+
+    let dst = [0.8f32, 0.3, 0.6];
+    let src = [0.25f32, 0.9, 0.1];
+
+    let mut canvas = Canvas::new(SIZE);
+    canvas.clear(Color::BLACK);
+    canvas
+        .draw_rect(
+            Rect::new(16.0, 16.0, 112.0, 112.0),
+            &Paint::fill(Color::srgb(dst[0], dst[1], dst[2], 1.0)).with_color_filter(
+                ColorFilter::blend([src[0], src[1], src[2], 1.0], BlendMode::Difference)
+                    .expect("difference is available as a filter"),
+            ),
+        )
+        .expect("a filtered rectangle");
+    let pixels = render(&mut ctx, canvas);
+
+    let got = pixel(&pixels, 64, 64);
+    for (channel, (d, s)) in dst.iter().zip(src.iter()).enumerate() {
+        let want = ((d - s).abs() * 255.0).round() as u8;
+        assert!(
+            got[channel].abs_diff(want) <= 2,
+            "channel {channel} of |dst - src| should be about {want}, got {}",
+            got[channel]
+        );
+    }
+    assert_eq!(
+        got[3], 255,
+        "an opaque draw stays opaque through the filter"
     );
 }

@@ -898,6 +898,19 @@ fn filtered(premultiplied: vec4<f32>) -> vec4<f32> {
         return premultiplied;
     }
 
+    // A blend against a constant, which the compositing specification states
+    // on premultiplied operands and `blend_tint` takes that way. Handled before
+    // the straight/premultiplied split below because it is on the far side of
+    // it: it is the one filter above the matrix that does not want straight
+    // color, which is what `filter::is_straight` says by bounding its range.
+    if (kind > 4.5) {
+        return blend_tint(
+            i32(paint.recolor[0].x + 0.5),
+            paint.filter_offset,
+            premultiplied,
+        );
+    }
+
     // Everything past the premultiplied matrix reads straight color -- the
     // gamma pair could not mean anything else -- so the test is a threshold
     // rather than a list. `filter::is_straight` draws the same line.

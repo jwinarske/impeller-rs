@@ -22,6 +22,15 @@ duplication the paragraph above rules out. `docs/parity.md` says what is built,
 a test checks that it says so truly, and a copy of that claim kept by hand here
 is the same claim without the check. So there is no list.
 
+`ColorFilter::blend` accepts every mode `ColorFilter.mode` takes, where it
+refused the advanced ones. The affine modes still become a `ColorFilter::Matrix`
+and cost the shader nothing beyond the multiply it was already doing; the rest
+become a new `ColorFilter::Blend { color, mode }`, which the shader evaluates
+per fragment against the constant using the same function a mesh's per-vertex
+tint goes through. It blends against a constant rather than against the frame,
+so unlike the same mode set on the paint it needs no framebuffer fetch and no
+extension, and is available wherever the shader compiles.
+
 A blur turns with the transform it was stated under. `dart:ui` states a
 deviation per axis in the caller's own space, and the two separable passes now
 run along the directions that space's axes point in once the transform has been

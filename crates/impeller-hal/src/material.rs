@@ -292,6 +292,25 @@ pub enum ColorFilter {
         offset: [f32; 4],
         form: ColorForm,
     },
+    /// Blend a constant color against the material's own, in a mode a matrix
+    /// cannot state.
+    ///
+    /// `dart:ui`'s `ColorFilter.mode` takes any blend mode, and most of them
+    /// are affine in the destination once the source is fixed -- those become
+    /// a [`Self::Matrix`] and cost the shader nothing beyond the multiply it
+    /// was already doing. The advanced modes are not affine: they are
+    /// piecewise, or they exchange components between channels. This is where
+    /// they go.
+    ///
+    /// It is arithmetic against a constant rather than against the frame, so
+    /// it needs no framebuffer fetch and no extension -- unlike the same mode
+    /// set on the paint, which reaches the hardware's blending unit and is
+    /// gated on one. The shader evaluates it with the same function a mesh's
+    /// per-vertex tint uses.
+    ///
+    /// `color` is premultiplied, as [`Self::blend`] leaves it and as the
+    /// specification states its operands.
+    Blend { color: [f32; 4], mode: BlendMode },
     /// The sRGB transfer function, one direction or the other.
     ///
     /// The one filter `dart:ui` offers that a matrix cannot express: the curve
@@ -412,13 +431,10 @@ impl ColorFilter {
                 }
                 (m, [0.0; 4])
             }
-            other => {
-                let _ = other;
-                return Err(Error::Unsupported(
-                    "an advanced blend mode is not an affine function of what it blends, so it \
-                     cannot be a color filter; set it as the paint's blend mode instead",
-                ));
-            }
+            // Not affine, so not a matrix. Evaluated per fragment instead,
+            // against the same constant, by the same function a mesh's
+            // per-vertex tint goes through.
+            mode => return Ok(Self::Blend { color: s, mode }),
         };
         Ok(Self::Matrix {
             columns,
@@ -444,6 +460,11 @@ impl ColorFilter {
                             .all(|(i, v)| *v == if i == j { 1.0 } else { 0.0 })
                     })
             }
+            // `Dst` returns the destination untouched, which is the identity
+            // and is the only mode here that is. It cannot arrive through
+            // `blend`, which sends every affine mode to a matrix, but it can be
+            // written by hand.
+            Self::Blend { mode, .. } => *mode == BlendMode::Dst,
             // The curve is the identity at exactly three points -- zero, one,
             // and nowhere else on the range -- so as a function it never is.
             Self::Gamma { .. } => false,
@@ -468,19 +489,32 @@ impl ColorFilter {
             Self::Gamma {
                 direction: Gamma::SrgbToLinear,
             } => filter::SRGB_TO_LINEAR,
+            Self::Blend { .. } => filter::BLEND,
         }
     }
 
     pub(crate) fn pack_into(&self, out: &mut [f32; MATERIAL_FLOATS]) {
         out[layout::FILTER_PARAMS] = self.code();
-        if let Self::Matrix {
-            columns, offset, ..
-        } = self
-        {
-            for (j, column) in columns.iter().enumerate() {
-                out[layout::FILTER + j * 4..layout::FILTER + j * 4 + 4].copy_from_slice(column);
+        match self {
+            Self::Matrix {
+                columns, offset, ..
+            } => {
+                for (j, column) in columns.iter().enumerate() {
+                    out[layout::FILTER + j * 4..layout::FILTER + j * 4 + 4].copy_from_slice(column);
+                }
+                out[layout::FILTER_OFFSET..layout::FILTER_OFFSET + 4].copy_from_slice(offset);
             }
-            out[layout::FILTER_OFFSET..layout::FILTER_OFFSET + 4].copy_from_slice(offset);
+            // The constant goes where a matrix's offset would, which is what it
+            // is: the term that does not depend on the material. The mode goes
+            // in the first float of the matrix itself, which this filter has no
+            // use for -- sixteen floats are already reserved for every draw,
+            // and spending a fifth vector to carry one number would cost every
+            // draw that does not blend.
+            Self::Blend { color, mode } => {
+                out[layout::FILTER_OFFSET..layout::FILTER_OFFSET + 4].copy_from_slice(color);
+                out[layout::FILTER] = mode.code();
+            }
+            Self::None | Self::Gamma { .. } => {}
         }
     }
 }
@@ -492,6 +526,8 @@ pub mod filter {
     pub const STRAIGHT: f32 = 2.0;
     pub const LINEAR_TO_SRGB: f32 = 3.0;
     pub const SRGB_TO_LINEAR: f32 = 4.0;
+    /// A blend against a constant color, for the modes a matrix cannot state.
+    pub const BLEND: f32 = 5.0;
 
     /// Whether a code names a filter that reads straight rather than
     /// premultiplied color.
@@ -499,8 +535,13 @@ pub mod filter {
     /// The shader decides this by comparison rather than by equality, and gets
     /// the same answer, so the boundary lives here where both can cite it: a
     /// filter added above this line is straight unless it says otherwise.
+    ///
+    /// [`BLEND`] says otherwise, which is what the sentence above anticipated.
+    /// The compositing specification states every blend on premultiplied
+    /// operands and the shader's own blend function takes them that way, so
+    /// handing it straight color would be handing it the wrong numbers.
     pub fn is_straight(code: f32) -> bool {
-        code > PREMULTIPLIED
+        code > PREMULTIPLIED && code < BLEND
     }
 }
 
