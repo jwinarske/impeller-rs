@@ -1062,26 +1062,37 @@ than wrapping or trapping: where that expression reaches infinity the count
 becomes `u32::MAX` and is then used as a recursion depth. Four billion frames
 is the stack.
 
-`MAX_STROKE_WIDTH` is a sixteenth of the coordinate range, and it went in as a
-margin around a measured cliff rather than a limit derived from anything.
-Bisected at the time: eight million tessellated and sixteen million overflowed,
-so the bound left an eightfold margin below the nearest width observed to fail.
+There was a `MAX_STROKE_WIDTH` here, a sixteenth of the coordinate range, and it
+is gone. It went in as a margin around that cliff rather than a limit derived
+from anything — bisected at the time, eight million tessellated and sixteen
+million overflowed — and it was the one bound in this file that named no
+property of its own.
 
-**That cliff is gone.** It was reported as lyon issue 959 and fixed in pull
-request 961, which clamps the subdivision count to sixteen and does the same at
-the round cap — a second site the report had not found. The workspace requires
-1.0.21 or later, so the hazard cannot be resolved back in, and with the guard
-taken out the four-thousand-case hostile suite passes at every width including
-`f32::MAX`.
+The cliff is gone with it. Reported as lyon issue 959 and fixed in pull request
+961, which clamps the subdivision count to sixteen and does the same at the
+round cap, a second site the report had not found. The workspace requires
+`lyon_tessellation` 1.0.21 or later, which is what makes the sentence above
+something the build enforces rather than something true of one machine.
 
-So the bound is kept for a smaller reason than it was built for, and the
-difference is worth stating rather than leaving as a rule nobody remembers. The
-clamp settles a stroke at sixty-five thousand segments per arc, which on the
-suite's three-segment path is 327,684 vertices — produced identically for a
-width of ten million and for one of `1e30`. At the bound the same path costs
-5,124. A sixty-fourfold ceiling on what a single `draw_path` can be made to
-allocate is the same argument the coordinate bound beside it rests on, and it is
-a weaker one than the crash it replaces.
+Removed rather than re-justified, and the reason is parity. `dart:ui` states no
+maximum stroke width — `Paint.strokeWidth` is a `double` with no documented
+ceiling — and no such constant exists anywhere upstream. A limit of this
+renderer's own would be a limit nobody else has, and once the crash it was built
+for was fixed there was nothing left to weigh against that. Measured before
+removing it: with the guard out, the four-thousand-case hostile suite passes at
+every width including `f32::MAX`, and non-finite widths produce no geometry
+rather than malformed geometry, lyon's same release having added those guards
+too.
+
+What a caller gets instead is the ordinary float limit, and it is worth knowing
+where it starts. A stroke of a thousand, a million or a thousand million covers
+the frame exactly, which is the right picture for a band wider than the frame it
+surrounds. At `1e30` the stroke's own outline sits at five times ten to the
+twenty-ninth, far outside what an `f32` carries through a projection, and the
+geometry collapses to exactly half the frame. That is the same limit
+`MAX_COORDINATE` names, arriving through the width rather than through the path,
+and it is measured rather than desired — the test asserts that such a width
+still draws a great deal rather than pinning it at a half.
 
 Two things about how it was found are worth keeping. It is a *shipping* bug,
 not one a speculative change introduced: it reproduces on the released

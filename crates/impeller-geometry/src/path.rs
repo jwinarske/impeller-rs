@@ -130,37 +130,6 @@ pub struct Path {
 /// why this is the value.
 pub const MAX_COORDINATE: f32 = 16_777_216.0;
 
-/// The widest stroke the tessellator will accept, a sixteenth of
-/// [`MAX_COORDINATE`].
-///
-/// **The crash this was built for is gone, and the bound is kept for a
-/// different and smaller reason.** It went in because lyon computed a round
-/// join's subdivision count as `num_segments.log2().round() as u32`, and Rust's
-/// `as` cast saturates: where that expression reached infinity the count became
-/// `u32::MAX` and was used as a recursion depth, which is a stack overflow that
-/// unwinds nothing and cannot be caught. That was reported as
-/// <https://github.com/nical/lyon/issues/959> and fixed in
-/// <https://github.com/nical/lyon/pull/961>, which clamps the count to sixteen
-/// subdivisions and does the same at the round *cap*, a second site the report
-/// had not found. The workspace requires 1.0.21 or later, so the hazard cannot
-/// be resolved back in.
-///
-/// Measured after the update, with this guard taken out: the four-thousand-case
-/// hostile suite passes and nothing aborts at any width, `f32::MAX` included.
-/// So the bound is no longer load-bearing for safety, and what it holds up now
-/// is cost. The clamp bounds a stroke at sixty-five thousand segments per arc,
-/// which on the three-segment path the suite uses is 327,684 vertices —
-/// produced identically for a width of ten million and for one of `1e30`,
-/// neither of which has a picture in it at any scale this renderer draws at.
-/// At this bound the same path costs 5,124.
-///
-/// A sixty-fourfold ceiling on what one `draw_path` can be made to allocate is
-/// worth a limit that costs nothing real, and it is the same argument the
-/// coordinate bound beside it rests on. It is a weaker argument than the one it
-/// replaces, and stated plainly so that removing it is a decision someone can
-/// make rather than a rule nobody remembers the reason for.
-pub const MAX_STROKE_WIDTH: f32 = MAX_COORDINATE / 16.0;
-
 impl Path {
     pub fn builder() -> PathBuilder {
         PathBuilder::new()

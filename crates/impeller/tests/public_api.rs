@@ -15428,17 +15428,22 @@ fn a_layer_matrix_does_not_recover_what_fell_outside_the_layer() {
 }
 
 #[test]
-fn a_stroke_too_wide_to_tessellate_draws_nothing_rather_than_aborting() {
+fn a_stroke_too_wide_to_tessellate_draws_rather_than_aborting() {
     // The most serious thing the generated tests have found, and the only one
     // reachable in four lines of ordinary API use. `Paint::stroke(color, 1e30)`
     // with a round join used to take the process down -- not a panic a caller
     // could catch, a stack overflow, which unwinds nothing.
     //
-    // Lyon computes a round join's subdivision count as
+    // Lyon computed a round join's subdivision count as
     // `num_segments.log2().round() as u32`, and Rust's `as` cast saturates: an
-    // infinite `num_segments` becomes `u32::MAX` and is then used as a
-    // recursion depth. `MAX_STROKE_WIDTH` keeps a width that could reach it
-    // from being handed over at all.
+    // infinite `num_segments` became `u32::MAX` and was then used as a
+    // recursion depth. Reported as nical/lyon#959 and fixed in #961, which
+    // clamps the count; the workspace requires the release that has it.
+    //
+    // So the width is handed over now rather than refused. `dart:ui` states no
+    // maximum stroke width and neither does upstream, so a bound of this
+    // renderer's own would have been a limit nobody else has -- and once the
+    // crash was gone there was nothing left to justify it.
     //
     // Here rather than only in the geometry crate because the point is the
     // route: this is what a caller of the *renderer* can write.
@@ -15460,22 +15465,43 @@ fn a_stroke_too_wide_to_tessellate_draws_nothing_rather_than_aborting() {
         canvas
     };
 
-    // An ordinary width draws, so the refusal below is about the width and not
-    // about the path.
+    // An ordinary width draws, so what follows is about the width and not about
+    // the path.
     let drawn = render(&mut ctx, bar(6.0));
     assert!(
         drawn.chunks_exact(4).filter(|p| p[0] > 128).count() > 200,
         "a six-wide stroke should draw"
     );
 
-    // And the widths that could reach the recursion draw nothing at all --
-    // reaching this line is most of the assertion, since the failure being
-    // guarded against never returns.
-    for width in [1e30f32, f32::MAX, 1e9] {
-        let blank = render(&mut ctx, bar(width));
+    // A stroke wider than the frame covers it, which is the right picture: the
+    // band is half the width on each side of a path that is already inside.
+    let whole = (SIZE.width * SIZE.height) as usize;
+    for width in [1e3f32, 1e6, 1e9] {
+        let wide = render(&mut ctx, bar(width));
+        let covered = wide.chunks_exact(4).filter(|p| p[0] > 128).count();
+        assert_eq!(
+            covered, whole,
+            "a stroke {width:e} wide should cover the frame"
+        );
+    }
+
+    // Past that the picture degrades, and it is the same limit `MAX_COORDINATE`
+    // names arriving by a different road. A width of `1e30` puts the stroke's
+    // own outline at five times ten to the twenty-ninth, which is far outside
+    // what an `f32` carries through a projection -- so the geometry collapses
+    // and covers exactly half the frame. Measured, not desired.
+    //
+    // Asserted as "draws something substantial" rather than pinned at a half,
+    // because the number is a float-precision artifact rather than a decision.
+    // What the test is here for is the line above it: these widths used to end
+    // the process, and now they return.
+    for width in [1e30f32, f32::MAX] {
+        let wide = render(&mut ctx, bar(width));
+        let covered = wide.chunks_exact(4).filter(|p| p[0] > 128).count();
         assert!(
-            blank.chunks_exact(4).all(|p| p[0] < 8),
-            "a stroke {width:e} wide should draw nothing"
+            covered > whole / 4,
+            "a stroke {width:e} wide should still draw a great deal; it covered \
+             {covered} of {whole}"
         );
     }
 }

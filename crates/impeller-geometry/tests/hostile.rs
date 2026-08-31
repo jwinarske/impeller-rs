@@ -383,7 +383,7 @@ proptest! {
 /// down or allocated without bound before the boundary guards existed.
 mod found_by_generation {
     use super::*;
-    use impeller_geometry::{MAX_COORDINATE, MAX_STROKE_WIDTH};
+    use impeller_geometry::MAX_COORDINATE;
 
     /// `debug_assert!(tolerance >= S::EPSILON * S::EPSILON)` inside lyon's
     /// cubic flattener. A tolerance of zero is a number a caller can arrive at
@@ -426,23 +426,29 @@ mod found_by_generation {
         assert!(tess.stroke(&path, &StrokeStyle::new(4.0), 0.25).is_empty());
     }
 
-    /// A stroke wide enough to make lyon's round join recurse four billion
-    /// deep, which is a stack overflow and cannot be caught.
+    /// A stroke wide enough to have made lyon's round join recurse four billion
+    /// deep, which was a stack overflow and could not be caught.
     ///
-    /// The mechanism is worth writing out because it is not the shape of bug
-    /// the guards above are for. Lyon computes a round join's subdivision
-    /// count as `num_segments.log2().round() as u32`, and Rust's `as` cast
-    /// *saturates*: an infinite `num_segments` -- which a zero flattening step
-    /// produces, and a huge radius does -- becomes `u32::MAX` rather than
-    /// wrapping or panicking. That value is then used as a recursion depth.
+    /// The mechanism is worth keeping even though the defect is gone. Lyon
+    /// computed a round join's subdivision count as
+    /// `num_segments.log2().round() as u32`, and Rust's `as` cast *saturates*:
+    /// an infinite `num_segments` -- which a zero flattening step produces, and
+    /// a huge radius does -- became `u32::MAX` rather than wrapping or
+    /// panicking, and that value was used as a recursion depth. It was
+    /// reachable in four lines through `Canvas::draw_path`, with no device
+    /// involved.
     ///
-    /// Reachable through the public API in four lines:
-    /// `Canvas::draw_path` with `Paint::stroke(color, 1e30)` and a round join
-    /// aborted the process, with no device involved. A stack overflow unwinds
-    /// nothing, so no amount of care at the call site helps; the width has to
-    /// be refused before lyon sees it.
+    /// Reported as <https://github.com/nical/lyon/issues/959> and fixed in
+    /// <https://github.com/nical/lyon/pull/961>, which clamps the count to
+    /// sixteen subdivisions and does the same at the round cap -- a second site
+    /// the report had not found. The workspace requires 1.0.21 or later.
+    ///
+    /// So this no longer asserts a refusal. It asserts that the widths that
+    /// used to abort now tessellate, and that the ones with no geometry in them
+    /// produce nothing rather than something malformed. `dart:ui` states no
+    /// maximum stroke width and neither does upstream, so neither does this.
     #[test]
-    fn a_stroke_wider_than_the_coordinate_range_is_refused() {
+    fn a_stroke_wider_than_the_coordinate_range_tessellates() {
         let mut b = PathBuilder::new();
         b.move_to(Vec2::new(10.0, 10.0))
             .line_to(Vec2::new(50.0, 10.0))
@@ -450,25 +456,38 @@ mod found_by_generation {
         let path = b.build();
         let mut tess = Tessellator::new();
 
-        for width in [1e30f32, f32::MAX, f32::INFINITY, MAX_STROKE_WIDTH * 2.0] {
+        // The widths that used to abort the process. Reaching this line at all
+        // is most of the assertion; the rest is that what comes back is finite,
+        // since a stroke built from a saturated count would not be.
+        for width in [1e30f32, f32::MAX, 1e7] {
+            let style = StrokeStyle::new(width)
+                .with_cap(LineCap::Round)
+                .with_join(LineJoin::Round);
+            let out = tess.stroke(&path, &style, 0.25);
+            assert!(
+                !out.vertices.is_empty(),
+                "a stroke {width:e} wide should draw something"
+            );
+            assert!(
+                out.vertices
+                    .iter()
+                    .all(|p| p.x.is_finite() && p.y.is_finite()),
+                "a stroke {width:e} wide produced a vertex that is not a point"
+            );
+        }
+
+        // And the widths that describe no stroke draw nothing, which lyon
+        // handles rather than this: the same release added the non-finite
+        // guards that make these safe to hand over.
+        for width in [f32::INFINITY, f32::NEG_INFINITY, f32::NAN, 0.0, -5.0] {
             let style = StrokeStyle::new(width)
                 .with_cap(LineCap::Round)
                 .with_join(LineJoin::Round);
             assert!(
                 tess.stroke(&path, &style, 0.25).is_empty(),
-                "a stroke {width:e} wide should be refused"
+                "a stroke {width:e} wide has no geometry in it"
             );
         }
-
-        // And the width just inside the bound still draws, so the guard is a
-        // bound rather than a refusal of strokes. At that width this path costs
-        // 5,124 vertices; past the bound lyon's own clamp would settle at
-        // 327,684, which is what the bound is now for -- the stack overflow it
-        // was built against is fixed in the version the workspace requires.
-        let style = StrokeStyle::new(MAX_STROKE_WIDTH)
-            .with_cap(LineCap::Round)
-            .with_join(LineJoin::Round);
-        assert!(!tess.stroke(&path, &style, 0.25).is_empty());
     }
 
     /// The one with the widest blast radius, and the one no assertion catches

@@ -27,9 +27,7 @@ pub mod tessellate;
 pub mod transform;
 
 pub use flatten::{flatten, DEFAULT_TOLERANCE};
-pub use path::{
-    Convexity, FillRule, Path, PathBuilder, Rect, Verb, MAX_COORDINATE, MAX_STROKE_WIDTH,
-};
+pub use path::{Convexity, FillRule, Path, PathBuilder, Rect, Verb, MAX_COORDINATE};
 pub use stroke::{LineCap, LineJoin, StrokeStyle};
 pub use tessellate::{Tessellator, VertexBuffers};
 pub use transform::{

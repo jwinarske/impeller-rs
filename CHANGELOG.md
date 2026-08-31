@@ -136,13 +136,15 @@ approximation error itself is small enough, at the same relative tolerance. The
 outline moves by a few thousandths at its tangent extremes, which is four
 pixels of a hundred-and-twenty-eight-square frame.
 
-A stroke wider than `MAX_STROKE_WIDTH` draws nothing. `Paint::stroke(color, 1e30)`
-with a round join used to overflow the stack inside the tessellation dependency,
-which no caller can catch; that is fixed upstream in `lyon_tessellation` 1.0.21,
-which the workspace now requires. The bound is kept for what is left of the
-reason — a stroke past it would cost 327,684 vertices where one at it costs
-5,124 — and `docs/architecture.md` says so rather than leaving the old
-justification standing. `MAX_STROKE_WIDTH` is new and public.
+A stroke of any width tessellates. `Paint::stroke(color, 1e30)` with a round
+join used to overflow the stack inside the tessellation dependency, which no
+caller can catch, and a `MAX_STROKE_WIDTH` bound refused such widths rather than
+hand them over. That defect is fixed upstream in `lyon_tessellation` 1.0.21,
+which the workspace now requires, so the bound is removed and `MAX_STROKE_WIDTH`
+is gone from the public API — `dart:ui` states no maximum stroke width and
+neither does upstream, and a limit nobody else has needs a reason that outlived
+the crash. Widths past about a thousand million lose precision rather than being
+refused, which `docs/architecture.md` measures.
 
 A path is bounded before it is tessellated. A coordinate past two to the
 twenty-fourth is refused rather than drawn, because past that a float cannot
