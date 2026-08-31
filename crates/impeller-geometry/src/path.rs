@@ -133,29 +133,32 @@ pub const MAX_COORDINATE: f32 = 16_777_216.0;
 /// The widest stroke the tessellator will accept, a sixteenth of
 /// [`MAX_COORDINATE`].
 ///
-/// Unlike the coordinate bound, this one is a *margin around a measured cliff*
-/// rather than a limit derived from anything, and it is worth being plain
-/// about that. Lyon computes a round join's subdivision count as
-/// `num_segments.log2().round() as u32`, and Rust's `as` cast saturates: where
-/// that expression reaches infinity the count becomes `u32::MAX` and is used
-/// as a recursion depth. Four billion frames is a stack overflow, which
-/// unwinds nothing and cannot be caught, and it is reachable in four lines
-/// through `Canvas::draw_path`. Reported upstream as
-/// <https://github.com/nical/lyon/issues/959>, with the standalone repro and
-/// the values read out of the frame that saturates.
+/// **The crash this was built for is gone, and the bound is kept for a
+/// different and smaller reason.** It went in because lyon computed a round
+/// join's subdivision count as `num_segments.log2().round() as u32`, and Rust's
+/// `as` cast saturates: where that expression reached infinity the count became
+/// `u32::MAX` and was used as a recursion depth, which is a stack overflow that
+/// unwinds nothing and cannot be caught. That was reported as
+/// <https://github.com/nical/lyon/issues/959> and fixed in
+/// <https://github.com/nical/lyon/pull/961>, which clamps the count to sixteen
+/// subdivisions and does the same at the round *cap*, a second site the report
+/// had not found. The workspace requires 1.0.21 or later, so the hazard cannot
+/// be resolved back in.
 ///
-/// Bisected on a three-segment path at a quarter-pixel tolerance: a width of
-/// eight million tessellates (ten thousand vertices, growing linearly with the
-/// width, which is the round join being subdivided as its radius grows), and
-/// sixteen million overflows. The bound is a sixteenth of the coordinate
-/// range, which leaves an eightfold margin below the nearest width observed to
-/// fail.
+/// Measured after the update, with this guard taken out: the four-thousand-case
+/// hostile suite passes and nothing aborts at any width, `f32::MAX` included.
+/// So the bound is no longer load-bearing for safety, and what it holds up now
+/// is cost. The clamp bounds a stroke at sixty-five thousand segments per arc,
+/// which on the three-segment path the suite uses is 327,684 vertices —
+/// produced identically for a width of ten million and for one of `1e30`,
+/// neither of which has a picture in it at any scale this renderer draws at.
+/// At this bound the same path costs 5,124.
 ///
-/// The margin is what a bound around someone else's arithmetic is worth: the
-/// cliff's position depends on the tolerance, the path and the version of the
-/// dependency, so a limit set at the edge would be a limit set for one of
-/// them. A stroke wider than a million units has no picture in it at any scale
-/// this renderer draws at, so nothing is lost by staying far away.
+/// A sixty-fourfold ceiling on what one `draw_path` can be made to allocate is
+/// worth a limit that costs nothing real, and it is the same argument the
+/// coordinate bound beside it rests on. It is a weaker argument than the one it
+/// replaces, and stated plainly so that removing it is a decision someone can
+/// make rather than a rule nobody remembers the reason for.
 pub const MAX_STROKE_WIDTH: f32 = MAX_COORDINATE / 16.0;
 
 impl Path {

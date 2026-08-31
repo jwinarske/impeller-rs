@@ -65,7 +65,7 @@ raw-window-handle = "0.6"
 ash-window = "0.13"
 
 # --- core ---
-lyon_tessellation = "1"
+lyon_tessellation = "1.0.21"
 swash = "0.1"
 glam = "0.27"
 bytemuck = "1"

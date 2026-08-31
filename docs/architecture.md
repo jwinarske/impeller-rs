@@ -1062,14 +1062,26 @@ than wrapping or trapping: where that expression reaches infinity the count
 becomes `u32::MAX` and is then used as a recursion depth. Four billion frames
 is the stack.
 
-`MAX_STROKE_WIDTH` is a sixteenth of the coordinate range, and unlike the other
-bounds it is a margin around a measured cliff rather than a limit derived from
-anything. Bisected: eight million tessellates and sixteen million overflows, so
-the bound leaves an eightfold margin below the nearest width observed to fail.
-The cliff's position depends on the tolerance, the path and the version of the
-dependency, so a limit set at the edge would be a limit set for one of them —
-and a stroke wider than a million units has no picture in it at any scale this
-renderer draws at, so the margin costs nothing.
+`MAX_STROKE_WIDTH` is a sixteenth of the coordinate range, and it went in as a
+margin around a measured cliff rather than a limit derived from anything.
+Bisected at the time: eight million tessellated and sixteen million overflowed,
+so the bound left an eightfold margin below the nearest width observed to fail.
+
+**That cliff is gone.** It was reported as lyon issue 959 and fixed in pull
+request 961, which clamps the subdivision count to sixteen and does the same at
+the round cap — a second site the report had not found. The workspace requires
+1.0.21 or later, so the hazard cannot be resolved back in, and with the guard
+taken out the four-thousand-case hostile suite passes at every width including
+`f32::MAX`.
+
+So the bound is kept for a smaller reason than it was built for, and the
+difference is worth stating rather than leaving as a rule nobody remembers. The
+clamp settles a stroke at sixty-five thousand segments per arc, which on the
+suite's three-segment path is 327,684 vertices — produced identically for a
+width of ten million and for one of `1e30`. At the bound the same path costs
+5,124. A sixty-fourfold ceiling on what a single `draw_path` can be made to
+allocate is the same argument the coordinate bound beside it rests on, and it is
+a weaker one than the crash it replaces.
 
 Two things about how it was found are worth keeping. It is a *shipping* bug,
 not one a speculative change introduced: it reproduces on the released

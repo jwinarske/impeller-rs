@@ -461,7 +461,10 @@ mod found_by_generation {
         }
 
         // And the width just inside the bound still draws, so the guard is a
-        // bound rather than a refusal of strokes.
+        // bound rather than a refusal of strokes. At that width this path costs
+        // 5,124 vertices; past the bound lyon's own clamp would settle at
+        // 327,684, which is what the bound is now for -- the stack overflow it
+        // was built against is fixed in the version the workspace requires.
         let style = StrokeStyle::new(MAX_STROKE_WIDTH)
             .with_cap(LineCap::Round)
             .with_join(LineJoin::Round);

@@ -167,8 +167,10 @@ impl Tessellator {
         //
         // Measured before the guard: `Paint::stroke(color, 1e30)` with a round
         // join, through `Canvas::draw_path`, aborted the process. See
-        // `MAX_STROKE_WIDTH` for the mechanism, where the cliff was bisected
-        // to, and why the bound sits well below it rather than at it.
+        // `MAX_STROKE_WIDTH` for what this is now for. The stack overflow it
+        // was built against is fixed upstream and the workspace requires the
+        // release that fixes it; what the bound holds up is the cost of a
+        // stroke whose width has no picture in it.
         if !style.width.is_finite() || style.width > crate::path::MAX_STROKE_WIDTH {
             self.buffers.clear();
             return &self.buffers;
