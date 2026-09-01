@@ -19,7 +19,7 @@
 # the only row here that has one, and adding a second is the kind of thing the
 # review above is for.
 #
-# Last checked against the board: d3ed1ecca67d633ec2802cbd4e435fea946c0d8e
+# Last checked against the board: 57ef2c95bb79f6bd770c8851462f17440da1b1a3
 #
 # That line is read by `cargo xtask gate`, which counts the commits touching
 # what the bench times since it and says so. It exists because the numbers below
@@ -28,31 +28,37 @@
 # later reader can find. Update it when a `--check` run passes, whether or not
 # the numbers are re-recorded.
 #
-# Re-recorded 2026-09-01, and every row moved for one reason. `shade` in
-# `solid.wgsl` dispatched on the material kind with a chain of `if`s, so every
-# fragment paid two float comparisons for each kind ahead of its own, and a
-# solid color -- the commonest material there is -- fell through all of them to
-# reach the return at the bottom. It is a `switch` now, with the solid case
-# answered first.
+# Re-recorded twice on 2026-09-01, for three fixes of one kind: work every
+# fragment did that its own draw had not asked for.
 #
-# Against the numbers this file held before, on three runs agreeing to a
-# hundredth of a millisecond: the tessellated rows fell by about half, the
-# distance-field rows by nine and ten per cent, and the mixed frame by eleven
-# and two. Every pixel of all four hundred and twenty-six catalog and corpus
-# scenes is byte-identical across the change, which is what says this is a
-# dispatch cost and not a shortcut.
+# `shade` dispatched on the material kind with a chain of `if`s, so a fragment
+# paid two float comparisons for each kind ahead of its own and a solid color
+# fell through all fourteen. `fs_main` called `blend_tint` unconditionally --
+# twenty-nine modes and the non-separable tail behind them -- to arrive at the
+# one multiply that `Modulate`, the mode a draw that asked for nothing gets,
+# actually means. And `dithered` computed which kinds dither before the
+# amplitude test that discards the answer for every draw that is not a
+# gradient's.
 #
-# The row that had been 4.6 per cent up and unexplained -- the Vulkan distance
-# field -- was this: a point field's arm had gone in above the rounded
-# rectangle's, and the shapes are what that row draws.
+# Against what this file held on 2026-08-26, three runs a side agreeing to a
+# hundredth of a millisecond: the tessellated rows fell by about three quarters,
+# 13.661 to 3.694 and 15.976 to 4.523; the distance-field rows by a third; the
+# mixed frame by a third and a quarter.
+#
+# Every pixel of all four hundred and twenty-six catalog and corpus scenes is
+# byte-identical across both changes, checked by hashing each scene before and
+# after. That check is not optional here and no test in the tree replaces it:
+# both backends run the same WGSL, and the software reference is lavapipe
+# running it too, so a shared mistake would pass every comparison the suite
+# makes.
 #
 #
 # device	configuration	median in milliseconds	[tolerance %]
-vulkan:0 V3D 7.1.7.0	distance field, 1 sample	12.160	5.0
-vulkan:0 V3D 7.1.7.0	tessellated, 4 samples	7.417
-vulkan:0 V3D 7.1.7.0	tessellated, 1 sample	6.212
-vulkan:0 V3D 7.1.7.0	full frame, mixed content	18.795
-gles V3D 7.1.7.0	distance field, 1 sample	12.034
-gles V3D 7.1.7.0	tessellated, 4 samples	7.978
-gles V3D 7.1.7.0	tessellated, 1 sample	6.634
-gles V3D 7.1.7.0	full frame, mixed content	20.009
+vulkan:0 V3D 7.1.7.0	distance field, 1 sample	9.225	5.0
+vulkan:0 V3D 7.1.7.0	tessellated, 4 samples	4.523
+vulkan:0 V3D 7.1.7.0	tessellated, 1 sample	3.694
+vulkan:0 V3D 7.1.7.0	full frame, mixed content	14.623
+gles V3D 7.1.7.0	distance field, 1 sample	8.714
+gles V3D 7.1.7.0	tessellated, 4 samples	5.459
+gles V3D 7.1.7.0	tessellated, 1 sample	3.653
+gles V3D 7.1.7.0	full frame, mixed content	15.033

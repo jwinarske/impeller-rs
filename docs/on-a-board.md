@@ -146,48 +146,61 @@ starting that stage.
 A bench that dies instantly with `nohup: failed to run command './xtask'` is
 that, not the board.
 
-## What the kind dispatch cost, which was most of the frame
+## What every fragment was paying for draws that never asked
 
-Chasing the one row that the shader fix above did not recover found something
-larger than the regression it started from. `shade` in `solid.wgsl` chose among
-fourteen material kinds with a chain of `if`s, each testing an upper and a lower
-bound. Every fragment therefore paid two float comparisons for every kind ahead
-of its own -- and a solid color, kind zero and the commonest material there is,
-matched none of them and fell through the whole chain to reach the return at the
-bottom.
+Three fixes of one kind, found by pulling on a single unexplained row and
+measured on the Pi 5 with three runs a side agreeing to a hundredth of a
+millisecond. Each is work every fragment did that its own draw had not asked
+for.
 
-Measured on the Pi 5, three runs agreeing to a hundredth of a millisecond, after
-replacing the chain with a `switch` and answering the solid case first:
+`shade` dispatched on the material kind with a chain of `if`s, each testing an
+upper and a lower bound, so a fragment paid two float comparisons for every kind
+ahead of its own -- and a solid color, kind zero and the commonest material
+there is, matched none of the fourteen and fell through all of them to reach the
+return at the bottom. It is a `switch` now with solid answered first.
 
-| row | was | now |
+`fs_main` called `blend_tint` unconditionally, to combine a vertex color with
+the material. That function carries twenty-nine modes and the non-separable tail
+behind them, and the mode a draw that asked for nothing gets is `Modulate` --
+which is `src * dst`, one multiply. Written out at the call site, so the common
+case does not enter the function at all.
+
+`dithered` computed which kinds are dithered -- four comparisons -- before the
+amplitude test that discards the answer for every draw that is not a gradient's
+into a quantized target. The amplitude is tested first now.
+
+| row | 2026-08-26 | now |
 |---|---|---|
-| Vulkan distance field, 1 sample | 13.363 | 12.160 |
-| Vulkan tessellated, 4 samples | 15.976 | 7.417 |
-| Vulkan tessellated, 1 sample | 13.661 | 6.212 |
-| Vulkan full frame, mixed content | 21.199 | 18.795 |
-| GLES distance field, 1 sample | 13.442 | 12.034 |
-| GLES tessellated, 4 samples | 15.971 | 7.978 |
-| GLES tessellated, 1 sample | 13.530 | 6.634 |
-| GLES full frame, mixed content | 20.397 | 20.009 |
+| Vulkan distance field, 1 sample | 13.363 | 9.225 |
+| Vulkan tessellated, 4 samples | 15.976 | 4.523 |
+| Vulkan tessellated, 1 sample | 13.661 | 3.694 |
+| Vulkan full frame, mixed content | 21.199 | 14.623 |
+| GLES distance field, 1 sample | 13.442 | 8.714 |
+| GLES tessellated, 4 samples | 15.971 | 5.459 |
+| GLES tessellated, 1 sample | 13.530 | 3.653 |
+| GLES full frame, mixed content | 20.397 | 15.033 |
 
-The tessellated rows halved. They draw solid-filled shapes, which is the case
-that had been walking the entire chain.
+**Hash every scene before and after, and do not skip it.** No test in this tree
+would have caught a mistake in any of the three: both backends run the same
+WGSL, and the "software reference" the corpus compares against is lavapipe
+running it too, so a shared error passes every comparison the suite makes. What
+was done instead was to hash the pixels of all four hundred and twenty-six
+catalog and corpus scenes on each side of each change. Zero differed, twice, and
+that is what separates a dispatch cost from a shortcut.
 
-Two things were checked before believing it. Every pixel of all four hundred and
-twenty-six catalog and corpus scenes is byte-identical across the change --
-which is what separates a dispatch cost from a shortcut, and no test in the tree
-would have caught the difference on its own, since both backends run the same
-WGSL and the "software reference" is lavapipe running it too. And an
-intermediate version, which reordered the chain rather than replacing it,
-recovered the tessellated rows while making the mixed frame *worse* by three per
-cent: moving one kind up moves every kind below it down, which is the property
-the switch removes rather than rebalances.
+**One wrong turn is worth keeping.** The first attempt at the dispatch reordered
+the chain rather than replacing it: it recovered the rows it was aimed at and
+made the mixed frame three per cent *worse*, because moving one kind up moves
+every kind below it down. A switch removes that property rather than rebalancing
+it.
 
-The lesson that outlives the numbers is that this cost was invisible from every
-direction available here. It is not in a diff -- the chain had been correct and
-unremarkable for as long as it existed. It is not in `cost.rs`, which counts
-passes, draws and vertices and was right about all three. It is not in the
-catalog, whose pixels do not move. Only the board says.
+The general lesson is about where this was visible from, which is nowhere except
+the board. Not from a diff -- all three had been correct and unremarkable for as
+long as they existed. Not from `cost.rs`, which counts passes, draws and
+vertices and was right about all three. Not from the catalog, whose pixels do
+not move. The chain had been there since the shader had kinds to dispatch on,
+and the numbers it cost had been recorded as the baseline and read as the cost
+of the work.
 
 ## Saying when it was last checked
 

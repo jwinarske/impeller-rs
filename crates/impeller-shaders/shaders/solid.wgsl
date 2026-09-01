@@ -1226,10 +1226,17 @@ fn ordered_dither(frag: vec2<f32>) -> f32 {
 /// the target stores and rounds. Alpha is left alone -- perturbing coverage
 /// would move an edge rather than break a band.
 fn dithered(color: vec4<f32>, frag: vec2<f32>) -> vec4<f32> {
+    // The amplitude first and on its own, because it is zero for every target
+    // with no quantum to bridge and for every draw that is not a gradient's --
+    // which is nearly all of them. The kind test below is four comparisons that
+    // were being run before the answer that discards them.
     let amplitude = paint.filter_params.z;
+    if (amplitude <= 0.0) {
+        return color;
+    }
     let kind = paint.params.y;
     let gradient = (kind > 0.5 && kind < 3.5) || (kind > 8.5 && kind < 9.5);
-    if (amplitude <= 0.0 || !gradient) {
+    if (!gradient) {
         return color;
     }
     let offset = ordered_dither(frag) * amplitude;
@@ -1247,10 +1254,21 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     // the alpha applied once to the color and twice to itself.
     // The caller's color is the source and the paint's result the backdrop,
     // which is the order `dart:ui` states for both of the calls that carry one.
-    return dithered(
-        filtered(blend_tint(i32(paint.filter_params.y + 0.5), in.tint, shade(in))),
-        in.position.xy,
-    );
+    let shaded = shade(in);
+    let tint_mode = i32(paint.filter_params.y + 0.5);
+    // `Modulate` is the mode a draw that asked for nothing gets, white being
+    // its identity, and it is `src * dst` outright -- the same line the switch
+    // in `blend_tint` reaches for it. Written here as well so the common case
+    // does not enter that function at all: it carries twenty-nine modes and the
+    // non-separable tail behind them, and every fragment of every draw was
+    // going through it to arrive at one multiply.
+    var tinted: vec4<f32>;
+    if (tint_mode == 13) {
+        tinted = in.tint * shaded;
+    } else {
+        tinted = blend_tint(tint_mode, in.tint, shaded);
+    }
+    return dithered(filtered(tinted), in.position.xy);
 }
 
 /// The color this paint produces, premultiplied, before any filter.

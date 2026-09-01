@@ -743,13 +743,16 @@ float ordered_dither(vec2 frag) {
 
 vec4 dithered(vec4 color_1, vec2 frag_1) {
     float amplitude = _group_1_binding_0_fs.filter_params.z;
-    float kind_1 = _group_1_binding_0_fs.params.y;
-    bool gradient_2 = (((kind_1 > 0.5) && (kind_1 < 3.5)) || ((kind_1 > 8.5) && (kind_1 < 9.5)));
-    if (((amplitude <= 0.0) || !(gradient_2))) {
+    if ((amplitude <= 0.0)) {
         return color_1;
     }
-    float _e25 = ordered_dither(frag_1);
-    float offset_2 = (_e25 * amplitude);
+    float kind_1 = _group_1_binding_0_fs.params.y;
+    bool gradient_2 = (((kind_1 > 0.5) && (kind_1 < 3.5)) || ((kind_1 > 8.5) && (kind_1 < 9.5)));
+    if (!(gradient_2)) {
+        return color_1;
+    }
+    float _e24 = ordered_dither(frag_1);
+    float offset_2 = (_e24 * amplitude);
     return vec4((color_1.xyz + vec3(offset_2)), color_1.w);
 }
 
@@ -895,12 +898,20 @@ vec4 shade(VertexOutput in_2) {
 
 void main() {
     VertexOutput in_ = VertexOutput(gl_FragCoord, _vs2fs_location0, _vs2fs_location1, _vs2fs_location2);
-    float _e4 = _group_1_binding_0_fs.filter_params.y;
-    vec4 _e9 = shade(in_);
-    vec4 _e10 = blend_tint(int((_e4 + 0.5)), in_.tint, _e9);
-    vec4 _e11 = filtered(_e10);
-    vec4 _e14 = dithered(_e11, in_.position.xy);
-    _fs2p_location0 = _e14;
+    vec4 tinted = vec4(0.0);
+    vec4 _e1 = shade(in_);
+    float _e5 = _group_1_binding_0_fs.filter_params.y;
+    int tint_mode = int((_e5 + 0.5));
+    if ((tint_mode == 13)) {
+        tinted = (in_.tint * _e1);
+    } else {
+        vec4 _e15 = blend_tint(tint_mode, in_.tint, _e1);
+        tinted = _e15;
+    }
+    vec4 _e16 = tinted;
+    vec4 _e17 = filtered(_e16);
+    vec4 _e20 = dithered(_e17, in_.position.xy);
+    _fs2p_location0 = _e20;
     return;
 }
 
