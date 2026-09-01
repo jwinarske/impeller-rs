@@ -6390,6 +6390,26 @@ fn shadow_plate(name: &'static str, spec: ShadowSpec) -> Scene {
         .with_samples(4)
 }
 
+/// Upstream's two spiral casters, which differ only in which way the radius
+/// runs.
+///
+/// Twenty steps around and twice around, with the radius walking away from
+/// `base` by `step` a turn and back -- so the contour crosses itself on every
+/// revolution and the shape it encloses is a question about the fill rule
+/// rather than about an outline.
+fn spiral(base: f32, step: f32) -> Vec<[f32; 2]> {
+    const STEPS: i32 = 20;
+    // From zero rather than from one, which is upstream's shape written without
+    // its move-to: that first point is the same formula at `i == 0`.
+    (0..STEPS * 2)
+        .map(|i| {
+            let angle = std::f32::consts::TAU * i as f32 / STEPS as f32;
+            let radius = base + step * (i - STEPS).abs() as f32;
+            [64.0 + angle.cos() * radius, 64.0 + angle.sin() * radius]
+        })
+        .collect()
+}
+
 fn caster(shape: Shape) -> ShadowSpec {
     ShadowSpec {
         shape,
@@ -6943,18 +6963,142 @@ fn pictures() -> Vec<Scene> {
 
 /// `aiks_dl_shadow_unittests.cc`.
 ///
-/// Most of that file checks an optimization for convex shadows -- one scene
-/// per winding and shape kind, asserting the fast path was taken. This
-/// renderer has no such optimization and the pictures are the same either way,
-/// so what comes across is the shapes rather than the pairs.
+/// Most of that file is a convex-shadow optimization: one test per winding and
+/// shape kind, each asserting that the mesh the optimization produced matches
+/// the mesh the general path would have. That assertion cannot come across --
+/// this renderer has no such optimization and nothing here counts vertices in a
+/// shadow.
+///
+/// The pairing does come across, and it is the half worth having. A shadow must
+/// not depend on which way its caster is wound, whatever route drew it, and the
+/// scenes below are the same casters upstream uses with the same two windings
+/// each. `a_shadow_does_not_care_which_way_its_caster_is_wound` in
+/// `tests/catalog.rs` is what reads them as pairs; the naming is what lets it,
+/// so a scene named `-counter-clockwise-` must have a `-clockwise-` sibling
+/// differing in nothing else.
+///
+/// Upstream's casters are paths built point by point, and three of them cannot
+/// be written here: two draw a circle and an oval out of conics tweaked off the
+/// exact weight so the path is convex but unrecognizable, which the scene model
+/// has no closed multi-segment curve for, and one holds two closed contours,
+/// which [`Shape::Contours`] does not (its contours are open, on purpose). The
+/// circle and the oval are here as the analytic shapes upstream compares its
+/// paths *against*, which is the nearer half of what they are for.
 fn shadow() -> Vec<Scene> {
     vec![
+        // A rectangle with one corner moved by a twentieth of a pixel, which is
+        // upstream's and is there so nothing recognizes the path as a rectangle
+        // while the shadow stays rectangular. The analytic route is not lost by
+        // writing it this way -- the round rect below and the elevation sweep
+        // both take it.
         shadow_plate(
             "shadow/draw-shadow-can-optimize-clockwise-rect",
-            caster(Shape::Rect {
-                min: [36.0, 36.0],
-                max: [92.0, 84.0],
-            }),
+            caster(Shape::Polygon(vec![
+                [16.0, 16.0],
+                [111.952, 16.0],
+                [112.0, 112.0],
+                [16.0, 112.0],
+            ])),
+        ),
+        shadow_plate(
+            "shadow/draw-shadow-can-optimize-counter-clockwise-rect",
+            caster(Shape::Polygon(vec![
+                [16.0, 16.0],
+                [16.0, 112.0],
+                [112.0, 112.0],
+                [111.952, 16.0],
+            ])),
+        ),
+        shadow_plate(
+            "shadow/draw-shadow-can-optimize-clockwise-triangle",
+            caster(Shape::Polygon(vec![
+                [64.0, 16.0],
+                [112.0, 112.0],
+                [16.0, 112.0],
+            ])),
+        ),
+        shadow_plate(
+            "shadow/draw-shadow-can-optimize-counter-clockwise-triangle",
+            caster(Shape::Polygon(vec![
+                [64.0, 16.0],
+                [16.0, 112.0],
+                [112.0, 112.0],
+            ])),
+        ),
+        shadow_plate(
+            "shadow/draw-shadow-can-optimize-clockwise-octagon",
+            caster(Shape::Polygon(vec![
+                [16.0, 28.0],
+                [28.0, 16.0],
+                [100.0, 16.0],
+                [112.0, 28.0],
+                [112.0, 100.0],
+                [100.0, 112.0],
+                [28.0, 112.0],
+                [16.0, 100.0],
+            ])),
+        ),
+        shadow_plate(
+            "shadow/draw-shadow-can-optimize-counter-clockwise-octagon",
+            caster(Shape::Polygon(vec![
+                [16.0, 28.0],
+                [16.0, 100.0],
+                [28.0, 112.0],
+                [100.0, 112.0],
+                [112.0, 100.0],
+                [112.0, 28.0],
+                [100.0, 16.0],
+                [28.0, 16.0],
+            ])),
+        ),
+        // A triangle with a point added halfway along two of its sides. They
+        // are on the edge they sit on, so they change nothing about the shape
+        // and everything about the vertex list, which is upstream's subject:
+        // a hull walk that treats a colinear point as a turn gets a different
+        // mesh out of the same picture.
+        shadow_plate(
+            "shadow/draw-shadow-can-optimize-clockwise-with-extra-colinear-vertices",
+            caster(Shape::Polygon(vec![
+                [64.0, 16.0],
+                [88.0, 64.0],
+                [112.0, 112.0],
+                [64.0, 112.0],
+                [16.0, 112.0],
+                [40.0, 64.0],
+            ])),
+        ),
+        shadow_plate(
+            "shadow/draw-shadow-can-optimize-counter-clockwise-with-extra-colinear-vertices",
+            caster(Shape::Polygon(vec![
+                [64.0, 16.0],
+                [40.0, 64.0],
+                [16.0, 112.0],
+                [64.0, 112.0],
+                [112.0, 112.0],
+                [88.0, 64.0],
+            ])),
+        ),
+        // The three upstream keeps on the other side of the question: casters
+        // the optimization must decline. An hourglass and two spirals, each a
+        // single closed contour that crosses itself, so no winding is the
+        // caster's winding and the shadow is whatever the fill rule says the
+        // caster covers.
+        shadow_plate(
+            "shadow/draw-shadow-does-not-optimize-hourglass",
+            caster(Shape::Polygon(vec![
+                [16.0, 16.0],
+                [112.0, 112.0],
+                [16.0, 112.0],
+                [112.0, 16.0],
+            ])),
+        ),
+        shadow_plate(
+            "shadow/draw-shadow-does-not-optimize-inner-outer-spiral",
+            caster(Shape::Polygon(spiral(38.4, 0.48))),
+        ),
+        shadow_plate(
+            "shadow/draw-shadow-does-not-optimize-outer-inner-spiral",
+            caster(Shape::Polygon(spiral(48.0, -0.48))),
         ),
         shadow_plate(
             "shadow/draw-shadow-can-optimize-clockwise-circle",

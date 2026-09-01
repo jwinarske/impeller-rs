@@ -1491,3 +1491,64 @@ fn a_multi_draw_point_mode_is_clipped_all_at_once() {
          segments across a circle that size"
     );
 }
+
+/// A shadow must not depend on which way its caster is wound.
+///
+/// This is what upstream's shadow file is mostly made of and the half of it a
+/// catalog can carry. Upstream draws each caster twice, once each way round,
+/// and asserts that the mesh its convex-shadow optimization produced matches
+/// the one the general path would have. That assertion needs the optimization
+/// and a way to count vertices in a shadow, and this renderer has neither -- so
+/// what is left is the property the pairs exist to protect, which is that the
+/// two pictures are the same picture.
+///
+/// Identical rather than within a tolerance, and that is the point of it. Two
+/// windings of one polygon are one region, so a renderer that decides coverage
+/// from the region cannot tell them apart at all. Anything that reads the
+/// direction -- a hull walk that assumes a turn is a left turn, a fan that
+/// seeds from the first vertex, a fill rule applied signed -- differs, and
+/// differs by whole triangles rather than by an edge sample. So a budget here
+/// would only hide the failure it is looking for.
+///
+/// Paired by name: every `-counter-clockwise-` plate must have a
+/// `-clockwise-` sibling, and the count is asserted so that renaming one out
+/// of the pattern shows up as this test covering less rather than as nothing.
+#[test]
+fn a_shadow_does_not_care_which_way_its_caster_is_wound() {
+    let Ok(mut ctx) = Validated::new(DevicePreference::Auto) else {
+        eprintln!("skipping: no Vulkan device");
+        return;
+    };
+
+    let mut pairs = 0usize;
+    for scene in catalog() {
+        let Some(sibling) = scene.name.strip_prefix("shadow/") else {
+            continue;
+        };
+        let Some(rest) = sibling.split_once("-counter-clockwise-") else {
+            continue;
+        };
+        let clockwise = format!("shadow/{}-clockwise-{}", rest.0, rest.1);
+        let other = catalog()
+            .into_iter()
+            .find(|s| s.name == clockwise)
+            .unwrap_or_else(|| panic!("{} has no {clockwise} to pair with", scene.name));
+
+        let a = render::<VulkanHal>(&mut ctx, &scene);
+        let b = render::<VulkanHal>(&mut ctx, &other);
+        let difference = compare(&a, &b).unwrap_or_else(|e| panic!("{}: {e}", scene.name));
+        assert!(
+            difference.is_identical(),
+            "{} and {clockwise} are the same caster wound the other way and \
+             drew different pictures: {}",
+            scene.name,
+            difference.describe(Tolerance::new(0, 0.0))
+        );
+        pairs += 1;
+    }
+    assert_eq!(
+        pairs, 4,
+        "the shadow chapter should hold four winding pairs; a plate renamed out \
+         of the pattern would leave this test quietly covering less"
+    );
+}

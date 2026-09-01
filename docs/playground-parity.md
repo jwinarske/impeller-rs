@@ -112,14 +112,17 @@ rather than a gap nobody upstream has filled, and it is the only part of the
 rule not taken.
 
 All fourteen of the rows below have now been read against the file they name, at
-tip of tree, and the results are set out after the table. Three named their obstacle correctly. Text, where nearly all forty of that
-file's scenes shape a real font and mirroring them would mean shipping a
-shaper. And: shadows, where it governs twenty-six of that file's thirty scenes and
-means what it says, and paths, where nothing blocks the nine it is short. The
-path row's count was still one too high, for the reason the atlas row's was four
-too high -- a test in the file that draws no picture -- so of the two, one was
-right outright and one was right about the only thing the column claims to be
-about.
+tip of tree, and the results are set out after the table. One named its obstacle
+correctly: text, where nearly all forty of that file's scenes shape a real font
+and mirroring them would mean shipping a shaper.
+
+Two more came close and are the ones worth reading. Shadows named a real
+absence, and drew the wrong conclusion from it -- the optimization is indeed not
+here, but what upstream's scenes check between them survives it, and the section
+on that row is where the second look is recorded. Paths named nothing blocking
+the nine it was short, which was right; its count was still one too high, for
+the reason the atlas row's was four too high -- a test in the file that draws no
+picture -- so it was right about the only thing the column claims to be about.
 
 That makes three right and eleven wrong, in eight distinguishable ways, and the
 ways matter more than the count.
@@ -165,19 +168,19 @@ column is right and the obvious way to check it is wrong.
 | `aiks_dl_blur_unittests.cc` | ~59 | 56 | nothing; see below |
 | `aiks_dl_vertices_unittests.cc` | ~16 | 21 | a caller's program cannot be read at a mesh's texture coordinates, for one of them; see below |
 | `aiks_dl_atlas_unittests.cc` | ~11 | 12 | nothing; see below |
-| `aiks_dl_shadow_unittests.cc` | ~30 | 13 | a convex-shadow optimization this renderer does not have; see below |
+| `aiks_dl_shadow_unittests.cc` | ~30 | 23 | three casters the scene model cannot describe; see below |
 | `aiks_dl_primitive_shape_unittests.cc` | ~2 | 0 | one is a playground harness, one wants a stroke width of zero to mean a hairline |
 | `aiks_dl_text_unittests.cc` | — | 7 | shaping and font parsing, which are out of scope; glyph rendering is not, and these use synthetic coverage |
 | `aiks_dl_runtime_effect_unittests.cc` | — | 14 | a drawPaint with a program, and a sampler bound to something that is not a texture, for one each; see below |
 | `aiks_dl_unittests.cc` | ~36 | 25 | nothing; see below |
 
-The catalog holds four hundred and three scenes against a column totalling
+The catalog holds four hundred and thirteen scenes against a column totalling
 about four hundred, and the two are not a ratio: five chapters hold more than
 the file they mirror, because a scene here is one picture where a test there can
 be a loop over every blend mode or a family drawn twice. What the totals meeting
-does say is that the gaps left are small and named. Shadows is the one large
-one, at thirteen of about thirty, held by an optimization; the rest are short by
-single scenes, or by ordinary pictures nobody has written.
+does say is that the gaps left are small and named: every row is now short by
+single scenes, by casters or programs the scene model cannot describe, or by
+ordinary pictures nobody has written.
 
 ## What blocks the rest
 
@@ -958,16 +961,32 @@ it was already honest -- it reports its nineteen gaps by name -- and those stay
 gaps, because the GLES driver here lacks the extension too, so there is no pair
 to compare them on. Reported, not hidden, which was the whole difference.
 
-The shadow row is the first of these to survive being checked, and is worth
-recording for that rather than in spite of it. Twenty-six of that file's thirty
-scenes are named `DrawShadowCanOptimize` or `DrawShadowDoesNotOptimize`
-something, and what they are for is deciding which paths upstream's
-convex-shadow optimization applies to. That optimization is not here. The
-scenes would still *draw* -- an optimization that changed the picture would be
-a bug -- so they are not blocked in the way the column's other entries claimed
-to be; they are scenes whose whole subject is a thing this renderer does not
-do, and mirroring them would produce pictures that check nothing. That is a
-better reason not to write them than being unable to, and the row means it.
+The shadow row was the first of these to survive being checked, and then did
+not survive the second look. Twenty-six of that file's thirty scenes are named
+`DrawShadowCanOptimize` or `DrawShadowDoesNotOptimize` something, and what they
+are for is deciding which paths upstream's convex-shadow optimization applies
+to. That optimization is not here. The row's argument followed: the scenes would
+still *draw*, since an optimization that changed the picture would be a bug, so
+mirroring them would produce pictures that check nothing.
+
+The premise is right and the conclusion does not follow, because it looks at one
+scene at a time. Upstream writes them in pairs -- the same caster wound each way
+-- and the pair checks something the single scene cannot: that a shadow does not
+depend on which way its caster is wound. That property has to hold here too, it
+holds by a different mechanism than upstream's, and nothing was checking it.
+
+So the casters are here in both windings, and
+`a_shadow_does_not_care_which_way_its_caster_is_wound` reads them as pairs and
+requires the two pictures to be identical -- not within a budget, since two
+windings of one polygon are one region and anything that reads the direction
+differs by whole triangles rather than by an edge sample. The three casters
+upstream declines to optimize are here too, for the other side of the same
+question. What is left out is three of them that the scene model cannot
+describe: a circle and an oval built from conics tweaked off the exact weight,
+which needs a closed multi-segment curve, and one holding two closed contours,
+which `Shape::Contours` deliberately does not offer. The mesh comparison
+upstream makes stays out, and it is the only part of that file that was ever
+about the optimization rather than about the shadow.
 
 One of the four that are not about the optimization was missing and is now
 here. `CanDrawPerspectiveConvexShadow` is filed with the others and is not one
