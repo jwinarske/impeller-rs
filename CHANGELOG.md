@@ -22,6 +22,15 @@ duplication the paragraph above rules out. `docs/parity.md` says what is built,
 a test checks that it says so truly, and a copy of that claim kept by hand here
 is the same claim without the check. So there is no list.
 
+A layer whose matrix will move its result records over the pre-image of what the
+frame can see, not only over the frame. A shape drawn outside the frame and
+translated back into view used to be gone before the matrix ran; it arrives now.
+It costs no memory: the pass's extent still comes from the content's own bounds,
+so a magnifying inverse widens where a draw may land without allocating where no
+draw went. A matrix with no inverse, or one carrying the region across the
+vanishing line, keeps the old behavior, and a layer given explicit bounds is
+unchanged.
+
 A stroked rectangle with square corners is drawn by the distance field rather
 than by the tessellator, where before only a round join was. An outline is the
 difference of two offset shapes now instead of a band around one: a rectangle

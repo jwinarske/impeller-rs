@@ -1093,6 +1093,35 @@ fn basic() -> Vec<Scene> {
                 items
             },
         ),
+        Scene::tree(
+            "basic/matrix-image-filter-doesnt-cull-when-translated-from-offscreen",
+            // A circle drawn well off the left of the frame, inside a group
+            // whose matrix carries it back into view. What the group captures
+            // used to be bounded by the frame, so the circle was gone before
+            // the matrix ran and the plate would have been empty.
+            //
+            // A group whose matrix will move its result records over the
+            // pre-image now -- the region that lands where the frame can see it
+            // once the matrix has been applied -- so what arrives is the whole
+            // circle rather than a sliver or nothing.
+            vec![Node::Layer {
+                layer: Box::new(LayerSpec {
+                    matrix: Some(Transform::translate(96.0, 0.0)),
+                    ..LayerSpec::default()
+                }),
+                bounds: None,
+                transform: Transform::default(),
+                children: vec![Node::Draw(Box::new(Item::fill(
+                    Shape::Circle {
+                        center: [-32.0, 64.0],
+                        radius: 30.0,
+                    },
+                    GREEN,
+                )))],
+            }],
+        )
+        .with_background(DARK)
+        .with_samples(4),
         plate(
             "basic/can-render-colored-rect-primitive",
             // Upstream's whole scene: one rectangle in one color, drawn

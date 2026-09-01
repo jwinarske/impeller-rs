@@ -15422,18 +15422,20 @@ fn a_stroked_rectangle_has_the_corners_its_join_asks_for() {
 }
 
 #[test]
-fn a_layer_matrix_does_not_recover_what_fell_outside_the_layer() {
-    // `docs/non-parity.md` §12. A matrix on a layer resamples what the layer
-    // captured, and a layer captures no more than its target holds -- so a
-    // shape drawn past the edge of the frame is gone before the matrix runs.
-    // Upstream sizes the layer through the filter and renders it, which is
-    // what `MatrixImageFilterDoesntCullWhenTranslatedFromOffscreen` is named
-    // for.
+fn a_layer_matrix_recovers_what_fell_outside_the_frame() {
+    // A matrix on a layer resamples what the layer captured, and a layer used
+    // to capture no more than its parent's target held -- so a shape drawn past
+    // the edge of the frame was gone before the matrix ran, and a translation
+    // that would have brought it into view brought in nothing. That was §12 of
+    // `docs/non-parity.md`, pinned by this test in its previous form so that
+    // building the sizing would be a test that changed rather than a silent
+    // improvement. This is that change.
     //
-    // Pinned rather than left as a thing nobody noticed, so that building the
-    // sizing is a test that changes rather than a silent improvement -- and so
-    // that the half of it which *does* work is stated beside the half that
-    // does not.
+    // A layer whose matrix will move its result now records over the
+    // *pre-image*: the region that lands where the parent can see it once the
+    // matrix has been applied, unioned with the parent for the content the
+    // matrix leaves where it was. Upstream's
+    // `MatrixImageFilterDoesntCullWhenTranslatedFromOffscreen` is this case.
     let Some(mut ctx) = context() else { return };
 
     let green = Paint::fill(Color::srgb(0.0, 1.0, 0.0, 1.0));
@@ -15461,16 +15463,40 @@ fn a_layer_matrix_does_not_recover_what_fell_outside_the_layer() {
          {moved_inside} pixels"
     );
 
-    // Drawn off the left edge and translated back into view: nothing. Not a
-    // clipped circle, not a sliver -- the layer never held it.
+    // Drawn off the left edge and translated back into view: the whole circle,
+    // not a sliver. Compared against the one drawn inside rather than against a
+    // number, since the two are the same circle and the only question is
+    // whether the layer held it.
     let moved_in_from_outside = shot(&mut ctx, -36.0, 100.0);
+    assert!(
+        moved_in_from_outside.abs_diff(moved_inside) * 20 < moved_inside,
+        "a circle drawn off the frame and translated in should arrive whole: \
+         {moved_in_from_outside} pixels against {moved_inside} for the same \
+         circle drawn where the layer already reached"
+    );
+
+    // And it arrives in the right place, which the count alone cannot say. The
+    // circle is drawn at -36 and moved by 100, so its center lands at 64 -- the
+    // middle of the frame, where the ground was black before.
+    let mut canvas = Canvas::new(SIZE);
+    canvas.clear(Color::BLACK);
+    canvas.save_layer(
+        Layer::opacity(1.0).with_matrix(Affine2::from_translation(Vec2::new(100.0, 0.0))),
+    );
+    canvas
+        .draw_circle(Vec2::new(-36.0, 64.0), radius, &green)
+        .expect("a circle off the left edge");
+    canvas.restore();
+    let pixels = render(&mut ctx, canvas);
     assert_eq!(
-        moved_in_from_outside, 0,
-        "the limitation this pins is that content outside the layer is absent \
-         rather than partial; {moved_in_from_outside} pixels came back, so \
-         either the layer is now sized through its matrix -- in which case \
-         `docs/non-parity.md` §12 needs deleting and this test needs inverting \
-         -- or something else changed"
+        pixel(&pixels, 64, 64),
+        [0, 255, 0, 255],
+        "the circle should land in the middle of the frame"
+    );
+    assert_eq!(
+        pixel(&pixels, 64 + (radius as u32) + 4, 64),
+        [0, 0, 0, 255],
+        "and stop where a circle of that radius stops"
     );
 }
 

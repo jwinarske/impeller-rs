@@ -1415,9 +1415,58 @@ impl Canvas {
         // opened under the transform the caller drew in, which is the one its
         // sigma is stated against.
         let layer = layer.scaled_by(max_scale_of(self.transform));
+        let widened = self.matrix_preimage(&layer);
         let pending = self.open_layer(layer, None, None).unwrap_or(None);
+        if let Some(target) = widened {
+            self.aim_at(target);
+        }
         self.seed_backdrop(pending);
         self
+    }
+
+    /// The region a layer must record over when a matrix will move its result.
+    ///
+    /// A layer's target is the parent's, and a draw outside it is scissored
+    /// away -- which is right for every layer except one whose matrix brings
+    /// content in from outside. `dart:ui`'s matrix image filter is exactly
+    /// that, and upstream's `MatrixImageFilterDoesntCullWhenTranslatedFromOffscreen`
+    /// draws a circle three hundred points to the left of the frame and
+    /// translates it back.
+    ///
+    /// What has to be recorded over is the *pre-image*: the region that, once
+    /// the matrix has moved it, lands where the parent can see it. Union with
+    /// the parent, because a matrix that moves some content in leaves the rest
+    /// where it was.
+    ///
+    /// **Opening wide costs no memory, and that is what makes this safe.** The
+    /// pass's extent comes from the narrowed target in `finish_layer`, which is
+    /// the content's own bounds -- so a minifying matrix, whose inverse is a
+    /// magnifying one, widens the region a draw may land in without allocating
+    /// for a region no draw reached. What is allocated stays bounded by what
+    /// the caller drew.
+    fn matrix_preimage(&self, layer: &Layer) -> Option<Target> {
+        let matrix = layer.matrix?;
+        let parent = self.target;
+        let (min, max) = (
+            parent.origin,
+            parent.origin + Vec2::new(parent.extent.width as f32, parent.extent.height as f32),
+        );
+        let (back_min, back_max) = transformed_bounds(matrix.inverse()?, min, max)?;
+        let left = min.x.min(back_min.x).floor();
+        let top = min.y.min(back_min.y).floor();
+        let right = max.x.max(back_max.x).ceil();
+        let bottom = max.y.max(back_max.y).ceil();
+        // A matrix that folds the plane or carries the region across the
+        // vanishing line has no region to report, and one that widens past what
+        // an extent can hold is not a picture anybody asked for.
+        let (width, height) = (right - left, bottom - top);
+        if !(width.is_finite() && height.is_finite() && width > 0.0 && height > 0.0) {
+            return None;
+        }
+        Some(Target {
+            origin: Vec2::new(left, top),
+            extent: Extent2D::new(width as u32, height as u32),
+        })
     }
 
     /// Push the layer frame, and cut the backdrop out if one was asked for.

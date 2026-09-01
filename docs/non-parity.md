@@ -354,38 +354,41 @@ next reader who notices the clip finds the answer rather than filing it, and so
 that anyone tempted to "fix" it sees that doing so would *create* a divergence
 rather than remove one.
 
-## 12. A layer's matrix cannot bring content in from off the target
+## 12. A layer's matrix widens what it records, but not without limit
 
-**What differs.** `Layer::with_matrix` is `dart:ui`'s matrix image filter on a
-save layer, and it resamples what the layer captured. What the layer captured
-is bounded by its target, and a layer's target never exceeds its parent's -- so
-a shape drawn outside the parent is gone before the matrix runs, and a
-translation that would have brought it into view brings in nothing.
+**What differed, and what was done.** `Layer::with_matrix` is `dart:ui`'s matrix
+image filter on a save layer, and it resamples what the layer captured. What a
+layer captured was bounded by its parent's target -- so a shape drawn outside
+the frame was gone before the matrix ran, and a translation that would have
+brought it into view brought in nothing. Upstream's
+`MatrixImageFilterDoesntCullWhenTranslatedFromOffscreen` is that case by name,
+and it drew nothing here.
 
-Upstream sizes the layer through the filter: it computes the coverage the
-filtered result will occupy and allocates for that, so a circle drawn three
-hundred points to the left of the frame inside a layer translated three hundred
-to the right renders. Its
-`MatrixImageFilterDoesntCullWhenTranslatedFromOffscreen` is that case by name.
-Measured here, the same picture draws nothing at all -- not a clipped circle, no
-pixels.
+A layer whose matrix will move its result now records over the *pre-image*: the
+region that lands where the parent can see it once the matrix has been applied,
+unioned with the parent for the content the matrix leaves where it was.
 
-Fixing it means sizing a matrix layer's target to the pre-image of the visible
-region rather than to the parent, which is a memory decision as much as an
-arithmetic one: the inverse of a minifying matrix is a magnifying one, and
-`docs/architecture.md` records that layer allocation is already where this
-project has run a machine out of texture memory. So it is written down rather
-than done, and pinned by
-`a_layer_matrix_does_not_recover_what_fell_outside_the_layer` so that building
-it is a test that changes rather than a behavior nobody had noticed.
+**Opening wide costs no memory, and that is what made it safe to do.** The entry
+that stood here said the fix was a memory decision as much as an arithmetic one,
+because the inverse of a minifying matrix is a magnifying one and layer
+allocation is where this project has already run a machine out of texture
+memory. That is true of the region a draw may *land* in and false of the region
+that is *allocated*: the pass's extent comes from the narrowed target in
+`finish_layer`, which is the content's own bounds. A matrix that magnifies its
+pre-image a hundredfold widens where a draw may go without allocating for
+anywhere no draw reached, so what is allocated stays bounded by what the caller
+drew rather than by the matrix.
 
-**Impact.** A caller who moves a layer *within* the frame sees no difference,
-which is nearly every use: a matrix filter is usually a scale or a small
-translation applied to something already drawn where it can be seen. A caller
-who draws deliberately off-target and translates it in gets nothing, where
-upstream gets the picture. There is no partial failure between the two -- the
-content is either inside the target or absent -- so the case is visible the
-first time it is tried rather than subtly wrong.
+**What is left.** The widening is computed from the matrix alone, so it is exact
+for the affine cases and refuses the rest: a matrix that folds the plane has no
+inverse and one that carries the region across the vanishing line has no finite
+pre-image, and both keep the old behavior of capturing what the parent holds.
+A layer given explicit bounds is also unchanged -- the caller has said where the
+content is, and a matrix does not make that statement wrong.
+
+**Impact.** A caller who draws deliberately off-target and translates it in now
+gets the picture, where before there was nothing. A caller who moves a layer
+within the frame sees no difference, which was always nearly every use.
 
 ## 13. A translucent bevelled stroke covers a pixel twice
 
