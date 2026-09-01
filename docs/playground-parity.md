@@ -165,7 +165,7 @@ column is right and the obvious way to check it is wrong.
 | `aiks_dl_clip_unittests.cc` | ~5 | 7 | nothing; this file is covered |
 | `aiks_dl_opacity_unittests.cc` | ~3 | 3 | nothing; this file is covered |
 | `aiks_dl_blend_unittests.cc` | ~79 | 77 | capability injection, for one of them; see below |
-| `aiks_dl_blur_unittests.cc` | ~59 | 56 | nothing; see below |
+| `aiks_dl_blur_unittests.cc` | ~59 | 57 | nothing; see below |
 | `aiks_dl_vertices_unittests.cc` | ~16 | 21 | a caller's program cannot be read at a mesh's texture coordinates, for one of them; see below |
 | `aiks_dl_atlas_unittests.cc` | ~11 | 12 | nothing; see below |
 | `aiks_dl_shadow_unittests.cc` | ~30 | 24 | two casters the scene model cannot describe; see below |
@@ -174,7 +174,7 @@ column is right and the obvious way to check it is wrong.
 | `aiks_dl_runtime_effect_unittests.cc` | — | 15 | a sampler bound to something that is not a texture, for one of them; see below |
 | `aiks_dl_unittests.cc` | ~36 | 27 | one whose picture cannot show what it is for; see below |
 
-The catalog holds four hundred and seventeen scenes against a column totalling
+The catalog holds four hundred and eighteen scenes against a column totalling
 about four hundred, and the two are not a ratio: five chapters hold more than
 the file they mirror, because a scene here is one picture where a test there can
 be a loop over every blend mode or a family drawn twice. What the totals meeting
@@ -245,6 +245,25 @@ assertion is upstream's own comment, that the green covers the border outside
 the ramp too, because outside a decal what the shader produced is transparent
 rather than absent -- and a gradient blurred as an image, which is the other
 order and a different picture.
+
+A note on that chapter before the rest of it, because it was drawn wrong for
+longer than any of what follows was missing. Ten of its plates put a mask blur
+under `BlendMode::Src`, which is not a choice any of them made: `Item::fill`
+defaults to it, upstream's paint defaults to `kSrcOver`, and `Src` is one of the
+seven modes `docs/non-parity.md` section 16 names as erasing a mask blur's whole
+bounds. So ten plates named after upstream's blur scenes were drawing that
+deviation instead of the picture -- a blurred circle inside a hard-edged
+rectangle of erased ground, which is what the section describes and none of what
+upstream draws.
+
+Nothing could see it. The cross-backend comparison saw both backends agree,
+which they did; and `every_plate_that_asks_for_a_mask_blur_can_show_one` saw a
+plate differ from itself with its blur taken away, which it did -- by the size
+of the erased rectangle. That check was being satisfied by the artifact. Giving
+the draws upstream's blend broke it on the one plate whose blur is genuinely too
+small to see, `SolidColorOvalsMaskBlurTinySigma`, which had been written as one
+oval at a made-up deviation where upstream draws three at nothing, a hundredth,
+and one. It is the three now, and the check passes on the blur.
 
 The blur row was wrong in a more interesting way, and checking it changed the
 renderer rather than the document. It said "backdrop identity keys", which was

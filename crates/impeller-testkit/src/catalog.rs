@@ -6332,7 +6332,8 @@ fn blur() -> Vec<Scene> {
                     WHITE,
                 )
                 .with_mask_blur(7.0)
-                .with_mask_blur_style(*style)],
+                .with_mask_blur_style(*style)
+                .with_blend(BlendMode::SrcOver)],
             )
         })
         .collect();
@@ -6348,7 +6349,44 @@ fn blur() -> Vec<Scene> {
         )
         // Small enough that the halo is a pixel or two, which is the case a
         // blur implemented by scaling a target down and back up gets wrong.
-        .with_mask_blur(0.6)],
+        .with_mask_blur(0.6)
+        .with_blend(BlendMode::SrcOver)],
+    ));
+
+    scenes.push(plate(
+        "blur/can-render-foreground-advanced-blend-with-mask-blur",
+        // A mask blur and an advanced-mode color filter on one draw, which is
+        // the pair upstream keeps this scene for: its own comment says the
+        // filter should apply to the color only and respect the alpha mask.
+        //
+        // Those are two claims and the plate shows both. `Color` takes the hue
+        // and saturation of its source and the luminosity of its destination,
+        // so a gray circle filtered green against nothing comes out green --
+        // and the mask blur's halo, which is the same gray at a falling alpha,
+        // has to come out the same green at a falling alpha rather than fading
+        // toward the filter's own color. A filter applied after the mask,
+        // rather than to the color the mask then scales, is what would show as
+        // the second.
+        //
+        // Upstream's clip is here too, and cuts the circle on two sides: what
+        // it is for is the case where the blurred halo runs into the clip, so
+        // the filter and the mask meet a hard edge as well as a soft one.
+        vec![Item::fill(
+            Shape::Circle {
+                center: [64.0, 64.0],
+                radius: 32.0,
+            },
+            [128.0 / 255.0, 128.0 / 255.0, 128.0 / 255.0, 1.0],
+        )
+        .with_mask_blur(2.0)
+        .with_color_filter(
+            ColorFilter::blend(GREEN, BlendMode::Color).expect("every advanced mode is a filter"),
+        )
+        .with_clip_shape(Shape::Rect {
+            min: [16.0, 24.0],
+            max: [80.0, 88.0],
+        })
+        .with_blend(BlendMode::SrcOver)],
     ));
 
     scenes.push(plate(
@@ -6363,7 +6401,8 @@ fn blur() -> Vec<Scene> {
         // Reaching well past the plate, so the halo is cut by the frame rather
         // than by the layer -- which is the distinction a bounded layer sized
         // to its content alone gets wrong.
-        .with_mask_blur(30.0)],
+        .with_mask_blur(30.0)
+        .with_blend(BlendMode::SrcOver)],
     ));
 
     scenes.push(plate(
@@ -6376,7 +6415,8 @@ fn blur() -> Vec<Scene> {
             },
             WHITE,
         )
-        .with_mask_blur(0.0)],
+        .with_mask_blur(0.0)
+        .with_blend(BlendMode::SrcOver)],
     ));
 
     scenes
@@ -7626,7 +7666,8 @@ fn blur_variants() -> Vec<Scene> {
                     },
                     WHITE,
                 )
-                .with_mask_blur(10.0),
+                .with_mask_blur(10.0)
+                .with_blend(BlendMode::SrcOver),
             ],
         ),
         plate(
@@ -7721,19 +7762,38 @@ fn blur_variants() -> Vec<Scene> {
                     },
                     WHITE,
                 )
-                .with_mask_blur(5.0),
+                .with_mask_blur(5.0)
+                .with_blend(BlendMode::SrcOver),
             ],
         ),
         plate(
             "blur/solid-color-ovals-mask-blur-tiny-sigma",
-            vec![Item::fill(
-                Shape::Oval {
-                    min: [16.0, 44.0],
-                    max: [112.0, 84.0],
-                },
-                WHITE,
-            )
-            .with_mask_blur(0.4)],
+            // Upstream's three, and it had been one. The scene is a sweep, not
+            // a shape: the same oval at a deviation of nothing, of a hundredth,
+            // and of one, so what it shows is where a mask blur starts having
+            // an effect. A single oval at a made-up deviation in between shows
+            // none of that, and was also below what
+            // `every_plate_that_asks_for_a_mask_blur_can_show_one` will accept
+            // -- it passed that check on an artifact rather than on its blur;
+            // see the commit that gave these draws a blend.
+            [
+                (8.0f32, 0.0f32, GREEN),
+                (52.0, 0.01, [1.0, 1.0, 0.0, 1.0]),
+                (96.0, 1.0, RED),
+            ]
+            .into_iter()
+            .map(|(x, sigma, color)| {
+                Item::fill(
+                    Shape::Oval {
+                        min: [x, 32.0],
+                        max: [x + 24.0, 96.0],
+                    },
+                    color,
+                )
+                .with_mask_blur(sigma)
+                .with_blend(BlendMode::SrcOver)
+            })
+            .collect(),
         ),
     ];
 
