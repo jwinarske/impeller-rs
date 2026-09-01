@@ -146,6 +146,47 @@ starting that stage.
 A bench that dies instantly with `nohup: failed to run command './xtask'` is
 that, not the board.
 
+## What a shader costs on this board, measured the hard way
+
+The baseline went sixteen renderer commits unchecked, and checking it found
+every row between five and eleven per cent slower. The board had not changed:
+the baseline commit, cross-built and run the same afternoon, reproduced its own
+numbers to a tenth of a tenth of a per cent -- 13.362 against 13.363 -- which is
+what makes the rest of this a statement about the code.
+
+Bisected on the board, one cross-build and one run per step, reading the
+tessellated single-sample row:
+
+| commit | ms | against the baseline |
+|---|---|---|
+| the baseline | 13.661 | — |
+| a nine-patch in one draw | 13.663 | +0.0% |
+| a point field in one draw | 14.148 | +3.6% |
+| a blend as a color filter | 14.713 | +7.7% |
+| a gradient at a mesh's coordinates | 15.125 | +10.7% |
+
+Three shader changes, each individually reasonable, each about three points.
+None of them added work to the path being measured: a tessellated rectangle
+filled with a solid color takes no gradient, no point field and no color filter.
+What they added was *size* -- another material kind, another branch in the
+filter tail, another coordinate -- to a shader every draw compiles.
+
+One of the three was also a plain mistake, and fixing it recovered all of them.
+`select` in this language evaluates both of its operands, so choosing between two
+calls to the gradient mapping ran it twice per fragment; and it had been hoisted
+above the branch chain, so a solid fill ran it twice as well. Selecting the
+*input* and calling the mapping once, from inside a gradient's arm, put the
+tessellated rows at 1.6 to 1.7 per cent *below* the baseline.
+
+That the last three points of a ten-point regression were worth twelve is the
+part to remember. The cost of a fragment shader here is not the sum of what its
+branches do; it is a step function of what the whole thing needs at once, and
+the compiler's register budget is the step. So a change that adds nothing to the
+measured path can still cost three per cent, and a change that removes a little
+can recover much more. Neither is visible from a diff, and neither is visible
+from `cost.rs`, which counts passes, draws and vertices and is right about all
+three.
+
 **Measure through GLES on this board. One Vulkan configuration will not hold
 still, and it is the one worth measuring.** Ten runs of a binary gave a GLES
 distance-field figure spread over 0.017 ms and a Vulkan one that jumped between
