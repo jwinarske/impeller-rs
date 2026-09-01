@@ -321,6 +321,44 @@ and not in the GLSL, and it catches a chain one link at a time: a helper called
 only from a dead function still reads as called, so removing the root is what
 names the next one.
 
+### And a smaller shader is not a faster one
+
+The corollary above says not to carry code nothing runs. It does not say that
+removing code makes anything quicker, and the same board says plainly that it
+does not.
+
+Two commits shrank `solid.wgsl` in one afternoon. `1f64a28` folded a rounded
+rectangle's fill and its outline into one expression, which took 431 bytes of
+GLSL and 68 SPIR-V words out; `e9833c8` deleted the uncalled function above,
+another 207 bytes and 78 words. Benched three commits over sixteen runs, four a
+side in the faster of the two Vulkan states:
+
+| row | before | after | |
+|---|---|---|---|
+| vulkan full frame | 14.444 | 13.955 | -3.4% |
+| vulkan tessellated x4 | 4.481 | 4.522 | +0.9% |
+| vulkan tessellated x1 | 3.661 | 3.691 | +0.8% |
+| gles full frame | 14.540 | 14.835 | +2.0% |
+
+All of it is `1f64a28`. The deletion measures at nothing at all -- four runs of
+the tip against four of `1f64a28` alone are indistinguishable on every row --
+which is the answer to the question that commit deliberately left open, and is
+what should happen if a driver drops unreachable code from the program it
+actually compiles even though naga emits it into the source.
+
+Three things worth keeping from the rest of it. The change went *four* ways at
+once, not one: a frame three per cent cheaper on one backend and two per cent
+dearer on the other, from the same source. Neither distance-field row moved,
+and that is the path the folded function serves -- so what the other four rows
+responded to is not the arithmetic that changed but the size and shape of the
+program around it. And the direction is not predictable from the size: a
+strictly smaller shader made the row that matters most faster on Vulkan and
+slower on GLES.
+
+The lesson is the one above it, with the sign removed. Shader size is a step
+function on this board, the steps are not all downhill, and the only way to know
+which way one goes is to run it.
+
 ## What a shader costs on this board, measured the hard way
 
 The baseline went sixteen renderer commits unchecked, and checking it found

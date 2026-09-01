@@ -12,15 +12,25 @@
 #
 # Updating this is a reviewed event, like the shader snapshots: re-record with
 # --record, and the diff is the claim that every row moved for a reason. The
-# GLES rows repeat to about a tenth of a percent and mean what they say. The
-# Vulkan distance-field row lands in one of two states three percent apart from
-# one process to the next -- the gap is the cost of recording its hundred and
-# sixty draws, not of running them -- so it was recorded in whichever it got
-# and carries a fourth field, its own tolerance, to cover the other. That is
-# the only row here that has one, and adding a second is the kind of thing the
-# review above is for.
+# GLES rows repeat to about a tenth of a percent and mean what they say.
 #
-# Last checked against the board: 5dfc1ffbaef1aa0270c8a8acbc187e250f99b146
+# All four *Vulkan* rows land in one of two states from one process to the next,
+# and that sentence used to name only the distance-field one. Measured
+# 2026-09-01 over sixteen runs across three commits: the four move together,
+# every run is wholly in one state or the other, and the gap is 4.3 per cent on
+# the distance field, 0.8 and 1.1 on the tessellated pair and 1.6 on the frame.
+# So the explanation the older note gave -- the cost of recording a hundred and
+# sixty draws -- cannot be the whole of it, since the tessellated rows submit
+# one draw and move too. What it is has not been established from here.
+#
+# Each of those four therefore carries a fourth field, its own tolerance, wide
+# enough to cover the other state. They are recorded in the faster one, which
+# is the state to compare a change against; the tolerance is what keeps a run
+# that landed in the slower one from reading as a regression. Before this the
+# three unnamed rows had the default one per cent and failed on any slow-mode
+# run, which is noise this file was producing rather than catching.
+#
+# Last checked against the board: b8fa1eb4914d0dd033a7f5942bc2f4ddd839e628
 #
 # That line names the commit whose state a board run passed against, which is
 # never the commit that writes the line -- a hash cannot be recorded inside the
@@ -33,6 +43,33 @@
 # out, and nothing in the tree could have said so -- "I ran it" is not a fact a
 # later reader can find. Update it when a `--check` run passes, whether or not
 # the numbers are re-recorded.
+#
+# Re-recorded a fourth time on 2026-09-01, for one commit: `1f64a28`, which
+# folded a rounded rectangle's fill and its outline into one expression. It was
+# written for the duplication rather than for the clock, and the shader it left
+# is 431 bytes of GLSL and 68 SPIR-V words smaller. What that bought, and cost:
+#
+#   vulkan full frame      14.444 -> 13.955   -3.4%   the row an interface pays
+#   vulkan tessellated x4   4.481 ->  4.522   +0.9%
+#   vulkan tessellated x1   3.661 ->  3.691   +0.8%
+#   gles   full frame      14.540 -> 14.835   +2.0%
+#
+# Neither distance-field row moves, which is the part worth pausing on: that is
+# the path the folded function serves. Whatever the four rows above are
+# responding to, it is not the arithmetic that changed -- it is the size and
+# shape of the program around it, differently on each backend's compiler. The
+# same conclusion `docs/on-a-board.md` reaches from the other direction.
+#
+# `e9833c8` is in the same span and measures at nothing. It deleted a function
+# nothing ever called -- 207 bytes of GLSL, 78 SPIR-V words -- and four runs of
+# it against four of `1f64a28` alone are indistinguishable on all eight rows.
+# The commit declined to claim a gain; this is the measurement that says there
+# was none.
+#
+# Attributed by benching three commits over sixteen runs, four a side in the
+# faster Vulkan state: `ce3b31f` before both shader commits reproduces the
+# previous numbers exactly, `1f64a28` alone reproduces the ones below, and the
+# tip is indistinguishable from `1f64a28`.
 #
 # Re-recorded a third time on 2026-09-01, and this one is a correction rather
 # than a change. The numbers below had been recorded at `01119dd` and the
@@ -97,11 +134,11 @@
 #
 #
 # device	configuration	median in milliseconds	[tolerance %]
-vulkan:0 V3D 7.1.7.0	distance field, 1 sample	8.857	5.0
-vulkan:0 V3D 7.1.7.0	tessellated, 4 samples	4.481
-vulkan:0 V3D 7.1.7.0	tessellated, 1 sample	3.657
-vulkan:0 V3D 7.1.7.0	full frame, mixed content	14.442
-gles V3D 7.1.7.0	distance field, 1 sample	8.919
-gles V3D 7.1.7.0	tessellated, 4 samples	5.458
-gles V3D 7.1.7.0	tessellated, 1 sample	3.644
-gles V3D 7.1.7.0	full frame, mixed content	14.530
+vulkan:0 V3D 7.1.7.0	distance field, 1 sample	8.853	5.0
+vulkan:0 V3D 7.1.7.0	tessellated, 4 samples	4.522	2.0
+vulkan:0 V3D 7.1.7.0	tessellated, 1 sample	3.691	2.0
+vulkan:0 V3D 7.1.7.0	full frame, mixed content	13.955	2.5
+gles V3D 7.1.7.0	distance field, 1 sample	8.917
+gles V3D 7.1.7.0	tessellated, 4 samples	5.452
+gles V3D 7.1.7.0	tessellated, 1 sample	3.642
+gles V3D 7.1.7.0	full frame, mixed content	14.835
