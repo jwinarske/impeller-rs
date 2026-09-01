@@ -381,3 +381,85 @@ fn every_shader_declares_the_paint_block_the_renderer_packs() {
         );
     }
 }
+
+/// Every color-filter code the renderer can write is one the shader tells
+/// apart from its neighbors.
+///
+/// A different hazard from the material kinds beside it, and one this module
+/// invites. `filtered` dispatches by threshold rather than by arm -- `kind >
+/// 2.5` and not `case 3:` -- because most of the codes above a line share a
+/// route and the line is what matters. That makes adding a code silent in a way
+/// a missing `case` is not: a sixth filter would fall into the fifth's branch
+/// and be applied as a blend, with nothing failing anywhere.
+///
+/// So what is checked is that consecutive codes are separated. For every code
+/// but the first there must be a threshold at the half-integer below it, which
+/// is the only thing that can tell it from the code beneath.
+///
+/// And `is_straight` is checked against the shader rather than described as
+/// agreeing with it. Its own documentation says the boundary lives there "where
+/// both can cite it", which is the right arrangement and was still two
+/// expressions with nothing comparing them.
+#[test]
+fn the_shader_tells_every_color_filter_from_its_neighbors() {
+    use impeller_hal::material::filter;
+
+    const MATERIAL: &str = include_str!("../../impeller-hal/src/material.rs");
+    let module = MATERIAL
+        .split_once("pub mod filter {")
+        .expect("a `filter` module")
+        .1
+        .split_once("\n}")
+        .expect("the end of it")
+        .0;
+    let codes: Vec<(String, f32)> = module
+        .lines()
+        .filter_map(|line| line.trim().strip_prefix("pub const "))
+        .filter_map(|rest| {
+            let (name, value) = rest.split_once(": f32 = ")?;
+            Some((name.to_string(), value.trim_end_matches(';').parse().ok()?))
+        })
+        .collect();
+    assert!(
+        codes.len() >= 2,
+        "expected the filter codes to be read from the module, got {codes:?}"
+    );
+
+    let solid = sources()
+        .into_iter()
+        .find(|(name, _)| name == "solid.wgsl")
+        .expect("solid.wgsl");
+    let body = without_comments(&solid.1);
+    let dispatch = body
+        .split_once("fn filtered(")
+        .expect("solid.wgsl has a `filtered`")
+        .1
+        .split_once("\nfn ")
+        .expect("the end of it")
+        .0;
+
+    for (name, code) in &codes {
+        if *code == 0.0 {
+            continue;
+        }
+        let separator = format!("{}.5", *code as i32 - 1);
+        assert!(
+            dispatch.contains(&separator),
+            "nothing in `filtered` tests against {separator}, so `filter::{name}` \
+             is indistinguishable from the code below it and takes its branch"
+        );
+    }
+
+    // The straight/premultiplied boundary, stated in two places and now
+    // compared. The shader reads straight color where it says `kind > 1.5` and
+    // has not already returned for the blend above; `is_straight` has to say
+    // the same of every code.
+    for (name, code) in &codes {
+        let shader_says = *code > 1.5 && *code < filter::BLEND;
+        assert_eq!(
+            filter::is_straight(*code),
+            shader_says,
+            "`is_straight` and the shader disagree about `filter::{name}`"
+        );
+    }
+}
