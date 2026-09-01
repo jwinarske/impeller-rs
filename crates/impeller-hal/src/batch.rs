@@ -235,6 +235,19 @@ pub struct BatchDraw {
     /// how the result then reaches the target -- these two colors are both in
     /// the shader, so this one needs no extension and every mode is available.
     pub tint_blend: BlendMode,
+    /// Read the paint at this draw's texture coordinates rather than at the
+    /// position of the fragment.
+    ///
+    /// A property of the geometry rather than of the material, which is why it
+    /// is here: a mesh that states a coordinate per vertex has said where each
+    /// one sits in the paint's space, and there is nothing left to derive. An
+    /// image already worked this way and had its own material for it; this is
+    /// what lets a gradient or a caller's program do the same.
+    ///
+    /// False everywhere else, and it costs those draws nothing: the flag lands
+    /// in a slot no material that could set it uses, and the shader's select
+    /// is one instruction on a value it has already computed.
+    pub paint_at_texture_coords: bool,
 }
 
 impl BatchDraw {
@@ -252,6 +265,11 @@ impl BatchDraw {
         let mut out = self.material.to_uniform();
         self.filter.pack_into(&mut out);
         out[crate::material::layout::FILTER_PARAMS + 1] = self.tint_blend.code();
+        if self.paint_at_texture_coords {
+            // `geometry.x`, which no gradient writes. See the field's own note
+            // and the `paint_space` comment in the shader.
+            out[crate::material::layout::GEOMETRY] = 1.0;
+        }
         let dither = crate::material::layout::DITHER;
         // Upstream's rate exactly: `kDitherRate` is 1/64 and is added to the
         // premultiplied color whatever the target is. That is a single constant
@@ -379,6 +397,7 @@ impl Batch {
             clip,
             stencil,
             BlendMode::Modulate,
+            false,
         )
     }
 
@@ -400,6 +419,7 @@ impl Batch {
         clip: Option<Scissor>,
         stencil: ClipState,
         tint_blend: BlendMode,
+        paint_at_texture_coords: bool,
     ) -> Result<()> {
         if clip.is_some_and(Scissor::is_empty) {
             return Ok(());
@@ -450,6 +470,7 @@ impl Batch {
                 && last.clip == clip
                 && last.stencil == stencil
                 && last.tint_blend == tint_blend
+                && last.paint_at_texture_coords == paint_at_texture_coords
             {
                 last.index_count += indices.len() as u32;
                 return Ok(());
@@ -465,6 +486,7 @@ impl Batch {
             clip,
             stencil,
             tint_blend,
+            paint_at_texture_coords,
         });
         Ok(())
     }

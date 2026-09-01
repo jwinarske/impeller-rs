@@ -2125,6 +2125,25 @@ impl Canvas {
     /// shader receives clip-space endpoints and needs no transform of its own.
     fn material_for(&mut self, shader: &Shader) -> Material {
         let to_clip = self.target.projection() * self.transform;
+        self.material_from(shader, to_clip)
+    }
+
+    /// The same, for a draw whose fragments locate themselves some other way.
+    ///
+    /// A mesh that states a coordinate per vertex has already put each one in
+    /// the caller's own space, so the mapping the fragment stage applies must
+    /// not carry the geometry's transform as well -- it would be applied twice,
+    /// once by the vertices and once by the mapping. Passing the identity here
+    /// leaves exactly the paint's own part: the translation that measures from
+    /// a gradient's start, the rotation that orients a sweep, and nothing else.
+    ///
+    /// The shader then runs the same arithmetic on `(uv, 1)` that it runs on a
+    /// clip position, which is why there is one path in it rather than two.
+    fn material_at_texture_coords(&mut self, shader: &Shader) -> Material {
+        self.material_from(shader, Transform2D::IDENTITY)
+    }
+
+    fn material_from(&mut self, shader: &Shader, to_clip: Transform2D) -> Material {
         let stops_of = |stops: &[crate::paint::GradientStop]| -> Vec<Stop> {
             stops
                 .iter()
@@ -3791,14 +3810,32 @@ impl Canvas {
         }
 
         let textured = !mesh.texture_coords().is_empty();
+        // An image mesh has a material of its own, which samples the sheet at
+        // the interpolated coordinate. Every other shader reads its coordinate
+        // from the fragment's position, and the flag passed to the batch below
+        // is what redirects it to the vertices instead -- so the material is
+        // the ordinary one and nothing here has to know which kind it is.
+        //
+        // This used to refuse anything but an image, and the refusal said the
+        // coordinates needed an image paint to read. `dart:ui` reads whatever
+        // color source the paint carries at a mesh's coordinates, image or not.
+        // A caller's program replaces this renderer's fragment shader outright
+        // and takes its coordinate from the fragment's own position. There is
+        // nowhere in it for a per-vertex coordinate to arrive, so this is the
+        // one shader a textured mesh is still refused under -- a narrower
+        // refusal than the one that used to cover every shader but an image,
+        // and `docs/non-parity.md` says which upstream scene it costs.
+        if textured && matches!(paint.shader, Shader::RuntimeEffect { .. }) {
+            return Err(Error::Unsupported(
+                "a caller's program takes its coordinate from the fragment, so a \
+                 mesh's texture coordinates have nowhere to reach it",
+            ));
+        }
+        let at_coords = textured && !matches!(paint.shader, Shader::Image { .. });
         let material = match (&paint.shader, textured) {
             (Shader::Image { .. }, true) => self.mesh_material(&paint.shader)?,
-            (_, true) => {
-                return Err(Error::Unsupported(
-                    "a mesh with texture coordinates needs an image paint to read",
-                ))
-            }
-            (_, false) => self.material_for(&paint.shader),
+            _ if at_coords => self.material_at_texture_coords(&paint.shader),
+            _ => self.material_for(&paint.shader),
         };
 
         let to_clip = self.target.projection() * self.transform;
@@ -3833,6 +3870,13 @@ impl Canvas {
             self.clip,
             ClipState::content(self.depth),
             paint.tint_blend,
+            // Where the coordinates say something the material cannot work out
+            // for itself. An image mesh is excluded because it already reads
+            // them, through a material of its own; everything else -- a
+            // gradient, a caller's program -- derives its coordinate from the
+            // fragment's position unless told otherwise, and this is the
+            // telling. The material above was built to match.
+            at_coords,
         )?;
         Ok(self)
     }
@@ -4079,6 +4123,7 @@ impl Canvas {
                     self.clip,
                     ClipState::content(self.depth),
                     paint.tint_blend,
+                    false,
                 )?;
             }
             PointMode::Lines => {

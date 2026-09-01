@@ -5251,6 +5251,29 @@ fn vertices() -> Vec<Scene> {
             mesh_of(triangle(), ramp()),
         ),
         mesh(
+            "vertices/draw-vertices-linear-gradient-with-texture-coordinates",
+            MeshSpec {
+                positions: vec![[24.0, 104.0], [64.0, 24.0], [104.0, 104.0]],
+                // Coordinates that are not the positions, and not a
+                // rearrangement of them either. A gradient on a mesh is read at
+                // the coordinates rather than at the geometry, so the ramp runs
+                // across the triangle in a direction the triangle's own shape
+                // does not suggest -- and a renderer sampling by position
+                // instead would draw a plausible gradient pointing the wrong
+                // way.
+                texture_coords: vec![[104.0, 24.0], [24.0, 64.0], [104.0, 104.0]],
+                ..mesh_of(
+                    Vec::new(),
+                    Fill::LinearGradient {
+                        start: [24.0, 24.0],
+                        end: [104.0, 104.0],
+                        stops: vec![Stop::new(BLUE, 0.0), Stop::new(RED, 1.0)],
+                        tile: TileMode::Repeat,
+                    },
+                )
+            },
+        ),
+        mesh(
             "vertices/vertices-geometry-color-uv-position-data-advanced-blend",
             MeshSpec {
                 positions: quad.clone(),

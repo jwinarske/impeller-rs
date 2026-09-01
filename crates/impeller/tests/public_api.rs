@@ -6877,7 +6877,17 @@ fn a_mesh_reads_the_texture_where_its_coordinates_say_rather_than_where_it_sits(
 }
 
 #[test]
-fn texture_coordinates_without_a_texture_are_refused_rather_than_dropped() {
+fn texture_coordinates_are_taken_by_any_shader_that_can_read_them() {
+    // This used to refuse every shader but an image, on the reasoning that the
+    // coordinates had no texture to read. `dart:ui` reads whatever color source
+    // the paint carries at a mesh's coordinates, so the reasoning was about the
+    // implementation rather than the API, and it is `docs/non-parity.md`
+    // section 14 that records what changed.
+    //
+    // A solid color is the case worth pinning here rather than a gradient. The
+    // coordinates cannot show in the picture -- a constant is the same
+    // everywhere -- so accepting them is a decision about what a caller may
+    // write rather than about what they get, and it is upstream's decision.
     let mut canvas = Canvas::new(SIZE);
     let mesh = Vertices::textured(
         VertexMode::Triangles,
@@ -6889,11 +6899,22 @@ fn texture_coordinates_without_a_texture_are_refused_rather_than_dropped() {
         vec![Vec2::ZERO, Vec2::X, Vec2::Y],
     )
     .expect("mesh");
+    canvas
+        .draw_vertices(&mesh, &Paint::fill(Color::linear(1.0, 1.0, 1.0, 1.0)))
+        .expect("a solid paint takes coordinates it has no use for");
+
+    // The one shader that is still refused, and for a reason of its own: a
+    // caller's program replaces the fragment shader and takes its coordinate
+    // from the fragment's position, so there is nowhere for a per-vertex
+    // coordinate to arrive.
     assert!(
         canvas
-            .draw_vertices(&mesh, &Paint::fill(Color::linear(1.0, 1.0, 1.0, 1.0)))
+            .draw_vertices(
+                &mesh,
+                &Paint::runtime_effect(0, vec![0.0; impeller::RUNTIME_FLOATS])
+            )
             .is_err(),
-        "a solid paint has no texture for the coordinates to read"
+        "a program has no input a mesh's coordinates could reach"
     );
 }
 
@@ -16023,5 +16044,99 @@ fn a_layers_blur_reaches_past_stated_bounds_however_it_was_spelled() {
         on_the_layer.0 < 44 && on_the_layer.1 > 83,
         "a blur of six should carry past a bound at forty-four and eighty-four; \
          it reached {on_the_layer:?}"
+    );
+}
+
+#[test]
+fn a_gradient_on_a_mesh_is_read_at_the_texture_coordinates() {
+    // `dart:ui` reads whatever color source the paint carries at a mesh's
+    // coordinates, image or not. This refused everything but an image, with a
+    // message saying the coordinates needed an image paint to read -- true of
+    // the implementation and not of the API.
+    //
+    // The check is that the coordinates are *used*, not merely accepted. Two
+    // draws of the same triangle with the same gradient, differing only in the
+    // coordinates: one where they match the positions, and one where they run
+    // the other way. A renderer deriving the coordinate from the fragment's
+    // position gives the same picture twice.
+    let Some(mut ctx) = context() else { return };
+
+    let positions = [
+        Vec2::new(24.0, 104.0),
+        Vec2::new(64.0, 24.0),
+        Vec2::new(104.0, 104.0),
+    ];
+    let ramp = Shader::LinearGradient {
+        start: Vec2::new(24.0, 24.0),
+        end: Vec2::new(104.0, 104.0),
+        stops: vec![
+            GradientStop::new(Color::srgb(0.0, 0.0, 1.0, 1.0), 0.0),
+            GradientStop::new(Color::srgb(1.0, 0.0, 0.0, 1.0), 1.0),
+        ],
+        tile: TileMode::Clamp,
+    };
+    let shot = |ctx: &mut Context, coords: [Vec2; 3]| {
+        let mesh = Vertices::textured(VertexMode::Triangles, positions.to_vec(), coords.to_vec())
+            .expect("a triangle with coordinates");
+        let mut canvas = Canvas::new(SIZE);
+        canvas.clear(Color::BLACK);
+        canvas
+            .draw_vertices(&mesh, &Paint::fill(Color::WHITE).with_shader(ramp.clone()))
+            .expect("a gradient read at a mesh's coordinates");
+        render(ctx, canvas)
+    };
+
+    let along = shot(&mut ctx, positions);
+    let across = shot(
+        &mut ctx,
+        [
+            Vec2::new(104.0, 104.0),
+            Vec2::new(64.0, 24.0),
+            Vec2::new(24.0, 104.0),
+        ],
+    );
+
+    let differing = along
+        .chunks_exact(4)
+        .zip(across.chunks_exact(4))
+        .filter(|(a, b)| a[0].abs_diff(b[0]) > 8)
+        .count();
+    assert!(
+        differing > 500,
+        "reversing the coordinates should change the picture; {differing} pixels \
+         differ, which means the gradient was read at the position instead"
+    );
+
+    // And the first one is a gradient rather than a flat fill, so the
+    // difference above is between two pictures rather than two failures.
+    let _lit: Vec<u8> = along
+        .chunks_exact(4)
+        .filter(|p| p[0] > 4 || p[2] > 4)
+        .map(|p| p[0])
+        .collect();
+    // And coordinates equal to the positions give the same picture as no
+    // coordinates at all, which is the assertion that says the coordinate is
+    // being carried into the paint's space rather than merely used raw. The
+    // paint's origin is folded into the mapping the position route goes
+    // through; a coordinate route that skipped it would land the ramp
+    // somewhere else while still varying across the triangle.
+    let mesh = Vertices::new(VertexMode::Triangles, positions.to_vec())
+        .expect("a triangle with no coordinates");
+    let mut canvas = Canvas::new(SIZE);
+    canvas.clear(Color::BLACK);
+    canvas
+        .draw_vertices(&mesh, &Paint::fill(Color::WHITE).with_shader(ramp.clone()))
+        .expect("a gradient on a mesh with no coordinates");
+    let by_position = render(&mut ctx, canvas);
+
+    let apart = along
+        .chunks_exact(4)
+        .zip(by_position.chunks_exact(4))
+        .filter(|(a, b)| (0..4).any(|c| a[c].abs_diff(b[c]) > 2))
+        .count();
+    assert_eq!(
+        apart, 0,
+        "coordinates equal to the positions should read the gradient exactly \
+         where the positions do; {apart} pixels differ"
     );
 }

@@ -22,6 +22,16 @@ duplication the paragraph above rules out. `docs/parity.md` says what is built,
 a test checks that it says so truly, and a copy of that claim kept by hand here
 is the same claim without the check. So there is no list.
 
+A mesh's texture coordinates are read by any shader, not only an image. A
+gradient on a textured mesh takes its coordinate from the vertices, which is
+what `dart:ui` means by them; the material is built without the geometry's
+transform in that case, since the vertices have already applied it, and the
+shader runs the same mapping on the coordinate that it runs on a fragment's
+position. A caller's program is still refused, with a message saying why: a
+program replaces the fragment shader and takes its coordinate from the fragment,
+so there is nowhere for a per-vertex one to arrive. A solid paint now accepts
+coordinates it cannot show, as upstream does.
+
 A layer given both explicit bounds and an image filter sizes its target for the
 filter's spread. It was sized for the layer's own blur and morphology only, so a
 blur handed over as the layer's filter stopped dead at a stated bound where the

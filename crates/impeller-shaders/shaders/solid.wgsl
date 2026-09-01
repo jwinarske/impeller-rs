@@ -1239,6 +1239,30 @@ fn shade(in: VertexOutput) -> vec4<f32> {
     var color: vec4<f32> = paint.stops[0];
     let kind = paint.params.y;
     let count = i32(paint.params.x);
+    // Where a gradient measures from. Almost always the fragment's position
+    // carried back into the paint's own space; on a mesh that states texture
+    // coordinates, the coordinates themselves.
+    //
+    // `dart:ui` reads any color source at a mesh's coordinates, not only an
+    // image, and this is what makes a gradient one of them: the caller has said
+    // where each vertex sits in the paint's space, so there is nothing to
+    // derive. The flag lives in `geometry.x`, which no gradient kind writes --
+    // slots in this block mean different things per kind, and `params.z` being
+    // a tile mode here and a radius on an ellipse is the same arrangement.
+    // The same mapping either way, on a different homogeneous point. The
+    // material was built without the geometry's transform when the flag is set,
+    // so what is left in the mapping is the paint's own part -- the translation
+    // that measures from a gradient's start, the rotation that orients a sweep
+    // -- and the coordinate has already been placed in the caller's space by
+    // the vertices. One path rather than two is the point: a coordinate route
+    // that skipped the mapping would land the ramp somewhere else while still
+    // varying across the mesh, which is a wrong picture that looks like a right
+    // one.
+    let paint_space = select(
+        to_gradient_space(in.clip),
+        to_gradient_space(vec3<f32>(in.uv, 1.0)),
+        paint.geometry.x > 0.5,
+    );
 
     if (kind > 0.5 && kind < 1.5) {
         // Linear: project onto the axis in the gradient's own space rather than
@@ -1250,18 +1274,17 @@ fn shade(in: VertexOutput) -> vec4<f32> {
         // happens past either end is the paint's to say.
         let axis = paint.geometry.zw;
         let length_squared = max(dot(axis, axis), 1e-6);
-        let t = dot(to_gradient_space(in.clip), axis) / length_squared;
+        let t = dot(paint_space, axis) / length_squared;
         let tiled = tile_gradient(t, paint.params.z);
         color = gradient_color(tiled.x, count) * tiled.y;
     } else if (kind > 1.5 && kind < 2.5) {
         // Radial: distance in gradient space, where the radius is one.
-        let tiled = tile_gradient(length(to_gradient_space(in.clip)), paint.params.z);
+        let tiled = tile_gradient(length(paint_space), paint.params.z);
         color = gradient_color(tiled.x, count) * tiled.y;
     } else if (kind > 2.5 && kind < 3.5) {
         // Sweep: angle about the center, measured in gradient space so an
         // anisotropic target does not bunch the stops on two sides.
-        let local = to_gradient_space(in.clip);
-        let angle = atan2(local.y, local.x);
+        let angle = atan2(paint_space.y, paint_space.x);
         let start_angle = paint.geometry.z;
         let sweep = max(paint.geometry.w - start_angle, 1e-6);
         // The angle is brought into one turn ahead of the start, which removes
@@ -1291,7 +1314,7 @@ fn shade(in: VertexOutput) -> vec4<f32> {
         // The mapping put the first center at the origin and the second on the
         // positive x axis, so `d` is `(separation, 0)` and the dot products
         // below lose a term rather than needing one.
-        let point = to_gradient_space(in.clip);
+        let point = paint_space;
         let separation = paint.params.w;
         let r0 = paint.geometry.z;
         let dr = paint.geometry.w;
