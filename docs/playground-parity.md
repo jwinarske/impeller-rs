@@ -168,13 +168,13 @@ column is right and the obvious way to check it is wrong.
 | `aiks_dl_blur_unittests.cc` | ~59 | 56 | nothing; see below |
 | `aiks_dl_vertices_unittests.cc` | ~16 | 21 | a caller's program cannot be read at a mesh's texture coordinates, for one of them; see below |
 | `aiks_dl_atlas_unittests.cc` | ~11 | 12 | nothing; see below |
-| `aiks_dl_shadow_unittests.cc` | ~30 | 23 | three casters the scene model cannot describe; see below |
+| `aiks_dl_shadow_unittests.cc` | ~30 | 24 | two casters the scene model cannot describe; see below |
 | `aiks_dl_primitive_shape_unittests.cc` | ~2 | 0 | one is a playground harness, one wants a stroke width of zero to mean a hairline |
 | `aiks_dl_text_unittests.cc` | — | 7 | shaping and font parsing, which are out of scope; glyph rendering is not, and these use synthetic coverage |
 | `aiks_dl_runtime_effect_unittests.cc` | — | 15 | a sampler bound to something that is not a texture, for one of them; see below |
 | `aiks_dl_unittests.cc` | ~36 | 27 | one whose picture cannot show what it is for; see below |
 
-The catalog holds four hundred and sixteen scenes against a column totalling
+The catalog holds four hundred and seventeen scenes against a column totalling
 about four hundred, and the two are not a ratio: five chapters hold more than
 the file they mirror, because a scene here is one picture where a test there can
 be a loop over every blend mode or a family drawn twice. What the totals meeting
@@ -1018,12 +1018,18 @@ requires the two pictures to be identical -- not within a budget, since two
 windings of one polygon are one region and anything that reads the direction
 differs by whole triangles rather than by an edge sample. The three casters
 upstream declines to optimize are here too, for the other side of the same
-question. What is left out is three of them that the scene model cannot
-describe: a circle and an oval built from conics tweaked off the exact weight,
-which needs a closed multi-segment curve, and one holding two closed contours,
-which `Shape::Contours` deliberately does not offer. The mesh comparison
-upstream makes stays out, and it is the only part of that file that was ever
-about the optimization rather than about the shadow.
+question. What is left out is two of them that the scene model cannot describe:
+a circle and an oval built from conics tweaked off the exact weight, which
+needs a closed multi-segment curve the model has no variant for. The mesh
+comparison upstream makes stays out as well, and it is the only part of that
+file that was ever about the optimization rather than about the shadow.
+
+A third was on that list and is not now. It holds two closed triangles, which
+`Shape::Contours` cannot say -- its contours are open, deliberately, and the
+note beside that variant said the closed case should be written when a use for
+it appeared rather than in advance. This was the use, and `Shape::Polygons` is
+the shape it asked for: several closed contours in one path, which is what a
+fill rule acts on and what two separate draws are not.
 
 One of the four that are not about the optimization was missing and is now
 here. `CanDrawPerspectiveConvexShadow` is filed with the others and is not one

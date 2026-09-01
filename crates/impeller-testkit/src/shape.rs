@@ -57,6 +57,20 @@ pub enum Shape {
     /// than a field on it, because every use of it so far is upstream's and
     /// upstream's are all open.
     Contours(Vec<Vec<[f32; 2]>>),
+    /// Several closed polygons in one path.
+    ///
+    /// [`Self::Polygon`] is to this what [`Self::Polyline`] is to
+    /// [`Self::Contours`]: the same geometry, one contour or several. What it
+    /// adds over drawing each polygon separately is the fill rule, which acts
+    /// on the path as a whole -- two overlapping contours wound the same way
+    /// are one region under `NonZero` and a ring under `EvenOdd`, and neither
+    /// is what two draws produce.
+    ///
+    /// Written when a use appeared, which is what the note on `Contours` said
+    /// should happen: upstream's shadow file has a caster made of two closed
+    /// triangles, and a shadow is cast by what a path covers rather than by
+    /// each contour in turn.
+    Polygons(Vec<Vec<[f32; 2]>>),
     /// A closed polygon filled by a stated rule.
     ///
     /// Separate from [`Self::Polygon`] rather than a field on it, because the
@@ -220,6 +234,12 @@ impl Shape {
                             b.line_to(Vec2::from(*p));
                         }
                     }
+                }
+            }
+            Self::Polygons(contours) => {
+                for points in contours {
+                    trace(&mut b, points);
+                    b.close();
                 }
             }
             Self::Polyline(points) => {

@@ -7107,13 +7107,17 @@ fn pictures() -> Vec<Scene> {
 /// so a scene named `-counter-clockwise-` must have a `-clockwise-` sibling
 /// differing in nothing else.
 ///
-/// Upstream's casters are paths built point by point, and three of them cannot
-/// be written here: two draw a circle and an oval out of conics tweaked off the
-/// exact weight so the path is convex but unrecognizable, which the scene model
-/// has no closed multi-segment curve for, and one holds two closed contours,
-/// which [`Shape::Contours`] does not (its contours are open, on purpose). The
-/// circle and the oval are here as the analytic shapes upstream compares its
-/// paths *against*, which is the nearer half of what they are for.
+/// Upstream's casters are paths built point by point, and two of them cannot be
+/// written here: a circle and an oval drawn out of conics tweaked off the exact
+/// weight, so that the path is convex but unrecognizable, which the scene model
+/// has no closed multi-segment curve for. Both are here as the analytic shapes
+/// upstream compares those paths *against*, which is the nearer half of what
+/// they are for.
+///
+/// A third was on that list until [`Shape::Polygons`] existed. It holds two
+/// closed triangles, which [`Shape::Contours`] cannot say -- its contours are
+/// open, on purpose -- and the note beside that variant said the closed case
+/// should be written when a use for it appeared. This is the use.
 fn shadow() -> Vec<Scene> {
     vec![
         // A rectangle with one corner moved by a twentieth of a pixel, which is
@@ -7220,6 +7224,18 @@ fn shadow() -> Vec<Scene> {
                 [112.0, 112.0],
                 [16.0, 112.0],
                 [112.0, 16.0],
+            ])),
+        ),
+        shadow_plate(
+            "shadow/draw-shadow-does-not-optimize-multiple-contours",
+            // Two closed triangles meeting at a point, which is the caster the
+            // optimization declines for being more than one contour rather
+            // than for being concave. They share a vertex and nothing else, so
+            // what a fill rule would decide about an overlap never arises --
+            // upstream's point is the count of contours and not their winding.
+            caster(Shape::Polygons(vec![
+                vec![[40.0, 16.0], [64.0, 112.0], [16.0, 112.0]],
+                vec![[88.0, 16.0], [112.0, 112.0], [64.0, 112.0]],
             ])),
         ),
         shadow_plate(
