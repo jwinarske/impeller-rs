@@ -158,7 +158,7 @@ fn registration_marks() -> Vec<Node> {
 fn filter_collapse(filter: ColorFilter) -> Vec<Node> {
     vec![
         Node::Paint(Box::new(PaintSpec {
-            color: WHITE,
+            fill: Fill::Solid(WHITE),
             blend: BlendMode::Src,
             clip: None,
             clip_out: None,
@@ -294,12 +294,12 @@ fn draw_lines_grid(form: LineForm) -> Vec<Node> {
         // the rest of the catalog clears to: a line a third of a pixel wide
         // arrives as a few levels of gray, and it needs somewhere dark to
         // arrive on.
-        color: [
+        fill: Fill::Solid([
             0x11 as f32 / 255.0,
             0x11 as f32 / 255.0,
             0x11 as f32 / 255.0,
             1.0,
-        ],
+        ]),
         blend: BlendMode::Src,
         clip: None,
         clip_out: None,
@@ -554,7 +554,7 @@ const PURPLE: [f32; 4] = [128.0 / 255.0, 0.0, 128.0 / 255.0, 1.0];
 /// white it fades the other way, which is the direction a reader can see.
 fn white_ground() -> Node {
     Node::Paint(Box::new(PaintSpec {
-        color: WHITE,
+        fill: Fill::Solid(WHITE),
         blend: BlendMode::Src,
         clip: None,
         clip_out: None,
@@ -893,7 +893,7 @@ fn basic() -> Vec<Scene> {
             vec![
                 // A plain rectangle.
                 PaintSpec {
-                    color: BLUE,
+                    fill: Fill::Solid(BLUE),
                     blend: BlendMode::SrcOver,
                     clip: Some([6.0, 6.0, 58.0, 42.0]),
                     clip_out: None,
@@ -902,7 +902,7 @@ fn basic() -> Vec<Scene> {
                 // With a hole taken out of it, which is the clip stack rather
                 // than one clip.
                 PaintSpec {
-                    color: GREEN,
+                    fill: Fill::Solid(GREEN),
                     blend: BlendMode::SrcOver,
                     clip: Some([68.0, 6.0, 122.0, 42.0]),
                     clip_out: Some([84.0, 16.0, 106.0, 32.0]),
@@ -912,7 +912,7 @@ fn basic() -> Vec<Scene> {
                 // rectangle and the fill has to cover the turned one rather
                 // than a box around it.
                 PaintSpec {
-                    color: RED,
+                    fill: Fill::Solid(RED),
                     blend: BlendMode::SrcOver,
                     clip: Some([-24.0, -16.0, 24.0, 16.0]),
                     clip_out: None,
@@ -925,7 +925,7 @@ fn basic() -> Vec<Scene> {
                 // Under a shear, which is the transform no axis survives, and
                 // added rather than drawn over so the overlap is visible.
                 PaintSpec {
-                    color: [0.9, 0.75, 0.2, 1.0],
+                    fill: Fill::Solid([0.9, 0.75, 0.2, 1.0]),
                     blend: BlendMode::Plus,
                     clip: Some([-22.0, -18.0, 22.0, 18.0]),
                     clip_out: None,
@@ -1191,7 +1191,7 @@ fn basic() -> Vec<Scene> {
             // allocation held, exactly where the clip is.
             vec![
                 Node::Paint(Box::new(PaintSpec {
-                    color: RED,
+                    fill: Fill::Solid(RED),
                     blend: BlendMode::Src,
                     clip: None,
                     clip_out: None,
@@ -1233,7 +1233,7 @@ fn basic() -> Vec<Scene> {
                     bounds: Some([0.0, 0.0, 64.0, 64.0]),
                     transform: Transform::default(),
                     children: vec![Node::Paint(Box::new(PaintSpec {
-                        color: [0.0, 0.0, 0.0, 0.0],
+                        fill: Fill::Solid([0.0, 0.0, 0.0, 0.0]),
                         blend: BlendMode::Src,
                         clip: None,
                         clip_out: None,
@@ -2049,12 +2049,12 @@ fn path() -> Vec<Scene> {
             // and it is checked here instead.
             vec![
                 Node::Paint(Box::new(PaintSpec {
-                    color: [
+                    fill: Fill::Solid([
                         0x11 as f32 / 255.0,
                         0x11 as f32 / 255.0,
                         0x11 as f32 / 255.0,
                         1.0,
-                    ],
+                    ]),
                     blend: BlendMode::Src,
                     clip: None,
                     clip_out: None,
@@ -4246,7 +4246,7 @@ fn blend() -> Vec<Scene> {
                     .with_blend(BlendMode::SrcOver),
                 )),
                 Node::Paint(Box::new(PaintSpec {
-                    color: GREEN,
+                    fill: Fill::Solid(GREEN),
                     blend: BlendMode::Screen,
                     clip: None,
                     clip_out: None,
@@ -4474,14 +4474,14 @@ fn blend() -> Vec<Scene> {
             // plate in this chapter and wrong on this one.
             vec![
                 Node::Paint(Box::new(PaintSpec {
-                    color: [0.282, 0.820, 0.800, 1.0],
+                    fill: Fill::Solid([0.282, 0.820, 0.800, 1.0]),
                     blend: BlendMode::Src,
                     clip: None,
                     clip_out: None,
                     transform: Transform::default(),
                 })),
                 Node::Paint(Box::new(PaintSpec {
-                    color: [1.0, 0.271, 0.0, 0.5],
+                    fill: Fill::Solid([1.0, 0.271, 0.0, 0.5]),
                     blend: BlendMode::Hue,
                     clip: None,
                     clip_out: None,
@@ -4814,7 +4814,7 @@ fn save_layer_pictures() -> Vec<Scene> {
             "basic/can-render-clipped-layers",
             vec![
                 Node::Paint(Box::new(PaintSpec {
-                    color: WHITE,
+                    fill: Fill::Solid(WHITE),
                     blend: BlendMode::SrcOver,
                     clip: None,
                     clip_out: None,
@@ -4950,7 +4950,7 @@ fn rounded_rect_radii() -> Vec<Scene> {
             "basic/no-dimples-in-r-rect-path",
             vec![
                 Node::Paint(Box::new(PaintSpec {
-                    color: [0.1, 0.1, 0.1, 1.0],
+                    fill: Fill::Solid([0.1, 0.1, 0.1, 1.0]),
                     blend: BlendMode::SrcOver,
                     clip: None,
                     clip_out: None,
@@ -5004,7 +5004,7 @@ fn rounded_rect_radii() -> Vec<Scene> {
                 "basic/compare-diff-round-rect-and-round-rect",
                 vec![
                     Node::Paint(Box::new(PaintSpec {
-                        color: [0.0, 0.0, 0.0, 1.0],
+                        fill: Fill::Solid([0.0, 0.0, 0.0, 1.0]),
                         blend: BlendMode::Src,
                         clip: None,
                         clip_out: None,
@@ -5061,7 +5061,7 @@ fn basic_pictures() -> Vec<Scene> {
 
     let paint = |color: [f32; 4]| {
         Node::Paint(Box::new(PaintSpec {
-            color,
+            fill: Fill::Solid(color),
             blend: BlendMode::SrcOver,
             clip: None,
             clip_out: None,
@@ -6290,7 +6290,7 @@ fn image_rect_filtered(filter: ColorFilter) -> Vec<Node> {
     };
     vec![
         Node::Paint(Box::new(PaintSpec {
-            color: WHITE,
+            fill: Fill::Solid(WHITE),
             blend: BlendMode::Src,
             clip: None,
             clip_out: None,
@@ -6712,7 +6712,7 @@ fn pictures() -> Vec<Scene> {
                     bounds: Some([44.0, 44.0, 84.0, 84.0]),
                     transform: Transform::default(),
                     children: vec![Node::Paint(Box::new(PaintSpec {
-                        color: [1.0, 0.95, 0.2, 1.0],
+                        fill: Fill::Solid([1.0, 0.95, 0.2, 1.0]),
                         blend: BlendMode::SrcOver,
                         clip: None,
                         clip_out: None,
@@ -6741,7 +6741,7 @@ fn pictures() -> Vec<Scene> {
                 transform: Transform::default(),
                 children: vec![
                     Node::Paint(Box::new(PaintSpec {
-                        color: [1.0, 0.95, 0.2, 1.0],
+                        fill: Fill::Solid([1.0, 0.95, 0.2, 1.0]),
                         blend: BlendMode::SrcOver,
                         clip: None,
                         clip_out: None,
@@ -6824,7 +6824,7 @@ fn pictures() -> Vec<Scene> {
             // than either.
             vec![
                 Node::Paint(Box::new(PaintSpec {
-                    color: [0.0, 0.0, 0.0, 1.0],
+                    fill: Fill::Solid([0.0, 0.0, 0.0, 1.0]),
                     blend: BlendMode::Src,
                     clip: None,
                     clip_out: None,
@@ -6891,7 +6891,7 @@ fn pictures() -> Vec<Scene> {
             // way, and this renderer draws it without the optimization.
             vec![
                 Node::Paint(Box::new(PaintSpec {
-                    color: [1.0, 1.0, 0.2, 1.0],
+                    fill: Fill::Solid([1.0, 1.0, 0.2, 1.0]),
                     blend: BlendMode::Src,
                     clip: None,
                     clip_out: None,
@@ -6905,7 +6905,7 @@ fn pictures() -> Vec<Scene> {
                     bounds: None,
                     transform: Transform::default(),
                     children: vec![Node::Paint(Box::new(PaintSpec {
-                        color: [100.0 / 255.0, 149.0 / 255.0, 237.0 / 255.0, 0.75],
+                        fill: Fill::Solid([100.0 / 255.0, 149.0 / 255.0, 237.0 / 255.0, 0.75]),
                         blend: BlendMode::SrcOver,
                         clip: None,
                         clip_out: None,
@@ -6930,7 +6930,7 @@ fn pictures() -> Vec<Scene> {
             // combination at all, not a blur anybody can see.
             vec![
                 Node::Paint(Box::new(PaintSpec {
-                    color: [1.0, 1.0, 0.2, 1.0],
+                    fill: Fill::Solid([1.0, 1.0, 0.2, 1.0]),
                     blend: BlendMode::Src,
                     clip: None,
                     clip_out: None,
@@ -6944,7 +6944,7 @@ fn pictures() -> Vec<Scene> {
                     bounds: None,
                     transform: Transform::default(),
                     children: vec![Node::Paint(Box::new(PaintSpec {
-                        color: [100.0 / 255.0, 149.0 / 255.0, 237.0 / 255.0, 1.0],
+                        fill: Fill::Solid([100.0 / 255.0, 149.0 / 255.0, 237.0 / 255.0, 1.0]),
                         blend: BlendMode::SrcOver,
                         clip: None,
                         clip_out: None,
@@ -8624,6 +8624,36 @@ fn runtime_effect() -> Vec<Scene> {
                 effect(0.0),
             )],
         ),
+        Scene::tree(
+            "effect/draw-paint-transforms-bounds",
+            // A program with no shape at all: `drawPaint` takes a paint, and a
+            // paint carries a shader, so what a program fills here is whatever
+            // the clip admits. Upstream's name is about the bounds -- what a
+            // paint covers is the clip carried back through the transform, and
+            // its scene draws one under a scale to say the transform reached
+            // that and not only the drawing.
+            //
+            // The program splits on the clip-space coordinate, so no transform
+            // moves the split: what this plate has to show is coverage, and a
+            // rotation is the case where getting the bounds wrong shows. A
+            // paint covers the clip carried back through the transform, and a
+            // renderer that took the clip forward instead would fill a turned
+            // rectangle -- leaving the frame's corners empty, which is the
+            // whole of what the failure looks like.
+            vec![Node::Paint(Box::new(PaintSpec {
+                fill: effect(0.0),
+                blend: BlendMode::SrcOver,
+                clip: None,
+                clip_out: None,
+                transform: Transform {
+                    rotate: 30.0f32.to_radians(),
+                    translate: [64.0, 64.0],
+                    ..Transform::default()
+                },
+            }))],
+        )
+        .with_background(DARK)
+        .with_samples(4),
         plate(
             "effect/can-render-clipped-runtime-effects",
             // A caller's program filling a rectangle, cut to a rounded one. A

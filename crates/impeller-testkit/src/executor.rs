@@ -225,14 +225,24 @@ fn record_node(canvas: &mut Canvas, node: &Node, anti_alias: bool) -> Result<()>
             if let Some(out) = paint.clip_out {
                 canvas.clip_out_rect(rect_of(out))?;
             }
-            // `draw_color` rather than `draw_paint` with a solid shader,
-            // because that is the call `dart:ui` names for this and the two
-            // reach the same place by different routes -- one of which takes
-            // the blend as an argument and is therefore the one that can be
-            // wrong about it.
-            let result = canvas
-                .draw_color(color_of(paint.color), paint.blend)
-                .map(|_| ());
+            // `draw_color` for a color, rather than `draw_paint` with a solid
+            // shader, because that is the call `dart:ui` names for this and the
+            // two reach the same place by different routes -- one of which
+            // takes the blend as an argument and is therefore the one that can
+            // be wrong about it.
+            //
+            // Anything else is `draw_paint`, which is the call that takes a
+            // paint and so the only one a shader can arrive through.
+            let result = match &paint.fill {
+                Fill::Solid(color) => canvas.draw_color(color_of(*color), paint.blend),
+                fill => canvas.draw_paint(&Paint {
+                    shader: shader_for(fill),
+                    blend: paint.blend,
+                    anti_alias,
+                    ..Paint::default()
+                }),
+            }
+            .map(|_| ());
             canvas.restore();
             result?;
         }

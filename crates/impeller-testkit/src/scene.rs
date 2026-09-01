@@ -182,7 +182,13 @@ pub struct MeshSpec {
 /// there is no item: the clip is what gives this node its extent.
 #[derive(Debug, Clone, PartialEq)]
 pub struct PaintSpec {
-    pub color: [f32; 4],
+    /// What it fills with, which is not always a color.
+    ///
+    /// `drawPaint` takes a paint, and a paint carries a shader -- so a program
+    /// or a gradient over everything the clip admits is the same call as a
+    /// color over it, and upstream has a scene for exactly that. Held as a
+    /// [`Fill`] rather than as a color for that reason.
+    pub fill: Fill,
     pub blend: BlendMode,
     /// Narrow to this before filling. Without one the fill covers the frame,
     /// which is a picture but not much of a test.
@@ -1077,14 +1083,18 @@ impl Node {
         match self {
             Self::Draw(item) => reads_sheet(&item.fill),
             Self::Mesh(mesh) => reads_sheet(&mesh.fill),
+            // A flood fill carries a fill like any other draw, so a program
+            // over the whole clip reads the sheet the same way one over a shape
+            // does.
+            Self::Paint(paint) => reads_sheet(&paint.fill),
             // A sprite batch is pieces of the sheet by definition.
             Self::Atlas(_) => true,
             // A run reads the glyph atlas, which is a texture of its own rather
             // than the sheet -- see `uses_glyphs`.
             // A nine-patch is pieces of the sheet, like a sprite batch.
             Self::NinePatch(_) => true,
-            // Points and a flood fill are solid color; they sample nothing.
-            Self::Shadow(_) | Self::Glyphs(_) | Self::Points(_) | Self::Paint(_) => false,
+            // Points are solid color; they sample nothing.
+            Self::Shadow(_) | Self::Glyphs(_) | Self::Points(_) => false,
             Self::Picture(picture) => picture.children.iter().any(Node::samples_fixture),
             Self::Layer { children, .. } => children.iter().any(Node::samples_fixture),
         }
@@ -1131,13 +1141,10 @@ impl Node {
             Self::Glyphs(_) => true,
             Self::Draw(item) => reads_atlas(&item.fill),
             Self::Mesh(mesh) => reads_atlas(&mesh.fill),
+            Self::Paint(paint) => reads_atlas(&paint.fill),
             // Points are stroked geometry in a solid color, reading no texture
             // of either kind.
-            Self::Atlas(_)
-            | Self::Shadow(_)
-            | Self::Points(_)
-            | Self::NinePatch(_)
-            | Self::Paint(_) => false,
+            Self::Atlas(_) | Self::Shadow(_) | Self::Points(_) | Self::NinePatch(_) => false,
             Self::Picture(picture) => picture.children.iter().any(Node::uses_glyphs),
             Self::Layer { children, .. } => children.iter().any(Node::uses_glyphs),
         }

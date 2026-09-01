@@ -171,10 +171,10 @@ column is right and the obvious way to check it is wrong.
 | `aiks_dl_shadow_unittests.cc` | ~30 | 23 | three casters the scene model cannot describe; see below |
 | `aiks_dl_primitive_shape_unittests.cc` | ~2 | 0 | one is a playground harness, one wants a stroke width of zero to mean a hairline |
 | `aiks_dl_text_unittests.cc` | — | 7 | shaping and font parsing, which are out of scope; glyph rendering is not, and these use synthetic coverage |
-| `aiks_dl_runtime_effect_unittests.cc` | — | 14 | a drawPaint with a program, and a sampler bound to something that is not a texture, for one each; see below |
+| `aiks_dl_runtime_effect_unittests.cc` | — | 15 | a sampler bound to something that is not a texture, for one of them; see below |
 | `aiks_dl_unittests.cc` | ~36 | 26 | nothing; see below |
 
-The catalog holds four hundred and fourteen scenes against a column totalling
+The catalog holds four hundred and fifteen scenes against a column totalling
 about four hundred, and the two are not a ratio: five chapters hold more than
 the file they mirror, because a scene here is one picture where a test there can
 be a loop over every blend mode or a family drawn twice. What the totals meeting
@@ -502,16 +502,29 @@ a program used as an image filter on content that is turned, where the filter
 acts on what the draw produced and what the draw produced is already in the
 frame's space, so the tint does not turn with the shape.
 
-Three of upstream's are left. `DrawPaintTransformsBounds` fills with a program
-through `drawPaint`, and a scene here says `drawPaint` as a node carrying a
-color rather than a fill -- so the scene format is what stops it, not the
-renderer, which is the same shape of obstacle the difference-of-rounded-rects
-row had. `RuntimeEffectWithInvalidSamplerDoesNotCrash` binds a gradient where a
-sampler is expected; a scene names its images as slots into a table the executor
-uploads, and there is no way to name something that is not a texture. And
-`RuntimeEffectVectorArray` wants a program with a vector-array uniform, which
-would mean a third fixture shader -- the two here already pass vectors, so what
-it would add is the array rather than the vector.
+`DrawPaintTransformsBounds` was the third of these and is here now. It fills
+with a program through `drawPaint`, and what stopped it was the scene format
+rather than the renderer: `Canvas::draw_paint` takes a paint like every other
+call and a paint carries a shader, but a scene said `drawPaint` as a node
+carrying a color. It carries a fill now, which is what the call takes, and the
+two derivations that read a node's textures were told about it -- a flood fill
+had been filed under "solid color; samples nothing", which stopped being true
+in the same commit.
+
+The plate cannot show the transform and does not claim to. The fixture program
+splits on the clip-space coordinate, so nothing in the picture leans; what it
+shows is coverage under a rotation, which is where getting the bounds wrong
+would leave the frame's corners empty. That a paint fills the clip carried back
+through the transform is asserted where it can be, in
+`drawing_the_paint_fills_the_clip_rather_than_the_target` -- under a scale that *shrinks*,
+which is the direction that catches it.
+
+Two of upstream's are left. `RuntimeEffectWithInvalidSamplerDoesNotCrash` binds
+a gradient where a sampler is expected; a scene names its images as slots into a
+table the executor uploads, and there is no way to name something that is not a
+texture. And `RuntimeEffectVectorArray` wants a program with a vector-array
+uniform, which would mean a third fixture shader -- the two here already pass
+vectors, so what it would add is the array rather than the vector.
 
 The plates fill with a gradient where a flat color would have been easier, and
 the reason is a mutation that passed. Where a texture binding names nothing the
