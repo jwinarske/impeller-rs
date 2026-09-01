@@ -265,6 +265,34 @@ small to see, `SolidColorOvalsMaskBlurTinySigma`, which had been written as one
 oval at a made-up deviation where upstream draws three at nothing, a hundredth,
 and one. It is the three now, and the check passes on the blur.
 
+That fix stops at the mask blurs and the rest of the question is open, so it is
+written down here rather than left for whoever finds it next. `Item::fill`,
+`Item::filled` and `Item::stroke` all default to `Src`; `dart:ui`'s paint
+defaults to `srcOver`. Wherever a plate draws over something, the two differ --
+at an antialiased edge, under a translucent color, and anywhere a fill is
+transparent by design, which is what a decal tile mode makes it.
+
+Measured, by changing the default and rendering the catalog either way: 58 of
+418 plates move, and 19 of those move past the budget the catalog holds itself
+to. The largest are the ones where a fill is transparent on purpose -- a tiled
+texture with a decal mode at 86 per cent of the frame, a linear gradient with
+one at 66 -- because `Src` writes that transparency over the ground instead of
+leaving the ground alone. Two translucent stroked-arc plates move by 40 per
+cent, for the same reason with a different cause.
+
+**It is not an oversight, which is why it is not simply fixed.**
+`Scene::tolerance` reads `blend == SrcOver` as saying the fragment was computed
+rather than replaced, and gives a scene that says so a unit of slack per store.
+A solid `Src` draw is therefore compared *byte for byte* across devices, and
+that strictness is what the default buys. Changing it loosens every one of those
+scenes, and the same run breaks five tests, two of them the tolerance
+derivations themselves.
+
+So there are two costs and the choice between them is real. What is not in doubt
+is the mask blur, where the deviation is not a matter of degree: `Src` puts the
+draw into a case `docs/non-parity.md` section 16 describes and upstream never
+reaches. Those eight draws name their blend.
+
 The blur row was wrong in a more interesting way, and checking it changed the
 renderer rather than the document. It said "backdrop identity keys", which was
 real -- upstream's `SaveLayer` takes a `backdrop_id` so several layers can share
