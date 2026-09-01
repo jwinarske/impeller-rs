@@ -6,8 +6,9 @@
 # `--skip llvmpipe` because measuring the software rasterizer locks this board
 # up; see docs/on-a-board.md.
 #
-# Checked against a fresh run on the board it came from: all eight rows within
-# two tenths of a percent, which is what says this board can gate at all.
+# Checked against three fresh runs on the board it came from: all eight rows
+# within three tenths of a percent in every one of them, which is what says this
+# board can gate at all.
 #
 # Updating this is a reviewed event, like the shader snapshots: re-record with
 # --record, and the diff is the claim that every row moved for a reason. The
@@ -19,7 +20,7 @@
 # the only row here that has one, and adding a second is the kind of thing the
 # review above is for.
 #
-# Last checked against the board: 259db30265904ca51df205f532482195b751c8c7
+# Last checked against the board: 5dfc1ffbaef1aa0270c8a8acbc187e250f99b146
 #
 # That line names the commit whose state a board run passed against, which is
 # never the commit that writes the line -- a hash cannot be recorded inside the
@@ -33,8 +34,45 @@
 # later reader can find. Update it when a `--check` run passes, whether or not
 # the numbers are re-recorded.
 #
-# Re-recorded twice on 2026-09-01, for three fixes of one kind: work every
-# fragment did that its own draw had not asked for.
+# Re-recorded a third time on 2026-09-01, and this one is a correction rather
+# than a change. The numbers below had been recorded at `01119dd` and the
+# checked-at line then moved forward to `259db30`, on the reasoning that a hash
+# cannot be recorded inside the object it names. That reasoning is right and the
+# commit it landed on was not: `259db30` changes what the bench times, and its
+# own message says so -- "the distance-field benchmark came back four per cent
+# faster on the Pi 5". So the line named a commit whose state had never passed,
+# and the gate counted from the wrong place.
+#
+# Established by benching three commits, three runs each, on one board in one
+# sitting. `01119dd` reproduces every row of the old numbers to within four
+# tenths of a percent and passes. `259db30` moves four of the eight rows and
+# fails on one. `5dfc1ff`, the eight commits since, is level with `259db30`
+# everywhere -- the largest difference between them is a fifth of a percent, and
+# the GLES analytic-stroke row reads 8.926/8.914/8.930 against 8.903/8.909/8.917,
+# clusters that overlap.
+#
+# So the whole of the movement below belongs to `259db30`, which drew a stroke
+# as the difference of two offset shapes:
+#
+#   vulkan distance field   9.225 -> 8.857   -4.0%   what its message claimed
+#   gles   distance field   8.714 -> 8.919   +2.4%   what nobody noticed
+#   vulkan full frame      14.623 -> 14.442  -1.2%
+#   gles   full frame      15.033 -> 14.530  -3.3%
+#
+# The tessellated rows do not move, which is the check on that attribution: the
+# change is to the analytic stroke and those four rows never take it.
+#
+# One row got slower and it is recorded rather than argued away. The commit is a
+# net win on this board -- both full-frame rows and the Vulkan stroke row are
+# faster, and the frame is what an interface pays -- but the GLES stroke row
+# costs 2.4 per cent for it, and the two backends running the same WGSL is
+# exactly why that is worth writing down rather than averaging out. It went
+# unseen because the Vulkan row it is paired with carries a five per cent
+# tolerance for its own bimodality, and the run that would have failed on GLES
+# was never made.
+#
+# Re-recorded twice before that on 2026-09-01, for three fixes of one kind: work
+# every fragment did that its own draw had not asked for.
 #
 # `shade` dispatched on the material kind with a chain of `if`s, so a fragment
 # paid two float comparisons for each kind ahead of its own and a solid color
@@ -59,11 +97,11 @@
 #
 #
 # device	configuration	median in milliseconds	[tolerance %]
-vulkan:0 V3D 7.1.7.0	distance field, 1 sample	9.225	5.0
-vulkan:0 V3D 7.1.7.0	tessellated, 4 samples	4.523
-vulkan:0 V3D 7.1.7.0	tessellated, 1 sample	3.694
-vulkan:0 V3D 7.1.7.0	full frame, mixed content	14.623
-gles V3D 7.1.7.0	distance field, 1 sample	8.714
-gles V3D 7.1.7.0	tessellated, 4 samples	5.459
-gles V3D 7.1.7.0	tessellated, 1 sample	3.653
-gles V3D 7.1.7.0	full frame, mixed content	15.033
+vulkan:0 V3D 7.1.7.0	distance field, 1 sample	8.857	5.0
+vulkan:0 V3D 7.1.7.0	tessellated, 4 samples	4.481
+vulkan:0 V3D 7.1.7.0	tessellated, 1 sample	3.657
+vulkan:0 V3D 7.1.7.0	full frame, mixed content	14.442
+gles V3D 7.1.7.0	distance field, 1 sample	8.919
+gles V3D 7.1.7.0	tessellated, 4 samples	5.458
+gles V3D 7.1.7.0	tessellated, 1 sample	3.644
+gles V3D 7.1.7.0	full frame, mixed content	14.530

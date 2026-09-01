@@ -242,6 +242,63 @@ A test asserts the line is there and parses, since nothing else would notice a
 comment in a data file going missing, and a baseline that has stopped saying
 when it was checked reports "current" forever.
 
+### Which commit it names, and the way that went wrong
+
+A hash cannot be recorded inside the object it names, so the line always names a
+commit older than the one writing it -- and choosing which older one is where
+this went wrong once, in a way worth keeping because the failure looked like a
+correction.
+
+The line had named the commit before the one whose numbers were recorded, so the
+gate read one commit of drift where the answer was none. That was fixed by moving
+the line forward one commit. The reasoning was right and the commit it landed on
+was not: the commit it moved to *changes what the bench times*, and says so in
+its own message -- "the distance-field benchmark came back four per cent faster
+on the Pi 5". So the line came to name a state no board run had ever passed
+against, and the drift count started from the wrong place.
+
+Nothing could see it. A `--check` was not run at the moment the line moved,
+because moving it was a documentation fix; and when one was run eight commits
+later it failed, on a row that had nothing to do with any of those eight.
+
+The rule that comes out of it: **the line may only name a commit that touches
+nothing the bench times, or the commit whose state a run actually passed
+against.** A commit that only edits the baseline file qualifies, so the ordinary
+case -- re-record and name the commit you measured, in the same commit -- is
+both legal and the shortest path. Moving the line onto a renderer commit is what
+is not allowed, however plausible the arithmetic looks.
+
+### What that hid
+
+Finding it needed three commits benched, three runs each, in one sitting on one
+board -- the commit the numbers came from, the commit the line had been moved
+to, and the tip. The first reproduced the recorded numbers to within four tenths
+of a percent and passed. The tip was level with the middle one everywhere, the
+largest gap between them a fifth of a percent. So all of the movement belonged
+to the middle commit, which drew a stroke as the difference of two offset shapes:
+
+| row | before | after | |
+|---|---|---|---|
+| vulkan distance field | 9.225 | 8.857 | -4.0%, which its message claimed |
+| gles distance field | 8.714 | 8.919 | +2.4%, which nobody noticed |
+| vulkan full frame | 14.623 | 14.442 | -1.2% |
+| gles full frame | 15.033 | 14.530 | -3.3% |
+
+The four tessellated rows do not move at all, which is the check on that
+attribution: the change is to the analytic stroke and those rows never take it.
+
+The commit is a net win on this board and one row of it is a loss. Both
+full-frame numbers improve, and a frame of mixed content is what an interface
+pays; the GLES analytic-stroke row costs two and a half per cent for it. Worth
+recording rather than averaging away, because the two backends run the same
+WGSL: a change that moves them in opposite directions is a fact about the two
+compilers, and the next such change wants this one to have been written down.
+
+It went unseen because of what sits beside it. The Vulkan row it is paired with
+carries a five per cent tolerance of its own, for a bimodality documented in the
+baseline's header -- so the run that would have failed on GLES was the only one
+that could have said anything, and it was never made.
+
 ## What a shader costs on this board, measured the hard way
 
 The baseline went sixteen renderer commits unchecked, and checking it found
