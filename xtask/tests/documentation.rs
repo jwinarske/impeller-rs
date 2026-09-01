@@ -309,7 +309,11 @@ fn the_playground_inventory_counts_the_catalog_correctly() {
         .split_whitespace()
         .collect::<Vec<_>>()
         .join(" ");
-    let stated = format!("holds {} scenes of roughly", spell(total));
+    // Anchored on "holds N scenes" rather than the whole sentence it used to
+    // sit in. That sentence read "of roughly four hundred", which stopped being
+    // true once the catalog passed the column it was being compared against,
+    // and a check that pins prose around the number outlives its own wording.
+    let stated = format!("holds {} scenes", spell(total));
     assert!(
         flattened.contains(&stated),
         "docs/playground-parity.md does not say the catalog holds {total} scenes. \

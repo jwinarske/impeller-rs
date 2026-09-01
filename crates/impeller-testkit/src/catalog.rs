@@ -149,6 +149,47 @@ fn registration_marks() -> Vec<Node> {
     .collect()
 }
 
+/// Upstream's three filter-collapse scenes, which differ only in the filter.
+///
+/// A white ground so a filter that inverts has something to invert, and a
+/// square turned a third of a turn inside the group, which is what says the
+/// group is recolored as a finished image rather than each shape before it is
+/// placed.
+fn filter_collapse(filter: ColorFilter) -> Vec<Node> {
+    vec![
+        Node::Paint(Box::new(PaintSpec {
+            color: WHITE,
+            blend: BlendMode::Src,
+            clip: None,
+            clip_out: None,
+            transform: Transform::default(),
+        })),
+        Node::Layer {
+            layer: Box::new(LayerSpec {
+                color_filter: filter,
+                ..LayerSpec::default()
+            }),
+            bounds: None,
+            transform: Transform::default(),
+            children: vec![Node::Draw(Box::new(
+                Item::fill(
+                    Shape::Rect {
+                        min: [-26.0, -26.0],
+                        max: [26.0, 26.0],
+                    },
+                    BLUE,
+                )
+                .with_transform(Transform {
+                    rotate: 120.0f32.to_radians(),
+                    translate: [64.0, 64.0],
+                    ..Transform::default()
+                })
+                .with_blend(BlendMode::SrcOver),
+            ))],
+        },
+    ]
+}
+
 /// A plate drawn without multisampling.
 ///
 /// For the scenes whose subject is what a blend computes rather than where an
@@ -1161,6 +1202,100 @@ fn basic() -> Vec<Scene> {
                     bounds: Some([32.0, 32.0, 96.0, 96.0]),
                     transform: Transform::default(),
                     children: Vec::new(),
+                },
+            ],
+        ),
+        plate_tree(
+            "basic/subpass-with-clear-color-optimization",
+            // A bounded group at half alpha, composited with `Src`, holding one
+            // paint of transparent black -- also `Src`, so the group ends up
+            // transparent everywhere. Compositing it replaces what the bounds
+            // cover, so the plate is a hole punched in the ground.
+            //
+            // Upstream names this for an optimization that turns a group whose
+            // first draw covers it into the pass's clear color, and its comment
+            // says what a failure looks like: the target is composited without
+            // having been written, so what shows is whatever the allocation
+            // held -- on a real device, often NaNs, which upstream reports as a
+            // magenta square. The half alpha and the `Src` are upstream's too,
+            // and they are there so nothing mistakes this for the opacity
+            // peephole instead.
+            //
+            // The second group is upstream's as well: empty, unbounded, and
+            // composited with `DstOver`, so it must change nothing.
+            vec![
+                Node::Layer {
+                    layer: Box::new(LayerSpec {
+                        alpha: 0.5,
+                        blend: BlendMode::Src,
+                        ..LayerSpec::default()
+                    }),
+                    bounds: Some([0.0, 0.0, 64.0, 64.0]),
+                    transform: Transform::default(),
+                    children: vec![Node::Paint(Box::new(PaintSpec {
+                        color: [0.0, 0.0, 0.0, 0.0],
+                        blend: BlendMode::Src,
+                        clip: None,
+                        clip_out: None,
+                        transform: Transform::default(),
+                    }))],
+                },
+                Node::Layer {
+                    layer: Box::new(LayerSpec {
+                        blend: BlendMode::DstOver,
+                        ..LayerSpec::default()
+                    }),
+                    bounds: None,
+                    transform: Transform::default(),
+                    children: Vec::new(),
+                },
+            ],
+        ),
+        plate_tree(
+            "basic/clear-color-optimization-when-subpass-is-bigger-than-parent-pass",
+            // The same optimization asked the harder question: a group that is
+            // larger than the pass it composites into. Its matrix doubles it on
+            // the way back, so what it captures reaches twice as far as the
+            // frame, and the rectangle inside it is drawn twice that again --
+            // deliberately, to make the group's own extent the larger number.
+            //
+            // The plate is uniform, and that is the assertion. A group sized
+            // from the parent rather than from its contents, or one composited
+            // at the wrong offset, shows the ground somewhere along an edge.
+            vec![
+                Node::Draw(Box::new(Item::fill(
+                    Shape::Rect {
+                        min: [64.0, 64.0],
+                        max: [96.0, 96.0],
+                    },
+                    RED,
+                ))),
+                Node::Layer {
+                    layer: Box::new(LayerSpec {
+                        matrix: Some(Transform {
+                            scale: [2.0, 2.0],
+                            ..Transform::default()
+                        }),
+                        ..LayerSpec::default()
+                    }),
+                    bounds: None,
+                    transform: Transform::default(),
+                    children: vec![
+                        Node::Draw(Box::new(Item::fill(
+                            Shape::Rect {
+                                min: [0.0, 0.0],
+                                max: [128.0, 128.0],
+                            },
+                            GREEN,
+                        ))),
+                        Node::Draw(Box::new(Item::fill(
+                            Shape::Rect {
+                                min: [0.0, 0.0],
+                                max: [256.0, 256.0],
+                            },
+                            RED,
+                        ))),
+                    ],
                 },
             ],
         ),
@@ -3961,6 +4096,50 @@ fn blend() -> Vec<Scene> {
         .with_blend(BlendMode::SrcOver)],
     ));
 
+    scenes.push(plate_tree(
+        "blend/foreground-blend-subpass-collapse-optimization",
+        // A group recolored by a blend against a constant, holding one turned
+        // square. Upstream names it for an optimization that folds the group
+        // into the draw beneath it, which decides how many passes it takes and
+        // not what it draws.
+        //
+        // Blue through `ColorDodge` against red: the dodge divides by one minus
+        // the source, so the red channel saturates and the blue survives, and
+        // the square comes out magenta.
+        //
+        // What surrounds it is the more interesting half. `ColorDodge` is one
+        // of the modes that produces something from nothing, so the filter
+        // floods every pixel the group covers -- and an unbounded group covers
+        // the bounding box of what went into it, which for a square turned a
+        // third of a turn is a larger upright square. So the plate is a magenta
+        // diamond in a red box on the ground, and the red box is what says the
+        // group was recolored as a finished image over its own extent rather
+        // than shape by shape.
+        vec![Node::Layer {
+            layer: Box::new(LayerSpec {
+                color_filter: ColorFilter::blend(RED, BlendMode::ColorDodge)
+                    .expect("every advanced mode is a filter"),
+                ..LayerSpec::default()
+            }),
+            bounds: None,
+            transform: Transform::default(),
+            children: vec![Node::Draw(Box::new(
+                Item::fill(
+                    Shape::Rect {
+                        min: [-26.0, -26.0],
+                        max: [26.0, 26.0],
+                    },
+                    BLUE,
+                )
+                .with_transform(Transform {
+                    rotate: 120.0f32.to_radians(),
+                    translate: [64.0, 64.0],
+                    ..Transform::default()
+                }),
+            ))],
+        }],
+    ));
+
     scenes.push(plate(
         "blend/color-filter-advanced-blend",
         // Upstream's grid of every advanced mode as a color filter, over a
@@ -6600,6 +6779,114 @@ fn pictures() -> Vec<Scene> {
                     }),
                 })),
             ],
+        )
+        .with_background(DARK)
+        .with_samples(4),
+        Scene::tree(
+            "dl/collapsed-draw-paint-in-subpass",
+            // A paint inside a group whose mode combines it with the frame.
+            // Upstream names this for an optimization that collapses the group
+            // away, which is a question about how many passes it takes rather
+            // than about what it draws -- so the picture is the picture either
+            // way, and this renderer draws it without the optimization.
+            vec![
+                Node::Paint(Box::new(PaintSpec {
+                    color: [1.0, 1.0, 0.2, 1.0],
+                    blend: BlendMode::Src,
+                    clip: None,
+                    clip_out: None,
+                    transform: Transform::default(),
+                })),
+                Node::Layer {
+                    layer: Box::new(LayerSpec {
+                        blend: BlendMode::Multiply,
+                        ..LayerSpec::default()
+                    }),
+                    bounds: None,
+                    transform: Transform::default(),
+                    children: vec![Node::Paint(Box::new(PaintSpec {
+                        color: [100.0 / 255.0, 149.0 / 255.0, 237.0 / 255.0, 0.75],
+                        blend: BlendMode::SrcOver,
+                        clip: None,
+                        clip_out: None,
+                        transform: Transform::default(),
+                    }))],
+                },
+            ],
+        )
+        .with_background(DARK)
+        // An advanced mode on a group draws nothing on this machine's Vulkan
+        // software rasterizer, whatever the sample count; see the blend family.
+        .with_samples(1),
+        Scene::tree(
+            "dl/collapsed-draw-paint-in-subpass-backdrop-filter",
+            // The same shape with a backdrop filter instead of a mode, which is
+            // upstream's own regression scene for flutter/flutter#131576.
+            //
+            // The plate is uniform, and upstream's is too: the group filters
+            // the whole frame and then covers it with an opaque paint, so the
+            // blur is computed and then hidden. That is the point of it -- the
+            // failure it was written for is a frame that does not survive the
+            // combination at all, not a blur anybody can see.
+            vec![
+                Node::Paint(Box::new(PaintSpec {
+                    color: [1.0, 1.0, 0.2, 1.0],
+                    blend: BlendMode::Src,
+                    clip: None,
+                    clip_out: None,
+                    transform: Transform::default(),
+                })),
+                Node::Layer {
+                    layer: Box::new(LayerSpec {
+                        backdrop_blur: 10.0,
+                        ..LayerSpec::default()
+                    }),
+                    bounds: None,
+                    transform: Transform::default(),
+                    children: vec![Node::Paint(Box::new(PaintSpec {
+                        color: [100.0 / 255.0, 149.0 / 255.0, 237.0 / 255.0, 1.0],
+                        blend: BlendMode::SrcOver,
+                        clip: None,
+                        clip_out: None,
+                        transform: Transform::default(),
+                    }))],
+                },
+            ],
+        )
+        .with_background(DARK)
+        // A backdrop filter reads the target it is drawn into, which a
+        // multisampled pass here must clear rather than preserve.
+        .with_samples(1),
+        // Upstream's three filter-collapse scenes, which are one picture through
+        // three filters: a rotated blue square inside a group that recolors it.
+        // Named for an optimization that folds the group into the draw beneath
+        // it, which decides how many passes it takes and not what it draws --
+        // so they are ordinary pictures here, drawn without the optimization.
+        //
+        // The rotation is upstream's and is what makes them worth having beyond
+        // the filters: a group is recolored as a finished image, so a renderer
+        // that applied the filter to the shape before placing it would agree on
+        // an upright square and differ on a turned one.
+        Scene::tree(
+            "dl/color-matrix-filter-subpass-collapse-optimization",
+            filter_collapse(ColorFilter::matrix([
+                -1.0, 0.0, 0.0, 1.0, 0.0, //
+                0.0, -1.0, 0.0, 1.0, 0.0, //
+                0.0, 0.0, -1.0, 1.0, 0.0, //
+                1.0, 1.0, 1.0, 1.0, 0.0,
+            ])),
+        )
+        .with_background(DARK)
+        .with_samples(4),
+        Scene::tree(
+            "dl/linear-to-srgb-filter-subpass-collapse-optimization",
+            filter_collapse(ColorFilter::linear_to_srgb()),
+        )
+        .with_background(DARK)
+        .with_samples(4),
+        Scene::tree(
+            "dl/srgb-to-linear-filter-subpass-collapse-optimization",
+            filter_collapse(ColorFilter::srgb_to_linear()),
         )
         .with_background(DARK)
         .with_samples(4),

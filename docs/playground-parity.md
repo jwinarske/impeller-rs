@@ -156,12 +156,12 @@ column is right and the obvious way to check it is wrong.
 
 | File | Scenes there | Here | Blocked on |
 |---|---|---|---|
-| `aiks_dl_basic_unittests.cc` | ~85 | 83 | subpass optimizations; see below |
+| `aiks_dl_basic_unittests.cc` | ~85 | 85 | nothing; see below |
 | `aiks_dl_path_unittests.cc` | ~30 | 37 | nothing; see below |
 | `aiks_dl_gradient_unittests.cc` | ~40 | 46 | nothing; see below |
 | `aiks_dl_clip_unittests.cc` | ~5 | 7 | nothing; this file is covered |
 | `aiks_dl_opacity_unittests.cc` | ~3 | 3 | nothing; this file is covered |
-| `aiks_dl_blend_unittests.cc` | ~79 | 76 | capability injection and subpass collapse, for two of them; see below |
+| `aiks_dl_blend_unittests.cc` | ~79 | 77 | capability injection, for one of them; see below |
 | `aiks_dl_blur_unittests.cc` | ~59 | 56 | nothing; see below |
 | `aiks_dl_vertices_unittests.cc` | ~16 | 21 | a caller's program cannot be read at a mesh's texture coordinates, for one of them; see below |
 | `aiks_dl_atlas_unittests.cc` | ~11 | 12 | nothing; see below |
@@ -169,12 +169,15 @@ column is right and the obvious way to check it is wrong.
 | `aiks_dl_primitive_shape_unittests.cc` | ~2 | 0 | one is a playground harness, one wants a stroke width of zero to mean a hairline |
 | `aiks_dl_text_unittests.cc` | — | 7 | shaping and font parsing, which are out of scope; glyph rendering is not, and these use synthetic coverage |
 | `aiks_dl_runtime_effect_unittests.cc` | — | 14 | a drawPaint with a program, and a sampler bound to something that is not a texture, for one each; see below |
-| `aiks_dl_unittests.cc` | ~36 | 20 | subpass collapse, for five of them; see below |
+| `aiks_dl_unittests.cc` | ~36 | 25 | nothing; see below |
 
-The catalog holds three hundred and ninety-five scenes of roughly four hundred,
-and the proportion is less interesting than which ones: the arithmetic of drawing is largely covered, and
-what is missing is either a capability this renderer does not have or a thing
-the scene model cannot describe.
+The catalog holds four hundred and three scenes against a column totalling
+about four hundred, and the two are not a ratio: five chapters hold more than
+the file they mirror, because a scene here is one picture where a test there can
+be a loop over every blend mode or a family drawn twice. What the totals meeting
+does say is that the gaps left are small and named. Shadows is the one large
+one, at thirteen of about thirty, held by an optimization; the rest are short by
+single scenes, or by ordinary pictures nobody has written.
 
 ## What blocks the rest
 
@@ -549,8 +552,9 @@ The miscellany row said "mostly internal optimizations; the picture cases are
 here now", and the second half was the false one. Thirty-eight tests, two of
 which are unit tests on a texture -- `EXPECT_EQ(texture, nullptr)` and
 `EXPECT_FALSE(texture->NeedsMipmapGeneration())` -- so thirty-six pictures
-against twelve here. Five of the twenty-four missing are subpass collapse and
-are named for it; the rest are pictures, and the largest family among them is
+against twelve here. Five of the twenty-four missing were named for subpass
+collapse and are here now, for the reason at the foot of this section; the rest
+are pictures, and the largest family among them is
 eight translucent save layers, each with a different filter on it.
 
 The points family went in since, three of it: upstream's set of seven drawn
@@ -751,8 +755,9 @@ It was recorded as a non-parity entry and then, a commit later, built instead --
 which is what the entry had said should happen to it, having named the limit as
 a generalization nobody had written rather than a decision anybody took. So the
 five scenes are no longer blocked. The superellipses have since been built
-too, which is the second entry in this column to have gone that way, so the row
-is short by subpass optimizations and by ordinary pictures nobody has written.
+too, which is the second entry in this column to have gone that way. The subpass
+optimizations went the same way as a group, for the reason at the foot of this
+section, and the row is now level with the file.
 
 Five more of those are written now, and they were chosen for covering something
 no other plate does rather than for being next in the file. Two draw a paint
@@ -1233,11 +1238,24 @@ seven plates are here. `docs/parity.md` has what checks the transcription, and
 `docs/non-parity.md` has the one upstream artifact it carries.
 
 **Things that are deliberately out of scope.** Text, which needs shaping and
-font parsing that `docs/architecture.md` places outside this project. And the
-tests that check an optimization rather than a picture — subpass collapse,
-clear-color elision, peepholes — which assert about how a frame was rendered
-rather than what it looks like, and which this renderer does not implement the
-optimizations for.
+font parsing that `docs/architecture.md` places outside this project. That is
+the whole of the list, and it used to be longer.
+
+The rest of it read: the tests that check an optimization rather than a picture
+— subpass collapse, clear-color elision, peepholes — on the reasoning that they
+assert about how a frame was rendered rather than what it looks like, and this
+renderer does not implement the optimizations. That was eight scenes across
+three rows, and the reasoning does not survive being checked. Every one of them
+opens a playground and shows a picture; none of them assert anything about a
+pass count, because a playground test cannot. The optimization is what the test
+is *named* for, and what it does is draw the shape the optimizer was getting
+wrong.
+
+So the picture is the picture with the optimization or without it, and this
+renderer can draw all eight: two clear-color scenes in basic, one foreground
+blend in blend, and five in the miscellany. They are here, and what would still
+be out of scope — an assertion that a frame took one pass rather than two —
+is not something any of them ever made.
 
 ## The scenes
 
