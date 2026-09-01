@@ -349,14 +349,25 @@ impl GlesContext {
             gl.stencil_mask(0xff);
             gl.color_mask(true, true, true, true);
 
+            // The stencil is cleared whether or not the color is, which is
+            // what Vulkan's render pass does unconditionally and what this used
+            // to do only alongside a color clear. A pass that does not clear
+            // its color is one that continues a target -- what a backdrop
+            // filter cuts -- and it may still build clips, on a renderbuffer
+            // allocated for it a moment ago and holding whatever it holds. That
+            // made the picture depend on the allocation: the same frame drew
+            // differently between runs, and only on this backend.
+            //
+            // Clearing it where there is no stencil attachment is harmless and
+            // keeps the two paths from differing in anything but the attachment
+            // itself.
+            gl.clear_stencil(0);
+            let mut buffers = glow::STENCIL_BUFFER_BIT;
             if let Some(color) = pass.clear {
                 gl.clear_color(color[0], color[1], color[2], color[3]);
-                gl.clear_stencil(0);
-                // Clearing the stencil alongside the color even where there is
-                // no stencil attachment is harmless and keeps the two paths
-                // from differing in anything but the attachment itself.
-                gl.clear(glow::COLOR_BUFFER_BIT | glow::STENCIL_BUFFER_BIT);
+                buffers |= glow::COLOR_BUFFER_BIT;
             }
+            gl.clear(buffers);
 
             if batch.is_empty() {
                 detach_stencil(gl, render_fbo, stencil);

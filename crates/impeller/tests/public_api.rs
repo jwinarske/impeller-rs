@@ -3738,6 +3738,73 @@ fn a_backdrop_takes_any_image_filter_including_the_one_that_moves_it() {
 }
 
 #[test]
+fn a_stencil_clip_survives_the_pass_a_backdrop_filter_cuts() {
+    // A backdrop filter cannot sample the attachment it is writing, so the pass
+    // stops there and what follows begins by drawing it back in. That redraw
+    // restores the color. Nothing restored the stencil, and a stencil belongs
+    // to a pass -- so with a clip of a shape a scissor cannot express in force,
+    // every draw after a backdrop filter tested for a depth no pixel in the new
+    // pass held, and landed nowhere.
+    //
+    // Silently and everywhere, which is what makes it worth a test of its own.
+    // The frame that showed it is upstream's
+    // `BackdropRestoreUsesCorrectCoverageForFirstRestoredClip`, and it took
+    // writing that scene to notice: the catalog's other backdrop plates have no
+    // clip outside the layer, and a scissor clip -- which is every axis-aligned
+    // `clip_rect` -- is state the recorder holds and survives a cut by itself.
+    let Some(mut ctx) = context() else { return };
+    let shot = |ctx: &mut Context, sigma: f32| {
+        let mut canvas = Canvas::new(SIZE);
+        canvas.clear(Color::BLACK);
+        // A difference clip, which is never a scissor whatever the transform:
+        // the complement of a rectangle is not one.
+        canvas
+            .clip_out_rect(Rect::new(96.0, 96.0, 128.0, 128.0))
+            .expect("clip out");
+        canvas
+            .draw_rect(
+                Rect::new(0.0, 0.0, 128.0, 128.0),
+                &Paint::fill(Color::srgb(1.0, 0.0, 0.0, 1.0)).with_anti_alias(false),
+            )
+            .expect("red");
+        canvas.save_layer(Layer::opacity(1.0).with_backdrop_blur(sigma));
+        canvas.restore();
+        canvas
+            .draw_rect(
+                Rect::new(0.0, 0.0, 128.0, 128.0),
+                &Paint::fill(Color::srgb(0.0, 1.0, 0.0, 1.0)).with_anti_alias(false),
+            )
+            .expect("green");
+        render(ctx, canvas)
+    };
+
+    // Without a backdrop there is no cut, so this is the picture the other one
+    // has to match: green over red, and the corner the difference clip removed
+    // showing the ground.
+    let uncut = shot(&mut ctx, 0.0);
+    assert_eq!(pixel(&uncut, 32, 32), [0, 255, 0, 255], "green over red");
+    assert_eq!(
+        pixel(&uncut, 112, 112),
+        [0, 0, 0, 255],
+        "the corner removed"
+    );
+
+    let cut = shot(&mut ctx, 8.0);
+    assert_eq!(
+        pixel(&cut, 32, 32),
+        [0, 255, 0, 255],
+        "the draw after the backdrop should still land, so the clip has to have \
+         been made again in the pass the backdrop cut"
+    );
+    assert_eq!(
+        pixel(&cut, 112, 112),
+        [0, 0, 0, 255],
+        "and it should still be the same clip -- rebuilt too wide would let the \
+         green into the corner"
+    );
+}
+
+#[test]
 fn a_backdrop_blur_softens_what_is_behind_the_layer_and_nothing_else() {
     let Some(mut ctx) = context() else { return };
     // Frosted glass, which is the other blur. A layer blur softens the layer's

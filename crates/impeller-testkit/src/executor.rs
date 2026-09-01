@@ -570,6 +570,27 @@ fn record_node(canvas: &mut Canvas, node: &Node, anti_alias: bool) -> Result<()>
             canvas.restore();
             canvas.restore();
         }
+        Node::Clip {
+            rect,
+            rect_out,
+            children,
+        } => {
+            // A save and a restore around the clip, which is what makes it a
+            // clip in force over a run rather than one narrowing a draw: the
+            // canvas carries it until the restore, and everything recorded
+            // between them is under it.
+            canvas.save();
+            if let Some(rect) = rect {
+                canvas.clip_rect(rect_of(*rect))?;
+            }
+            if let Some(out) = rect_out {
+                canvas.clip_out_rect(rect_of(*out))?;
+            }
+            for child in children {
+                record_node(canvas, child, anti_alias)?;
+            }
+            canvas.restore();
+        }
     }
     Ok(())
 }

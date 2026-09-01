@@ -925,6 +925,26 @@ pub enum Node {
         transform: Transform,
         children: Vec<Node>,
     },
+    /// A clip in force over a run of nodes -- `save`, `clipRect`, `restore`.
+    ///
+    /// Distinct from the clip an item carries, which narrows one draw. A clip
+    /// is state on the canvas and applies to everything drawn while it is in
+    /// force, and the difference shows wherever a run of draws shares one:
+    /// repeating an item's clip across them is the same picture only if
+    /// nothing between them reads the clip, which a backdrop filter does.
+    ///
+    /// Nested rather than sequenced, which is the one place this departs from
+    /// the calls it names. Upstream clips and then keeps drawing siblings; a
+    /// scene is a tree, so what would be the following siblings are this
+    /// node's children instead. The picture is the same and the shape of the
+    /// recording is the same -- a `save`, the clip, the children, a `restore`.
+    Clip {
+        /// Keep only what this admits.
+        rect: Option<[f32; 4]>,
+        /// And remove this from it.
+        rect_out: Option<[f32; 4]>,
+        children: Vec<Node>,
+    },
 }
 
 impl From<Item> for Node {
@@ -979,7 +999,9 @@ impl Node {
             | Self::NinePatch(_)
             | Self::Paint(_) => Box::new(std::iter::empty()),
             Self::Picture(picture) => Box::new(picture.children.iter().flat_map(Node::items)),
-            Self::Layer { children, .. } => Box::new(children.iter().flat_map(Node::items)),
+            Self::Layer { children, .. } | Self::Clip { children, .. } => {
+                Box::new(children.iter().flat_map(Node::items))
+            }
         }
     }
 
@@ -996,7 +1018,9 @@ impl Node {
             Self::Picture(picture) => {
                 Box::new(picture.children.iter_mut().flat_map(Node::items_mut))
             }
-            Self::Layer { children, .. } => Box::new(children.iter_mut().flat_map(Node::items_mut)),
+            Self::Layer { children, .. } | Self::Clip { children, .. } => {
+                Box::new(children.iter_mut().flat_map(Node::items_mut))
+            }
         }
     }
 
@@ -1022,7 +1046,9 @@ impl Node {
             // draw with the paint they are given, a glyph run is coverage, and
             // a picture composites what it recorded.
             Self::NinePatch(_) | Self::Glyphs(_) | Self::Shadow(_) | Self::Picture(_) => false,
-            Self::Layer { children, .. } => children.iter().any(Self::blends_additively),
+            Self::Layer { children, .. } | Self::Clip { children, .. } => {
+                children.iter().any(Self::blends_additively)
+            }
         }
     }
 
@@ -1052,6 +1078,11 @@ impl Node {
             Self::Layer { children, .. } => {
                 1 + children.iter().map(Node::layer_depth).max().unwrap_or(0)
             }
+            // A clip is state on the canvas, not a target: it narrows what the
+            // group it scopes may draw into and opens nothing of its own.
+            Self::Clip { children, .. } => {
+                children.iter().map(Node::layer_depth).max().unwrap_or(0)
+            }
         }
     }
 
@@ -1069,6 +1100,7 @@ impl Node {
             | Self::NinePatch(_)
             | Self::Paint(_) => false,
             Self::Layer { .. } => true,
+            Self::Clip { children, .. } => children.iter().any(Node::has_layer),
         }
     }
 
@@ -1096,7 +1128,9 @@ impl Node {
             // Points are solid color; they sample nothing.
             Self::Shadow(_) | Self::Glyphs(_) | Self::Points(_) => false,
             Self::Picture(picture) => picture.children.iter().any(Node::samples_fixture),
-            Self::Layer { children, .. } => children.iter().any(Node::samples_fixture),
+            Self::Layer { children, .. } | Self::Clip { children, .. } => {
+                children.iter().any(Node::samples_fixture)
+            }
         }
     }
 
@@ -1146,7 +1180,9 @@ impl Node {
             // of either kind.
             Self::Atlas(_) | Self::Shadow(_) | Self::Points(_) | Self::NinePatch(_) => false,
             Self::Picture(picture) => picture.children.iter().any(Node::uses_glyphs),
-            Self::Layer { children, .. } => children.iter().any(Node::uses_glyphs),
+            Self::Layer { children, .. } | Self::Clip { children, .. } => {
+                children.iter().any(Node::uses_glyphs)
+            }
         }
     }
 
@@ -1171,6 +1207,7 @@ impl Node {
             } => {
                 Box::new(std::iter::once(layer.blend).chain(children.iter().flat_map(Node::blends)))
             }
+            Self::Clip { children, .. } => Box::new(children.iter().flat_map(Node::blends)),
         }
     }
 
@@ -1188,6 +1225,7 @@ impl Node {
             Self::Layer {
                 bounds, children, ..
             } => bounds.is_some() || children.iter().any(Node::has_bounded_layer),
+            Self::Clip { children, .. } => children.iter().any(Node::has_bounded_layer),
         }
     }
 
@@ -1212,6 +1250,7 @@ impl Node {
             Self::Layer {
                 layer, children, ..
             } => layer.backdrop_blur > 0.0 || children.iter().any(Node::filters_its_backdrop),
+            Self::Clip { children, .. } => children.iter().any(Node::filters_its_backdrop),
         }
     }
 
@@ -1254,8 +1293,18 @@ impl Node {
                     || layer.backdrop_blur > 0.0
                     || layer.morphology.is_some()
                     || layer.color_filter != ColorFilter::None
+                    // The two general filters, which had been left out. A
+                    // sigma and a program are the same kind of thing to a
+                    // plate, and a plate whose only feature was the general
+                    // spelling of one was skipped by the check that asks
+                    // whether a feature reaches the picture.
+                    || !layer.filter.is_identity()
+                    || !layer.backdrop.is_identity()
                     || children.iter().any(Node::carries_a_visual_feature)
             }
+            // A clip is geometry, not a feature: it says where a draw lands and
+            // nothing about how it looks.
+            Self::Clip { children, .. } => children.iter().any(Node::carries_a_visual_feature),
         }
     }
 
@@ -1285,6 +1334,9 @@ impl Node {
                 Some(matrix) => vec![transform, matrix],
                 None => vec![transform],
             },
+            // A clip has no transform of its own. Its rectangles are stated in
+            // the space it is opened in, like a layer's bounds.
+            Self::Clip { .. } => Vec::new(),
         }
     }
 
@@ -1319,6 +1371,7 @@ impl Node {
                     || layer.matrix.is_some_and(|m| m.perspective != [0.0, 0.0])
                     || children.iter().any(Node::asks_for_perspective)
             }
+            Self::Clip { children, .. } => children.iter().any(Node::asks_for_perspective),
         }
     }
 
@@ -1359,8 +1412,11 @@ impl Node {
                 layer.backdrop_blur = 0.0;
                 layer.morphology = None;
                 layer.color_filter = ColorFilter::None;
+                layer.filter = ImageFilter::None;
+                layer.backdrop = ImageFilter::None;
                 children.iter_mut().for_each(Node::plain);
             }
+            Self::Clip { children, .. } => children.iter_mut().for_each(Node::plain),
         }
     }
 

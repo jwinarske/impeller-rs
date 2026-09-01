@@ -172,9 +172,9 @@ column is right and the obvious way to check it is wrong.
 | `aiks_dl_primitive_shape_unittests.cc` | ~2 | 0 | one is a playground harness, one wants a stroke width of zero to mean a hairline |
 | `aiks_dl_text_unittests.cc` | — | 7 | shaping and font parsing, which are out of scope; glyph rendering is not, and these use synthetic coverage |
 | `aiks_dl_runtime_effect_unittests.cc` | — | 15 | a sampler bound to something that is not a texture, for one of them; see below |
-| `aiks_dl_unittests.cc` | ~36 | 26 | nothing; see below |
+| `aiks_dl_unittests.cc` | ~36 | 27 | one whose picture cannot show what it is for; see below |
 
-The catalog holds four hundred and fifteen scenes against a column totalling
+The catalog holds four hundred and sixteen scenes against a column totalling
 about four hundred, and the two are not a ratio: five chapters hold more than
 the file they mirror, because a scene here is one picture where a test there can
 be a loop over every blend mode or a family drawn twice. What the totals meeting
@@ -577,6 +577,30 @@ The points family went in since, three of it: upstream's set of seven drawn
 twice, once with a round cap and once with a square one -- which is the whole of
 what a cap means to a point, there being no direction for one to extend along --
 and its pair of scale extremes.
+
+Two matrix backdrops followed, once a matrix could be one. The second of them,
+`MatrixBackdropFilterWithTranslation`, is what a clip on a group is for: the
+group is unbounded, so without the clip the halved copy would cover the frame
+and with it the copy is a panel in the corner. A scene had no way to say that
+until it did -- an item's clip narrows one draw, and a clip is state on the
+canvas -- and saying it found a defect, recorded below.
+
+`BackdropRestoreUsesCorrectCoverageForFirstRestoredClip` is the one scene here
+deliberately left unwritten because of what it looks like rather than what it
+needs. It draws a red rectangle, filters a backdrop under a clip, and then
+covers the whole thing with green -- so the picture is the green and the notch,
+and it is the same picture with the backdrop filter taken away.
+`a_feature_a_scene_asks_for_has_to_change_the_picture` says a plate like that is
+worse than no plate, and it is right: what the scene is for cannot be seen in
+it.
+
+It was still worth writing once. Doing so found that a stencil clip did not
+survive the pass a backdrop filter cuts -- every draw after the filter tested
+for a depth no pixel in the new pass held, and landed nowhere -- and that on
+GLES the new pass's stencil was not cleared at all, so the same frame drew
+differently between runs. Both are fixed, and what checks them is
+`a_stencil_clip_survives_the_pass_a_backdrop_filter_cuts`, which is a test
+rather than a plate for exactly the reason the scene is not one.
 
 That pair is the one worth the words, and it is a test about where a
 multiplication happens rather than about points. One plate is a point a

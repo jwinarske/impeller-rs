@@ -965,9 +965,12 @@ fn build_render_pass(device: &ash::Device, key: RenderPassKey) -> Result<vk::Ren
         .initial_layout(vk::ImageLayout::UNDEFINED)
         .final_layout(final_layout(key, true));
 
-    // Cleared at pass start and discarded at the end. A clip stack is built
-    // and unwound entirely within one pass, so nothing outside it can read
-    // this, and on a tiler discarding keeps it in tile memory.
+    // Cleared at pass start and discarded at the end. No pass reads what
+    // another left here: a clip stack that outlives a pass -- which one does
+    // when a backdrop filter cuts the pass under it -- is rebuilt by drawing
+    // the narrowings again, not by carrying the buffer across. So on a tiler
+    // discarding keeps it in tile memory, and the clear is what every pass
+    // starts from.
     let stencil = key.stencil.map(|format| {
         vk::AttachmentDescription::default()
             .format(format)

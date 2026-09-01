@@ -476,6 +476,28 @@ impl Target {
     }
 }
 
+/// One stencil clip in force, kept so it can be made again.
+///
+/// A stencil clip is a *draw*: it steps the stencil forward where the shape
+/// covers, and every content draw after it tests against what that draw left.
+/// A pass cut starts a new pass, whose stencil attachment begins cleared -- so
+/// unless the narrowing draws are made again, every draw after the cut tests a
+/// buffer nothing wrote and lands nowhere.
+///
+/// Kept as the shape rather than as the draw, because the shape is what
+/// `clip_path` needs to make one and the draw lives in a batch that the cut has
+/// already taken away.
+#[derive(Debug, Clone)]
+struct StencilClip {
+    path: Path,
+    /// The transform the shape was stated in. `clip_out_rect` builds its
+    /// contours in device pixels and passes the identity; `clip_path` passes
+    /// whatever was in force.
+    transform: Transform2D,
+    /// The scissor in force when it was made, which narrows the narrowing.
+    scissor: Option<Scissor>,
+}
+
 /// Transform and clip, saved together.
 ///
 /// One stack rather than two: a `save` and its `restore` bracket a subtree, and
@@ -487,6 +509,11 @@ struct SavedState {
     clip: Option<Scissor>,
     clip_bounds: Rect,
     depth: u32,
+    /// How many stencil clips were in force, so `restore` can drop the ones
+    /// this save added. Redundant with `depth` and kept beside it for the same
+    /// reason the bounds are kept beside the scissor: one of them is the truth
+    /// the device holds and the other is what would be needed to rebuild it.
+    clips: usize,
     /// Set where this save opened a layer, holding what the layer displaced.
     layer: Option<LayerFrame>,
 }
@@ -496,6 +523,14 @@ struct SavedState {
 struct LayerFrame {
     batch: Batch,
     sources: Vec<TextureSource>,
+    /// The stencil clips in force on the parent, set aside with its batch.
+    ///
+    /// A layer starts unclipped -- the composite that returns it is subject to
+    /// the parent's clip instead -- so it needs a list of its own, and the
+    /// parent's has to come back when it does. Held here rather than as a
+    /// length in `SavedState`, because unlike every other save this one does
+    /// not *extend* the list it found.
+    clips: Vec<StencilClip>,
     paint: Layer,
     /// An image filter to run over the finished layer, if one was asked for.
     ///
@@ -999,6 +1034,8 @@ pub struct Canvas {
     /// Content draws where the stencil holds this, which is true only where
     /// every one of those clips admitted the pixel.
     depth: u32,
+    /// Those clips, in the order they were built. See [`StencilClip`].
+    clips: Vec<StencilClip>,
     stack: Vec<SavedState>,
     /// What the batch being recorded samples, in slot order.
     sources: Vec<TextureSource>,
@@ -1100,6 +1137,7 @@ impl Canvas {
             // canvas may reach.
             clip_bounds: Rect::new(0.0, 0.0, extent.width as f32, extent.height as f32),
             depth: 0,
+            clips: Vec::new(),
             stack: Vec::new(),
             sources: Vec::new(),
             finished: Vec::new(),
@@ -1343,9 +1381,15 @@ impl Canvas {
             clip: self.clip,
             stencil: ClipState::narrow(self.depth),
         };
+        let path = builder.build();
         self.renderer
-            .fill_into(&mut self.batch, &builder.build(), Affine2::IDENTITY, &paint)?;
+            .fill_into(&mut self.batch, &path, Affine2::IDENTITY, &paint)?;
         self.depth += 1;
+        self.clips.push(StencilClip {
+            path,
+            transform: Transform2D::IDENTITY,
+            scissor: paint.clip,
+        });
         // The tracked bounds are left alone, and that is not an oversight.
         // Removing a rectangle from the middle of a region leaves its bounding
         // box exactly where it was, and removing one from the edge leaves a box
@@ -1385,6 +1429,11 @@ impl Canvas {
         self.renderer
             .fill_into(&mut self.batch, path, self.transform, &paint)?;
         self.depth += 1;
+        self.clips.push(StencilClip {
+            path: path.clone(),
+            transform: self.transform,
+            scissor: paint.clip,
+        });
         // A path clip narrows what may be drawn without touching the scissor,
         // so the tracked rectangle is the only place it is accounted for. Its
         // bounding box rather than the path: this rectangle is a promise about
@@ -1407,6 +1456,7 @@ impl Canvas {
             clip: self.clip,
             clip_bounds: self.clip_bounds,
             depth: self.depth,
+            clips: self.clips.len(),
             layer: None,
         });
         self
@@ -1679,7 +1729,38 @@ impl Canvas {
         self.anti_alias = false;
         let index = self.finished.len() - 1;
         self.draw_whole_pass(index, target, target, BlendMode::Src, None);
+        self.rebuild_stencil_clips();
         index
+    }
+
+    /// Make the stencil clips again, in the batch that follows a cut.
+    ///
+    /// A stencil clip is a draw and a pass owns its stencil attachment, so
+    /// cutting the pass throws the clip state away: the redraw restores the
+    /// color and nothing restores the stencil, leaving every content draw after
+    /// the cut testing for a depth no pixel holds. Which is to say it draws
+    /// nothing, silently and everywhere.
+    ///
+    /// The narrowings are made again in the order they were made the first
+    /// time, at the depths they were made at -- which they still are, since
+    /// `clips` holds exactly those in force and each was made at its own index.
+    /// A failure to build one is dropped rather than propagated: the shape
+    /// tessellated once already to get here, and there is no result to fail
+    /// into halfway through a cut.
+    fn rebuild_stencil_clips(&mut self) {
+        for depth in 0..self.clips.len() {
+            let clip = self.clips[depth].clone();
+            let paint = RenderPaint {
+                material: Material::solid([1.0, 1.0, 1.0, 1.0]),
+                filter: ColorFilter::None,
+                blend: BlendMode::Src,
+                clip: clip.scissor,
+                stencil: ClipState::narrow(depth as u32),
+            };
+            let _ = self
+                .renderer
+                .fill_into(&mut self.batch, &clip.path, clip.transform, &paint);
+        }
     }
 
     /// Whether a layer is open, which decides what a cut pass clears to.
@@ -1789,9 +1870,11 @@ impl Canvas {
             clip: self.clip,
             clip_bounds: self.clip_bounds,
             depth: self.depth,
+            clips: self.clips.len(),
             layer: Some(LayerFrame {
                 batch: std::mem::take(&mut self.batch),
                 sources: std::mem::take(&mut self.sources),
+                clips: std::mem::take(&mut self.clips),
                 paint: layer,
                 filter,
                 parent: self.target,
@@ -2097,9 +2180,15 @@ impl Canvas {
             // recorded, so the layer arrives subject to what was in force when
             // it was opened rather than to whatever it did inside itself.
             self.depth = previous.depth;
+            self.clips = frame.clips.clone();
             self.finish_layer(frame);
             return self;
         }
+
+        // Everything this save added to the list goes with it. The widening
+        // draws below undo the same clips on the device; this is the record of
+        // them a later pass cut would rebuild from.
+        self.clips.truncate(previous.clips);
 
         // A scissor is state the recorder holds, so restoring it is an
         // assignment. A stencil clip lives in a buffer on the device, so

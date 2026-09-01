@@ -22,6 +22,18 @@ duplication the paragraph above rules out. `docs/parity.md` says what is built,
 a test checks that it says so truly, and a copy of that claim kept by hand here
 is the same claim without the check. So there is no list.
 
+A stencil clip survives the pass a backdrop filter cuts. A backdrop cannot
+sample the attachment it is writing, so the pass stops there and what follows
+begins by drawing it back in -- which restored the color and not the stencil. A
+stencil belongs to a pass, so with a clip of a shape a scissor cannot express in
+force, every draw after a backdrop filter tested for a depth no pixel in the new
+pass held and landed nowhere. The narrowings are made again in the pass that
+follows the cut, at the depths they were made at. Fixed alongside it: on GLES a
+pass that does not clear its color did not clear its stencil either, so a
+rebuilt clip tested against whatever the renderbuffer was allocated with and the
+same frame drew differently between runs. Every pass clears its stencil now,
+which is what the Vulkan render pass already did.
+
 A backdrop filter may be a matrix. `save_layer_backdrop` refused one, on the
 reasoning that a filter is a pass and a pass that moves its image needs a target
 sized for where the image went. The first half holds of every other filter and

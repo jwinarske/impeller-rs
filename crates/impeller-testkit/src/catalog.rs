@@ -6883,6 +6883,56 @@ fn pictures() -> Vec<Scene> {
         // chapter's backdrop plates give.
         .with_samples(1),
         Scene::tree(
+            "dl/matrix-backdrop-filter-with-translation",
+            // The same matrix backdrop confined to a panel, which is upstream's
+            // second scene for it and the one that puts a clip between the
+            // capture and the seed.
+            //
+            // The clip is what the plate is for. The group is unbounded, so
+            // without it the halved copy would cover the frame; with it the
+            // copy is a panel in the corner and the original is untouched
+            // beside it. Written at a fifth of upstream's coordinates, and with
+            // the matrix chosen so the whole of the content lands inside the
+            // panel rather than a corner of it.
+            vec![
+                Node::Draw(Box::new(Item::stroke(
+                    Shape::Rect {
+                        min: [4.0, 4.0],
+                        max: [100.0, 100.0],
+                    },
+                    StrokeSpec::new(2.0),
+                    RED,
+                ))),
+                Node::Draw(Box::new(Item::fill(
+                    Shape::Circle {
+                        center: [52.0, 52.0],
+                        radius: 28.0,
+                    },
+                    GREEN,
+                ))),
+                Node::Clip {
+                    rect: Some([64.0, 64.0, 124.0, 124.0]),
+                    rect_out: None,
+                    children: vec![Node::Layer {
+                        layer: Box::new(LayerSpec {
+                            backdrop: ImageFilter::Matrix {
+                                transform: magnify(Vec2::splat(52.0), 0.5, Vec2::splat(94.0))
+                                    .into(),
+                            },
+                            ..LayerSpec::default()
+                        }),
+                        bounds: None,
+                        transform: Transform::default(),
+                        children: Vec::new(),
+                    }],
+                },
+            ],
+        )
+        .with_background(DARK)
+        // A backdrop filter cuts the pass to read what it was writing, which a
+        // multisampled pass cannot be resumed from.
+        .with_samples(1),
+        Scene::tree(
             "dl/collapsed-draw-paint-in-subpass",
             // A paint inside a group whose mode combines it with the frame.
             // Upstream names this for an optimization that collapses the group
