@@ -2380,6 +2380,47 @@ rather than in principle.
   | x86 llvmpipe, 256-bit vectors | 1.51× | 2.19× |
   | Pi 5 llvmpipe, 128-bit vectors | 0.96× | 3.25× |
 
+  **Every row above was measured before the fragment shader stopped doing work
+  its draws had not asked for, and the two Pi rows have since been remeasured
+  and moved a long way.** The shader used to dispatch on the material kind with
+  a chain of comparisons, call the vertex-tint blend unconditionally, and decide
+  whether to dither before checking whether it was dithering at all -- costs
+  every fragment paid, and which a solid fill paid the most of, since it matched
+  none of the fourteen kinds and fell through all of them. `docs/on-a-board.md`
+  has the measurements and the reasoning.
+
+  Remeasured on 2026-09-01, three runs a side agreeing to a hundredth of a
+  millisecond:
+
+  | device | field ÷ tessellated at one sample | cost of four samples |
+  |---|---|---|
+  | Pi 5 V3D, Vulkan | 0.98× → **2.50×** | 1.17× → 1.22× |
+  | Pi 5 V3D, GLES | 1.00× → **2.39×** | 1.17× → 1.49× |
+
+  The paragraph above this table said the margin was expected to narrow on a
+  tiler and possibly invert, and that both halves held. The first half no longer
+  does. The field and the triangles were at parity on this board because both
+  were paying the same fixed overhead per fragment; removing it left the
+  triangles cheap and the field still evaluating a distance and its derivative,
+  which is work the triangles do not do. The desktop measurement had said
+  exactly that -- 1.36× -- and the tiler now agrees with it rather than
+  contradicting it.
+
+  It goes further than narrowing. At these sample counts the field at one sample
+  is now twice the cost of the *tessellated* shapes at four -- 2.04× on Vulkan
+  and 1.60× on GLES -- so on this board, for this scene, tessellating and
+  multisampling is cheaper than evaluating the field, which is the opposite of
+  what the numbers said a week ago.
+
+  What that does *not* settle is the design. This scene is a hundred and sixty
+  rounded rectangles at 1920×1080, which is a fill-rate test rather than a
+  frame; the field's advantage was never only speed, and `docs/non-parity.md`
+  and the sections above record what else it buys -- an exact coverage on a
+  rotated or fractionally placed edge, and a pass that can stay at one sample
+  when nothing else in it needs four. It is recorded here because a conclusion
+  resting on a measurement should move when the measurement does, and because
+  the next person to reach for these numbers should find the current ones.
+
   Multisampling costs seventeen percent on the tiler against seventy-eight on
   the desktop part, which is the tile-memory resolve doing exactly what it is
   supposed to. The software rows are there to say how much that is worth: the
