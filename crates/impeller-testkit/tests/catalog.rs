@@ -440,36 +440,40 @@ fn a_wide_stroke_through_its_own_call_covers_each_pixel_once() {
         "the pair is supposed to differ in how it says the rectangle"
     );
 
-    // The round-join rectangle of the lower row, which is the one this
-    // renderer draws analytically: a stroked rectangle with a square corner
-    // falls back to the tessellator, so the other two columns are the same
-    // picture in both plates and have nothing to say here.
+    // The round-join and mitered rectangles of the lower row, which are the two
+    // this renderer draws analytically. A bevel cuts its corner off, which is
+    // neither the arc an offset gives nor the point a miter does, so that
+    // column still goes to the tessellator and still doubles -- which is what
+    // is left of `docs/non-parity.md` section 13.
     let img = render::<VulkanHal>(&mut ctx, &direct);
-    let mut covered = 0usize;
-    let mut worst = (0u8, (0u32, 0u32));
-    for y in 68..98u32 {
-        for x in 49..79u32 {
-            let blue = img.pixel(x, y)[2];
-            if blue > worst.0 {
-                worst = (blue, (x, y));
-            }
-            if blue.abs_diff(SINGLE_COVER_BLUE) <= 2 {
-                covered += 1;
+    for (join, left) in [("round", 49u32), ("miter", 92)] {
+        let mut covered = 0usize;
+        let mut worst = (0u8, (0u32, 0u32));
+        for y in 68..98u32 {
+            for x in left..left + 30 {
+                let blue = img.pixel(x, y)[2];
+                if blue > worst.0 {
+                    worst = (blue, (x, y));
+                }
+                if blue.abs_diff(SINGLE_COVER_BLUE) <= 2 {
+                    covered += 1;
+                }
             }
         }
+        assert!(
+            worst.0 <= SINGLE_COVER_BLUE + 20,
+            "the {join} column: a pixel at {:?} reads {} where one cover is \
+             {SINGLE_COVER_BLUE}, so the outline is blending over itself",
+            worst.1,
+            worst.0
+        );
+        assert!(
+            covered > 700,
+            "the {join} column: only {covered} of 900 pixels carry a full cover, \
+             so this window is edge rather than stroke and the bound above \
+             proved nothing"
+        );
     }
-    assert!(
-        worst.0 <= SINGLE_COVER_BLUE + 20,
-        "a pixel at {:?} reads {} where one cover is {SINGLE_COVER_BLUE}, so the \
-         outline is blending over itself",
-        worst.1,
-        worst.0
-    );
-    assert!(
-        covered > 700,
-        "only {covered} of 900 pixels carry a full cover, so this window is \
-         edge rather than stroke and the bound above proved nothing"
-    );
 }
 
 fn forget_mask_blurs(nodes: &mut [impeller_testkit::Node]) -> usize {

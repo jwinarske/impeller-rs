@@ -898,18 +898,42 @@ hairline, one pixel at full opacity; here it is no stroke at all, which
 rather than weakening it — a width animated toward zero now dims continuously to
 nothing, where upstream's fades and then jumps back to full at the end.
 
-**A stroked rectangle with square corners cannot take the analytic route.** A
-distance field's stroke is the band a fixed distance either side of the
-outline, and at a vertex that band's outer edge is an arc — so a stroked
-rectangle drawn that way comes out with *rounded* corners, where `dart:ui`'s
-default join is a miter and the tessellated stroker gives the sharp corner it
-asks for. Measured on a nine-wide stroke, one route draws the outer corner
-pixel and the other does not: two hundred and fifty-three levels apart.
+**A stroked rectangle with square corners took the analytic route once the
+outline stopped being a band.** A distance field's stroke used to be the band a
+fixed distance either side of the outline, and at a vertex that band's outer
+edge is an arc — so a stroked rectangle drawn that way came out with *rounded*
+corners, where `dart:ui`'s default join is a miter and the tessellated stroker
+gives the sharp corner it asks for. Measured on a nine-wide stroke, one route
+drew the outer corner pixel and the other did not: two hundred and fifty-three
+levels apart. The route was refused for it.
 
-So the route is refused for a rectangle with no corner radius whose join is
-anything but round, and taken for everything else. With a radius the outline
-has no vertex, there is no join to get wrong, and the arc is what the shape
-is.
+An outline is the *difference of two offset shapes* now, rather than a band
+around one, and that is the whole of the difference. A band asks which points
+lie within half a width of the outline, and outside a square corner the
+distance to the outline is the distance to the vertex, so the band's outer edge
+there is an arc. Offsetting says the other thing: a rectangle grown by half a
+width is a rectangle, its corner still square, and the zero set of that shape's
+own field is exactly the miter.
+
+Which offset to grow by is the join, and the shader cannot see the join, so the
+outer radius is carried on the material rather than derived. It is the radius
+plus half the stroke for anything with a radius and for a round join — growing
+an arc gives a bigger arc — and zero for a mitered square corner. A bevel is
+still refused: it cuts the corner off, which is neither the arc an offset gives
+nor the point a miter does, and no offset of this shape is that.
+
+Two things are worth recording about the change. Every pixel of all four
+hundred and twenty-six catalog and corpus scenes is byte-identical across it,
+because every stroke that was already analytic had a radius, and for a radius
+the two formulations agree exactly — growing a rounded rectangle by `d` grows
+its radius by `d`. And the distance-field benchmark got four per cent *faster*
+on a Pi 5, the stroke now returning from its own branch rather than falling
+through the fill's coverage arithmetic.
+
+It also recovers most of what `docs/non-parity.md` section 13 records. A
+translucent wide stroke laid down by the tessellator covers some pixels twice;
+an evaluated field covers each once. Miter and round now take the field, which
+leaves the bevel.
 
 It went unnoticed because nothing compared the two routes. The testkit sent a
 rectangle through `draw_path` rather than through `draw_rect` — against the

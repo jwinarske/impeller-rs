@@ -22,6 +22,19 @@ duplication the paragraph above rules out. `docs/parity.md` says what is built,
 a test checks that it says so truly, and a copy of that claim kept by hand here
 is the same claim without the check. So there is no list.
 
+A stroked rectangle with square corners is drawn by the distance field rather
+than by the tessellator, where before only a round join was. An outline is the
+difference of two offset shapes now instead of a band around one: a rectangle
+grown by half a width is a rectangle, its corner still square, where the band's
+outer edge at a vertex is an arc. `Material::RoundedRect` carries an
+`outer_radius`, which the join decides and the shader cannot. A bevel is still
+tessellated -- it cuts the corner off, which no offset of this shape does.
+
+Two consequences worth stating. A translucent wide stroke with a miter no longer
+covers a pixel twice, which is most of §13 of `docs/non-parity.md`. And every
+pixel of the catalog and corpus is unchanged, since every stroke that was
+already analytic had a radius, and for a radius the two formulations agree.
+
 A mesh's texture coordinates are read by any shader, not only an image. A
 gradient on a textured mesh takes its coordinate from the vertices, which is
 what `dart:ui` means by them; the material is built without the geometry's

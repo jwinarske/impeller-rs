@@ -807,6 +807,22 @@ pub enum Material {
         to_local: ToLocal,
         /// Corner radius, in the shape's own space.
         radius: f32,
+        /// The radius the outline's *outer* edge turns through, which is not
+        /// always the radius grown by half the stroke.
+        ///
+        /// An outline is the difference of two offset shapes rather than a band
+        /// around one, and the outer offset is where a join shows. Grow a
+        /// rounded corner and you get a bigger rounded corner, so this is
+        /// `radius + stroke / 2` for anything with a radius, and for anything
+        /// with a round join. A *mitered* square corner is the exception: its
+        /// offset is still square, so this is zero and the field draws the
+        /// point the join asks for.
+        ///
+        /// Carried rather than derived because the shader cannot see the join,
+        /// and because deriving it wrongly is what made a square-cornered
+        /// stroke come out with rounded corners and be refused this route
+        /// altogether.
+        outer_radius: f32,
         /// Trace the outline at this width rather than filling, in the shape's
         /// own space. Zero fills.
         ///
@@ -1196,10 +1212,12 @@ impl Material {
             half_size,
             to_local,
             radius,
+            outer_radius,
             stroke,
         } = self
         {
             out[layout::STOPS..layout::STOPS + 4].copy_from_slice(color);
+            out[layout::GEOMETRY + 1] = *outer_radius;
             out[layout::GEOMETRY + 2] = half_size[0];
             out[layout::GEOMETRY + 3] = half_size[1];
             out[layout::TO_LOCAL..layout::TO_LOCAL + 12].copy_from_slice(to_local);

@@ -19,7 +19,7 @@
 # the only row here that has one, and adding a second is the kind of thing the
 # review above is for.
 #
-# Last checked against the board: 57ef2c95bb79f6bd770c8851462f17440da1b1a3
+# Last checked against the board: b62d05d7a479ded4bc190fda9807bb11c0166d42
 #
 # That line is read by `cargo xtask gate`, which counts the commits touching
 # what the bench times since it and says so. It exists because the numbers below

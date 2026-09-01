@@ -15300,21 +15300,36 @@ fn a_rectangle_drawn_two_ways_agrees_everywhere_but_its_corners() {
             .zip(as_path.chunks_exact(4))
             .enumerate()
         {
-            if a != b {
+            let delta = a
+                .iter()
+                .zip(b)
+                .map(|(p, q)| (*p as i32 - *q as i32).abs())
+                .max()
+                .unwrap_or(0);
+            // One level is two implementations rounding, not two routes
+            // disagreeing. The structural failure this is for -- a field wrong
+            // along an edge rather than at a corner -- differs by tens or
+            // hundreds, so nothing worth catching hides under this.
+            if delta > 1 {
                 let (x, y) = (i as u32 % SIZE.width, i as u32 / SIZE.width);
-                let delta = a
-                    .iter()
-                    .zip(b)
-                    .map(|(p, q)| (*p as i32 - *q as i32).abs())
-                    .max()
-                    .unwrap_or(0);
                 differing.push((x, y, delta));
             }
         }
+        // A filled rectangle has four corners; a stroked one has eight, an
+        // outer and an inner at each, and an L of two pixels can differ at any
+        // of them. The stroked case used to allow four because both routes were
+        // the tessellator -- a square-cornered stroke was refused the field --
+        // so it was really asserting zero. It is two implementations now, and
+        // this is the first bound it has ever actually had to hold.
+        let corners = if matches!(paint.style, Style::Stroke(_)) {
+            16
+        } else {
+            4
+        };
         assert!(
-            differing.len() <= 4,
+            differing.len() <= corners,
             "{label}: {} pixels differ between the two routes, which is more \
-             than the corners can account for: {differing:?}",
+             than the {corners} a corner apiece can account for: {differing:?}",
             differing.len()
         );
         for (x, y, delta) in &differing {
@@ -15322,10 +15337,21 @@ fn a_rectangle_drawn_two_ways_agrees_everywhere_but_its_corners() {
             // Within two pixels of both a vertical edge and a horizontal one,
             // which is the corner and nothing else: the affected cluster is an
             // L of three pixels tucked inside it.
+            //
+            // A stroke's corners are not the rectangle's. They sit half a width
+            // outside it and half a width inside, so the reach has to carry
+            // that -- and a rectangle ninety-two by sixty-six with a ten-wide
+            // stroke still leaves the middle of every edge far outside this,
+            // which is what the claim is about.
+            let reach = 2.5
+                + match &paint.style {
+                    Style::Stroke(style) => style.width / 2.0,
+                    _ => 0.0,
+                };
             let near_x =
-                (*x as f32 - rect.left).abs() <= 2.5 || (*x as f32 - rect.right).abs() <= 2.5;
+                (*x as f32 - rect.left).abs() <= reach || (*x as f32 - rect.right).abs() <= reach;
             let near_y =
-                (*y as f32 - rect.top).abs() <= 2.5 || (*y as f32 - rect.bottom).abs() <= 2.5;
+                (*y as f32 - rect.top).abs() <= reach || (*y as f32 - rect.bottom).abs() <= reach;
             assert!(
                 near_x && near_y,
                 "{label}: ({x}, {y}) differs by {delta} and is not at a corner \

@@ -3392,13 +3392,20 @@ impl Canvas {
         // wrong and the arc is what the shape is. Only the square-cornered case
         // is refused, and only where the caller asked for something other than
         // the round join the field would give them anyway.
-        if radius <= 0.0 {
-            if let Style::Stroke(style) = &paint.style {
-                if style.width > 0.0 && style.join != LineJoin::Round {
+        // A bevel cuts the corner off, which is neither the arc a round join
+        // gives nor the point a miter does, and no offset of this shape is that
+        // -- so it is the one join still sent to the tessellator. The other two
+        // are the outer offset with and without a radius, which is what
+        // `outer_radius` carries below.
+        let mitered = match &paint.style {
+            Style::Stroke(style) if style.width > 0.0 => {
+                if style.join == LineJoin::Bevel {
                     return None;
                 }
+                style.join == LineJoin::Miter
             }
-        }
+            _ => false,
+        };
         // Widened and dimmed on the same terms the tessellated route is, so
         // that which route a shape takes stays invisible. See `thin_stroke`.
         let (stroke, coverage) = thin_stroke(self.transform, analytic_stroke(paint)?);
@@ -3426,6 +3433,15 @@ impl Canvas {
             // that is not square.
             to_local: invert_to_local(to_clip * Affine2::from_translation(center)),
             radius: radius.min(rect.width() / 2.0).min(rect.height() / 2.0),
+            // A mitered square corner offsets to a square corner, which is a
+            // radius of nothing. Everything else grows by half the stroke:
+            // a rounded corner because that is what offsetting an arc does, and
+            // a round join because the arc is what it asks for.
+            outer_radius: if mitered && radius <= 0.0 {
+                0.0
+            } else {
+                radius.min(rect.width() / 2.0).min(rect.height() / 2.0) + stroke / 2.0
+            },
             stroke,
         })
     }
