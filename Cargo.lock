@@ -462,6 +462,7 @@ dependencies = [
 name = "impeller-shaders"
 version = "0.1.0"
 dependencies = [
+ "impeller-hal",
  "naga",
 ]
 
