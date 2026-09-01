@@ -146,6 +146,23 @@ starting that stage.
 A bench that dies instantly with `nohup: failed to run command './xtask'` is
 that, not the board.
 
+## Saying when it was last checked
+
+`cargo xtask gate` prints one line about the timing baseline, beside the skip
+census and read the same way: how many commits have touched what the bench times
+since a board run last passed. It is not a threshold and it cannot fail; timing
+needs a quiet machine, and the one the gate runs on spreads its own medians by
+up to half.
+
+The count is from a line in the baseline itself -- `# Last checked against the
+board:` and a commit -- rather than from when the file last changed. The
+difference matters, because the ordinary outcome of a check is that the numbers
+*pass* and are not re-recorded, and keying on the file would count those as
+drift. Update the line when a `--check` run passes, whether or not you re-record.
+A test asserts the line is there and parses, since nothing else would notice a
+comment in a data file going missing, and a baseline that has stopped saying
+when it was checked reports "current" forever.
+
 ## What a shader costs on this board, measured the hard way
 
 The baseline went sixteen renderer commits unchecked, and checking it found

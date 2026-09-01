@@ -19,6 +19,24 @@
 # the only row here that has one, and adding a second is the kind of thing the
 # review above is for.
 #
+# Last checked against the board: 3937ce10a03ef7d0e5f7421beb39d6b6e6967a4b
+#
+# That line is read by `cargo xtask gate`, which counts the commits touching
+# what the bench times since it and says so. It exists because the numbers below
+# once went sixteen renderer commits unchecked and were ten and a half per cent
+# out, and nothing in the tree could have said so -- "I ran it" is not a fact a
+# later reader can find. Update it when a `--check` run passes, whether or not
+# the numbers are re-recorded.
+#
+# On that check, seven of the eight rows came in at or below what is recorded
+# here, by one to two per cent, over three runs agreeing to two hundredths of a
+# millisecond. They are deliberately not re-recorded: the eighth row, the Vulkan
+# distance field, came in at 13.98 against 13.36 -- 4.6 per cent up, inside its
+# own tolerance, and stable rather than jumping between the two states its note
+# above describes. Re-recording the seven while that one is unexplained would
+# make the file say the regression is the new normal, which is what a baseline
+# is for saying it is not.
+#
 # device	configuration	median in milliseconds	[tolerance %]
 vulkan:0 V3D 7.1.7.0	distance field, 1 sample	13.363	5.0
 vulkan:0 V3D 7.1.7.0	tessellated, 4 samples	15.976

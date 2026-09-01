@@ -909,6 +909,92 @@ pub fn compare(baseline: &Baseline, run: &[(String, String, f64)], tolerance: f6
     }
 }
 
+/// The commit the recorded timings were last checked against, if a baseline
+/// says so.
+///
+/// One file rather than all of them: a second board would need its own line and
+/// its own count, and there is one board.
+fn verified_at() -> Option<String> {
+    let text = std::fs::read_to_string("tests/bench-baselines/raspberry-pi-5-v3d.txt").ok()?;
+    text.lines()
+        .find_map(|line| line.strip_prefix("# Last checked against the board: "))
+        .map(|sha| sha.trim().to_string())
+        .filter(|sha| sha.len() >= 7 && sha.chars().all(|c| c.is_ascii_hexdigit()))
+}
+
+/// How far the recorded timings have drifted from the code, in commits.
+///
+/// The gate cannot check timing: it takes a quiet machine, and the one this
+/// runs on spreads its own medians by up to half. So the timing baseline is
+/// checked by hand on a board, and the failure that follows from that is not a
+/// wrong number but a forgotten one -- sixteen renderer commits once went by
+/// between two checks, and the ten and a half per cent they had cost was
+/// invisible from every diff and every green gate.
+///
+/// This is the cheapest thing that would have surfaced it: not a threshold, not
+/// a failure, just the count, printed where the skip census is printed and read
+/// the same way. What it counts is commits touching the crates the bench times,
+/// since the baseline file last changed.
+///
+/// `None` where the question cannot be asked -- no git, no baseline, a
+/// checkout without history. A tarball build is not a build that has drifted.
+pub fn baseline_drift() -> Option<(usize, &'static str)> {
+    const BASELINE: &str = "tests/bench-baselines";
+    /// What the bench times, end to end through both backends.
+    const TIMED: &[&str] = &[
+        "crates/impeller-core/src",
+        "crates/impeller-shaders/shaders",
+        "crates/impeller-hal/src",
+        "crates/impeller-hal-vulkan/src",
+        "crates/impeller-hal-gles/src",
+    ];
+
+    let git = |args: &[&str]| -> Option<String> {
+        let out = std::process::Command::new("git").args(args).output().ok()?;
+        out.status
+            .success()
+            .then(|| String::from_utf8_lossy(&out.stdout).trim().to_string())
+    };
+    // The commit a board run last passed against, which the baseline records
+    // itself. Falling back to when the file last changed would count the
+    // commits since the numbers were *written*, and a check that passed without
+    // re-recording -- which is the ordinary outcome -- would not be counted at
+    // all. "I ran it" has to be a fact in the tree or it is not a fact.
+    let recorded = match verified_at() {
+        Some(sha) => sha,
+        None => git(&["log", "-1", "--format=%H", "--", BASELINE])?,
+    };
+    if recorded.is_empty() {
+        return None;
+    }
+    let mut args = vec!["log", "--oneline", &format!("{recorded}..HEAD"), "--"]
+        .into_iter()
+        .map(String::from)
+        .collect::<Vec<_>>();
+    args.extend(TIMED.iter().map(|p| p.to_string()));
+    let listed = git(&args.iter().map(String::as_str).collect::<Vec<_>>())?;
+    let count = listed.lines().filter(|l| !l.is_empty()).count();
+    Some((count, BASELINE))
+}
+
+/// The line the gate prints for [`baseline_drift`].
+pub fn drift_line() -> Option<String> {
+    let (count, path) = baseline_drift()?;
+    Some(match count {
+        0 => format!("the timing baseline in {path} is current\n"),
+        1 => format!(
+            "1 commit has touched what the bench times since {path} was \
+             recorded. Timing is not gated here; `cargo xtask bench --check` on \
+             a board is what would say.\n"
+        ),
+        n => format!(
+            "{n} commits have touched what the bench times since {path} was \
+             recorded. Timing is not gated here; `cargo xtask bench --check` on \
+             a board is what would say.\n"
+        ),
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

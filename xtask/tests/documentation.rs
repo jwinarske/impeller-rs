@@ -927,3 +927,33 @@ fn string_literals(source: &str) -> Vec<String> {
     }
     out
 }
+
+#[test]
+fn the_timing_baseline_records_the_commit_it_was_checked_against() {
+    // `cargo xtask gate` counts the commits touching what the bench times since
+    // that line, and says so beside the skip census. It is the cheapest thing
+    // that would have caught the failure it exists for: sixteen renderer
+    // commits once went by between two board runs, and the ten and a half per
+    // cent they cost was invisible from every diff and every green gate.
+    //
+    // Checked here because the line is a comment in a data file, which nothing
+    // else would notice the loss of. A baseline that has stopped saying when it
+    // was checked reports "current" forever.
+    let text = std::fs::read_to_string(
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../tests/bench-baselines/raspberry-pi-5-v3d.txt"),
+    )
+    .expect("the Pi 5 baseline");
+    let sha = text
+        .lines()
+        .find_map(|line| line.strip_prefix("# Last checked against the board: "))
+        .expect(
+            "the baseline should record the commit a board run last passed \
+             against; see `baseline_drift` in xtask",
+        )
+        .trim();
+    assert!(
+        sha.len() >= 7 && sha.chars().all(|c| c.is_ascii_hexdigit()),
+        "that line should hold a commit hash, and holds {sha:?}"
+    );
+}

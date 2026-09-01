@@ -145,6 +145,11 @@ pub fn run(software: bool) -> bool {
     println!("== suite, with the skips named ==");
     let outcome = crate::verify::run_with_env(&[], &env);
     print!("{}", crate::verify::text(&outcome));
+    // Beside the skip census and read the same way: something this gate cannot
+    // check, said out loud rather than left to be noticed.
+    if let Some(line) = crate::bench::drift_line() {
+        print!("\n{line}");
+    }
     !(outcome.broke || outcome.failed > 0)
 }
 
