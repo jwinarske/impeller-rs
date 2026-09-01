@@ -280,14 +280,6 @@ float coverage_of(float distance_, float per_pixel, float width) {
     return (outer - inner);
 }
 
-float outline_if_asked(float distance_1) {
-    float width_1 = _group_1_binding_0_fs.params.w;
-    if ((width_1 <= 0.0)) {
-        return distance_1;
-    }
-    return (abs(distance_1) - (width_1 * 0.5));
-}
-
 float rounded_rect_distance(vec2 point, vec2 half_size, float radius) {
     vec2 q = ((abs(point) - half_size) + vec2(radius));
     return ((min(max(q.x, q.y), 0.0) + length(max(q, vec2(0.0)))) - radius);
@@ -319,9 +311,9 @@ vec4 rrect_blur_coverage(vec3 clip_2) {
     vec2 adjusted = (centered - adjust);
     float _e33 = power_distance(max(adjusted, vec2(0.0)), exponent_1, (1.0 / exponent_1));
     float inside_2 = min(max(adjusted.x, adjusted.y), 0.0);
-    float distance_2 = ((_e33 + inside_2) - r1_);
-    float _e43 = erf7_((s_inv * (min_edge + distance_2)));
-    float _e45 = erf7_((s_inv * distance_2));
+    float distance_1 = ((_e33 + inside_2) - r1_);
+    float _e43 = erf7_((s_inv * (min_edge + distance_1)));
+    float _e45 = erf7_((s_inv * distance_1));
     float coverage_1 = (scale * (_e43 - _e45));
     vec4 _e51 = _group_1_binding_0_fs.stops[0];
     return (_e51 * clamp(coverage_1, 0.0, 1.0));

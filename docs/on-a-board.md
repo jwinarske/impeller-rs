@@ -299,6 +299,28 @@ carries a five per cent tolerance of its own, for a bimodality documented in the
 baseline's header -- so the run that would have failed on GLES was the only one
 that could have said anything, and it was never made.
 
+### A function nothing called, compiled by every driver
+
+The same measurement has a corollary nobody had drawn from it. A shader is not
+a program with a linker that drops what nothing reaches: naga emits an uncalled
+function into the GLSL exactly as it emits a used one, so dead code in a shader
+source is code every driver parses and compiles for the life of the program.
+
+`solid.wgsl` had one. `outline_if_asked` went in with the commit that traced an
+outline from the same distance field, was never called by anything, and stayed
+for every commit after -- two hundred and seven bytes of GLSL and seventy-eight
+words of SPIR-V. Whether that is measurable is not established and this document
+will not guess; what is established, in the section below, is that this shader's
+cost is a step function of its size on this board, and that is enough reason not
+to carry code nothing runs.
+
+`every_function_in_a_shader_is_either_called_or_a_stage` in
+`crates/impeller-shaders/tests/sources.rs` is what would have said so. It reads
+the WGSL rather than the generated output, since a call graph is legible there
+and not in the GLSL, and it catches a chain one link at a time: a helper called
+only from a dead function still reads as called, so removing the root is what
+names the next one.
+
 ## What a shader costs on this board, measured the hard way
 
 The baseline went sixteen renderer commits unchecked, and checking it found

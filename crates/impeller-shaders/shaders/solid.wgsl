@@ -558,14 +558,6 @@ fn coverage_of(distance: f32, per_pixel: f32, width: f32) -> f32 {
     return outer - inner;
 }
 
-fn outline_if_asked(distance: f32) -> f32 {
-    let width = paint.params.w;
-    if (width <= 0.0) {
-        return distance;
-    }
-    return abs(distance) - width * 0.5;
-}
-
 /// Signed distance from a rounded rectangle, negative inside.
 ///
 /// The standard formulation: fold into one quadrant by symmetry, measure to
