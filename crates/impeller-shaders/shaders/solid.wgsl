@@ -1257,6 +1257,13 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
 fn shade(in: VertexOutput) -> vec4<f32> {
     var color: vec4<f32> = paint.stops[0];
     let kind = paint.params.y;
+    // A solid color first, because it is the commonest material by a long way
+    // and because the chain below is linear: falling through every arm to reach
+    // the return at the bottom cost it two comparisons per kind, and the count
+    // of kinds grows.
+    if (kind < 0.5) {
+        return vec4<f32>(color.rgb * color.a, color.a);
+    }
     let count = i32(paint.params.x);
     // Where a gradient measures from. Almost always the fragment's position
     // carried back into the paint's own space; on a mesh that states texture
@@ -1376,41 +1383,30 @@ fn shade(in: VertexOutput) -> vec4<f32> {
     // sweep arm tests only a lower bound and would otherwise claim this kind
     // as well. Returned directly, since a sampled texel is premultiplied
     // already and the conversion below would apply alpha a second time.
-    if (kind > 3.5 && kind < 4.5) {
-        return sample_image(in.clip);
+    switch i32(kind + 0.5) {
+        // 4
+        case 4: { return sample_image(in.clip); }
+        // 7, 8 -- the analytic shape fields
+        case 7: { return rounded_rect_coverage(in.clip); }
+        case 8: { return ellipse_coverage(in.clip); }
+        case 12: { return rrect_blur_coverage(in.clip); }
+        case 13: { return point_field_coverage(in.uv); }
+        // Already premultiplied, like anything else sampled from a target, and
+        // a weighted average of premultiplied colors is premultiplied.
+        case 6: { return blur_along_axis(in.clip); }
+        // Premultiplied for the same reason, and an extremum of premultiplied
+        // colors taken channel by channel is one too: no channel can come out
+        // above an alpha that no sample had.
+        case 11: { return morphology_along_axis(in.clip); }
+        // Already premultiplied, like anything else sampled from a texture.
+        case 10: { return sample_mesh(in.uv); }
+        default: {}
     }
     // Every one of these is bounded on both sides, so each arm claims its own
     // kind and nothing else. Written as descending open-ended tests they were
     // correct only because of the returns above them, which meant a kind added
     // later was claimed by all four: the conical gradient, kind nine, came out
     // as a rounded rectangle the first time it ran.
-    if (kind > 11.5 && kind < 12.5) {
-        return rrect_blur_coverage(in.clip);
-    }
-    if (kind > 12.5 && kind < 13.5) {
-        return point_field_coverage(in.uv);
-    }
-    if (kind > 7.5 && kind < 8.5) {
-        return ellipse_coverage(in.clip);
-    }
-    if (kind > 6.5 && kind < 7.5) {
-        return rounded_rect_coverage(in.clip);
-    }
-    if (kind > 5.5 && kind < 6.5) {
-        // Already premultiplied, like anything else sampled from a target, and
-        // a weighted average of premultiplied colors is premultiplied.
-        return blur_along_axis(in.clip);
-    }
-    if (kind > 10.5 && kind < 11.5) {
-        // Premultiplied for the same reason, and an extremum of premultiplied
-        // colors taken channel by channel is one too: no channel can come out
-        // above an alpha that no sample had.
-        return morphology_along_axis(in.clip);
-    }
-    if (kind > 9.5 && kind < 10.5) {
-        // Already premultiplied, like anything else sampled from a texture.
-        return sample_mesh(in.uv);
-    }
     if (kind > 4.5 && kind < 5.5) {
         // Coverage rather than color: one channel scaling a solid, which is
         // what an antialiased glyph is. The coordinates are the vertex's own,

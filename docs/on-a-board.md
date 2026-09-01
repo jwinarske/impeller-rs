@@ -146,6 +146,49 @@ starting that stage.
 A bench that dies instantly with `nohup: failed to run command './xtask'` is
 that, not the board.
 
+## What the kind dispatch cost, which was most of the frame
+
+Chasing the one row that the shader fix above did not recover found something
+larger than the regression it started from. `shade` in `solid.wgsl` chose among
+fourteen material kinds with a chain of `if`s, each testing an upper and a lower
+bound. Every fragment therefore paid two float comparisons for every kind ahead
+of its own -- and a solid color, kind zero and the commonest material there is,
+matched none of them and fell through the whole chain to reach the return at the
+bottom.
+
+Measured on the Pi 5, three runs agreeing to a hundredth of a millisecond, after
+replacing the chain with a `switch` and answering the solid case first:
+
+| row | was | now |
+|---|---|---|
+| Vulkan distance field, 1 sample | 13.363 | 12.160 |
+| Vulkan tessellated, 4 samples | 15.976 | 7.417 |
+| Vulkan tessellated, 1 sample | 13.661 | 6.212 |
+| Vulkan full frame, mixed content | 21.199 | 18.795 |
+| GLES distance field, 1 sample | 13.442 | 12.034 |
+| GLES tessellated, 4 samples | 15.971 | 7.978 |
+| GLES tessellated, 1 sample | 13.530 | 6.634 |
+| GLES full frame, mixed content | 20.397 | 20.009 |
+
+The tessellated rows halved. They draw solid-filled shapes, which is the case
+that had been walking the entire chain.
+
+Two things were checked before believing it. Every pixel of all four hundred and
+twenty-six catalog and corpus scenes is byte-identical across the change --
+which is what separates a dispatch cost from a shortcut, and no test in the tree
+would have caught the difference on its own, since both backends run the same
+WGSL and the "software reference" is lavapipe running it too. And an
+intermediate version, which reordered the chain rather than replacing it,
+recovered the tessellated rows while making the mixed frame *worse* by three per
+cent: moving one kind up moves every kind below it down, which is the property
+the switch removes rather than rebalances.
+
+The lesson that outlives the numbers is that this cost was invisible from every
+direction available here. It is not in a diff -- the chain had been correct and
+unremarkable for as long as it existed. It is not in `cost.rs`, which counts
+passes, draws and vertices and was right about all three. It is not in the
+catalog, whose pixels do not move. Only the board says.
+
 ## Saying when it was last checked
 
 `cargo xtask gate` prints one line about the timing baseline, beside the skip

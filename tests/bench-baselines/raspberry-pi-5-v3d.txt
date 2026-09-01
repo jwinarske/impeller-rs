@@ -19,7 +19,7 @@
 # the only row here that has one, and adding a second is the kind of thing the
 # review above is for.
 #
-# Last checked against the board: 3937ce10a03ef7d0e5f7421beb39d6b6e6967a4b
+# Last checked against the board: d3ed1ecca67d633ec2802cbd4e435fea946c0d8e
 #
 # That line is read by `cargo xtask gate`, which counts the commits touching
 # what the bench times since it and says so. It exists because the numbers below
@@ -28,21 +28,31 @@
 # later reader can find. Update it when a `--check` run passes, whether or not
 # the numbers are re-recorded.
 #
-# On that check, seven of the eight rows came in at or below what is recorded
-# here, by one to two per cent, over three runs agreeing to two hundredths of a
-# millisecond. They are deliberately not re-recorded: the eighth row, the Vulkan
-# distance field, came in at 13.98 against 13.36 -- 4.6 per cent up, inside its
-# own tolerance, and stable rather than jumping between the two states its note
-# above describes. Re-recording the seven while that one is unexplained would
-# make the file say the regression is the new normal, which is what a baseline
-# is for saying it is not.
+# Re-recorded 2026-09-01, and every row moved for one reason. `shade` in
+# `solid.wgsl` dispatched on the material kind with a chain of `if`s, so every
+# fragment paid two float comparisons for each kind ahead of its own, and a
+# solid color -- the commonest material there is -- fell through all of them to
+# reach the return at the bottom. It is a `switch` now, with the solid case
+# answered first.
+#
+# Against the numbers this file held before, on three runs agreeing to a
+# hundredth of a millisecond: the tessellated rows fell by about half, the
+# distance-field rows by nine and ten per cent, and the mixed frame by eleven
+# and two. Every pixel of all four hundred and twenty-six catalog and corpus
+# scenes is byte-identical across the change, which is what says this is a
+# dispatch cost and not a shortcut.
+#
+# The row that had been 4.6 per cent up and unexplained -- the Vulkan distance
+# field -- was this: a point field's arm had gone in above the rounded
+# rectangle's, and the shapes are what that row draws.
+#
 #
 # device	configuration	median in milliseconds	[tolerance %]
-vulkan:0 V3D 7.1.7.0	distance field, 1 sample	13.363	5.0
-vulkan:0 V3D 7.1.7.0	tessellated, 4 samples	15.976
-vulkan:0 V3D 7.1.7.0	tessellated, 1 sample	13.661
-vulkan:0 V3D 7.1.7.0	full frame, mixed content	21.199
-gles V3D 7.1.7.0	distance field, 1 sample	13.442
-gles V3D 7.1.7.0	tessellated, 4 samples	15.971
-gles V3D 7.1.7.0	tessellated, 1 sample	13.530
-gles V3D 7.1.7.0	full frame, mixed content	20.397
+vulkan:0 V3D 7.1.7.0	distance field, 1 sample	12.160	5.0
+vulkan:0 V3D 7.1.7.0	tessellated, 4 samples	7.417
+vulkan:0 V3D 7.1.7.0	tessellated, 1 sample	6.212
+vulkan:0 V3D 7.1.7.0	full frame, mixed content	18.795
+gles V3D 7.1.7.0	distance field, 1 sample	12.034
+gles V3D 7.1.7.0	tessellated, 4 samples	7.978
+gles V3D 7.1.7.0	tessellated, 1 sample	6.634
+gles V3D 7.1.7.0	full frame, mixed content	20.009
