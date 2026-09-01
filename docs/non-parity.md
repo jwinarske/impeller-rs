@@ -45,6 +45,32 @@ clone of unknown vintage can encode behavior upstream has since changed. Where
 a claim names a symbol or a file, that is what to re-read when checking whether
 this file has gone stale.
 
+**Last re-read: 2026-09-01**, and the date is here because the sentence above it
+is worthless without one. "It was checked" is not a fact a later reader can act
+on; "it was checked on this day, and these are the symbols that were still
+saying what this file says they say" is. The same lesson is written out at
+length beside the timing baseline, which went eight commits pointing at a state
+no run had passed against, for want of exactly this.
+
+Six entries name something in upstream specific enough to re-read, and all six
+were, on that date and at tip:
+
+| | claim | what was read | still true |
+|---|---|---|---|
+| §1 | 256 uniform stops | `gradient_generator.h`, `kMaxUniformGradientStops = 256u` | yes |
+| §3 | the GLES shading language floors at 1.00 | `compiler.cc`, `sl_options.version = ... : 100`, and the `#ifndef IMPELLER_TARGET_OPENGLES` around `IPOrderedDither8x8` in `fast_gradient.frag` | yes |
+| §5 | elevation is in logical pixels | `dl_dispatcher.cc`, `Scalar occluder_z = dpr * elevation` | yes |
+| §6 | a blur reduces in one step | `gaussian_blur_filter_contents.cc`, `kMaxSigma = 500.0f` and one `downsample_scalar` through `texture_downsample.frag` | yes |
+| §8 | the blurred rectangle's asymmetric term | `solid_rrect_like_blur_contents.cc`, `NegPos` and `1.25 * sigma * (eccentricV.x - eccentricV.y)` under the comment "Pull in long end" | yes |
+| §10 | the squircle's conic-weight sawtooth | `round_superellipse_param.cc`, `frac * kPrecomputedVariables[left + 1][0] * sqrt(n)` | yes |
+
+Two of those six are upstream defects rather than differences of design -- §8's
+asymmetry and §10's sawtooth -- and both are still there. §10 is the sharper
+case now that the file has been read again: the comment four lines above the
+line in question states the intended relation as `weight1 = factor1 * sqrt(n)`,
+for the whole factor, which is what the code does to one term of the
+interpolation and not the other. Neither has been reported.
+
 ## 1. Four stops fit in the paint block; upstream carries 256
 
 **What differs.** Past `MAX_STOPS` — four — the recorder tabulates a gradient
