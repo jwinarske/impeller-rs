@@ -10,7 +10,7 @@ struct Paint {
     vec4 to_local[3];
     vec4 params;
     vec4 recolor[4];
-    vec4 recolor_offset;
+    vec4 filter_offset;
     vec4 filter_params;
 };
 struct VertexOutput {

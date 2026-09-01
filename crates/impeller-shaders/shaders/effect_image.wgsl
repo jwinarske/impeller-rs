@@ -13,7 +13,7 @@ struct Paint {
     to_local: array<vec4<f32>, 3>,
     params: vec4<f32>,
     recolor: array<vec4<f32>, 4>,
-    recolor_offset: vec4<f32>,
+    filter_offset: vec4<f32>,
     filter_params: vec4<f32>,
 };
 

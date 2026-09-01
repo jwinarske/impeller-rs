@@ -222,3 +222,162 @@ fn the_shader_answers_for_every_material_kind_and_no_others() {
          answers for them"
     );
 }
+
+/// The paint block, as four shaders declare it and as the renderer packs it.
+///
+/// This is the most consequential pair of lists in the tree and had nothing
+/// holding it together. `impeller_hal::material::layout` names the float offset
+/// each part of a material is written at; the `Paint` block in the WGSL names
+/// what the shader reads there. A member inserted, reordered or resized on one
+/// side and not the other does not fail to build and does not fail to render --
+/// every draw simply reads the wrong floats, and what that looks like depends
+/// on which kinds a scene happens to use.
+///
+/// Four declarations, not two. A caller's fragment program replaces this
+/// renderer's shader outright and reads the same uniform block, so the three
+/// fixture effects declare it too and say in their own comments that they are
+/// declaring the same one. Nothing was checking that they still were.
+///
+/// What is compared is the members and their widths rather than the prose
+/// around them, since the comments differ between the four on purpose -- the
+/// renderer's block explains the arrangement and a caller's does not need to.
+#[test]
+fn every_shader_declares_the_paint_block_the_renderer_packs() {
+    use impeller_hal::material::{layout, MATERIAL_FLOATS};
+
+    // A member is `name: vec4<f32>,` or `name: array<vec4<f32>, N>,`. Both are
+    // four floats a slot, which is the arrangement the block is built on and
+    // the reason it can be copied in without writing padding.
+    fn members(block: &str) -> Vec<(String, usize)> {
+        let mut out = Vec::new();
+        for line in block.lines() {
+            let line = line.trim();
+            let Some((name, rest)) = line.split_once(':') else {
+                continue;
+            };
+            let name = name.trim();
+            if name.is_empty() || !name.chars().all(|c| c.is_alphanumeric() || c == '_') {
+                continue;
+            }
+            let floats = if rest.contains("array<vec4<f32>") {
+                let count: usize = rest
+                    .rsplit(',')
+                    .nth(1)
+                    .and_then(|n| n.trim().trim_end_matches('>').trim().parse().ok())
+                    .unwrap_or_else(|| panic!("cannot read the length of `{line}`"));
+                4 * count
+            } else if rest.contains("vec4<f32>") {
+                4
+            } else {
+                panic!("`{line}` is not a four-component slot, which this block is made of");
+            };
+            out.push((name.to_string(), floats));
+        }
+        out
+    }
+
+    let mut declarations: Vec<(String, Vec<(String, usize)>)> = Vec::new();
+    for (name, source) in sources() {
+        let body = without_comments(&source);
+        let Some((_, rest)) = body.split_once("struct Paint {") else {
+            continue;
+        };
+        let block = rest.split_once('}').expect("the end of the block").0;
+        declarations.push((name, members(block)));
+    }
+    assert_eq!(
+        declarations.len(),
+        4,
+        "four shaders declare the paint block; found {:?}",
+        declarations.iter().map(|(n, _)| n).collect::<Vec<_>>()
+    );
+
+    // `solid.wgsl` is the reference rather than whichever sorted first: it is
+    // the renderer's own block, and the other three are a caller's copy of it.
+    let reference = &declarations
+        .iter()
+        .find(|(name, _)| name == "solid.wgsl")
+        .expect("solid.wgsl declares the paint block")
+        .1;
+    for (name, other) in &declarations {
+        assert_eq!(
+            other, reference,
+            "{name} declares the paint block differently from solid.wgsl, so a \
+             draw through one reads floats the other did not write"
+        );
+    }
+
+    // The offsets, cumulative from zero, against what the renderer packs to.
+    // The correspondence is by hand because the two vocabularies differ -- the
+    // block's `recolor` is the renderer's `FILTER` -- and it is checked for
+    // completeness below rather than trusted.
+    let expected: [(&str, &str, usize); 8] = [
+        ("stops", "STOPS", layout::STOPS),
+        ("offsets", "OFFSETS", layout::OFFSETS),
+        ("geometry", "GEOMETRY", layout::GEOMETRY),
+        ("to_local", "TO_LOCAL", layout::TO_LOCAL),
+        ("params", "PARAMS", layout::PARAMS),
+        ("recolor", "FILTER", layout::FILTER),
+        ("filter_offset", "FILTER_OFFSET", layout::FILTER_OFFSET),
+        ("filter_params", "FILTER_PARAMS", layout::FILTER_PARAMS),
+    ];
+    let mut at = 0usize;
+    for (index, (member, floats)) in reference.iter().enumerate() {
+        let (declared, constant, offset) = expected
+            .get(index)
+            .unwrap_or_else(|| panic!("the block has a member `{member}` this test does not name"));
+        assert_eq!(member, declared, "member {index} of the paint block");
+        assert_eq!(
+            at, *offset,
+            "`{member}` sits at float {at} in the shader and `layout::{constant}` \
+             says {offset}"
+        );
+        at += floats;
+    }
+    assert_eq!(
+        reference.len(),
+        expected.len(),
+        "the block declares {} members and this test names {}",
+        reference.len(),
+        expected.len()
+    );
+    assert_eq!(
+        at, MATERIAL_FLOATS,
+        "the block is {at} floats and `MATERIAL_FLOATS` is {MATERIAL_FLOATS}"
+    );
+
+    // And every constant in `layout` is accounted for, so one added there is
+    // classified rather than quietly uncovered. `DITHER` is the one that names
+    // no member of its own: it is two floats inside `filter_params`, which the
+    // constant's own documentation says, so what is asserted is that it lands
+    // inside that member rather than beside it.
+    const MATERIAL: &str = include_str!("../../impeller-hal/src/material.rs");
+    let module = MATERIAL
+        .split_once("pub mod layout {")
+        .expect("a `layout` module")
+        .1
+        .split_once("\n}")
+        .expect("the end of it")
+        .0;
+    for line in module.lines() {
+        let Some(rest) = line.trim().strip_prefix("pub const ") else {
+            continue;
+        };
+        let Some(name) = rest.split(':').next() else {
+            continue;
+        };
+        // `DITHER` names no member of its own -- it is two floats inside
+        // `filter_params` -- so there is nothing here to match it against. Its
+        // place is asserted where both numbers are, beside the constant itself,
+        // and at compile time: two constants compared in a test is an
+        // assertion that cannot fail.
+        if name == "DITHER" {
+            continue;
+        }
+        assert!(
+            expected.iter().any(|(_, constant, _)| *constant == name),
+            "`layout::{name}` is not matched to a member of the paint block here, \
+             so nothing asks whether the shader reads it where the renderer wrote it"
+        );
+    }
+}
