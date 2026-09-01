@@ -532,3 +532,58 @@ mod found_by_generation {
         }
     }
 }
+
+/// The case that showed lyon's own debug assertions had to come off.
+///
+/// Found by `accepted_input_tessellates_to_finite_output` and kept here as a
+/// case of its own, because a proptest seed says a failure happened once and a
+/// test says what it was. Every coordinate is inside
+/// `Path::is_within_tessellation_range`, so this is input this renderer accepts
+/// on purpose.
+///
+/// What it does to lyon 1.0.21 is reach `fill.rs`'s `recover_from_error` and
+/// trip the assertion there -- `self.active.edges.first().map(|e|
+/// !e.is_merge)`, a claim about the sweep line's own state that its recovery
+/// path apparently cannot keep. In a release build there is no assertion and it
+/// recovers into a real tessellation, a thousand and forty-nine vertices of
+/// one; in a debug build it panicked, so the same path drew a shape in release
+/// and took the process down under test. The workspace manifest turns that
+/// package's debug assertions off and says why.
+///
+/// Reduced from what proptest handed over, and each of the three curves earns
+/// its place: replacing the conic with a line, or shrinking the magnitude to a
+/// thousand, makes it tessellate cleanly. The quad is the one piece that does
+/// not need to be a curve -- two lines through the same points do it -- and it
+/// is left as upstream's generator produced it so the case here and the seed in
+/// `hostile.proptest-regressions` are the same case.
+#[test]
+fn a_path_at_the_coordinate_limit_tessellates_rather_than_panicking() {
+    let far = 16_777_215.0f32;
+    let mut builder = PathBuilder::new().with_fill_rule(FillRule::NonZero);
+    builder.arc(
+        Vec2::new(0.0, far),
+        Vec2::new(1162.7828, -479.33395),
+        7.361_401_6,
+        -0.362_522_57,
+    );
+    builder.close();
+    builder.conic_to(Vec2::new(0.0, 0.0), Vec2::new(-1.1754944e-38, far), 0.0);
+    builder.move_to(Vec2::new(MAX_COORDINATE, far));
+    builder.quad_to(Vec2::new(0.0, 0.0), Vec2::new(0.0, far));
+    let path = builder.build();
+    assert!(path.is_finite());
+    assert!(path.is_within_tessellation_range());
+
+    let mut tess = Tessellator::new();
+    let filled = tess.fill(&path, 0.01);
+    // Something rather than nothing, which is what says lyon recovered instead
+    // of giving up -- and the check that would fail if a later version of it
+    // decided to return empty here instead.
+    assert!(
+        !filled.is_empty(),
+        "the path should tessellate to something"
+    );
+    for v in &filled.vertices {
+        assert!(v.is_finite(), "fill put {v:?} in the buffer");
+    }
+}
