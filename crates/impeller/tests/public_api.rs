@@ -3570,11 +3570,18 @@ fn a_group_can_be_filtered_by_a_composition_in_either_order() {
 }
 
 #[test]
-fn a_backdrop_takes_any_image_filter_and_refuses_the_one_that_moves_it() {
+fn a_backdrop_takes_any_image_filter_including_the_one_that_moves_it() {
     // `Layer::backdrop_blur` is a sigma, because a layer is `Copy` and a filter
     // is not. That made a blur the only backdrop this renderer could apply,
     // where `SceneBuilder.pushBackdropFilter` takes any `ImageFilter` and
     // upstream's `SaveLayer` takes a `DlImageFilter`.
+    //
+    // A matrix was the last one still refused, on the reasoning that a filter
+    // is a pass and a pass that moves its image needs a target sized for where
+    // the image went. The first half is true of every other filter and the
+    // second does not follow: a backdrop is not composited, it is *seeded*, and
+    // the target it is seeded into is the layer's own -- decided before the
+    // filter is consulted and the same size whatever the matrix says.
     let Some(mut ctx) = context() else { return };
 
     // A hard vertical edge to filter: black left, white right.
@@ -3645,9 +3652,74 @@ fn a_backdrop_takes_any_image_filter_and_refuses_the_one_that_moves_it() {
         "the dilation should have carried the edge left of where it was"
     );
 
-    // And the one that is refused rather than guessed at. A matrix moves the
-    // image, so as a pass it needs a target sized for where the content went
-    // rather than where it was.
+    // And the one that moves the image rather than recomputing it in place. It
+    // is not a pass: what a backdrop is seeded into is the layer's own target,
+    // already allocated and the same size whatever the matrix says, so the
+    // matrix folds into the mapping that seed draws through.
+    //
+    // Sixteen pixels right, which puts the edge at eighty where it was at
+    // sixty-four. Checked on both sides of where it moved to and where it left,
+    // so a matrix quietly dropped would fail at the first and a matrix applied
+    // twice at the second.
+    let moved = shot(
+        &mut ctx,
+        Some(ImageFilter::Matrix {
+            transform: Transform2D::from(Affine2::from_translation(Vec2::new(16.0, 0.0))),
+        }),
+    );
+    assert_eq!(
+        pixel(&moved, 72, 64),
+        [0, 0, 0, 255],
+        "the edge should have moved right, leaving black where white was"
+    );
+    assert_eq!(
+        pixel(&moved, 88, 64),
+        [255, 255, 255, 255],
+        "and white should be where the edge moved to"
+    );
+
+    // What the move leaves behind is the other half of what a matrix backdrop
+    // means, and this ground cannot show it: a clamp extends the edge texel,
+    // and every edge of this ground is the color the ground beyond it already
+    // is, so a smear and a show-through agree everywhere.
+    //
+    // So a second ground, white with a black stripe down its right edge, and a
+    // matrix that halves the image into the top-left quarter. Two thirds of the
+    // way across, the seed names a texel past the right of the source: decal
+    // makes that transparent and the white ground shows, where a clamp would
+    // put the stripe there -- black, across a region the stripe never covered.
+    let mut canvas = Canvas::new(SIZE);
+    canvas.clear(Color::WHITE);
+    canvas
+        .draw_rect(
+            Rect::new(112.0, 0.0, 128.0, 128.0),
+            &Paint::fill(Color::BLACK).with_anti_alias(false),
+        )
+        .expect("stripe");
+    canvas
+        .save_layer_backdrop(
+            Layer::opacity(1.0),
+            None,
+            &ImageFilter::Matrix {
+                transform: Transform2D::from(Affine2::from_scale(Vec2::splat(0.5))),
+            },
+        )
+        .expect("halved backdrop");
+    canvas.restore();
+    let halved = render(&mut ctx, canvas);
+    assert_eq!(
+        pixel(&halved, 100, 64),
+        [255, 255, 255, 255],
+        "past the halved image the target should show through, not the edge \
+         texel smeared across it"
+    );
+    // And the halved image is there at all: the stripe is at fifty-six now,
+    // which is where the right edge of a frame halved about the origin lands.
+    assert_eq!(pixel(&halved, 60, 32), [0, 0, 0, 255], "the halved stripe");
+
+    // A matrix with no inverse is refused rather than guessed at: it collapses
+    // the image to a line or a point, and nothing says what the rest of the
+    // target read.
     let mut canvas = Canvas::new(SIZE);
     ground(&mut canvas);
     let outcome = canvas
@@ -3655,13 +3727,13 @@ fn a_backdrop_takes_any_image_filter_and_refuses_the_one_that_moves_it() {
             Layer::opacity(1.0),
             None,
             &ImageFilter::Matrix {
-                transform: Transform2D::from(Affine2::from_translation(Vec2::new(8.0, 0.0))),
+                transform: Transform2D::from(Affine2::from_scale(Vec2::new(1.0, 0.0))),
             },
         )
         .map(|_| ());
     assert!(
         matches!(outcome, Err(Error::Unsupported(_))),
-        "a matrix backdrop should be refused rather than approximated, got {outcome:?}"
+        "a singular matrix backdrop should be refused, got {outcome:?}"
     );
 }
 

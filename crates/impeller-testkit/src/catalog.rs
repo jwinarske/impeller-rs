@@ -6803,6 +6803,86 @@ fn pictures() -> Vec<Scene> {
         .with_background(DARK)
         .with_samples(4),
         Scene::tree(
+            "dl/matrix-backdrop-filter",
+            // A backdrop filter that is a matrix rather than a blur: the inner
+            // group captures what the outer one has drawn, halves it and puts
+            // it down offset, so a half-size copy of the rectangle and the
+            // circle lands with its circle on the far edge of the original.
+            //
+            // The first matrix backdrop in the catalog, and until this went in
+            // the only one this renderer refused. The other backdrop plates
+            // filter with a blur, a caller's program, or the two composed, and
+            // all three leave a pixel where they found it -- so nothing here
+            // was asking whether a backdrop can be read anywhere but where it
+            // was written.
+            //
+            // What the copy does not cover is the half that says the seed
+            // decals rather than clamps: the capture is the outer group's own
+            // content on transparent, so the copy is transparent nearly
+            // everywhere and the original shows through it. Where the two
+            // circles overlap, one at half alpha over the other reads brighter
+            // than either.
+            vec![
+                Node::Paint(Box::new(PaintSpec {
+                    color: [0.0, 0.0, 0.0, 1.0],
+                    blend: BlendMode::Src,
+                    clip: None,
+                    clip_out: None,
+                    transform: Transform::default(),
+                })),
+                Node::Layer {
+                    layer: Box::new(LayerSpec::default()),
+                    bounds: None,
+                    transform: Transform::default(),
+                    children: vec![
+                        Node::Draw(Box::new(Item::stroke(
+                            Shape::Rect {
+                                min: [0.0, 0.0],
+                                max: [120.0, 120.0],
+                            },
+                            StrokeSpec::new(2.0),
+                            RED,
+                        ))),
+                        Node::Draw(Box::new(
+                            Item::fill(
+                                Shape::Circle {
+                                    center: [80.0, 80.0],
+                                    radius: 40.0,
+                                },
+                                [0.0, 1.0, 0.0, 0.5],
+                            )
+                            .with_blend(BlendMode::Plus),
+                        )),
+                        Node::Layer {
+                            layer: Box::new(LayerSpec {
+                                backdrop: ImageFilter::Matrix {
+                                    // Halve about the circle's center and set
+                                    // the result down a radius away along the
+                                    // diagonal, which is upstream's arithmetic
+                                    // in this plate's units.
+                                    transform: magnify(
+                                        Vec2::splat(40.0),
+                                        0.5,
+                                        Vec2::splat(40.0 + 40.0 * std::f32::consts::FRAC_1_SQRT_2),
+                                    )
+                                    .into(),
+                                },
+                                ..LayerSpec::default()
+                            }),
+                            bounds: None,
+                            transform: Transform::default(),
+                            children: Vec::new(),
+                        },
+                    ],
+                },
+            ],
+        )
+        .with_background(DARK)
+        // A backdrop filter cuts the pass to read what it was writing, which a
+        // multisampled pass cannot be resumed from; the same reason the blur
+        // chapter's backdrop plates give.
+        .with_samples(1),
+        Scene::tree(
             "dl/collapsed-draw-paint-in-subpass",
             // A paint inside a group whose mode combines it with the frame.
             // Upstream names this for an optimization that collapses the group

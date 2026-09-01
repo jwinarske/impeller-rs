@@ -1033,6 +1033,22 @@ pub struct Canvas {
     backdrops: std::collections::HashMap<i64, BackdropShare>,
 }
 
+/// A backdrop ready to be laid under a layer's own content.
+///
+/// Three things rather than a pass index, because a seed is a draw and a draw
+/// needs a mapping: which pass holds the filtered image, which target that pass
+/// is an image *of* -- they differ when a bounded layer seeds from its parent
+/// -- and the matrix the filter asked for, which is the one filter that moves
+/// the image rather than recomputing it where it stands.
+#[derive(Clone, Copy)]
+struct Backdrop {
+    pass: usize,
+    of: Target,
+    /// `None` for every filter but a matrix, which is what it means for the
+    /// image to be read where it was written.
+    moved_by: Option<Affine2>,
+}
+
 /// One captured backdrop, and what has already been made of it.
 ///
 /// The capture is a pass index, which is all a backdrop needs to be here: a
@@ -1480,7 +1496,7 @@ impl Canvas {
         layer: Layer,
         filter: Option<ImageFilter>,
         backdrop: Option<&ImageFilter>,
-    ) -> Result<Option<(usize, Target)>> {
+    ) -> Result<Option<Backdrop>> {
         let parent = self.target;
         // The layer's own sigma is the `Copy`-friendly spelling of the same
         // thing, so it becomes a filter here and there is one path below.
@@ -1534,13 +1550,45 @@ impl Canvas {
         id: Option<i64>,
         parent: Target,
         filter: &ImageFilter,
-    ) -> Result<(usize, Target)> {
+    ) -> Result<Backdrop> {
+        // A matrix is peeled off here rather than run as a pass. Every other
+        // filter reads its input where the fragment is and writes there, so it
+        // is a pass over a target the size of what it was handed; a matrix
+        // moves the image instead, and a pass for it would need a target sized
+        // for where the content went. It does not need one: what a backdrop is
+        // seeded into is the layer's own target, already allocated and the same
+        // size whatever the matrix says, and the seed is a draw with a mapping
+        // -- so the matrix goes into that mapping and no pass is spent.
+        //
+        // Only at the top. Inside a composition the matrix is between two
+        // filters that do run as passes, so its result is what the outer one
+        // reads and there is no seed to fold it into; that stays refused, in
+        // `filter_passes`.
+        let (filter, moved_by) = match filter {
+            ImageFilter::Matrix { transform } => {
+                let Some(affine) = transform.to_affine() else {
+                    return Err(Error::Unsupported(
+                        "a projective matrix is not available as a backdrop filter; \
+                         it maps the image through a division this seed does not do",
+                    ));
+                };
+                if affine.matrix2.determinant() == 0.0 {
+                    return Err(Error::Unsupported(
+                        "a singular matrix is not available as a backdrop filter; \
+                         it collapses the image and nothing says what it read",
+                    ));
+                }
+                (&ImageFilter::None, Some(affine))
+            }
+            other => (other, None),
+        };
         let Some(id) = id else {
             let cut = self.cut_pass();
-            return Ok((
-                self.filter_passes(cut, parent, filter, BlurBasis::of(self.transform))?,
-                parent,
-            ));
+            return Ok(Backdrop {
+                pass: self.filter_passes(cut, parent, filter, BlurBasis::of(self.transform))?,
+                of: parent,
+                moved_by,
+            });
         };
 
         // Read out by value first: what follows needs `&mut self`, and the
@@ -1557,7 +1605,13 @@ impl Canvas {
         let (over, captured) = match existing {
             // A filter is a function of its input, so the same filter over the
             // same capture is the same image and there is nothing to compute.
-            Some((from, _, Some(pass))) => return Ok((pass, from)),
+            Some((from, _, Some(pass))) => {
+                return Ok(Backdrop {
+                    pass,
+                    of: from,
+                    moved_by,
+                })
+            }
             Some((from, captured, None)) => (from, captured),
             None => {
                 let cut = self.cut_pass();
@@ -1577,7 +1631,11 @@ impl Canvas {
         if let Some(share) = self.backdrops.get_mut(&id) {
             share.filtered.push((filter.clone(), pass));
         }
-        Ok((pass, over))
+        Ok(Backdrop {
+            pass,
+            of: over,
+            moved_by,
+        })
     }
 
     /// End the current target's pass here, and answer which pass now holds it.
@@ -1620,7 +1678,7 @@ impl Canvas {
         // multisampling will say so again.
         self.anti_alias = false;
         let index = self.finished.len() - 1;
-        self.draw_whole_pass(index, target, target, BlendMode::Src);
+        self.draw_whole_pass(index, target, target, BlendMode::Src, None);
         index
     }
 
@@ -1636,7 +1694,14 @@ impl Canvas {
     /// seeded with a backdrop. The mapping is the inverse of the one a layer
     /// composite uses, and reduces to the full-texture mapping when the two are
     /// the same size, which is what makes the unbounded case share this code.
-    fn draw_whole_pass(&mut self, pass: usize, source: Target, into: Target, blend: BlendMode) {
+    fn draw_whole_pass(
+        &mut self,
+        pass: usize,
+        source: Target,
+        into: Target,
+        blend: BlendMode,
+        moved_by: Option<Affine2>,
+    ) {
         let slot = self.slot_for(TextureSource::Layer(pass));
         let offset = into.origin - source.origin;
         let (iw, ih) = (into.extent.width as f32, into.extent.height as f32);
@@ -1647,11 +1712,37 @@ impl Canvas {
         let anchor = Vec2::new(-1.0 - 2.0 * offset.x / iw, 1.0 + 2.0 * offset.y / ih);
         let scale = Mat2::from_diagonal(Vec2::new(0.5 * iw / sw, -0.5 * ih / sh));
         let clip_to_texture = Affine2::from_mat2(scale) * Affine2::from_translation(-anchor);
+        // A matrix moves the image, so the fragment at a device point reads
+        // where that point came *from*: the mapping gains the inverse, stated
+        // in device pixels, between the texture coordinates and the device
+        // position they name. `texels` is that position from a normalized
+        // coordinate and `normalized` is its inverse, so with no matrix the
+        // three cancel and this is the mapping above unchanged.
+        let clip_to_texture = match moved_by {
+            None => clip_to_texture,
+            Some(matrix) => {
+                let texels = Affine2::from_translation(source.origin)
+                    * Affine2::from_scale(Vec2::new(sw, sh));
+                let normalized = texels.inverse();
+                normalized * matrix.inverse() * texels * clip_to_texture
+            }
+        };
         let material = Material::Image {
             to_local: to_local_columns(Transform2D::from(clip_to_texture)),
             slot,
             alpha: 1.0,
-            tile: TileMode::Clamp,
+            // Clamped when the image stays where it was, which is every case
+            // but one: the mapping then covers exactly the texture and there is
+            // nothing outside it to decide about. A matrix leaves parts of the
+            // target naming no texel, and those have to come out transparent so
+            // what is underneath shows -- smearing the edge across them is what
+            // a clamp would do and is not what a filter that moved an image
+            // says about where the image is not.
+            tile: if moved_by.is_some() {
+                TileMode::Decal
+            } else {
+                TileMode::Clamp
+            },
             // A layer is composited at its own size, so a texel lands on a
             // pixel and the filter has nothing to blend. Linear anyway, which
             // is what a target scaled by a resize would want.
@@ -1679,12 +1770,17 @@ impl Canvas {
     ///
     /// `Src`, because it is the layer's starting image rather than something
     /// composited onto it, and the layer's target was cleared to transparent.
-    fn seed_backdrop(&mut self, pending: Option<(usize, Target)>) {
-        let Some((pass, parent)) = pending else {
+    fn seed_backdrop(&mut self, pending: Option<Backdrop>) {
+        let Some(Backdrop {
+            pass,
+            of: parent,
+            moved_by,
+        }) = pending
+        else {
             return;
         };
         let into = self.target;
-        self.draw_whole_pass(pass, parent, into, BlendMode::Src);
+        self.draw_whole_pass(pass, parent, into, BlendMode::Src, moved_by);
     }
 
     fn push_layer_frame(&mut self, layer: Layer, filter: Option<ImageFilter>) {
@@ -1762,9 +1858,16 @@ impl Canvas {
     /// handed to `saveLayer`, and the group counterpart of what
     /// `Paint::with_image_filter` already does for one draw.
     ///
-    /// Refuses a matrix for the reason `filter_passes` gives, and refuses it
-    /// here rather than at `restore`: a `restore` has no result to fail into,
-    /// and by then the caller has drawn into the layer.
+    /// Refuses a matrix, which is a redirection rather than an absence: a
+    /// group's finished image is moved by `Layer::with_matrix`, which states
+    /// the same thing and is what `peel` turns this filter into everywhere
+    /// else. Refused here rather than at `restore`, because a `restore` has no
+    /// result to fail into and by then the caller has drawn into the layer.
+    ///
+    /// A *backdrop's* matrix is not refused; see `backdrop_pass`. The two are
+    /// different questions -- a group's own image is composited by machinery
+    /// that already takes a matrix, and a backdrop's is seeded by a draw that
+    /// now does.
     pub fn save_layer_filtered(
         &mut self,
         layer: Layer,
@@ -4946,12 +5049,14 @@ impl Canvas {
     /// is its inner half then its outer, which is what composing means and is
     /// the order `peel` takes them apart in.
     ///
-    /// A matrix is refused rather than approximated. Every other kind reads its
-    /// input where the fragment is and writes there; a matrix *moves* the
-    /// image, so as a pass it needs a mapping the other filters do not have and
-    /// a target sized for where the content went rather than where it was. That
-    /// is real work and guessing at it would put the backdrop somewhere nobody
-    /// asked for, which is the substitution this renderer refuses elsewhere.
+    /// A matrix does not become a pass. Every other kind reads its input where
+    /// the fragment is and writes there; a matrix *moves* the image, so as a
+    /// pass it would need a target sized for where the content went rather than
+    /// where it was. A backdrop's matrix never gets here -- `backdrop_pass`
+    /// peels it off and folds it into the seed, which draws into a target that
+    /// was already the right size -- so what reaches this arm is a matrix
+    /// somewhere inside a composition, where the seed is not what reads it, and
+    /// that is refused rather than approximated.
     fn filter_passes(
         &mut self,
         source: usize,
@@ -4980,8 +5085,9 @@ impl Canvas {
             }
             ImageFilter::Matrix { .. } => {
                 return Err(Error::Unsupported(
-                    "a matrix is not available as a backdrop filter; it moves the \
-                     image rather than recomputing it in place",
+                    "a matrix inside a composition is not available as a filter; it \
+                     moves the image rather than recomputing it in place, and only \
+                     the outermost one folds into a backdrop's seed",
                 ))
             }
         })

@@ -22,6 +22,17 @@ duplication the paragraph above rules out. `docs/parity.md` says what is built,
 a test checks that it says so truly, and a copy of that claim kept by hand here
 is the same claim without the check. So there is no list.
 
+A backdrop filter may be a matrix. `save_layer_backdrop` refused one, on the
+reasoning that a filter is a pass and a pass that moves its image needs a target
+sized for where the image went. The first half holds of every other filter and
+the second does not follow: a backdrop is seeded rather than composited, and the
+target it is seeded into is the layer's own -- fixed before the filter is
+consulted, and the same size whatever the matrix says. So the matrix folds into
+the mapping that seed already draws through, and costs no pass. Outside the
+moved image the seed names no texel and the target shows through, rather than
+the edge smeared across the gap. A matrix inside a composition is still refused,
+having no seed to fold into, and so is one with no inverse or with a projection.
+
 A layer whose matrix will move its result records over the pre-image of what the
 frame can see, not only over the frame. A shape drawn outside the frame and
 translated back into view used to be gone before the matrix ran; it arrives now.

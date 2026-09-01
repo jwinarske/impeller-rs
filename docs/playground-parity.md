@@ -172,9 +172,9 @@ column is right and the obvious way to check it is wrong.
 | `aiks_dl_primitive_shape_unittests.cc` | ~2 | 0 | one is a playground harness, one wants a stroke width of zero to mean a hairline |
 | `aiks_dl_text_unittests.cc` | — | 7 | shaping and font parsing, which are out of scope; glyph rendering is not, and these use synthetic coverage |
 | `aiks_dl_runtime_effect_unittests.cc` | — | 14 | a drawPaint with a program, and a sampler bound to something that is not a texture, for one each; see below |
-| `aiks_dl_unittests.cc` | ~36 | 25 | nothing; see below |
+| `aiks_dl_unittests.cc` | ~36 | 26 | nothing; see below |
 
-The catalog holds four hundred and thirteen scenes against a column totalling
+The catalog holds four hundred and fourteen scenes against a column totalling
 about four hundred, and the two are not a ratio: five chapters hold more than
 the file they mirror, because a scene here is one picture where a test there can
 be a loop over every blend mode or a family drawn twice. What the totals meeting
