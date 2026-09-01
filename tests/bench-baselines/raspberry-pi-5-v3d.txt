@@ -19,10 +19,15 @@
 # the only row here that has one, and adding a second is the kind of thing the
 # review above is for.
 #
-# Last checked against the board: b62d05d7a479ded4bc190fda9807bb11c0166d42
+# Last checked against the board: 259db30265904ca51df205f532482195b751c8c7
 #
-# That line is read by `cargo xtask gate`, which counts the commits touching
-# what the bench times since it and says so. It exists because the numbers below
+# That line names the commit whose state a board run passed against, which is
+# never the commit that writes the line -- a hash cannot be recorded inside the
+# object it names. So it is updated afterwards, in a commit that touches nothing
+# the bench times, and the count below it stays honest.
+#
+# It is read by `cargo xtask gate`, which counts the commits touching what the
+# bench times since it and says so. It exists because the numbers below
 # once went sixteen renderer commits unchecked and were ten and a half per cent
 # out, and nothing in the tree could have said so -- "I ran it" is not a fact a
 # later reader can find. Update it when a `--check` run passes, whether or not
