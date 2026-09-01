@@ -664,47 +664,33 @@ fn rounded_rect_coverage(clip: vec3<f32>) -> vec4<f32> {
     let point = to_gradient_space(clip);
     let half_size = paint.geometry.zw;
     let radius = clamp(paint.params.z, 0.0, min(half_size.x, half_size.y));
-    let stroke = paint.params.w;
-    if (stroke > 0.0) {
-        // An outline as the difference of two offset shapes rather than as a
-        // band around one, and the difference is the corner.
-        //
-        // A band takes the distance to the outline and asks for the points
-        // within half a width of it. Outside a square corner that distance is
-        // the Euclidean distance to the vertex, so the band's outer edge there
-        // is an *arc* -- and `dart:ui`'s default join is a miter, which is
-        // sharp. That is why a square-cornered stroke used to be refused here
-        // and sent to the tessellator instead.
-        //
-        // Offsetting the shape says the other thing. A rectangle grown by half
-        // a width is a rectangle, with the corner still square, and the zero
-        // set of its own field is exactly the miter. For a rounded corner the
-        // two agree -- growing a rounded rectangle by `d` grows its radius by
-        // `d`, which is the arc either way -- so nothing that was already
-        // analytic changes shape.
-        let half = stroke * 0.5;
-        // The outer radius is carried rather than derived, because the join
-        // decides it and the shader cannot see the join. See the field's note
-        // on `Material::RoundedRect`.
-        let outer = rounded_rect_distance(point, half_size + half, paint.geometry.y);
-        // The inner shape vanishes once the stroke is wider than the shape it
-        // outlines, and a vanished shape has no inside. Left to `max` alone the
-        // degenerate box would be a point, and a point half a pixel across is a
-        // dot in the middle of a thick outline.
-        let shrunk = half_size - half;
-        let gradient = vec2<f32>(dpdx(outer), dpdy(outer));
-        let per_pixel = max(length(gradient), 1e-6);
-        let outside_in = clamp(0.5 - outer / per_pixel, 0.0, 1.0);
-        var inside_out = 0.0;
-        if (min(shrunk.x, shrunk.y) > 0.0) {
-            let inner = rounded_rect_distance(point, shrunk, max(radius - half, 0.0));
-            inside_out = clamp(0.5 - inner / per_pixel, 0.0, 1.0);
-        }
-        let tint = paint.stops[0];
-        let alpha = tint.a * (outside_in - inside_out);
-        return vec4<f32>(tint.rgb * alpha, alpha);
-    }
-    let distance = rounded_rect_distance(point, half_size, radius);
+    let stroke = max(paint.params.w, 0.0);
+
+    // A fill and an outline are one expression, differing in what the shape is
+    // and whether a second one is taken out of it.
+    //
+    // An outline is the difference of two offset shapes rather than a band
+    // around one, and the difference is the corner. A band takes the distance
+    // to the outline and asks for the points within half a width of it;
+    // outside a square corner that distance is the Euclidean distance to the
+    // vertex, so the band's outer edge there is an *arc*. `dart:ui`'s default
+    // join is a miter, which is sharp -- and that is why a square-cornered
+    // stroke used to be refused here and sent to the tessellator.
+    //
+    // Offsetting the shape says the other thing. A rectangle grown by half a
+    // width is a rectangle, its corner still square, and the zero set of its
+    // own field is exactly the miter. For a rounded corner the two agree --
+    // growing a rounded rectangle by `d` grows its radius by `d` -- so nothing
+    // that was already analytic changes shape. At a stroke of zero the growth
+    // is zero and this is the shape itself, which is the fill.
+    let half = stroke * 0.5;
+    // The outer radius is carried rather than derived for a stroke, because
+    // the join decides it and the shader cannot see the join; see the field's
+    // note on `Material::RoundedRect`. Both operands are values already in
+    // hand, so selecting between them costs nothing -- `select` evaluates both
+    // sides, which is only a trap when a side is work.
+    let grown = select(radius, paint.geometry.y, stroke > 0.0);
+    let outer = rounded_rect_distance(point, half_size + half, grown);
 
     // How much the distance changes across one pixel, which is what turns a
     // distance into a coverage. Taken from the derivative rather than passed
@@ -717,11 +703,22 @@ fn rounded_rect_coverage(clip: vec3<f32>) -> vec4<f32> {
     // scales the axes differently, where it adds a large derivative to a small
     // one. The result is an edge softer than a pixel, which reads as a blurry
     // shape rather than an antialiased one.
-    let gradient = vec2<f32>(dpdx(distance), dpdy(distance));
-    let width = length(gradient);
+    let gradient = vec2<f32>(dpdx(outer), dpdy(outer));
+    let per_pixel = max(length(gradient), 1e-6);
     // Half a pixel each way. A pixel whose center sits on the edge is half
     // covered, which is what the linear ramp says at distance zero.
-    let coverage = coverage_of(distance, max(width, 1e-6), paint.params.w);
+    var coverage = clamp(0.5 - outer / per_pixel, 0.0, 1.0);
+
+    // And for an outline, what is inside the inner shape comes back out. The
+    // inner shape vanishes once the stroke is wider than the shape it outlines,
+    // and a vanished shape has no inside: left to `max` alone the degenerate
+    // box would be a point, and a point half a pixel across is a dot in the
+    // middle of a thick outline.
+    let shrunk = half_size - half;
+    if (stroke > 0.0 && min(shrunk.x, shrunk.y) > 0.0) {
+        let inner = rounded_rect_distance(point, shrunk, max(radius - half, 0.0));
+        coverage -= clamp(0.5 - inner / per_pixel, 0.0, 1.0);
+    }
 
     let tint = paint.stops[0];
     let alpha = tint.a * coverage;
