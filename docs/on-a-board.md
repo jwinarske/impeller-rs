@@ -202,6 +202,29 @@ not move. The chain had been there since the shader had kinds to dispatch on,
 and the numbers it cost had been recorded as the baseline and read as the cost
 of the work.
 
+## Advanced blending on this machine's Vulkan, twice
+
+Two draws answer an advanced blend with an empty frame on lavapipe, and GLES --
+the same Mesa through a different extension -- is correct for both. Neither is
+this renderer: the pipeline state is the same either way and the pictures agree
+on GLES.
+
+The first is any advanced blend under multisampling. Fifteen catalog plates were
+reporting a mode they never drew because of it, and they are single-sampled now,
+which costs them nothing: their subject is what a blend computes rather than
+where an edge falls.
+
+The second is a *group* composited with an advanced mode, which is an image quad
+drawn with that mode. It produces nothing at any alpha and any sample count,
+where the same mode on an ordinary draw works. There is no workaround for it
+here -- the composite is what a group is -- so the sweep that asks whether a
+plate can show its mode asks every device and passes if any can.
+
+Both were found by writing the plate and looking at the output, and neither is
+visible from a diff, from `cost.rs`, or from the cross-backend comparison, which
+skips these scenes because the *preferred* Vulkan device has no advanced-blend
+extension at all.
+
 ## Saying when it was last checked
 
 `cargo xtask gate` prints one line about the timing baseline, beside the skip

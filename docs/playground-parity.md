@@ -161,7 +161,7 @@ column is right and the obvious way to check it is wrong.
 | `aiks_dl_gradient_unittests.cc` | ~40 | 46 | nothing; see below |
 | `aiks_dl_clip_unittests.cc` | ~5 | 7 | nothing; this file is covered |
 | `aiks_dl_opacity_unittests.cc` | ~3 | 3 | nothing; this file is covered |
-| `aiks_dl_blend_unittests.cc` | ~79 | 47 | capability injection and subpass collapse, for two of them; see below |
+| `aiks_dl_blend_unittests.cc` | ~79 | 76 | capability injection and subpass collapse, for two of them; see below |
 | `aiks_dl_blur_unittests.cc` | ~59 | 56 | nothing; see below |
 | `aiks_dl_vertices_unittests.cc` | ~16 | 21 | a caller's program cannot be read at a mesh's texture coordinates, for one of them; see below |
 | `aiks_dl_atlas_unittests.cc` | ~11 | 12 | nothing; see below |
@@ -171,7 +171,7 @@ column is right and the obvious way to check it is wrong.
 | `aiks_dl_runtime_effect_unittests.cc` | — | 14 | a drawPaint with a program, and a sampler bound to something that is not a texture, for one each; see below |
 | `aiks_dl_unittests.cc` | ~36 | 20 | subpass collapse, for five of them; see below |
 
-The catalog holds three hundred and sixty-six scenes of roughly four hundred,
+The catalog holds three hundred and ninety-five scenes of roughly four hundred,
 and the proportion is less interesting than which ones: the arithmetic of drawing is largely covered, and
 what is missing is either a capability this renderer does not have or a thing
 the scene model cannot describe.
@@ -433,6 +433,23 @@ as well as through value.
 
 All twenty-one are asserted, and putting the sample count back fails the
 assertion.
+
+The other half of that file's macro output is here now, and it is not the same
+family twice. Upstream generates every blend mode over a *draw* and again over a
+*group* at half alpha, and the two cover different mechanisms: a draw's mode
+combines one shape's color with the frame, a group's combines a finished image
+with it after the group's own alpha has scaled what it holds. A renderer
+applying the alpha after the mode would agree with the first family and disagree
+with the second for every mode that is not linear.
+
+Writing them found a second driver failure of the same shape as the first, in a
+different draw. A group is composited as an image quad drawn with its mode, and
+on this machine's Vulkan software rasterizer that draw produces nothing for an
+advanced mode -- at any alpha, at any sample count -- while GLES, the same Mesa
+through a different extension, is correct. The draw family works on both. So the
+sweep that asks whether a plate can show its mode now asks *every* device here
+and passes if any can, which is the honest claim rather than a device-specific
+one, and the reason is written beside it.
 
 The rule that found none of that has been widened since, because it should have
 found some of it. A scene is rendered again with its features stripped and has

@@ -3651,6 +3651,66 @@ const MODES: &[(BlendMode, &str)] = &[
     (BlendMode::Luminosity, "blend/blend-mode-luminosity"),
 ];
 
+/// The same modes again, for the family upstream generates at half source
+/// alpha.
+///
+/// A second table of names rather than a suffix computed from the first, for
+/// the reason the first is written out: a scene's name is an identifier the
+/// playground steps through and a test reports, and it has to be a
+/// `&'static str`.
+const MODES_AT_HALF_ALPHA: &[(BlendMode, &str)] = &[
+    (BlendMode::Clear, "blend/blend-mode-src-alpha-clear"),
+    (BlendMode::Src, "blend/blend-mode-src-alpha-src"),
+    (BlendMode::Dst, "blend/blend-mode-src-alpha-dst"),
+    (BlendMode::SrcOver, "blend/blend-mode-src-alpha-src-over"),
+    (BlendMode::DstOver, "blend/blend-mode-src-alpha-dst-over"),
+    (BlendMode::SrcIn, "blend/blend-mode-src-alpha-src-in"),
+    (BlendMode::DstIn, "blend/blend-mode-src-alpha-dst-in"),
+    (BlendMode::SrcOut, "blend/blend-mode-src-alpha-src-out"),
+    (BlendMode::DstOut, "blend/blend-mode-src-alpha-dst-out"),
+    (BlendMode::SrcATop, "blend/blend-mode-src-alpha-src-atop"),
+    (BlendMode::DstATop, "blend/blend-mode-src-alpha-dst-atop"),
+    (BlendMode::Xor, "blend/blend-mode-src-alpha-xor"),
+    (BlendMode::Plus, "blend/blend-mode-src-alpha-plus"),
+    (BlendMode::Modulate, "blend/blend-mode-src-alpha-modulate"),
+    (BlendMode::Multiply, "blend/blend-mode-src-alpha-multiply"),
+    (BlendMode::Screen, "blend/blend-mode-src-alpha-screen"),
+    (BlendMode::Overlay, "blend/blend-mode-src-alpha-overlay"),
+    (BlendMode::Darken, "blend/blend-mode-src-alpha-darken"),
+    (BlendMode::Lighten, "blend/blend-mode-src-alpha-lighten"),
+    (
+        BlendMode::ColorDodge,
+        "blend/blend-mode-src-alpha-color-dodge",
+    ),
+    (
+        BlendMode::ColorBurn,
+        "blend/blend-mode-src-alpha-color-burn",
+    ),
+    (
+        BlendMode::HardLight,
+        "blend/blend-mode-src-alpha-hard-light",
+    ),
+    (
+        BlendMode::SoftLight,
+        "blend/blend-mode-src-alpha-soft-light",
+    ),
+    (
+        BlendMode::Difference,
+        "blend/blend-mode-src-alpha-difference",
+    ),
+    (BlendMode::Exclusion, "blend/blend-mode-src-alpha-exclusion"),
+    (BlendMode::Hue, "blend/blend-mode-src-alpha-hue"),
+    (
+        BlendMode::Saturation,
+        "blend/blend-mode-src-alpha-saturation",
+    ),
+    (BlendMode::Color, "blend/blend-mode-src-alpha-color"),
+    (
+        BlendMode::Luminosity,
+        "blend/blend-mode-src-alpha-luminosity",
+    ),
+];
+
 /// `aiks_dl_blend_unittests.cc`.
 ///
 /// The per-mode scenes mirror what the original generates with a macro over
@@ -3724,6 +3784,67 @@ fn blend() -> Vec<Scene> {
             )
         })
         .collect();
+
+    // Upstream generates two families over every blend mode, and the second is
+    // the one this had not mirrored: the mode on a *group* rather than on a
+    // draw, at half alpha. The distinction is real and neither family covers
+    // the other. A draw's mode combines one shape's color with the frame; a
+    // group's combines a finished image with it, after the group's own alpha
+    // has scaled what it holds -- so the two have to compose in that order, and
+    // a renderer applying the alpha after the mode would agree with the draw
+    // family and disagree with this one for every mode that is not linear.
+    scenes.extend(MODES_AT_HALF_ALPHA.iter().map(|(mode, name)| {
+        Scene::tree(
+            name,
+            vec![
+                // The same destination the draw family uses, so the two can be
+                // read against each other.
+                Node::Draw(Box::new(Item::filled(
+                    Shape::Rect {
+                        min: [8.0, 8.0],
+                        max: [120.0, 120.0],
+                    },
+                    Fill::LinearGradient {
+                        start: [8.0, 8.0],
+                        end: [120.0, 120.0],
+                        stops: vec![
+                            Stop::new([0.08, 0.12, 0.5, 1.0], 0.0),
+                            Stop::new([0.95, 0.82, 0.2, 1.0], 1.0),
+                        ],
+                        tile: TileMode::Clamp,
+                    },
+                ))),
+                Node::Layer {
+                    layer: Box::new(LayerSpec {
+                        alpha: 0.5,
+                        blend: *mode,
+                        ..LayerSpec::default()
+                    }),
+                    bounds: None,
+                    transform: Transform::default(),
+                    children: vec![Node::Draw(Box::new(
+                        Item::fill(
+                            Shape::Circle {
+                                center: [64.0, 64.0],
+                                radius: 40.0,
+                            },
+                            // Opaque here, where the draw family's circle is
+                            // translucent: the group's alpha is what makes this
+                            // one half strength, and a translucent circle inside
+                            // it would confuse the two.
+                            [0.9, 0.35, 0.2, 1.0],
+                        )
+                        .with_blend(BlendMode::SrcOver),
+                    ))],
+                },
+            ],
+        )
+        .with_background(DARK)
+        // Single-sampled for the reason the draw family is: an advanced blend
+        // under multisampling draws nothing on this machine's Vulkan software
+        // rasterizer.
+        .with_samples(1)
+    }));
 
     scenes.push(plate(
         "blend/paint-blend-mode-is-respected",
