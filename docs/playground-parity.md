@@ -143,12 +143,25 @@ picture cases were all present when two thirds of them were not (miscellany).
 And one that said its chapter was bounded by test fixtures rather than by the
 renderer, when the renderer is exactly what bounds it (runtime effects).
 
-Three of the eight turned into renderer changes rather than document ones.
+Three of the eight turned into renderer changes rather than document ones, and
+more have since. The pattern has held every time it has been tested: on the
+evidence above, the likeliest thing wrong with an entry in this column is not
+that it names the wrong obstacle but that it names a real one governing far
+less than the gap it is offered to explain -- or, twice now, one that is real
+about upstream and not about this renderer.
 
-All fourteen have now been checked. Treat them as unverified, which is what they are.
-On the evidence above, the likeliest thing wrong with them is not that they
-name the wrong obstacle but that they name a real one governing far less than
-the gap it is offered to explain.
+Both of those turned up again in one sitting. The shadow row named an
+optimization that genuinely is not here and concluded that mirroring its scenes
+would check nothing, which is true of any one of them and false of the pairs
+they come in. The vertices row named a refusal whose stated reason -- that a
+caller's program has nowhere for a per-vertex coordinate to arrive -- was about
+a fragment stage, when the vertex stage behind it is this renderer's own and
+hands the coordinate on. The first cost ten plates and a shape; the second cost
+a fixture and a refusal being deleted.
+
+So the column is short again, and what is in it now is mostly of a third kind:
+not an obstacle at all, but a test of machinery upstream has and this renderer
+does not, which no amount of building here would reach.
 
 One thing the checking did *not* find, and it is worth saying because the
 opposite was nearly recorded: the "Scenes there" counts are in scenes and not
@@ -171,7 +184,7 @@ column is right and the obvious way to check it is wrong.
 | `aiks_dl_shadow_unittests.cc` | ~30 | 24 | two casters the scene model cannot describe; see below |
 | `aiks_dl_primitive_shape_unittests.cc` | ~2 | 0 | one is a playground harness, one wants a stroke width of zero to mean a hairline |
 | `aiks_dl_text_unittests.cc` | — | 7 | shaping and font parsing, which are out of scope; glyph rendering is not, and these use synthetic coverage |
-| `aiks_dl_runtime_effect_unittests.cc` | — | 15 | a sampler bound to something that is not a texture, for one of them; see below |
+| `aiks_dl_runtime_effect_unittests.cc` | — | 15 | nothing; two of that file's tests exercise machinery this renderer does not have, which is not the same as a gap; see below |
 | `aiks_dl_unittests.cc` | ~36 | 27 | one whose picture cannot show what it is for; see below |
 
 The catalog holds four hundred and nineteen scenes against a column totalling
@@ -566,12 +579,27 @@ through the transform is asserted where it can be, in
 `drawing_the_paint_fills_the_clip_rather_than_the_target` -- under a scale that *shrinks*,
 which is the direction that catches it.
 
-Two of upstream's are left. `RuntimeEffectWithInvalidSamplerDoesNotCrash` binds
-a gradient where a sampler is expected; a scene names its images as slots into a
-table the executor uploads, and there is no way to name something that is not a
-texture. And `RuntimeEffectVectorArray` wants a program with a vector-array
-uniform, which would mean a third fixture shader -- the two here already pass
-vectors, so what it would add is the array rather than the vector.
+Two of upstream's are left, and both were read again once the third had turned
+out to be buildable. Neither is unbuilt. Both are tests of machinery this
+renderer does not have, which is a different sentence and the one this column
+should have been carrying.
+
+`RuntimeEffectWithInvalidSamplerDoesNotCrash` binds a gradient where a sampler
+is expected, and asserts the engine survives it. Upstream can be handed that
+because a Dart caller hands it `List<ImageShader>` and the list is checked at
+run time. Here a program names its images as slots into a table the executor
+uploads -- `images: Vec<u32>` -- so there is no bad binding to survive: the
+type does not admit one. Mirroring it would mean weakening the interface in
+order to test the weakness.
+
+`RuntimeEffectVectorArray` declares `uniform vec4 iValues[1]` and reads its four
+components in four bands. What that exercises upstream is uniform *reflection*:
+its compiler walks a program's declarations and works out where each one sits.
+This renderer has none to get wrong. A program declares the same block the
+renderer packs -- that is the whole interface, and `docs/architecture.md` says
+why -- and that block is already made of arrays of `vec4`. Every runtime-effect
+plate here reads `paint.stops[1]` on every fragment, so an array-typed uniform
+in a caller's program is not a case to be built; it is the only case there is.
 
 The plates fill with a gradient where a flat color would have been easier, and
 the reason is a mutation that passed. Where a texture binding names nothing the
