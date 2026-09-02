@@ -1105,12 +1105,28 @@ impl Node {
     }
 
     fn samples_fixture(&self) -> bool {
+        // Exhaustive, and the direction it can be wrong in is why. A fill kind
+        // that reads the sheet and is answered `false` here does not fail a
+        // test -- the executor simply does not upload the fixture, and the
+        // scene draws something else. That is the dangerous direction, and a
+        // wildcard is what would take it: this is the same shape as the
+        // derivations that missed a new fill kind, a mesh, an atlas and a glyph
+        // run in turn, and the lesson those taught was to stop enumerating what
+        // matters and make the compiler ask about everything.
         let reads_sheet = |fill: &Fill| match fill {
             Fill::Image { .. } => true,
             // A program naming slot zero reads the sheet as surely as an image
             // fill does, and the executor has to upload it either way.
             Fill::RuntimeEffect { images, .. } => images.contains(&0),
-            _ => false,
+            // A color reads nothing. A gradient past `MAX_STOPS` does reach a
+            // texture, but the recorder builds that ramp itself out of the
+            // stops the fill carries -- it is not the fixture sheet and nothing
+            // has to be uploaded for it.
+            Fill::Solid(_)
+            | Fill::LinearGradient { .. }
+            | Fill::RadialGradient { .. }
+            | Fill::SweepGradient { .. }
+            | Fill::ConicalGradient { .. } => false,
         };
         match self {
             Self::Draw(item) => reads_sheet(&item.fill),
@@ -1227,9 +1243,17 @@ impl Node {
     }
 
     fn uses_glyphs(&self) -> bool {
+        // Exhaustive for the reason `samples_fixture` is: answering `false` for
+        // a fill that does read the glyph atlas leaves it unbuilt rather than
+        // failing anything.
         let reads_atlas = |fill: &Fill| match fill {
             Fill::RuntimeEffect { images, .. } => images.contains(&1),
-            _ => false,
+            Fill::Solid(_)
+            | Fill::Image { .. }
+            | Fill::LinearGradient { .. }
+            | Fill::RadialGradient { .. }
+            | Fill::SweepGradient { .. }
+            | Fill::ConicalGradient { .. } => false,
         };
         match self {
             Self::Glyphs(_) => true,
