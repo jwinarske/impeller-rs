@@ -641,6 +641,14 @@ and it is the same picture with the backdrop filter taken away.
 worse than no plate, and it is right: what the scene is for cannot be seen in
 it.
 
+The cost lane took it instead, which is the half a picture could not carry.
+`layer-backdrop-under-a-difference-clip` is in the corpus: the same arrangement,
+with nothing drawn over the evidence, and what it is there for is the number
+rather than the look. Rebuilding a clip costs one draw per clip in force per
+cut, and that scene is the only one in either collection that can say so --
+`cost.rs` counts draws on every commit, and removing the rebuild takes its row
+from eleven draws to ten.
+
 It was still worth writing once. Doing so found that a stencil clip did not
 survive the pass a backdrop filter cuts -- every draw after the filter tested
 for a depth no pixel in the new pass held, and landed nowhere -- and that on

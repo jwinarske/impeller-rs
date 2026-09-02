@@ -2934,6 +2934,66 @@ pub fn corpus() -> Vec<Scene> {
                 },
             ],
         ),
+        // The same backdrop with a stencil clip in force when it cuts the pass,
+        // which is the one arrangement that exercises rebuilding one.
+        //
+        // A backdrop filter cannot sample the attachment it is writing, so the
+        // pass stops there and the next begins by drawing it back in. A scissor
+        // clip survives that by itself, being state the recorder holds; a
+        // stencil clip does not, being a draw in the batch the cut took away.
+        // The narrowings are made again in the pass that follows, and this is
+        // the scene whose `passes` and `draws` say what that costs -- one draw
+        // per clip in force, which no other scene here can show because no
+        // other one has a clip a scissor cannot express and a backdrop at once.
+        //
+        // The picture is the reason it is a *corpus* scene rather than only a
+        // count. `docs/playground-parity.md` records that upstream's own
+        // regression test for this cannot be a plate, because it covers its
+        // evidence with an opaque draw. Nothing covers this one: the notch is
+        // the clip, the blurred band is the backdrop, and both have to be there
+        // on both backends.
+        Scene::tree(
+            "layer-backdrop-under-a-difference-clip",
+            vec![Node::Clip {
+                rect: None,
+                // Never a scissor whatever the transform: the complement of a
+                // rectangle is not one, so this goes to the stencil.
+                rect_out: Some([96.0, 96.0, 128.0, 128.0]),
+                children: vec![
+                    Item::fill(
+                        Shape::Rect {
+                            min: [0.0, 0.0],
+                            max: [64.0, 128.0],
+                        },
+                        RED,
+                    )
+                    .into(),
+                    Item::fill(
+                        Shape::Rect {
+                            min: [64.0, 0.0],
+                            max: [128.0, 128.0],
+                        },
+                        BLUE,
+                    )
+                    .into(),
+                    Node::Layer {
+                        layer: Box::new(LayerSpec::default().with_backdrop_blur(5.0)),
+                        bounds: Some([16.0, 40.0, 112.0, 88.0]),
+                        transform: Transform::default(),
+                        children: vec![Item::fill(
+                            Shape::RoundedRect {
+                                min: [16.0, 40.0],
+                                max: [112.0, 88.0],
+                                radius: 10.0,
+                            },
+                            [1.0, 1.0, 1.0, 0.25],
+                        )
+                        .with_blend(BlendMode::SrcOver)
+                        .into()],
+                    },
+                ],
+            }],
+        ),
         // Layers. Everything below here needs the scene to be a tree, and none
         // of it could be said at all while a scene was a flat list of items --
         // which is why layer compositing went uncompared across backends for as
