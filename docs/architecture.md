@@ -746,8 +746,13 @@ darks; then the table went linear and half, which answered that by having no
 fixed quantum to spend well; and now the values are encoded again because the
 pipeline is, so the perceptual spacing is back without the format arranging it.
 What half still buys is range — an eight-bit table cannot hold a component
-outside the sRGB primaries, and upstream's `kR8G8B8A8UNormInt` gradient texture
-cannot either. Straight rather than premultiplied storage survives all of it,
+outside the sRGB primaries. Upstream reached the same place and answered it the
+same way, in a different denomination: `CreateGradientTexture` scans the stops,
+and a gradient with any wide-gamut color among them is stored as
+`kR32G32B32A32Float` rather than the `kR8G8B8A8UNormInt` every other gradient
+gets. So the format is chosen per gradient there and once here, and both are
+choosing it for range. Straight rather than premultiplied storage survives all
+of it,
 because `gradient_color` returns the same shape from both arms and a
 premultiplied table would fork the two paths at the point the design exists to
 converge them.
