@@ -1144,3 +1144,76 @@ fn every_test_the_documents_name_exists() {
         dangling.join("\n  ")
     );
 }
+
+/// A path the documents name is a path that is there.
+///
+/// The same question as the citations above, asked of files instead of tests,
+/// and it found the same kind of answer: three references written relative to
+/// somewhere other than the repository root. Two of them named `tests/cost.rs`
+/// and `tests/cost-baseline.txt`, which is the worst version of the mistake --
+/// there *is* a `tests/` directory at the root, holding the shader snapshots
+/// and the board baselines, so a reader following those went somewhere real and
+/// found the file absent.
+///
+/// Only extensions this repository actually uses are checked. The documents
+/// cite upstream's files constantly -- `gaussian_blur_filter_contents.cc`,
+/// `dl_dispatcher.cc`, a `.frag` here and there -- and those live in a tree
+/// nobody has locally, which is the whole reason `docs/non-parity.md` says to
+/// read them at tip through `gh`. Extension is what tells the two apart without
+/// a list of exceptions to maintain.
+#[test]
+fn every_path_the_documents_name_is_there() {
+    const OURS: [&str; 5] = [".rs", ".md", ".wgsl", ".toml", ".txt"];
+
+    let root = repo_root();
+    let mut dangling = Vec::new();
+    let mut checked = 0usize;
+    let mut documents = vec![
+        ("README.md", doc("../README.md")),
+        ("CHANGELOG.md", doc("../CHANGELOG.md")),
+    ];
+    for name in [
+        "architecture.md",
+        "parity.md",
+        "non-parity.md",
+        "playground-parity.md",
+        "on-a-board.md",
+    ] {
+        documents.push((name, doc(name)));
+    }
+
+    for (name, text) in &documents {
+        let mut rest = text.as_str();
+        while let Some(open) = rest.find('`') {
+            rest = &rest[open + 1..];
+            let Some(close) = rest.find('`') else { break };
+            let cited = &rest[..close];
+            rest = &rest[close + 1..];
+            // A path rather than a name: it has to say where, or there is
+            // nothing here to resolve. A bare `canvas.rs` is prose.
+            if !cited.contains('/') || !OURS.iter().any(|e| cited.ends_with(e)) {
+                continue;
+            }
+            if cited.contains(' ') || cited.starts_with('/') {
+                continue;
+            }
+            checked += 1;
+            if !root.join(cited).exists() {
+                dangling.push(format!("{name} names {cited}"));
+            }
+        }
+    }
+
+    assert!(
+        checked >= 40,
+        "only {checked} paths were found across the documents, which is fewer \
+         than there are and means the walk missed some"
+    );
+    assert!(
+        dangling.is_empty(),
+        "these documents name files that are not there:\n  {}\n\
+         Either the file moved and the prose should follow it, or the path was \
+         written relative to somewhere other than the repository root.",
+        dangling.join("\n  ")
+    );
+}

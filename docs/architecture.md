@@ -1043,8 +1043,8 @@ numbers are the same on lavapipe, on V3D, and on a machine with no GPU, which
 means they can be recorded once and checked everywhere at no variance.
 
 That is the half that catches an *algorithmic* regression, and most regressions
-worth catching are algorithmic. `tests/cost-baseline.txt` holds one row per
-corpus scene and `tests/cost.rs` checks it. Loosening the flattening tolerance
+worth catching are algorithmic. `crates/impeller-testkit/tests/cost-baseline.txt` holds one row per
+corpus scene and `crates/impeller-testkit/tests/cost.rs` checks it. Loosening the flattening tolerance
 from a quarter pixel to a half moves thirty of its rows; taking the analytic
 route away from rounded rectangles moves three, and says which — a scene's
 vertex count going from four to thirty-two is a quad becoming a tessellation,

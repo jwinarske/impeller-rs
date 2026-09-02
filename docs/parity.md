@@ -189,7 +189,7 @@ across five configurations, each asserted inside the shape and outside it two
 hundredths of a unit further out, and each labeled with the part of the curve
 it sits on: where the superellipse starts, where it meets the circular arc, the
 middle of that arc. Those points are transcribed into
-`impeller-geometry/src/superellipse.rs` beside the table they check.
+`crates/impeller-geometry/src/superellipse.rs` beside the table they check.
 
 **What they check, measured rather than asserted.** Perturbing the corner
 construction is caught at a couple of percent — a gap factor moved from 0.2929
