@@ -181,7 +181,7 @@ column is right and the obvious way to check it is wrong.
 | `aiks_dl_blur_unittests.cc` | ~59 | 57 | nothing; see below |
 | `aiks_dl_vertices_unittests.cc` | ~16 | 22 | nothing; see below |
 | `aiks_dl_atlas_unittests.cc` | ~11 | 12 | nothing; see below |
-| `aiks_dl_shadow_unittests.cc` | ~30 | 24 | two casters the scene model cannot describe, and measured as near-duplicates of ones it can; see below |
+| `aiks_dl_shadow_unittests.cc` | 29 | 24 | twelve casters the scene model cannot spell or cannot wind, measured as near-duplicates of ones it can; see below |
 | `aiks_dl_primitive_shape_unittests.cc` | ~2 | 0 | one is a playground harness, one wants a stroke width of zero to mean a hairline |
 | `aiks_dl_text_unittests.cc` | — | 7 | shaping and font parsing, which are out of scope; glyph rendering is not, and these use synthetic coverage |
 | `aiks_dl_runtime_effect_unittests.cc` | — | 15 | nothing; two of that file's tests exercise machinery this renderer does not have, which is not the same as a gap; see below |
@@ -1164,15 +1164,25 @@ scene at a time. Upstream writes them in pairs -- the same caster wound each way
 depend on which way its caster is wound. That property has to hold here too, it
 holds by a different mechanism than upstream's, and nothing was checking it.
 
-So the casters are here in both windings, and
+So the polygonal casters are here in both windings, and
 `a_shadow_does_not_care_which_way_its_caster_is_wound` reads them as pairs and
 requires the two pictures to be identical -- not within a budget, since two
 windings of one polygon are one region and anything that reads the direction
 differs by whole triangles rather than by an edge sample. The three casters
 upstream declines to optimize are here too, for the other side of the same
-question. What is left out is two of them that the scene model cannot describe:
-a circle and an oval built from conics tweaked off the exact weight, which
-needs a closed multi-segment curve the model has no variant for.
+question.
+
+Twelve of upstream's twenty-nine are left out, and they divide by what stops
+them. Eight want a closed contour of several curve segments -- a circle and an
+oval built from conics tweaked off the exact weight, a round rectangle with four
+different corner radii built the same way, and quadratic, conic and cubic
+casters -- where `Shape::Conic` and `Shape::Cubic` are each one open segment and
+`Contours` opens every contour it is given. Three want a *winding* the model
+cannot state: the counter-clockwise circle, oval and uniform round rectangle,
+where the clockwise ones here are `Shape::Circle`, `Shape::Oval` and
+`Shape::RoundedRect` and a primitive has no direction to reverse. The last mixes
+stray `MoveTo`s with a closed contour, which is the same open-or-closed
+limitation the file beside it ran into.
 
 Worth stating what that costs, because the obvious repair is a general curve
 path and it would buy very little. Upstream's tweak is there to defeat *its*
@@ -1180,8 +1190,8 @@ shape recognition, so that the general convex path is exercised rather than an
 oval fast path. This renderer has no such recognition for a shadow: a circle, a
 sixty-four-sided polygon approximating one, and a rounded rectangle all record
 as four passes and four draws, differing only in the vertex count of the shape
-itself. So the two missing casters would take the same route as the octagon and
-the triangle that are here, with their curves flattened first -- which the path
+itself. So every one of the twelve would take the same route as the octagon and
+the triangle that are here, with its curves flattened first -- which the path
 chapter already covers from several directions. The variant is worth adding when
 something else wants it, and not for these. The mesh
 comparison upstream makes stays out as well, and it is the only part of that
