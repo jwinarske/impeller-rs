@@ -48,6 +48,24 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # The runner ships with several toolchains this repository never uses,
+      # and they are large enough to decide whether the job finishes. It ran
+      # out of disk on 2026-09-02 -- every step green, the suite passed, and
+      # the runner then died packing the cargo cache, which needs room for a
+      # copy of what it is packing. The failure surfaced as a job with no
+      # failing step and two post-steps that never reported, which is not a
+      # shape anybody reads correctly the first time.
+      #
+      # Removed before the cache is restored rather than after, since the
+      # restore needs the room too. `|| true` throughout: a runner image that
+      # stops shipping one of these should not fail the build for it.
+      - name: Make room
+        run: |
+          before=$(df --output=avail -BG / | tail -1)
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc \
+            /usr/local/share/boost "$AGENT_TOOLSDIRECTORY" || true
+          echo "free before: $before, after: $(df --output=avail -BG / | tail -1)"
+
       - name: Install Mesa
         # Wrapped in a hard wall-clock cap and retried, because apt's own
         # timeout is the wrong instrument. It measures inactivity, and the
