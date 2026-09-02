@@ -328,10 +328,23 @@ summarized here only so that this file is the one place to look.
 
 - **Text shaping and font parsing.** Out of scope by design; `draw_glyphs` takes
   a positioned run and an atlas. *Impact:* a caller brings their own shaper.
-- **`drawPicture` is tessellated rather than replayed.** `draw_recording`
-  composes a finished recording into the current one by tessellating it again.
-  *Impact:* the geometry is re-walked rather than the draws being replayed,
-  which costs recording time on a repeated sub-picture.
+- **`drawPicture` is composed as an image rather than replayed.** This entry
+  used to say the geometry was re-walked and that the cost was recording time,
+  which is not what `draw_recording` does and understates it twice over. A
+  recording arrives with its passes already made: they are appended, its root
+  becomes a texture this canvas samples, and the picture is placed by mapping a
+  fragment back through the transform. So a picture costs a target and a pass of
+  its own -- `picture-drawn-into-a-picture` in the corpus is three passes for two
+  nested ones, one each and one for the frame, and `cost-baseline.txt` is where
+  that is visible.
+
+  *Impact:* two, and the second is the one a caller would notice. A pass per
+  picture, where upstream dispatches the sub-picture's ops into the canvas it is
+  already recording and spends none. And a picture is rasterized at its own
+  extent before it is placed, so magnifying one resamples the picture it became
+  rather than re-flattening its curves at the new scale --
+  `dl/draw-picture-magnified` in the catalog draws exactly that, and a circle's
+  edge is where it shows.
 
 ## 10. An upstream artifact carried on purpose
 
