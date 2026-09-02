@@ -235,40 +235,60 @@ this machine -- that is the `blend/blend-mode-*` family, which the run that
 found this compared and passed. What differs is compositing a layer's texture
 with one of those modes when the layer's contents do not reach its edge.
 
-What it is at the Vulkan level took four tries to say, and the first three were
-wrong. Not a `renderArea` offset: this backend never sets one, the area is
-always the whole target. Not the negative viewport offset that crops a narrowed
-target either -- at the HAL level, one batch into one target with an advanced
-mode composites correctly with that offset, for a solid material and a sampled
-texture alike, and equally with a source texture smaller than the destination.
-And not the *submission*, which was the third answer and stood in this file for
-a while: two submissions with a fence between them fail exactly as one does.
+What it is at the Vulkan level took five tries to say, and the first four were
+wrong. Not a `renderArea` offset: this backend never sets one. Not the negative
+viewport offset that crops a narrowed target. Not the *submission*: two
+submissions with a fence between them fail exactly as one does. And not the
+attachment's coverage either, which was the fourth answer and the one that got
+filed -- partial coverage does fail, but only because of what it puts in one
+particular place.
 
-The fourth answer came from writing the thing out in bare `ash` with no renderer
-in it, which is what should have happened before any of the other three were
-written down. Two render passes in one command buffer; pass one clears a 32x32
-image to a color and draws over it; pass two samples that image with
-`VK_BLEND_OP_MULTIPLY_EXT`. The clear is deliberately neither the source nor the
-destination, so *it read what pass one drew* and *it read the clear* come out as
-different numbers.
+The fifth came from writing it out in bare `ash` with no renderer in it, which
+is what should have happened before any of the other four were written down.
+**The source is sampled once for the whole primitive rather than per fragment,
+and every fragment is blended against that one value -- its color and its alpha
+-- whatever the shader emitted there.**
 
-**The blend reads the clear whenever pass one's draw did not cover the whole
-attachment**, at every pixel, including the ones pass one did draw. Partial
-coverage reached three ways -- a scissor at the corner, a scissor inset by a
-pixel, a smaller viewport -- all fail the same way. Full coverage of a *smaller*
-attachment is correct, so it is the coverage and not the size. The identical
-sample with ordinary alpha blending is correct, and reading the intermediate
-back shows pass one wrote what it was asked to every time. Validation says
-nothing about any of it.
+That single sentence predicts every measurement taken across both
+investigations, including the ones taken before there was a rule to predict
+them. Destination `(0.264, 0.396, 0.616, 1.0)`, multiply:
 
-A layer is cleared to transparent black, so in a renderer the same failure
-arrives wearing a different face: multiplying by a transparent source leaves the
-destination, and the composite looks like it was dropped rather than fed the
-wrong operand.
+| what the one source value is | predicted | measured |
+|---|---|---|
+| orange, alpha 1 | 60, 40, 24 | 60, 40, 23 |
+| the intermediate's clear, alpha 1 | 7, 81, 47 | 7, 81, 47 |
+| alpha 0 | 67, 101, 157 | 67, 101, 157 |
+| orange, alpha 0.25 | 65, 86, 124 | 65, 86, 124 |
 
-One row of the table above still does not line up with that account. A rect one
-pixel narrower at the same origin does not cover its target either, and it
-composites. That is measured, not argued, and it is not explained here.
+The three that pin it need no sampling at all, only a fragment shader whose
+alpha varies. A rounded rectangle's coverage, alpha zero to one: not one pixel
+of 1024 changes, including the interior ones where coverage is one and the
+fragment is byte-identical to a constant-color shader's -- while the same
+shader under ordinary alpha blending draws the antialiased shape, 572 pixels,
+soft edges and all. Floor that alpha at a quarter so it never reaches zero and
+the whole frame comes back one color, exactly the blend at a quarter, including
+where the shader emits one. Turn the ramp inside out -- alpha one at the edges,
+a quarter in the middle -- and the whole frame comes back at one. So it is one
+fragment's value and not the minimum.
+
+Everything else follows. A layer is cleared to transparent black, so a group
+whose contents do not reach its edge has a transparent texel where the driver
+looks, and the composite contributes nothing -- which is the table above. A
+group whose contents *do* cover its target composites correctly even when its
+alpha varies across it, which is measured and is what the rule requires. And
+the fifteen catalog plates that were reporting a mode they never drew were
+multisampled, which is not something a blend can see: four samples makes the
+executor ask for antialiasing and draw the shape from its distance field, and a
+distance field is exactly a fragment shader whose alpha varies. Single-sampled
+they tessellate, and a tessellated shape's fragments all carry the paint's own
+alpha.
+
+Ruled out along the way, each by measurement rather than argument: the sample
+count, the derivative -- stating the per-pixel rate as a constant instead of
+taking `dpdx`/`dpdy` changes nothing -- a translucent source as such, since a
+constant alpha of 0.92 blends correctly and matches the formula, the scissor,
+the render area, a stencil attachment, a discarded multisample store, and the
+submission.
 
 Reported as gitlab.freedesktop.org/mesa/mesa/-/work_items/16243.
 
@@ -314,52 +334,35 @@ cent of the frame, all of it background.
 State a ground in eighths of a byte and there is nothing to round.
 `no_scene_clears_to_a_color_on_a_rounding_tie` checks both collections.
 
-## Advanced blending on this machine's Vulkan, twice
+## Advanced blending on this machine's Vulkan, in two disguises
 
-Two draws answer an advanced blend with an empty frame on lavapipe, and GLES --
-the same Mesa through a different extension -- is correct for both. Neither is
-this renderer: the pipeline state is the same either way and the pictures agree
-on GLES.
+Two arrangements answer an advanced blend with an empty frame on lavapipe, and
+GLES -- the same Mesa through a different extension -- is correct for both.
+Neither is this renderer: the pipeline state is the same either way and the
+pictures agree on GLES.
 
-The first was written down here as "any advanced blend under multisampling",
-which is wrong, and the correction is more useful than the claim was. Sample
-count is not a thing the blend can see. What it changes is the *route*: at four
-samples the executor asks for antialiasing and a shape is drawn from its
-distance field, at one it is tessellated. So the failing arrangement was being
-named by the switch that selected it.
+They were written down here as two defects and they are one. The section above
+has the rule and how it was reduced; what belongs here is what each looked like
+before there was a rule, because that is what a reader will meet first.
 
-Reduced to bare Vulkan, with no renderer in it, the trigger is the **fragment's
-alpha varying across the primitive**. One pass, a ground laid down as a draw,
-then a full-screen draw over it with `VK_BLEND_OP_MULTIPLY_EXT`:
-
-| the fragment shader | result |
-|---|---|
-| a push-constant color, alpha 1 everywhere | multiplies correctly |
-| a coverage from a distance field, alpha 0 to 1 | **0 of 1024 pixels change** |
-| the same coverage shader, ordinary alpha blending | 572 of 1024 change, edges soft |
-
-Not the sample count -- it fails at one sample as readily as four. Not the
-derivative either: stating the per-pixel rate as a constant instead of taking
-`dFdx`/`dFdy` of the distance leaves the failure exactly where it was. Not a
-translucent source in general, since
-`every_advanced_mode_agrees_with_the_reference_formulas` pushes a constant alpha
-of 0.92 through the same op and gets the equation's answer. What is left is that
-the alpha *varies*, and when it does the whole draw is dropped -- at every
-pixel, including the interior ones where coverage is one and the emitted
-fragment is byte-identical to the one the solid shader emits.
-
-Fifteen catalog plates were reporting a mode they never drew because of it, and
-they are single-sampled now, which costs them nothing: their subject is what a
-blend computes rather than where an edge falls. That fix still works, and now
-for a stated reason -- a single-sampled plate tessellates, and a tessellated
-shape's fragments all carry the paint's own alpha.
+The first was filed as "any advanced blend under multisampling". A sample count
+is not something a blend can see. What four samples changes is the *route*: the
+executor asks for antialiasing and the shape is drawn from its distance field
+rather than tessellated, and a distance field is a fragment shader whose alpha
+varies. So the claim was naming the switch that selected the failing
+arrangement. Fifteen catalog plates were reporting a mode they never drew, and
+they are single-sampled now, which costs them nothing -- their subject is what a
+blend computes rather than where an edge falls. That fix still holds and now for
+a stated reason: a tessellated shape's fragments all carry the paint's own
+alpha.
 
 The second is a *group* whose contents do not reach the edge of its own target,
 composited with an advanced mode -- which is every group a plate is likely to
-draw. It produces nothing at any alpha and any sample count, where the same mode
-on an ordinary draw works, and where the same group filling the frame composites
-correctly. The section above has what that reduces to in bare Vulkan. There is
-no workaround for it here -- the composite is what a group is -- so the sweep
+draw. A layer is cleared to transparent black, so such a group has a transparent
+texel where the driver takes its one source value, and the composite contributes
+nothing. It fails at any alpha and any sample count, where the same mode on an
+ordinary draw works and the same group filling its target composites correctly.
+There is no workaround here -- the composite is what a group is -- so the sweep
 that asks whether a plate can show its mode asks every device and passes if any
 can.
 
