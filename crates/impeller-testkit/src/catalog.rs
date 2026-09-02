@@ -6902,6 +6902,49 @@ fn pictures() -> Vec<Scene> {
         .with_background(DARK)
         .with_samples(4),
         Scene::tree(
+            "dl/depth-values-for-polygon-mode",
+            // The plate above with one thing changed. `Polygon` joins the whole
+            // run into a single open polyline where `Lines` reads it as
+            // separate segments, so the same ten points draw a zig-zag here and
+            // five parallel strokes there -- and the invariant is the same one:
+            // several draws out of one call, all needing the depth the clip is
+            // tested against, or the run comes back cut in pieces.
+            //
+            // The points are deliberately identical. A pair that differs in the
+            // mode alone says which of the two modes is wrong when one of them
+            // is; a pair that also moved its geometry says only that something
+            // did.
+            vec![
+                Node::Draw(Box::new(Item::stroke(
+                    Shape::Circle {
+                        center: [64.0, 64.0],
+                        radius: 52.0,
+                    },
+                    StrokeSpec::new(3.0),
+                    RED,
+                ))),
+                Node::Points(Box::new(PointsSpec {
+                    mode: PointMode::Polygon,
+                    points: (0..5)
+                        .flat_map(|i| {
+                            let y = i as f32 * 26.0 - 26.0;
+                            [[-8.0, y], [136.0, y + 96.0]]
+                        })
+                        .collect(),
+                    stroke: StrokeSpec::new(6.0),
+                    color: BLUE,
+                    blend: BlendMode::SrcOver,
+                    transform: Transform::default(),
+                    clip_shape: Some(Shape::Circle {
+                        center: [64.0, 64.0],
+                        radius: 52.0,
+                    }),
+                })),
+            ],
+        )
+        .with_background(DARK)
+        .with_samples(4),
+        Scene::tree(
             "dl/matrix-backdrop-filter",
             // A backdrop filter that is a matrix rather than a blur: the inner
             // group captures what the outer one has drawn, halves it and puts
