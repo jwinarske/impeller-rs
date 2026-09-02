@@ -262,9 +262,9 @@ order and a different picture.
 A note on that chapter before the rest of it, because it was drawn wrong for
 longer than any of what follows was missing. Ten of its plates put a mask blur
 under `BlendMode::Src`, which is not a choice any of them made: `Item::fill`
-defaults to it, upstream's paint defaults to `kSrcOver`, and `Src` is one of the
-seven modes `docs/non-parity.md` section 15 names as erasing a mask blur's whole
-bounds. So ten plates named after upstream's blur scenes were drawing that
+defaulted to it at the time, upstream's paint defaults to `kSrcOver`, and `Src`
+is one of the seven modes `docs/non-parity.md` section 15 names as erasing a
+mask blur's whole bounds. So ten plates named after upstream's blur scenes were drawing that
 deviation instead of the picture -- a blurred circle inside a hard-edged
 rectangle of erased ground, which is what the section describes and none of what
 upstream draws.
@@ -278,33 +278,57 @@ small to see, `SolidColorOvalsMaskBlurTinySigma`, which had been written as one
 oval at a made-up deviation where upstream draws three at nothing, a hundredth,
 and one. It is the three now, and the check passes on the blur.
 
-That fix stops at the mask blurs and the rest of the question is open, so it is
-written down here rather than left for whoever finds it next. `Item::fill`,
-`Item::filled` and `Item::stroke` all default to `Src`; `dart:ui`'s paint
-defaults to `srcOver`. Wherever a plate draws over something, the two differ --
-at an antialiased edge, under a translucent color, and anywhere a fill is
-transparent by design, which is what a decal tile mode makes it.
+That fix stopped at the mask blurs and left the rest open. It is closed now, and
+the way it closed is worth the paragraphs because the reason it stayed open was
+a cost that turned out to be avoidable.
 
-Measured, by changing the default and rendering the catalog either way: 58 of
-418 plates move, and 19 of those move past the budget the catalog holds itself
-to. The largest are the ones where a fill is transparent on purpose -- a tiled
+`Item::fill`, `Item::filled` and `Item::stroke` defaulted to `Src`; `dart:ui`'s
+paint defaults to `srcOver`. Wherever a plate draws over something the two
+differ -- at an antialiased edge, under a translucent color, and anywhere a fill
+is transparent by design, which is what a decal tile mode makes it. Measured, by
+changing the default and rendering the catalog either way: 65 of 418 plates
+move. The largest are the ones where a fill is transparent on purpose -- a tiled
 texture with a decal mode at 86 per cent of the frame, a linear gradient with
 one at 66 -- because `Src` writes that transparency over the ground instead of
 leaving the ground alone. Two translucent stroked-arc plates move by 40 per
-cent, for the same reason with a different cause.
+cent, for the same reason with a different cause. Every one of those movements
+is a correction: what they drew before is a picture upstream never draws.
 
-**It is not an oversight, which is why it is not simply fixed.**
-`Scene::tolerance` reads `blend == SrcOver` as saying the fragment was computed
-rather than replaced, and gives a scene that says so a unit of slack per store.
-A solid `Src` draw is therefore compared *byte for byte* across devices, and
-that strictness is what the default buys. Changing it loosens every one of those
-scenes, and the same run breaks five tests, two of them the tolerance
-derivations themselves.
+What held it up was the second cost, and it was real as stated.
+`Scene::tolerance` read `blend == SrcOver` as saying the fragment was computed
+rather than replaced, and gave a scene that says so a unit of slack per store.
+A solid `Src` draw was therefore compared *byte for byte* across devices, and
+that strictness is what the default bought.
 
-So there are two costs and the choice between them is real. What is not in doubt
-is the mask blur, where the deviation is not a matter of degree: `Src` puts the
-draw into a case `docs/non-parity.md` section 15 describes and upstream never
-reaches. Those eight draws name their blend.
+The way out is that the premise was too coarse. `SrcOver` is named as the mode
+that combines the fragment with what is already there, but an opaque source
+leaves nothing to combine with: `src + dst * (1 - 1)` is `src`, exactly, in the
+shader and in the fixed-point store alike. So the question the derivation asks
+is now about the *color* as well as the mode, and an opaque solid draw keeps its
+byte-for-byte comparison whichever mode it names. Two derivation tests had been
+leaning on the old imprecision and say what they mean now: the one that counts
+stores through a group uses a translucent color, since counting stores that do
+not happen counts nothing, and the one that checks the multisample budget uses a
+rectangle, since a multisampled circle is answered by the analytic branch above
+it.
+
+`EXACT` also had to grow a second condition. A scene can be made entirely of
+draws that store and still be composited out of a target, and the composite is
+arithmetic whatever it composites. `picture-drawn-into-a-picture` is the scene
+that says so: every draw in it writes a solid color and the two backends still
+land two levels apart on a tenth of the frame.
+
+Two things fell out of the change that are worth more than it cost. Two corpus
+scenes -- `circle-antialiased` and `rounded-rect-stroked` -- drop from 114 and
+216 vertices to 6, because `Src` does not respect coverage and was pushing both
+onto the tessellated path; they are drawn from their distance fields now, which
+is what upstream does and what this renderer prefers. And
+`blur/composed-filters` turned out to be a second plate drawing the deviation
+instead of its subject: its closing used a radius of nine against a notch
+twenty-four across, so it filled nothing, and the only thing distinguishing it
+from the same shape unfiltered was the ground `Src` erased.
+`a_feature_a_scene_asks_for_has_to_change_the_picture` caught it the moment the
+erasure stopped. The radius is fourteen.
 
 The blur row was wrong in a more interesting way, and checking it changed the
 renderer rather than the document. It said "backdrop identity keys", which was

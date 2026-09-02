@@ -565,7 +565,7 @@ impl Item {
             transform: Transform::default(),
             fill: Fill::Solid(color),
             color_filter: ColorFilter::None,
-            blend: BlendMode::Src,
+            blend: BlendMode::SrcOver,
             clip: None,
             clip_out: None,
             as_path: false,
@@ -597,7 +597,7 @@ impl Item {
             transform: Transform::default(),
             fill,
             color_filter: ColorFilter::None,
-            blend: BlendMode::Src,
+            blend: BlendMode::SrcOver,
             clip: None,
             clip_out: None,
             as_path: false,
@@ -615,7 +615,7 @@ impl Item {
             transform: Transform::default(),
             fill: Fill::Solid(color),
             color_filter: ColorFilter::None,
-            blend: BlendMode::Src,
+            blend: BlendMode::SrcOver,
             clip: None,
             clip_out: None,
             as_path: false,
@@ -953,6 +953,24 @@ impl From<Item> for Node {
     }
 }
 
+/// Whether a draw of one color puts that color into the target unchanged.
+///
+/// `SrcOver` is the interesting case and the reason this is a function rather
+/// than a comparison. It is named as the mode that combines the fragment with
+/// what was already there -- but only where there is something to combine, and
+/// an opaque source leaves nothing: `src + dst * (1 - 1)` is `src`, exactly,
+/// in floating point and in the fixed-point store alike. So an opaque solid
+/// draw stores whatever it says its mode is.
+///
+/// The distinction matters only where coverage is binary, which is where
+/// `Tolerance::EXACT` is reachable at all: a partially covered pixel carries a
+/// source alpha below one whatever the color said, and does combine. Every
+/// scene that can produce one is multisampled or analytic, and both of those
+/// are answered before this is asked.
+fn stores(blend: BlendMode, color: [f32; 4]) -> bool {
+    blend != BlendMode::SrcOver || color[3] >= 1.0
+}
+
 impl Node {
     /// A group with a full-size target, which is what a caller states when it
     /// does not know what the group covers.
@@ -1168,25 +1186,28 @@ impl Node {
     fn stores_rather_than_computes(&self) -> bool {
         match self {
             // A solid color, written rather than blended, is the whole of the
-            // case: any other fill computes, and `SrcOver` combines what it
-            // computed with what was there.
-            Self::Draw(item) => {
-                item.blend != BlendMode::SrcOver && matches!(item.fill, Fill::Solid(_))
-            }
+            // case: any other fill computes.
+            Self::Draw(item) => match item.fill {
+                Fill::Solid(color) => stores(item.blend, color),
+                _ => false,
+            },
             // A flood fill is a draw without a shape and answers the same way.
-            Self::Paint(paint) => {
-                paint.blend != BlendMode::SrcOver && matches!(paint.fill, Fill::Solid(_))
-            }
+            Self::Paint(paint) => match paint.fill {
+                Fill::Solid(color) => stores(paint.blend, color),
+                _ => false,
+            },
             // Points are stroked geometry in one color, so they store like any
             // other draw of one.
-            Self::Points(points) => points.blend != BlendMode::SrcOver,
+            Self::Points(points) => stores(points.blend, points.color),
             // A mesh's colors are interpolated across a triangle by the
             // rasterizer, which is arithmetic neither backend's shader
             // performs; without colors it is a draw of whatever its fill says.
             Self::Mesh(mesh) => {
                 mesh.colors.is_empty()
-                    && mesh.blend != BlendMode::SrcOver
-                    && matches!(mesh.fill, Fill::Solid(_))
+                    && match mesh.fill {
+                        Fill::Solid(color) => stores(mesh.blend, color),
+                        _ => false,
+                    }
             }
             // These sample a texture, which is an interpolation whatever else
             // they do: sprites out of the sheet, coverage out of the glyph
@@ -1670,7 +1691,14 @@ impl Scene {
         // scene format cannot be missed here. It has to say which it is, and
         // the direction to be wrong in is written down beside it.
         let computed = !self.items.iter().all(Node::stores_rather_than_computes);
-        if !computed {
+        let depth = self.items.iter().map(Node::layer_depth).max().unwrap_or(0);
+        // Both conditions, and the second is not redundant. A scene can be made
+        // entirely of draws that store and still be composited out of a target,
+        // and the *composite* is arithmetic whatever it is compositing: a
+        // sample, an alpha, and a blend. `picture-drawn-into-a-picture` is the
+        // scene that says so -- every draw in it writes a solid color and the
+        // two backends still land two levels apart on a tenth of the frame.
+        if !computed && depth == 0 {
             return self.allowing_ties(crate::image::Tolerance::EXACT);
         }
         // One unit per fixed-point store the fragment passes through, which is
@@ -1691,7 +1719,6 @@ impl Scene {
         // scene in the corpus is allowed three by this and uses two, which is
         // slack that is stated rather than discovered: if a scene ever needs
         // the third, the rule already predicted it.
-        let depth = self.items.iter().map(Node::layer_depth).max().unwrap_or(0);
         self.allowing_ties(crate::image::Tolerance::new(1 + depth, 0.0))
     }
 
@@ -3869,12 +3896,16 @@ mod tolerance_tests {
     /// multisample profile already carries its own, for the same edges.
     #[test]
     fn a_multisampled_scene_keeps_its_own_budget() {
+        // A rectangle rather than a curve, and the shape is the whole of what
+        // this asserts. A multisampled circle is drawn from its distance field
+        // and is answered by the branch above this one; the question here is
+        // what the scenes that reach *this* branch are given.
         let scene = Scene::new(
             "s",
             vec![Item::fill(
-                Shape::Circle {
-                    center: [50.0, 40.0],
-                    radius: 30.0,
+                Shape::Rect {
+                    min: [20.0, 10.0],
+                    max: [80.0, 70.0],
                 },
                 WHITE,
             )],
@@ -3886,13 +3917,17 @@ mod tolerance_tests {
     /// One unit per store, and a group is a store.
     #[test]
     fn a_group_is_allowed_the_rounding_of_the_target_it_is_composited_from() {
+        // Translucent, and that is what makes it a fragment arrived at by
+        // arithmetic rather than one written down. An opaque `SrcOver` draw
+        // leaves nothing to combine with and stores, so it would be held to
+        // `EXACT` and this test would be counting stores that do not happen.
         let inner = || {
             Item::fill(
                 Shape::Rect {
                     min: [10.0, 10.0],
                     max: [90.0, 70.0],
                 },
-                WHITE,
+                [1.0, 1.0, 1.0, 0.5],
             )
             .with_blend(BlendMode::SrcOver)
         };
