@@ -521,3 +521,132 @@ fn overlapping_advanced_draws_actually_blend_with_each_other() {
         "the overlap matches the region covered by only one shape"
     );
 }
+
+/// The layer alphas a group is composited at, and why two.
+///
+/// One is the composite with nothing scaling it, which is the mode on its own.
+/// A half is the case a renderer can get right and still have the order wrong:
+/// a group's alpha scales what it holds *before* the mode combines it with the
+/// frame, and applying it afterwards agrees at one and disagrees everywhere
+/// else.
+const GROUP_ALPHAS: [f32; 2] = [1.0, 0.5];
+
+/// A group composited with one mode, and the pixel it left.
+///
+/// Through `Canvas` rather than through a batch, because there is no other way
+/// to say "a group": the batch-level test above pushes one draw, and a group is
+/// a target rendered into and composited out of, which only the recorder
+/// builds.
+fn composite_group<H: Hal>(
+    ctx: &mut H::Context,
+    mode: BlendMode,
+    alpha: f32,
+) -> Result<[u8; 4], Error>
+where
+    H::Context: HalContext<Hal = H>,
+{
+    use impeller_core::{Canvas, Color, Layer, Paint, Rect};
+
+    let mut canvas = Canvas::new(SIZE);
+    // What a clear writes is what it is given: these are the numbers that end
+    // up in the target, so the equation below takes them as they are rather
+    // than premultiplying them again.
+    canvas.clear(Color::srgb(ADV_DST[0], ADV_DST[1], ADV_DST[2], ADV_DST[3]));
+    canvas.save_layer(Layer::opacity(alpha).with_blend(mode));
+    canvas
+        .draw_rect(
+            Rect::new(0.0, 0.0, SIZE.width as f32, SIZE.height as f32),
+            &Paint::fill(Color::srgb(ADV_SRC[0], ADV_SRC[1], ADV_SRC[2], ADV_SRC[3])),
+        )
+        .map_err(|_| Error::Unsupported("the group's own draw"))?;
+    canvas.restore();
+
+    let pixels = impeller_core::render_offscreen_into::<H>(
+        ctx,
+        &canvas.finish(),
+        &[],
+        PixelFormat::Rgba8Unorm,
+    )?;
+    let middle = ((SIZE.height / 2 * SIZE.width + SIZE.width / 2) * 4) as usize;
+    Ok([
+        pixels[middle],
+        pixels[middle + 1],
+        pixels[middle + 2],
+        pixels[middle + 3],
+    ])
+}
+
+/// Every advanced mode composites a *group* by its equation too.
+///
+/// The test above pushes one draw and checks the mode against the formula. A
+/// group is the other half of what `dart:ui` offers and nothing was checking
+/// it: what reaches the blend is not a shape's color but a finished target,
+/// scaled by the group's own alpha, and that is a different path through the
+/// renderer with the same specification behind it.
+///
+/// The gap was worth closing on its own and was found sideways. Two versions of
+/// one software rasterizer disagree with each other by up to ninety levels on
+/// exactly this arrangement -- `docs/on-a-board.md` has it -- and there was no
+/// way to say which of them was right, because nothing here computed the
+/// answer. Now something does, and both agree with it.
+///
+/// One tolerance unit, the same as the draw-level check, and the same reasoning:
+/// a looser bound would only hide a wrong order of operations.
+#[gtest]
+fn every_advanced_mode_composites_a_group_by_its_equation() {
+    let mut ran = false;
+    let check = |label: &str, run: &mut dyn FnMut(BlendMode, f32) -> Result<[u8; 4], Error>| {
+        let mut checked = 0;
+        for mode in BlendMode::ALL.iter().filter(|m| m.is_advanced()) {
+            for alpha in GROUP_ALPHAS {
+                match run(*mode, alpha) {
+                    Ok(got) => {
+                        checked += 1;
+                        // The group's contents premultiplied by its alpha
+                        // against the destination as the clear left it.
+                        let a = ADV_SRC[3] * alpha;
+                        let source = [ADV_SRC[0] * a, ADV_SRC[1] * a, ADV_SRC[2] * a, a];
+                        let want = quantize(
+                            blend_advanced(*mode, source, ADV_DST).expect("advanced formula"),
+                        );
+                        expect_true!(
+                            near(got, want),
+                            "{label} {mode} at group alpha {alpha}: got {got:?}, \
+                             equation says {want:?}"
+                        );
+                    }
+                    Err(e) => expect_true!(false, "{label} {mode} at {alpha}: refused: {e}"),
+                }
+            }
+        }
+        if checked > 0 {
+            eprintln!("compared {checked} group composites against the equations on {label}");
+        }
+        checked
+    };
+
+    for (preference, label) in [
+        (DevicePreference::Auto, "vulkan/auto"),
+        (DevicePreference::Software, "vulkan/software"),
+    ] {
+        let Ok(mut ctx) = Validated::new(preference) else {
+            continue;
+        };
+        if !ctx.capabilities().advanced_blend {
+            continue;
+        }
+        ran |= check(label, &mut |mode, alpha| {
+            composite_group::<VulkanHal>(&mut ctx, mode, alpha)
+        }) > 0;
+    }
+    if let Ok(mut ctx) = GlesValidated::new(DisplayTarget::Surfaceless) {
+        if ctx.capabilities().advanced_blend {
+            ran |= check("gles", &mut |mode, alpha| {
+                composite_group::<GlesHal>(&mut ctx, mode, alpha)
+            }) > 0;
+        }
+    }
+    if !ran {
+        eprintln!("skipping: no device here composites a group with an advanced mode");
+    }
+}

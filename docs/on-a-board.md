@@ -221,11 +221,19 @@ twenty-nine modes against the equations and passes on both backends here. What
 that test covers is a *draw*, though, and this is a group composite, so it is
 not evidence about the case that differs.
 
-Not chased further, and the reason is what it would cost: settling which of the
-two is right means deriving the expected value for a group composite by hand,
-per mode, against a driver nobody ships to users. The plates stay, the gate is
-run knowing this, and the note is here so the next person to see fourteen blend
-plates fail under `--software` does not start from nothing.
+Which of them is right is now answerable, and the answer is both.
+`every_advanced_mode_composites_a_group_by_its_equation` composites a group with
+each of the fifteen advanced modes at two layer alphas and compares against the
+specification's own formula, and llvmpipe's Vulkan and its GLES each agree with
+it to a unit -- thirty comparisons apiece. So the renderer composites a group
+correctly on both, and whatever the plates disagree about is downstream of that:
+those scenes put a *gradient* behind an unbounded group, where this puts a flat
+color behind a bounded one, and the difference has not been narrowed further.
+
+That test exists because of this note. Nothing in the tree computed the expected
+value for a group composite -- the blend-equation check pushes a single draw --
+so there was no way to adjudicate. Now there is, and the plates' disagreement is
+a smaller and better-specified question than it was.
 
 ## A clear is rounded by the driver, and the drivers disagree
 
