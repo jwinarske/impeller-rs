@@ -27,7 +27,7 @@
 use impeller_core::{ColorFilter, ImageFilter};
 use impeller_hal::BlendMode;
 use impeller_testkit::scene::{LayerSpec, MorphologySpec, Node, Transform};
-use impeller_testkit::Scene;
+use impeller_testkit::{catalog, corpus, Scene};
 
 /// A layer with every field set to something that is not its default.
 ///
@@ -191,4 +191,54 @@ fn a_layer_carrying_any_one_feature_says_so() {
             "`{name}` is not a feature and should not read as one"
         );
     }
+}
+
+/// No scene clears to a color that lands on a rounding tie.
+///
+/// A clear is not a draw. It is converted from float to the target's format by
+/// the driver rather than by a shader, and the drivers here do not agree about
+/// halves: a ground of `[0.06, 0.07, 0.10]` came out 25 in the blue channel on
+/// this machine's Vulkan and its GLES, and 26 on the software rasterizer,
+/// because a tenth of 255 is 25.5 exactly. Every scene using it then differed
+/// by a unit on every pixel of ground it left uncovered -- inside the budget,
+/// and spending a budget meant for the arithmetic of drawing on the color the
+/// frame started at.
+///
+/// Only clears, and that is measured rather than assumed. The same tie in a
+/// *fill* does not do it: a rectangle filled with `0.5` comes back 128 on all
+/// three, because a fill reaches the target through the fragment stage and the
+/// fixed-function store, which round the same way everywhere. So this checks
+/// backgrounds and says nothing about the hundred and fifty-odd fills in the
+/// two collections that sit on a half.
+///
+/// The rule is easy to keep: state a ground in eighths of a byte. Both times
+/// this has been got wrong the value was a round decimal chosen for reading --
+/// nine tenths of 255 is 229.5, and that one cost 79 per cent of a frame.
+#[test]
+fn no_scene_clears_to_a_color_on_a_rounding_tie() {
+    let mut on_a_tie = Vec::new();
+    for scene in corpus().into_iter().chain(catalog()) {
+        // Alpha as well: a transparent ground is exact and every other value
+        // reaches the same conversion the colors do.
+        for (channel, value) in ["red", "green", "blue", "alpha"]
+            .into_iter()
+            .zip(scene.background)
+        {
+            let scaled = value * 255.0;
+            if (scaled - scaled.floor() - 0.5).abs() < 1e-4 {
+                on_a_tie.push(format!(
+                    "{} clears to {value} in {channel}, which is {scaled} of 255",
+                    scene.name
+                ));
+            }
+        }
+    }
+    assert!(
+        on_a_tie.is_empty(),
+        "these scenes clear to a color a driver has to round, and two of the \
+         drivers here round it differently:\n  {}\n\
+         State the ground in eighths of a byte instead -- 26.0 / 255.0 rather \
+         than 0.10 -- so there is nothing to round.",
+        on_a_tie.join("\n  ")
+    );
 }

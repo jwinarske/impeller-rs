@@ -202,6 +202,30 @@ not move. The chain had been there since the shader had kinds to dispatch on,
 and the numbers it cost had been recorded as the baseline and read as the cost
 of the work.
 
+## A clear is rounded by the driver, and the drivers disagree
+
+Two of them here put `[0.06, 0.07, 0.10]` on the screen as different colors.
+Vulkan and GLES on this machine's hardware give 25 in the blue channel and the
+software rasterizer gives 26, because a tenth of 255 is 25.5 exactly and nothing
+says which way a half goes.
+
+It is only the *clear*. The same tie in a fill does not do it -- a rectangle
+filled with `0.5` comes back 128 on all three -- because a fill reaches the
+target through the fragment stage and the fixed-function store, which round the
+same way everywhere, while a clear is converted by the driver's own path. There
+are a hundred and fifty-odd fills on a half across the two scene collections and
+none of them costs anything.
+
+What it cost was a unit on every pixel of ground a scene left uncovered, which
+is inside the per-channel budget and is the reason it went unnoticed: the budget
+is there for the arithmetic of drawing, and it was being spent on the color the
+frame started at. On a pale ground the same mistake is louder -- nine tenths of
+255 is 229.5, and a shadow scene written that way differed from GLES on 79 per
+cent of the frame, all of it background.
+
+State a ground in eighths of a byte and there is nothing to round.
+`no_scene_clears_to_a_color_on_a_rounding_tie` checks both collections.
+
 ## Advanced blending on this machine's Vulkan, twice
 
 Two draws answer an advanced blend with an empty frame on lavapipe, and GLES --
