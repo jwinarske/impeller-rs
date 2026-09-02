@@ -284,8 +284,18 @@ you does not have will disagree — one lavapipe version writes outside a scisso
 where three other drivers do not, and a threshold fitted to one GPU can clear it
 by one per cent there and fail everywhere else. And the validation layer is the
 only thing that reports a Vulkan object outliving its device; without it those
-tests still pass, and on a machine that has no layer they say so, a hundred and
-twenty times, in skips nobody reads.
+tests still pass, and on a machine that has no layer they say so in skips nobody
+reads. A hundred and forty-nine of them, measured on 2026-09-02 rather than
+estimated, and measurable again in one command:
+
+```sh
+mkdir -p /tmp/no-layers && VK_LAYER_PATH=/tmp/no-layers cargo xtask verify
+```
+
+Which hides the layer's manifest from the loader and leaves everything else
+alone: the same 954 tests pass either way, with six skips when the layer is
+there and a hundred and fifty-five when it is not. This said a hundred and
+twenty once and the suite outgrew it, which is what the command is for.
 
 The gate says what CI last said, in a line beside the skip census and the
 timing drift, and for the same reason both of those are there: it is something
