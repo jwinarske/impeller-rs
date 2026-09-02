@@ -964,6 +964,52 @@ fn the_timing_baseline_records_the_commit_it_was_checked_against() {
     );
 }
 
+/// A document making claims about upstream says when it last read them.
+///
+/// `docs/non-parity.md` argues this at length in its own voice -- a parity
+/// decision is worth exactly as much as the source it was read from, and "it
+/// was checked" is not a fact a later reader can act on without a date. Then
+/// nothing checked that the line was there, which is the same gap the timing
+/// baseline had before the test above it.
+///
+/// It is worth more than tidiness. The audit that added the line to
+/// `docs/parity.md` found two of its three upstream claims wrong, both in prose
+/// that was read as a checklist and never re-derived. A date is what turns
+/// "someone should check these" into a thing a reader can see is overdue.
+///
+/// The date is not compared against anything. Staleness is a judgment about how
+/// fast upstream moves, not a threshold, and a test that failed on a date would
+/// only teach people to bump it.
+#[test]
+fn a_document_claiming_something_about_upstream_says_when_it_last_read_it() {
+    for name in ["parity.md", "non-parity.md"] {
+        let text = doc(name);
+        let date = text
+            .lines()
+            .find_map(|line| {
+                let line = line.trim_start_matches("**");
+                line.strip_prefix("Last re-read: ")
+            })
+            .unwrap_or_else(|| {
+                panic!(
+                    "docs/{name} makes claims about upstream and should carry a \
+                     `**Last re-read: YYYY-MM-DD**` line saying when they were \
+                     last read at tip"
+                )
+            });
+        let date: String = date.chars().take(10).collect();
+        let parts: Vec<&str> = date.split('-').collect();
+        assert!(
+            parts.len() == 3
+                && parts[0].len() == 4
+                && parts[1].len() == 2
+                && parts[2].len() == 2
+                && parts.iter().all(|p| p.chars().all(|c| c.is_ascii_digit())),
+            "docs/{name}'s re-read line should hold a YYYY-MM-DD date, and holds {date:?}"
+        );
+    }
+}
+
 /// The ratios `docs/architecture.md` reasons from are the ones the board
 /// recorded.
 ///
