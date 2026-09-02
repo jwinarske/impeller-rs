@@ -185,7 +185,7 @@ column is right and the obvious way to check it is wrong.
 | `aiks_dl_primitive_shape_unittests.cc` | ~2 | 0 | one is a playground harness, one wants a stroke width of zero to mean a hairline |
 | `aiks_dl_text_unittests.cc` | — | 7 | shaping and font parsing, which are out of scope; glyph rendering is not, and these use synthetic coverage |
 | `aiks_dl_runtime_effect_unittests.cc` | — | 15 | nothing; two of that file's tests exercise machinery this renderer does not have, which is not the same as a gap; see below |
-| `aiks_dl_unittests.cc` | 39 | 27 | two whose pictures cannot show what they are for; see below |
+| `aiks_dl_unittests.cc` | 39 | 28 | two whose pictures cannot show what they are for; see below |
 
 One row now carries an exact number rather than an approximate one.
 `aiks_dl_unittests.cc` holds thirty-nine `TEST_P` and expands none of them over
@@ -194,7 +194,7 @@ same number and there is nothing to approximate. It said about thirty-six. The
 rest keep their tildes and should: the paragraph below on `IMPELLER_FOR_EACH_BLEND_MODE`
 is why counting them that way is wrong.
 
-The catalog holds four hundred and nineteen scenes against a column totalling
+The catalog holds four hundred and twenty scenes against a column totalling
 about four hundred, and the two are not a ratio: five chapters hold more than
 the file they mirror, because a scene here is one picture where a test there can
 be a loop over every blend mode or a family drawn twice. What the totals meeting
