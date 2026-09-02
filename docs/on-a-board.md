@@ -234,14 +234,24 @@ this machine -- that is the `blend/blend-mode-*` family, which the run that
 found this compared and passed. What differs is compositing a layer's texture
 with one of those modes when the layer sits anywhere but the frame's corner.
 
-What it is at the Vulkan level is *not* established, and two readings that fit
-the table are both wrong. It is not a `renderArea` offset -- this backend never
-sets one, the area is always the whole target. And it is not the negative
-viewport offset that crops a narrowed target: at the HAL level, one batch into
-one target with an advanced mode composites correctly with that offset, for a
-solid material and for a sampled texture alike. So it is something about the
-arrangement rather than the draw state -- the layer is rendered in one pass of a
-submission and sampled by the next -- and that has not been narrowed further.
+What it is at the Vulkan level took three tries to say, and the first two were
+wrong. Not a `renderArea` offset: this backend never sets one, the area is
+always the whole target. Not the negative viewport offset that crops a narrowed
+target either -- at the HAL level, one batch into one target with an advanced
+mode composites correctly with that offset, for a solid material and a sampled
+texture alike, and equally with a source texture smaller than the destination.
+
+What is left, and what every measurement now points at, is the *submission*. A
+composite whose source was rendered by an earlier `submit_batch` works. The same
+composite whose source was rendered by an earlier pass of the *same* submission
+does not -- which is what a layer is, and why only the group plates show it.
+`SrcOver` in that identical arrangement is correct, which is what says it is the
+blend rather than the read.
+
+This backend transitions a sampled image out of the color-attachment layout
+before the pass that reads it, with a full barrier on both sides, so what it
+does between those two passes looks right. Reported as
+gitlab.freedesktop.org/mesa/mesa/-/work_items/16243.
 
 Which side is at fault is not established here and the note stops short of
 saying. What can be said is that this renderer's use of the extension is plain
