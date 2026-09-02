@@ -18,6 +18,39 @@ This says nothing about whether the pixels match the C++ implementation's. That
 needs golden images from an engine build and is a separate exercise; see the
 last section.
 
+### When the upstream claims here were last read
+
+Most rows below describe this renderer against the published `dart:ui` surface,
+which is what the section above argues for and needs no re-reading. A few say
+something about *upstream's implementation* instead, and those age the way
+`docs/non-parity.md` says its own do: a claim is worth exactly as much as the
+source it was read from, and nothing in a table announces when the source moved.
+
+**Last re-read: 2026-09-02**, at tip in `flutter/flutter` under
+`engine/src/flutter`, not from a checkout. Three rows name something specific
+enough to re-read, and all three were:
+
+- `strokeWidth`, on the widening and dimming arithmetic. `line_geometry.cc` has
+  `ComputePixelHalfWidth` as `max(width, kMinStrokeSize / max_basis) * 0.5` and
+  `geometry.cc` has `ComputeStrokeAlphaCoverage` as `clamp(scaled * 2, 0, 1)`,
+  returning `1.0` at a scaled width of exactly zero. Still true, and that last
+  clause is the discontinuity the row cites as its reason for reading zero as no
+  stroke at all.
+- `imageFilter`, on the kinds `DlImageFilter` offers. **Was wrong.** It said
+  seven where `DlImageFilterType` has eight; the eighth, `kLocalMatrix`, has no
+  factory and is what `makeWithLocalMatrix` wraps an existing filter in. The
+  count was right about what a caller can construct and read as stale against
+  the enum, which is the trip the row now saves.
+- `maskFilter`, on what `AttemptDrawBlurredRRect` does. **Was wrong.** It said
+  one draw "in every style, as upstream does it". `Canvas::AttemptDrawBlur`
+  spells out in its own comment that the normal style is one draw, the solid
+  style is two combined in a layer, and outer and inner go through a clip. This
+  renderer stops in the same place and says so in `canvas.rs`, so the row
+  contradicted the code it described.
+
+Two of three wrong is the argument for the date rather than against it, and the
+entries stay after being fixed so the next reader knows what was checked.
+
 ### The level this measures at, which is not Impeller's own
 
 `dart:ui` is not Impeller's interface. The stack is `dart:ui` → the tonic
