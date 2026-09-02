@@ -202,7 +202,7 @@ not move. The chain had been there since the shader had kinds to dispatch on,
 and the numbers it cost had been recorded as the baseline and read as the cost
 of the work.
 
-## A group's advanced blend, on a target whose origin is not zero
+## A group's advanced blend, when the group does not fill the frame
 
 `cargo xtask gate --software` is the command that runs what CI runs, and on this
 machine it is not clean. Fourteen `blend/blend-mode-src-alpha-*` plates -- a
@@ -214,7 +214,7 @@ plates agree there.
 Narrowed by varying one thing at a time, and the answer is not what any of the
 obvious guesses said. Not the gradient behind the group, not whether the layer
 was given bounds, not the mode, and not the size of the group's contents. It is
-the **origin of the layer's target**:
+**where the group's contents sit inside it**:
 
 | the group's contents | Vulkan | GLES |
 |---|---|---|
@@ -223,45 +223,67 @@ the **origin of the layer's target**:
 | the same rect moved one pixel right | draws nothing at all | composites |
 | a rect inset on all sides | draws nothing at all | composites |
 
-A layer's target is narrowed to what its contents cover, so moving the contents
-moves the target's origin, and llvmpipe's Vulkan then drops the composite
-entirely -- the frame comes back exactly as it was before the group. One pixel
-of origin is enough; a pixel of size is not.
+Nothing about the recording changes across those four rows except the rect. Both
+passes are the frame's size in all of them, the clears are the same, and the
+compositing draw is vertex-for-vertex identical -- so what reaches the driver
+differs only in the texels pass one leaves behind. Where it fails, the frame
+comes back exactly as it was before the group.
 
 It is the composite and not the mode. The same fifteen modes drawn *as draws*,
 on a circle covering a third of the frame, agree between the two backends on
 this machine -- that is the `blend/blend-mode-*` family, which the run that
 found this compared and passed. What differs is compositing a layer's texture
-with one of those modes when the layer sits anywhere but the frame's corner.
+with one of those modes when the layer's contents do not reach its edge.
 
-What it is at the Vulkan level took three tries to say, and the first two were
+What it is at the Vulkan level took four tries to say, and the first three were
 wrong. Not a `renderArea` offset: this backend never sets one, the area is
 always the whole target. Not the negative viewport offset that crops a narrowed
 target either -- at the HAL level, one batch into one target with an advanced
 mode composites correctly with that offset, for a solid material and a sampled
 texture alike, and equally with a source texture smaller than the destination.
+And not the *submission*, which was the third answer and stood in this file for
+a while: two submissions with a fence between them fail exactly as one does.
 
-What is left, and what every measurement now points at, is the *submission*. A
-composite whose source was rendered by an earlier `submit_batch` works. The same
-composite whose source was rendered by an earlier pass of the *same* submission
-does not -- which is what a layer is, and why only the group plates show it.
-`SrcOver` in that identical arrangement is correct, which is what says it is the
-blend rather than the read.
+The fourth answer came from writing the thing out in bare `ash` with no renderer
+in it, which is what should have happened before any of the other three were
+written down. Two render passes in one command buffer; pass one clears a 32x32
+image to a color and draws over it; pass two samples that image with
+`VK_BLEND_OP_MULTIPLY_EXT`. The clear is deliberately neither the source nor the
+destination, so *it read what pass one drew* and *it read the clear* come out as
+different numbers.
 
-This backend transitions a sampled image out of the color-attachment layout
-before the pass that reads it, with a full barrier on both sides, so what it
-does between those two passes looks right. Reported as
-gitlab.freedesktop.org/mesa/mesa/-/work_items/16243.
+**The blend reads the clear whenever pass one's draw did not cover the whole
+attachment**, at every pixel, including the ones pass one did draw. Partial
+coverage reached three ways -- a scissor at the corner, a scissor inset by a
+pixel, a smaller viewport -- all fail the same way. Full coverage of a *smaller*
+attachment is correct, so it is the coverage and not the size. The identical
+sample with ordinary alpha blending is correct, and reading the intermediate
+back shows pass one wrote what it was asked to every time. Validation says
+nothing about any of it.
 
-Which side is at fault is not established here and the note stops short of
-saying. What can be said is that this renderer's use of the extension is plain
--- `VK_EXT_blend_operation_advanced` named in the pipeline's blend op, both
-operands declared premultiplied, `UNCORRELATED` overlap, no framebuffer fetch
-and no barrier -- and that the same recording is correct on GLES, correct on the
-older llvmpipe, and correct against the specification's own formula wherever it
-draws at all. `every_advanced_mode_composites_a_group_by_its_equation` is what
-says the last of those: fifteen modes at two layer alphas, thirty comparisons
-per device, all within a unit.
+A layer is cleared to transparent black, so in a renderer the same failure
+arrives wearing a different face: multiplying by a transparent source leaves the
+destination, and the composite looks like it was dropped rather than fed the
+wrong operand.
+
+One row of the table above still does not line up with that account. A rect one
+pixel narrower at the same origin does not cover its target either, and it
+composites. That is measured, not argued, and it is not explained here.
+
+Reported as gitlab.freedesktop.org/mesa/mesa/-/work_items/16243.
+
+Which side is at fault the earlier drafts stopped short of saying, on the
+grounds that a renderer accusing a driver had better be sure. The bare program
+settles it: there is no renderer in it to be wrong. What was already true of
+this side is still worth stating, since it is what made the reduction credible
+-- the use of the extension is plain, `VK_EXT_blend_operation_advanced` named in
+the pipeline's blend op, both operands declared premultiplied, `UNCORRELATED`
+overlap, no framebuffer fetch and no barrier -- and the same recording is
+correct on GLES, correct on the older llvmpipe, and correct against the
+specification's own formula wherever it draws at all.
+`every_advanced_mode_composites_a_group_by_its_equation` is what says the last
+of those: fifteen modes at two layer alphas, thirty comparisons per device, all
+within a unit.
 
 That test exists because of this note. Nothing in the tree computed the expected
 value for a group composite -- the blend-equation check pushes a single draw --
@@ -304,11 +326,14 @@ reporting a mode they never drew because of it, and they are single-sampled now,
 which costs them nothing: their subject is what a blend computes rather than
 where an edge falls.
 
-The second is a *group* composited with an advanced mode, which is an image quad
-drawn with that mode. It produces nothing at any alpha and any sample count,
-where the same mode on an ordinary draw works. There is no workaround for it
-here -- the composite is what a group is -- so the sweep that asks whether a
-plate can show its mode asks every device and passes if any can.
+The second is a *group* whose contents do not reach the edge of its own target,
+composited with an advanced mode -- which is every group a plate is likely to
+draw. It produces nothing at any alpha and any sample count, where the same mode
+on an ordinary draw works, and where the same group filling the frame composites
+correctly. The section above has what that reduces to in bare Vulkan. There is
+no workaround for it here -- the composite is what a group is -- so the sweep
+that asks whether a plate can show its mode asks every device and passes if any
+can.
 
 Both were found by writing the plate and looking at the output, and neither is
 visible from a diff, from `cost.rs`, or from the cross-backend comparison, which
