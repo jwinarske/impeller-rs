@@ -2414,12 +2414,17 @@ rather than in principle.
   has the measurements and the reasoning.
 
   Remeasured on 2026-09-01, three runs a side agreeing to a hundredth of a
-  millisecond:
+  millisecond. Every ratio below is a quotient of two numbers in
+  `tests/bench-baselines/raspberry-pi-5-v3d.txt`, and
+  `the_ratios_here_are_the_ones_the_baseline_records` recomputes them from that
+  file on every commit -- so a re-recording that moves a row moves these with it
+  or fails, rather than leaving a design conclusion resting on a number nobody
+  checked again.
 
   | device | field ÷ tessellated at one sample | cost of four samples |
   |---|---|---|
-  | Pi 5 V3D, Vulkan | 0.98× → **2.50×** | 1.17× → 1.22× |
-  | Pi 5 V3D, GLES | 1.00× → **2.39×** | 1.17× → 1.49× |
+  | Pi 5 V3D, Vulkan | 0.98× → **2.40×** | 1.17× → 1.23× |
+  | Pi 5 V3D, GLES | 1.00× → **2.45×** | 1.17× → 1.50× |
 
   The paragraph above this table said the margin was expected to narrow on a
   tiler and possibly invert, and that both halves held. The first half no longer
@@ -2431,8 +2436,8 @@ rather than in principle.
   contradicting it.
 
   It goes further than narrowing. At these sample counts the field at one sample
-  is now twice the cost of the *tessellated* shapes at four -- 2.04× on Vulkan
-  and 1.60× on GLES -- so on this board, for this scene, tessellating and
+  costs about twice the *tessellated* shapes at four -- 1.96× on Vulkan and
+  1.64× on GLES -- so on this board, for this scene, tessellating and
   multisampling is cheaper than evaluating the field, which is the opposite of
   what the numbers said a week ago.
 

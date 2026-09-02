@@ -961,3 +961,96 @@ fn the_timing_baseline_records_the_commit_it_was_checked_against() {
         "that line should hold a commit hash, and holds {sha:?}"
     );
 }
+
+/// The ratios `docs/architecture.md` reasons from are the ones the board
+/// recorded.
+///
+/// That document's distance-field section reaches a design conclusion -- that
+/// the analytic field costs more than the triangles on a tiler, against what
+/// the same passage used to say -- and it reaches it from quotients of the
+/// timing baseline. A quotient in prose is exactly the kind of number that goes
+/// stale silently: re-recording the baseline is a reviewed event with its own
+/// diff, and nothing about that diff points at a paragraph three files away
+/// that was reading it.
+///
+/// So the quotients are recomputed here from
+/// `tests/bench-baselines/raspberry-pi-5-v3d.txt` and matched against what the
+/// prose says, to the two decimals it states them at. The arrow form in the
+/// table -- `0.98× → 2.40×` -- is read for its right-hand side: the left is
+/// what the board said before the fragment shader stopped doing work nobody
+/// asked for, and is history rather than a claim about now.
+#[test]
+fn the_ratios_here_are_the_ones_the_baseline_records() {
+    let baseline = std::fs::read_to_string(
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../tests/bench-baselines/raspberry-pi-5-v3d.txt"),
+    )
+    .expect("the board baseline");
+
+    let median = |device: &str, configuration: &str| -> f32 {
+        baseline
+            .lines()
+            .filter(|line| !line.starts_with('#'))
+            .find_map(|line| {
+                let mut fields = line.split('\t');
+                let named = fields.next()?;
+                let config = fields.next()?;
+                if !named.starts_with(device) || config != configuration {
+                    return None;
+                }
+                fields.next()?.parse().ok()
+            })
+            .unwrap_or_else(|| panic!("no {device} row for {configuration}"))
+    };
+
+    let text = doc("architecture.md");
+    // Named as the document names them, so a failure says which row of which
+    // table to look at rather than which quotient of which pair.
+    let expected = [
+        (
+            "vulkan",
+            "Vulkan field over tessellated at one sample",
+            "distance field, 1 sample",
+            "tessellated, 1 sample",
+        ),
+        (
+            "gles",
+            "GLES field over tessellated at one sample",
+            "distance field, 1 sample",
+            "tessellated, 1 sample",
+        ),
+        (
+            "vulkan",
+            "Vulkan cost of four samples",
+            "tessellated, 4 samples",
+            "tessellated, 1 sample",
+        ),
+        (
+            "gles",
+            "GLES cost of four samples",
+            "tessellated, 4 samples",
+            "tessellated, 1 sample",
+        ),
+        (
+            "vulkan",
+            "Vulkan field over tessellated at four samples",
+            "distance field, 1 sample",
+            "tessellated, 4 samples",
+        ),
+        (
+            "gles",
+            "GLES field over tessellated at four samples",
+            "distance field, 1 sample",
+            "tessellated, 4 samples",
+        ),
+    ];
+    for (device, what, over, under) in expected {
+        let ratio = median(device, over) / median(device, under);
+        let stated = format!("{ratio:.2}×");
+        assert!(
+            text.contains(&stated),
+            "the baseline puts {what} at {stated}, and docs/architecture.md does \
+             not say that anywhere -- a row moved and the reasoning above it did not"
+        );
+    }
+}
