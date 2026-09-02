@@ -228,6 +228,12 @@ moves the target's origin, and llvmpipe's Vulkan then drops the composite
 entirely -- the frame comes back exactly as it was before the group. One pixel
 of origin is enough; a pixel of size is not.
 
+It is the composite and not the mode. The same fifteen modes drawn *as draws*,
+on a circle covering a third of the frame, agree between the two backends on
+this machine -- that is the `blend/blend-mode-*` family, which the run that
+found this compared and passed. What differs is compositing a layer's texture
+with one of those modes when the layer sits anywhere but the frame's corner.
+
 Which side is at fault is not established here and the note stops short of
 saying. What can be said is that this renderer's use of the extension is plain
 -- `VK_EXT_blend_operation_advanced` named in the pipeline's blend op, both
