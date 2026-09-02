@@ -40,8 +40,16 @@ fn git(args: &[&str]) -> Option<String> {
     Some(String::from_utf8_lossy(&out.stdout).trim().to_string())
 }
 
-/// The last run that reached a conclusion, ignoring ones still going and ones
-/// superseded by a later push.
+/// Which conclusions are an answer about the code.
+///
+/// A positive list rather than a negative one, and that is the safer direction
+/// as well as the shorter: a status nobody here has seen reads as "no answer"
+/// and prints the line saying so, where a negative list would report it as
+/// whatever it happened to say. A run stopped because a later push superseded
+/// it is the common case and tells you nothing about either commit.
+const ANSWERS: [&str; 4] = ["success", "failure", "timed_out", "startup_failure"];
+
+/// The last run that reached one of those, ignoring the rest.
 ///
 /// Parsed from a tab-separated list rather than JSON, to keep this from needing
 /// a parser for one field of one command.
@@ -54,13 +62,14 @@ fn last_conclusive() -> Option<Run> {
         "--json",
         "conclusion,headSha",
         "--jq",
-        r#".[] | select(.conclusion != "" and .conclusion != "cancelled") | "\(.conclusion)\t\(.headSha)""#,
+        r#".[] | "\(.conclusion)\t\(.headSha)""#,
     ])?;
-    let line = listed.lines().next()?;
-    let (conclusion, sha) = line.split_once('\t')?;
-    Some(Run {
-        conclusion: conclusion.to_string(),
-        sha: sha.to_string(),
+    listed.lines().find_map(|line| {
+        let (conclusion, sha) = line.split_once('\t')?;
+        ANSWERS.contains(&conclusion).then(|| Run {
+            conclusion: conclusion.to_string(),
+            sha: sha.to_string(),
+        })
     })
 }
 
@@ -146,6 +155,22 @@ mod tests {
         assert!(said.contains("CI last failure"), "{said}");
         assert!(said.contains("gate --software"), "{said}");
         assert!(said.contains("--log-failed"), "{said}");
+    }
+
+    /// Only the statuses that say something about the code are answers, and
+    /// the rest read as none. A run stopped because a later push superseded it
+    /// is the common one, and reporting its status would be reporting on a
+    /// commit nobody asked about.
+    #[test]
+    fn only_a_real_conclusion_is_an_answer() {
+        for answer in ANSWERS {
+            assert!(!describe(Some(&run(answer)), Some(0)).contains("not asked"));
+        }
+        // `last_conclusive` is what drops the rest; this pins the list it drops
+        // them against, which is the part a reader would otherwise have to
+        // infer from a `jq` filter.
+        assert!(!ANSWERS.contains(&"skipped"));
+        assert!(!ANSWERS.contains(&"neutral"));
     }
 
     /// A run on a commit this tree has never seen says that rather than a
