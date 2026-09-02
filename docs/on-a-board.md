@@ -202,6 +202,31 @@ not move. The chain had been there since the shader had kinds to dispatch on,
 and the numbers it cost had been recorded as the baseline and read as the cost
 of the work.
 
+## Two llvmpipes disagree with each other about a group's advanced blend
+
+`cargo xtask gate --software` is the command that runs what CI runs, and on this
+machine it is not clean. Fourteen `blend/blend-mode-src-alpha-*` plates -- a
+group composited at half alpha with an advanced mode -- come out up to ninety
+levels apart between llvmpipe's Vulkan and its GLES, over the thirty per cent of
+the frame the group covers. Neither draws nothing; they compute different
+answers.
+
+CI does not see it. That machine has llvmpipe from LLVM 20.1.2 and this one has
+22.1.8, and the same fourteen plates agree there. So what the failure says is
+that a newer llvmpipe disagrees with itself across the two APIs on this
+operation, not that the renderer does -- and the renderer's own arithmetic is
+checked from the other side anyway, by
+`every_advanced_mode_agrees_with_the_reference_formulas`, which compares all
+twenty-nine modes against the equations and passes on both backends here. What
+that test covers is a *draw*, though, and this is a group composite, so it is
+not evidence about the case that differs.
+
+Not chased further, and the reason is what it would cost: settling which of the
+two is right means deriving the expected value for a group composite by hand,
+per mode, against a driver nobody ships to users. The plates stay, the gate is
+run knowing this, and the note is here so the next person to see fourteen blend
+plates fail under `--software` does not start from nothing.
+
 ## A clear is rounded by the driver, and the drivers disagree
 
 Two of them here put `[0.06, 0.07, 0.10]` on the screen as different colors.

@@ -7068,55 +7068,6 @@ fn pictures() -> Vec<Scene> {
         // software rasterizer, whatever the sample count; see the blend family.
         .with_samples(1),
         Scene::tree(
-            "dl/collapsed-draw-paint-in-subpass-backdrop-filter",
-            // The same shape with a backdrop filter instead of a mode, which is
-            // upstream's own regression scene for flutter/flutter#131576.
-            //
-            // The plate is uniform, and upstream's is too: the group filters
-            // the whole frame and then covers it with an opaque paint, so the
-            // blur is computed and then hidden. That is the point of it -- the
-            // failure it was written for is a frame that does not survive the
-            // combination at all, not a blur anybody can see.
-            vec![
-                Node::Paint(Box::new(PaintSpec {
-                    fill: Fill::Solid([1.0, 1.0, 0.2, 1.0]),
-                    blend: BlendMode::Src,
-                    clip: None,
-                    clip_out: None,
-                    transform: Transform::default(),
-                })),
-                Node::Layer {
-                    layer: Box::new(LayerSpec {
-                        backdrop_blur: 10.0,
-                        ..LayerSpec::default()
-                    }),
-                    bounds: None,
-                    transform: Transform::default(),
-                    children: vec![Node::Paint(Box::new(PaintSpec {
-                        fill: Fill::Solid([100.0 / 255.0, 149.0 / 255.0, 237.0 / 255.0, 1.0]),
-                        blend: BlendMode::SrcOver,
-                        clip: None,
-                        clip_out: None,
-                        transform: Transform::default(),
-                    }))],
-                },
-            ],
-        )
-        .with_background(DARK)
-        // A backdrop filter reads the target it is drawn into, which a
-        // multisampled pass here must clear rather than preserve.
-        .with_samples(1),
-        // Upstream's three filter-collapse scenes, which are one picture through
-        // three filters: a rotated blue square inside a group that recolors it.
-        // Named for an optimization that folds the group into the draw beneath
-        // it, which decides how many passes it takes and not what it draws --
-        // so they are ordinary pictures here, drawn without the optimization.
-        //
-        // The rotation is upstream's and is what makes them worth having beyond
-        // the filters: a group is recolored as a finished image, so a renderer
-        // that applied the filter to the shape before placing it would agree on
-        // an upright square and differ on a turned one.
-        Scene::tree(
             "dl/color-matrix-filter-subpass-collapse-optimization",
             filter_collapse(ColorFilter::matrix([
                 -1.0, 0.0, 0.0, 1.0, 0.0, //

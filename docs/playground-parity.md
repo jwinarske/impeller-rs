@@ -185,9 +185,9 @@ column is right and the obvious way to check it is wrong.
 | `aiks_dl_primitive_shape_unittests.cc` | ~2 | 0 | one is a playground harness, one wants a stroke width of zero to mean a hairline |
 | `aiks_dl_text_unittests.cc` | — | 7 | shaping and font parsing, which are out of scope; glyph rendering is not, and these use synthetic coverage |
 | `aiks_dl_runtime_effect_unittests.cc` | — | 15 | nothing; two of that file's tests exercise machinery this renderer does not have, which is not the same as a gap; see below |
-| `aiks_dl_unittests.cc` | ~36 | 27 | one whose picture cannot show what it is for; see below |
+| `aiks_dl_unittests.cc` | ~36 | 26 | two whose pictures cannot show what they are for; see below |
 
-The catalog holds four hundred and nineteen scenes against a column totalling
+The catalog holds four hundred and eighteen scenes against a column totalling
 about four hundred, and the two are not a ratio: five chapters hold more than
 the file they mirror, because a scene here is one picture where a test there can
 be a loop over every blend mode or a family drawn twice. What the totals meeting
@@ -660,9 +660,16 @@ and with it the copy is a panel in the corner. A scene had no way to say that
 until it did -- an item's clip narrows one draw, and a clip is state on the
 canvas -- and saying it found a defect, recorded below.
 
-`BackdropRestoreUsesCorrectCoverageForFirstRestoredClip` is the one scene here
-deliberately left unwritten because of what it looks like rather than what it
-needs. It draws a red rectangle, filters a backdrop under a clip, and then
+Two scenes here are deliberately left unwritten because of what they look like
+rather than what they need, and both are backdrop filters covered by an opaque
+draw. `CollapsedDrawPaintInSubpassBackdropFilter` was written and then removed:
+a paint fills the frame, the group filters all of it, and a second opaque paint
+covers the result, so the plate is one flat color and is the same flat color
+with the filter taken away. It passed here for a while because this machine's
+GPU and its software rasterizer disagreed by a pixel at the frame's edge, which
+is not evidence of anything; CI, which has only the one device, said so.
+
+`BackdropRestoreUsesCorrectCoverageForFirstRestoredClip` is the other. It draws a red rectangle, filters a backdrop under a clip, and then
 covers the whole thing with green -- so the picture is the green and the notch,
 and it is the same picture with the backdrop filter taken away.
 `a_feature_a_scene_asks_for_has_to_change_the_picture` says a plate like that is
