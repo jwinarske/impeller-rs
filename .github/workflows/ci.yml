@@ -46,7 +46,7 @@ jobs:
       # repository's CI over a warning in somebody else's crate.
       RUSTFLAGS: -D warnings
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       # The runner ships with several toolchains this repository never uses,
       # and they are large enough to decide whether the job finishes. It ran
@@ -114,7 +114,7 @@ jobs:
           exit 1
 
       - name: Cache cargo
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: |
             ~/.cargo/registry/index
@@ -171,7 +171,7 @@ jobs:
       # kept whether or not anything parsed it.
       - name: Keep the test output
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: verify-log
           path: |
@@ -184,7 +184,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       # Read from the manifest rather than written twice. A job that pinned its
       # own version would keep passing after somebody raised the declared one,
       # which is the failure mode this job exists to prevent.
@@ -217,7 +217,7 @@ jobs:
           - aarch64-unknown-linux-gnu
           - riscv64gc-unknown-linux-gnu
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - name: Add the target
         run: rustup target add ${{ matrix.target }}
       # `check` rather than `build`, deliberately: linking would want a cross
@@ -240,9 +240,9 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - name: Cache cargo-deny
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: ~/.cargo/bin/cargo-deny
           key: cargo-deny-${{ runner.os }}
