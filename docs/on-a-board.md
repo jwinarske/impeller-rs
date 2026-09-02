@@ -202,38 +202,46 @@ not move. The chain had been there since the shader had kinds to dispatch on,
 and the numbers it cost had been recorded as the baseline and read as the cost
 of the work.
 
-## Two llvmpipes disagree with each other about a group's advanced blend
+## A group's advanced blend, on a target whose origin is not zero
 
 `cargo xtask gate --software` is the command that runs what CI runs, and on this
 machine it is not clean. Fourteen `blend/blend-mode-src-alpha-*` plates -- a
 group composited at half alpha with an advanced mode -- come out up to ninety
-levels apart between llvmpipe's Vulkan and its GLES, over the thirty per cent of
-the frame the group covers. Neither draws nothing; they compute different
-answers.
+levels apart between llvmpipe's Vulkan and its GLES. CI does not see it: that
+machine has llvmpipe from LLVM 20.1.2 and this one has 22.1.8, and the same
+plates agree there.
 
-CI does not see it. That machine has llvmpipe from LLVM 20.1.2 and this one has
-22.1.8, and the same fourteen plates agree there. So what the failure says is
-that a newer llvmpipe disagrees with itself across the two APIs on this
-operation, not that the renderer does -- and the renderer's own arithmetic is
-checked from the other side anyway, by
-`every_advanced_mode_agrees_with_the_reference_formulas`, which compares all
-twenty-nine modes against the equations and passes on both backends here. What
-that test covers is a *draw*, though, and this is a group composite, so it is
-not evidence about the case that differs.
+Narrowed by varying one thing at a time, and the answer is not what any of the
+obvious guesses said. Not the gradient behind the group, not whether the layer
+was given bounds, not the mode, and not the size of the group's contents. It is
+the **origin of the layer's target**:
 
-Which of them is right is now answerable, and the answer is both.
-`every_advanced_mode_composites_a_group_by_its_equation` composites a group with
-each of the fifteen advanced modes at two layer alphas and compares against the
-specification's own formula, and llvmpipe's Vulkan and its GLES each agree with
-it to a unit -- thirty comparisons apiece. So the renderer composites a group
-correctly on both, and whatever the plates disagree about is downstream of that:
-those scenes put a *gradient* behind an unbounded group, where this puts a flat
-color behind a bounded one, and the difference has not been narrowed further.
+| the group's contents | Vulkan | GLES |
+|---|---|---|
+| a rect covering the frame | composites | composites |
+| a rect one pixel narrower, same origin | composites | composites |
+| the same rect moved one pixel right | draws nothing at all | composites |
+| a rect inset on all sides | draws nothing at all | composites |
+
+A layer's target is narrowed to what its contents cover, so moving the contents
+moves the target's origin, and llvmpipe's Vulkan then drops the composite
+entirely -- the frame comes back exactly as it was before the group. One pixel
+of origin is enough; a pixel of size is not.
+
+Which side is at fault is not established here and the note stops short of
+saying. What can be said is that this renderer's use of the extension is plain
+-- `VK_EXT_blend_operation_advanced` named in the pipeline's blend op, both
+operands declared premultiplied, `UNCORRELATED` overlap, no framebuffer fetch
+and no barrier -- and that the same recording is correct on GLES, correct on the
+older llvmpipe, and correct against the specification's own formula wherever it
+draws at all. `every_advanced_mode_composites_a_group_by_its_equation` is what
+says the last of those: fifteen modes at two layer alphas, thirty comparisons
+per device, all within a unit.
 
 That test exists because of this note. Nothing in the tree computed the expected
 value for a group composite -- the blend-equation check pushes a single draw --
-so there was no way to adjudicate. Now there is, and the plates' disagreement is
-a smaller and better-specified question than it was.
+so there was no way to adjudicate. Now there is, and what is left is a question
+about one driver version rather than about the renderer.
 
 ## A clear is rounded by the driver, and the drivers disagree
 
