@@ -185,7 +185,7 @@ column is right and the obvious way to check it is wrong.
 | `aiks_dl_primitive_shape_unittests.cc` | ~2 | 0 | one is a playground harness, one wants a stroke width of zero to mean a hairline |
 | `aiks_dl_text_unittests.cc` | — | 7 | shaping and font parsing, which are out of scope; glyph rendering is not, and these use synthetic coverage |
 | `aiks_dl_runtime_effect_unittests.cc` | — | 15 | nothing; two of that file's tests exercise machinery this renderer does not have, which is not the same as a gap; see below |
-| `aiks_dl_unittests.cc` | 39 | 28 | nine that are texture or dispatcher machinery rather than pictures, one the scene model cannot say, one removed as unshowable, and two unwritten; see below |
+| `aiks_dl_unittests.cc` | 39 | 28 | nine that are texture or dispatcher machinery rather than pictures, two the scene model cannot say, one removed as unshowable, and one unwritten; see below |
 
 One row now carries an exact number rather than an approximate one.
 `aiks_dl_unittests.cc` holds thirty-nine `TEST_P` and expands none of them over
@@ -811,17 +811,23 @@ releasing on teardown, and replacing a region of one's contents. What they draw
 is incidental to the machinery under test. One more is the dispatcher's own
 culling, reached through a render-target cache.
 
-One the scene model cannot say: a run of points painted from a texture, where a
-run here carries a single color. One is `CollapsedDrawPaintInSubpassBackdropFilter`,
-which was built and then removed -- it drew a uniform picture with its features
-stripped as with them, so nothing could tell whether the optimization it names
-had happened.
+Two the scene model cannot say. One is a run of points painted from a texture,
+where a run here carries a single color. The other is a stroked path whose
+`MoveTo` is followed by a `Close`: a `Shape` states its contours all-open or
+all-closed -- `Contours` opens every one and `Polygons` closes every one -- and
+upstream's path is one of each. The invariant behind it did not need a picture
+and is checked where it belongs, in
+`a_close_after_a_lone_move_to_adds_no_contour`: the builder keeps the trailing
+`MoveTo` and `Close`, and flattening walks one contour rather than two. That is
+what upstream's comment asks for, reached by dropping the empty contour instead
+of declining to add one.
 
-That leaves two, and they are pictures nobody has written rather than anything
-blocked: the coverage the first restored clip gives a backdrop filter, and a
-stroked path whose `MoveTo` is followed by a `Close`, which upstream's own
-comment says is there so that closing does not add a second nearly-empty
-contour.
+One is `CollapsedDrawPaintInSubpassBackdropFilter`, which was built and then
+removed -- it drew a uniform picture with its features stripped as with them, so
+nothing could tell whether the optimization it names had happened.
+
+That leaves one picture nobody has written rather than anything blocked: the
+coverage the first restored clip gives a backdrop filter.
 
 The clip row said "nothing; this file is covered" and the file was not covered.
 Six scenes against five tests reads as a surplus, and two of the six are this

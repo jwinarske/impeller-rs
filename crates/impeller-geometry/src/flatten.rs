@@ -183,6 +183,60 @@ mod tests {
     use super::*;
     use crate::path::PathBuilder;
 
+    /// Closing a contour that holds only a `move_to` produces no contour.
+    ///
+    /// Upstream keeps a scene on this -- a path that walks three points, moves
+    /// back to the first and closes -- with a comment saying the close must not
+    /// add a second nearly-empty contour. The scene cannot be mirrored in the
+    /// catalog, because a `Shape` states its contours all-open or all-closed
+    /// and this path is one of each; but the invariant it guards is a question
+    /// about the builder rather than about a picture, and this is where it can
+    /// be asked directly.
+    ///
+    /// The verbs are asserted alongside the count so the test cannot pass for
+    /// the wrong reason. Without them, a builder that quietly dropped the
+    /// trailing `move_to` would satisfy the count while no longer exercising
+    /// the case, and the test would go on passing having stopped meaning
+    /// anything.
+    #[test]
+    fn a_close_after_a_lone_move_to_adds_no_contour() {
+        let mut b = PathBuilder::new();
+        b.move_to(Vec2::new(0.0, 400.0))
+            .line_to(Vec2::new(0.0, 0.0))
+            .line_to(Vec2::new(400.0, 0.0))
+            .move_to(Vec2::new(0.0, 400.0));
+        b.close();
+        let path = b.build();
+
+        assert_eq!(
+            path.verbs(),
+            [
+                Verb::MoveTo,
+                Verb::LineTo,
+                Verb::LineTo,
+                Verb::MoveTo,
+                Verb::Close
+            ],
+            "the builder should still be holding the case this is about"
+        );
+
+        let contours = flatten(&path, 0.1);
+        assert_eq!(
+            contours.len(),
+            1,
+            "the move_to and close describe a contour with no extent, which is \
+             nothing to walk; got {contours:?}"
+        );
+        assert_eq!(
+            contours[0],
+            [
+                Vec2::new(0.0, 400.0),
+                Vec2::new(0.0, 0.0),
+                Vec2::new(400.0, 0.0)
+            ]
+        );
+    }
+
     #[test]
     fn a_straight_curve_needs_one_segment() {
         // Collinear control points have zero second difference, so no
