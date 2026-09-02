@@ -67,6 +67,8 @@
   layer-dilated                                4      4       20       30       3     0
   atlas-turned-sprites                         1      1       16       24       1     0
   layer-resampled-by-its-matrix                2      3       32       78       1     0
+  shadow-cast-by-a-card                        4      5       60      150       3     0
+  picture-drawn-into-a-picture                 3      4       52      132       2     0
   nine-patch-stretched                         1      1       36       54       1     0
   point-field                                  1      1       48       72       0     0
   glyph-run                                    1      1      140      210       1     0

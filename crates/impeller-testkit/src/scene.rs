@@ -1842,6 +1842,18 @@ fn pentagram() -> Vec<[f32; 2]> {
         .collect()
 }
 
+/// The ground most of the corpus clears to.
+///
+/// Stated in eighths of a byte rather than as round decimals, and the reason
+/// is a tie. A tenth of 255 is 25.5 exactly, and two rasterizers broke that tie
+/// two different ways -- this machine's Vulkan and its GLES landing on 25 and
+/// the software one on 26 -- so every scene using it differed by a unit on
+/// every pixel of ground it left uncovered. Inside the budget, and spending the
+/// budget on the clear color rather than on the drawing it is there to check.
+///
+/// Any value off a half is fine; this is the nearest one to what was meant.
+const DARK_GROUND: [f32; 4] = [15.0 / 255.0, 18.0 / 255.0, 26.0 / 255.0, 1.0];
+
 /// The scene corpus.
 ///
 /// Deliberately small and varied rather than large: each scene is here because
@@ -3241,7 +3253,7 @@ pub fn corpus() -> Vec<Scene> {
             )
             .with_blend(BlendMode::SrcOver)],
         )
-        .with_background([0.06, 0.07, 0.10, 1.0]),
+        .with_background(DARK_GROUND),
         Scene::tree(
             "mesh-interpolated",
             // Two triangles sharing an edge, each vertex a different color, so
@@ -3274,7 +3286,7 @@ pub fn corpus() -> Vec<Scene> {
                 mask_blur: 0.0,
             }))],
         )
-        .with_background([0.06, 0.07, 0.10, 1.0]),
+        .with_background(DARK_GROUND),
         Scene::tree(
             "layer-dilated",
             // A cross dilated by a layer's morphology, which is a separable
@@ -3317,7 +3329,7 @@ pub fn corpus() -> Vec<Scene> {
                 ],
             }],
         )
-        .with_background([0.06, 0.07, 0.10, 1.0]),
+        .with_background(DARK_GROUND),
         Scene::tree(
             "atlas-turned-sprites",
             // Sprites out of the sheet, each turned and scaled by an amount
@@ -3354,7 +3366,7 @@ pub fn corpus() -> Vec<Scene> {
                 alpha: 1.0,
             }))],
         )
-        .with_background([0.06, 0.07, 0.10, 1.0]),
+        .with_background(DARK_GROUND),
         Scene::tree(
             "layer-resampled-by-its-matrix",
             // A group whose matrix magnifies it on the way back, which is a
@@ -3403,7 +3415,92 @@ pub fn corpus() -> Vec<Scene> {
                 ],
             }],
         )
-        .with_background([0.06, 0.07, 0.10, 1.0]),
+        .with_background(DARK_GROUND),
+        Scene::tree(
+            "shadow-cast-by-a-card",
+            // `drawShadow`, which nothing else here reaches. The mask blur two
+            // scenes up is a paint's, softening a shape where it stands; this
+            // is the call that derives an offset, a deviation and an alpha from
+            // one elevation and remaps the color tonally on the way -- three
+            // numbers and a curve, none of which a blurred shape exercises.
+            //
+            // On a pale ground, alone in this collection, because a shadow is a
+            // darkening and the dark ground everything else uses would hide the
+            // thing under test.
+            vec![Node::Shadow(Box::new(ShadowSpec {
+                shape: Shape::RoundedRect {
+                    min: [32.0, 34.0],
+                    max: [96.0, 86.0],
+                    radius: 10.0,
+                },
+                color: [0.0, 0.0, 0.0, 1.0],
+                elevation: 6.0,
+                transparent_occluder: false,
+                transform: Transform::default(),
+                with_caster: true,
+            }))],
+        )
+        // The pale ground the catalog's shadow plates use, stated as eighths of
+        // a byte rather than as round decimals: nine tenths of 255 is 229.5
+        // exactly, and a background sitting on a tie makes every pixel outside
+        // the shadow differ by a unit between two backends for no reason of the
+        // scene's own. Measured before it was changed -- 79 per cent of the
+        // frame, all of it ground.
+        .with_background([230.0 / 255.0, 230.0 / 255.0, 235.0 / 255.0, 1.0])
+        .with_samples(4),
+        Scene::tree(
+            "picture-drawn-into-a-picture",
+            // `drawPicture`, which composes a finished recording into the one
+            // being made. It is here for the counts rather than for the pixels:
+            // this renderer tessellates a sub-picture again rather than
+            // replaying its draws, which `docs/non-parity.md` records as a
+            // deliberate difference, and `cost-baseline.txt` is the only thing
+            // in the tree that can say what that costs. Nothing was measuring
+            // it, so nothing would have noticed the count doubling.
+            //
+            // Nested twice and placed by a transform, so the inner picture's
+            // geometry is walked through two placements and the row below
+            // counts every vertex of it.
+            vec![Node::Picture(Box::new(PictureSpec {
+                size: Extent2D::new(128, 128),
+                transform: Transform {
+                    scale: [0.5, 0.5],
+                    translate: [32.0, 32.0],
+                    ..Transform::default()
+                },
+                blend: BlendMode::SrcOver,
+                children: vec![
+                    Item::fill(
+                        Shape::Circle {
+                            center: [64.0, 64.0],
+                            radius: 48.0,
+                        },
+                        [0.9, 0.3, 0.2, 1.0],
+                    )
+                    .with_blend(BlendMode::SrcOver)
+                    .into(),
+                    Node::Picture(Box::new(PictureSpec {
+                        size: Extent2D::new(128, 128),
+                        transform: Transform {
+                            scale: [0.5, 0.5],
+                            translate: [32.0, 32.0],
+                            ..Transform::default()
+                        },
+                        blend: BlendMode::SrcOver,
+                        children: vec![Item::fill(
+                            Shape::Rect {
+                                min: [24.0, 24.0],
+                                max: [104.0, 104.0],
+                            },
+                            [0.2, 0.6, 0.9, 1.0],
+                        )
+                        .with_blend(BlendMode::SrcOver)
+                        .into()],
+                    })),
+                ],
+            }))],
+        )
+        .with_background(DARK_GROUND),
         Scene::tree(
             "nine-patch-stretched",
             vec![Node::NinePatch(Box::new(NinePatchSpec {
@@ -3420,7 +3517,7 @@ pub fn corpus() -> Vec<Scene> {
                 transform: Transform::default(),
             }))],
         )
-        .with_background([0.06, 0.07, 0.10, 1.0])
+        .with_background(DARK_GROUND)
         .with_samples(4),
         Scene::tree(
             "point-field",
@@ -3458,7 +3555,7 @@ pub fn corpus() -> Vec<Scene> {
                 clip_shape: None,
             }))],
         )
-        .with_background([0.06, 0.07, 0.10, 1.0])
+        .with_background(DARK_GROUND)
         .with_samples(4),
         Scene::tree(
             "glyph-run",
