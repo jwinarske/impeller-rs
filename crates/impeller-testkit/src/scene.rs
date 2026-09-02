@@ -3914,6 +3914,56 @@ mod tolerance_tests {
         assert_eq!(scene.tolerance(), Tolerance::MULTISAMPLED);
     }
 
+    /// Storing every fragment is not enough to be compared exactly.
+    ///
+    /// `EXACT` asks two things and the second is easy to lose: that no draw
+    /// computes its color, *and* that nothing is composited out of a target on
+    /// the way to the frame. A picture is such a target, and the composite is
+    /// arithmetic -- a sample, an alpha and a blend -- whatever it is
+    /// compositing. So a scene made entirely of solid opaque draws is exact
+    /// drawn flat and is not exact drawn inside a picture.
+    ///
+    /// The corpus has a scene that says the same thing on a device --
+    /// `picture-drawn-into-a-picture`, where two backends land two levels apart
+    /// on a tenth of the frame with nothing but solid colors in it -- but that
+    /// one needs two devices and skips without them. This is the same claim
+    /// where it cannot skip.
+    #[test]
+    fn storing_every_fragment_is_not_exact_through_a_picture() {
+        let draw = || {
+            Item::fill(
+                Shape::Rect {
+                    min: [10.0, 10.0],
+                    max: [90.0, 70.0],
+                },
+                WHITE,
+            )
+        };
+        let flat = Scene::new("flat", vec![draw()]);
+        assert_eq!(
+            flat.tolerance().per_channel,
+            Tolerance::EXACT.per_channel,
+            "an opaque solid draw stores every fragment and is compared exactly"
+        );
+
+        let through_a_picture = Scene::tree(
+            "through-a-picture",
+            vec![Node::Picture(Box::new(PictureSpec {
+                size: Extent2D::new(128, 128),
+                transform: Transform::default(),
+                blend: BlendMode::SrcOver,
+                children: vec![Node::Draw(Box::new(draw()))],
+            }))],
+        );
+        assert_ne!(
+            through_a_picture.tolerance().per_channel,
+            Tolerance::EXACT.per_channel,
+            "the composite out of a picture's target is arithmetic even when \
+             everything drawn into it was written down rather than computed"
+        );
+        assert_eq!(through_a_picture.tolerance().per_channel, 2);
+    }
+
     /// One unit per store, and a group is a store.
     #[test]
     fn a_group_is_allowed_the_rounding_of_the_target_it_is_composited_from() {
