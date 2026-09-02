@@ -233,10 +233,10 @@ fn the_shader_answers_for_every_material_kind_and_no_others() {
 /// every draw simply reads the wrong floats, and what that looks like depends
 /// on which kinds a scene happens to use.
 ///
-/// Four declarations, not two. A caller's fragment program replaces this
-/// renderer's shader outright and reads the same uniform block, so the three
-/// fixture effects declare it too and say in their own comments that they are
-/// declaring the same one. Nothing was checking that they still were.
+/// Every source declares it, not two. A caller's fragment program replaces this
+/// renderer's shader outright and reads the same uniform block, so the fixture
+/// effects declare it too and say in their own comments that they are declaring
+/// the same one. Nothing was checking that they still were.
 ///
 /// What is compared is the members and their widths rather than the prose
 /// around them, since the comments differ between the four on purpose -- the
@@ -285,11 +285,19 @@ fn every_shader_declares_the_paint_block_the_renderer_packs() {
         let block = rest.split_once('}').expect("the end of the block").0;
         declarations.push((name, members(block)));
     }
+    // Every source declares it, which is the count that matters rather than a
+    // number: the renderer's own shader and every stand-in for a caller's,
+    // because a program is a pipeline here only if it declares the block the
+    // renderer packs.
     assert_eq!(
         declarations.len(),
-        4,
-        "four shaders declare the paint block; found {:?}",
-        declarations.iter().map(|(n, _)| n).collect::<Vec<_>>()
+        sources().len(),
+        "every shader declares the paint block; these do not: {:?}",
+        sources()
+            .iter()
+            .map(|(name, _)| name.clone())
+            .filter(|name| !declarations.iter().any(|(n, _)| n == name))
+            .collect::<Vec<_>>()
     );
 
     // `solid.wgsl` is the reference rather than whichever sorted first: it is

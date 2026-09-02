@@ -105,6 +105,25 @@ pub fn image_effect() -> impeller_hal::RuntimeProgram {
     }
 }
 
+/// A program that ramps along the coordinate the vertices state.
+///
+/// Registered fourth, so a scene naming it names program three. The sibling of
+/// [`effect`] and deliberately so: it reads `in.uv` where that one reads the
+/// clip position, which is the evidence that a per-vertex coordinate reaches a
+/// caller's program at all -- something `docs/non-parity.md` section 14 had
+/// recorded as impossible until the two were put side by side.
+///
+/// It ramps rather than splitting, because a ramp is what four quads can be
+/// wrong about together: each stating its own share of one range, they draw a
+/// single continuous ramp if the coordinate arrived and four copies of the
+/// whole ramp if it did not.
+pub fn mesh_uv_effect() -> impeller_hal::RuntimeProgram {
+    impeller_hal::RuntimeProgram {
+        spirv: impeller_shaders::EFFECT_MESH_UV_SPV.to_vec(),
+        glsl_es: impeller_shaders::EFFECT_MESH_UV_FS_GLSL.to_string(),
+    }
+}
+
 /// The color [`image_effect`] multiplies its input by.
 pub fn tint_uniforms(tint: [f32; 4]) -> Vec<f32> {
     let mut out = vec![0.0; impeller_hal::RUNTIME_FLOATS];

@@ -7042,19 +7042,19 @@ fn texture_coordinates_are_taken_by_any_shader_that_can_read_them() {
         .draw_vertices(&mesh, &Paint::fill(Color::linear(1.0, 1.0, 1.0, 1.0)))
         .expect("a solid paint takes coordinates it has no use for");
 
-    // The one shader that is still refused, and for a reason of its own: a
-    // caller's program replaces the fragment shader and takes its coordinate
-    // from the fragment's position, so there is nowhere for a per-vertex
-    // coordinate to arrive.
-    assert!(
-        canvas
-            .draw_vertices(
-                &mesh,
-                &Paint::runtime_effect(0, vec![0.0; impeller::RUNTIME_FLOATS])
-            )
-            .is_err(),
-        "a program has no input a mesh's coordinates could reach"
-    );
+    // And a caller's program, which was the one shader still refused here. The
+    // reason given was that a program replaces the fragment shader and takes
+    // its coordinate from the fragment's position, leaving a per-vertex
+    // coordinate nowhere to arrive. It replaces the *fragment* stage; the
+    // vertex stage behind it is this renderer's own and hands on `uv`, which a
+    // program receives by declaring the same output the pipeline requires of
+    // it. Nothing here to refuse.
+    canvas
+        .draw_vertices(
+            &mesh,
+            &Paint::runtime_effect(0, vec![0.0; impeller::RUNTIME_FLOATS]),
+        )
+        .expect("a program reads a mesh's coordinates as `uv`");
 }
 
 #[test]
@@ -12745,8 +12745,13 @@ fn a_mesh_takes_a_runtime_effect_unless_it_is_textured() {
         "and so is the corner the triangle does not reach"
     );
 
-    // Texture coordinates with no image to read is the one refusal, and it has
-    // to be an error rather than a picture drawn from whatever was bound.
+    // And texture coordinates are accepted rather than refused, which is the
+    // half this used to assert the other way round. A program does not read
+    // them through the flag every built-in shader is told by -- it receives
+    // them as `uv` and decides -- so there is nothing here to refuse. What that
+    // buys is checked where it can be seen, in
+    // `a_program_reads_the_coordinate_the_vertices_state`, which mirrors a
+    // mesh's coordinates and requires the picture to turn over with them.
     let textured = Vertices::full(
         VertexMode::Triangles,
         vec![
@@ -12766,8 +12771,8 @@ fn a_mesh_takes_a_runtime_effect_unless_it_is_textured() {
                 &textured,
                 &Paint::runtime_effect(program, effect_uniforms(0.0)),
             )
-            .is_err(),
-        "a textured mesh under an effect has no image for its coordinates"
+            .is_ok(),
+        "a textured mesh under an effect reads its coordinates as `uv`"
     );
 }
 

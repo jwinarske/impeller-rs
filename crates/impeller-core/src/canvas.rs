@@ -3412,7 +3412,7 @@ impl Canvas {
     /// Only `Clear`. Upstream does not generalize this and neither does this:
     /// the other six modes that ignore coverage have no such reading and stay
     /// on the route that gets them wrong, which is `docs/non-parity.md`
-    /// section 16.
+    /// section 15.
     fn erasing_blur_paint(paint: &Paint) -> Paint {
         if paint.blend != BlendMode::Clear {
             return paint.clone();
@@ -4076,18 +4076,20 @@ impl Canvas {
         // This used to refuse anything but an image, and the refusal said the
         // coordinates needed an image paint to read. `dart:ui` reads whatever
         // color source the paint carries at a mesh's coordinates, image or not.
-        // A caller's program replaces this renderer's fragment shader outright
-        // and takes its coordinate from the fragment's own position. There is
-        // nowhere in it for a per-vertex coordinate to arrive, so this is the
-        // one shader a textured mesh is still refused under -- a narrower
-        // refusal than the one that used to cover every shader but an image,
-        // and `docs/non-parity.md` says which upstream scene it costs.
-        if textured && matches!(paint.shader, Shader::RuntimeEffect { .. }) {
-            return Err(Error::Unsupported(
-                "a caller's program takes its coordinate from the fragment, so a \
-                 mesh's texture coordinates have nowhere to reach it",
-            ));
-        }
+        //
+        // It then refused a caller's program alone, on the reasoning that a
+        // program replaces this renderer's fragment shader outright and so has
+        // nowhere for a per-vertex coordinate to arrive. That was wrong, and
+        // wrong about this renderer rather than about upstream: a program
+        // replaces the *fragment* stage, and the vertex stage it runs behind is
+        // this renderer's own whatever the fragment does. That stage hands on
+        // `uv` beside `clip`, and a program declaring the same `VertexOutput`
+        // -- which one has to, to be a pipeline here at all -- receives both.
+        //
+        // So a program reads the mesh's coordinate by reading `in.uv`, and
+        // chooses, where every built-in shader is told which to use by the flag
+        // below. `effect_mesh_uv.wgsl` is the fixture that proves it: the
+        // sibling of `effect.wgsl` differing in one line.
         let at_coords = textured && !matches!(paint.shader, Shader::Image { .. });
         let material = match (&paint.shader, textured) {
             (Shader::Image { .. }, true) => self.mesh_material(&paint.shader)?,

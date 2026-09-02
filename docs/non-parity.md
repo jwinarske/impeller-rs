@@ -460,54 +460,7 @@ narrow relative to its geometry, which is nearly every stroke drawn. Where it
 shows, it shows as a darker patch at the joins rather than as anything
 structural, and it is the same on both backends.
 
-## 14. A caller's program cannot be read at a mesh's texture coordinates
-
-**What differs.** `draw_vertices` takes a per-vertex texture coordinate, and
-every shader reads its own color there except one: a runtime effect is refused
-with "a caller's program takes its coordinate from the fragment, so a mesh's
-texture coordinates have nowhere to reach it". Upstream reads any color source
-at those coordinates, and its
-`DrawVerticesTextureCoordinatesWithFragmentShader` is that case by name.
-
-The reason is what a program *is* here. Every other shader is a branch in this
-renderer's own fragment shader, which sees the interpolated coordinate as an
-attribute and can be told to measure from it. A caller's program replaces that
-shader outright, so the attribute reaches nothing: what would have to change is
-the contract between the renderer and a program, giving one an input it does not
-have today.
-
-This entry used to be much wider. It said only an image could be read at a
-mesh's coordinates, and that every other shader -- a gradient among them -- was
-refused. The refusal was a bare `return Err` with no comment beside it, in a
-file where the refusals around it each carry a paragraph, and it turned out to
-be unbuilt rather than decided.
-
-**What was built.** A gradient reads at the coordinates now, and the mechanism
-is worth stating because the obvious version of it is wrong. A gradient's
-coordinate comes from `to_gradient_space`, which carries the fragment's clip
-position back through the inverse of what placed the geometry *and* through the
-paint's own part -- the translation that measures from a gradient's start, the
-rotation that orients a sweep. Feeding it the raw coordinate instead skips both,
-which lands the ramp somewhere else while still varying across the mesh: a wrong
-picture that looks like a right one, and one that a first attempt here produced.
-
-So the material is built without the geometry's transform when a mesh states
-coordinates, leaving exactly the paint's own part, and the shader runs the same
-arithmetic on `(uv, 1)` that it runs on a clip position. One path rather than
-two, and the test that keeps it honest is that a mesh whose coordinates equal
-its positions draws the same picture as the same mesh with no coordinates at
-all.
-
-A solid color takes coordinates too, and cannot show them -- a constant is the
-same everywhere. It is accepted rather than refused because `dart:ui` accepts
-it, which makes it a decision about what a caller may write rather than about
-what they get.
-
-**Impact.** One upstream scene, and a caller who wants a program's output to
-follow a mesh's parameterization rather than the frame. Any other shader on a
-textured mesh works, and a mesh with no coordinates was never affected.
-
-## 15. A blur turns with its caller, but by turning the passes rather than the space
+## 14. A blur turns with its caller, but by turning the passes rather than the space
 
 **What differs, and it is now a mechanism rather than a result.** `dart:ui`
 states a deviation per axis in the space the caller was drawing in. Where that
@@ -564,7 +517,7 @@ correct under a rotation, a circular kernel being circular whichever way it is
 turned. Under a shear or a perspective transform, an anisotropic blur still
 runs along the target's axes.
 
-## 16. A mask blur under a mode that ignores coverage erases its whole bounds
+## 15. A mask blur under a mode that ignores coverage erases its whole bounds
 
 **What differs.** A mask blur that cannot be evaluated in the fragment stage is
 drawn as a layer: the shape goes into a target, the target is blurred, and the

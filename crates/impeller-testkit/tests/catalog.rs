@@ -1552,3 +1552,101 @@ fn a_shadow_does_not_care_which_way_its_caster_is_wound() {
          of the pattern would leave this test quietly covering less"
     );
 }
+
+/// A per-vertex coordinate reaches a caller's program.
+///
+/// This was written down as a thing that could not happen. `draw_vertices`
+/// states a coordinate per vertex; every built-in shader can be told to measure
+/// from it, and a caller's program was refused, on the reasoning that a program
+/// replaces this renderer's fragment shader outright and so leaves the
+/// attribute nowhere to arrive.
+///
+/// It arrives. A program replaces the *fragment* stage, and the vertex stage it
+/// runs behind is this renderer's own whatever the fragment does -- so a
+/// program declaring the same `VertexOutput`, which it must in order to be a
+/// pipeline here at all, receives `uv` beside `clip`.
+///
+/// Asserted by mirroring rather than by naming a color. The same mesh is drawn
+/// twice, once with its coordinates running along its positions and once with
+/// them reversed, and what has to hold is that the second is the first turned
+/// over. A program reading the clip position would draw the same picture both
+/// times; one reading nothing would draw a flat one. This fails differently for
+/// each of the ways it could be wrong, which is what
+/// `vertices/draw-vertices-texture-coordinates-with-fragment-shader` cannot say
+/// on its own -- a plate is one picture, and this is a claim about two.
+#[test]
+fn a_program_reads_the_coordinate_the_vertices_state() {
+    use impeller_core::{ImageFilter, VertexMode};
+    use impeller_testkit::scene::{MeshSpec, Node, Transform};
+    use impeller_testkit::Fill;
+
+    let Ok(mut ctx) = Validated::new(DevicePreference::Auto) else {
+        eprintln!("skipping: no Vulkan device");
+        return;
+    };
+
+    let corners = [[8.0, 8.0], [120.0, 8.0], [120.0, 120.0], [8.0, 120.0]];
+    let shot = |ctx: &mut Validated, reversed: bool| -> Image {
+        let coords = corners
+            .iter()
+            .map(|p| {
+                let along = (p[0] - 8.0) / 112.0;
+                [if reversed { 1.0 - along } else { along }, 0.0]
+            })
+            .collect();
+        let scene = Scene::tree(
+            "probe",
+            vec![Node::Mesh(Box::new(MeshSpec {
+                mode: VertexMode::Triangles,
+                positions: corners.to_vec(),
+                colors: Vec::new(),
+                texture_coords: coords,
+                indices: vec![0, 1, 2, 0, 2, 3],
+                fill: Fill::RuntimeEffect {
+                    program: 3,
+                    uniforms: impeller_testkit::fixture::effect_uniforms(
+                        [1.0, 0.0, 0.0, 1.0],
+                        [0.0, 0.0, 1.0, 1.0],
+                        0.0,
+                    ),
+                    images: Vec::new(),
+                },
+                tint_blend: impeller_hal::BlendMode::Modulate,
+                blend: impeller_hal::BlendMode::SrcOver,
+                transform: Transform::default(),
+                image_filter: ImageFilter::None,
+                mask_blur: 0.0,
+            }))],
+        )
+        .with_samples(1);
+        render::<VulkanHal>(ctx, &scene)
+    };
+
+    let along = shot(&mut ctx, false);
+    let reversed = shot(&mut ctx, true);
+
+    let left = along.pixel(20, 64);
+    let right = along.pixel(108, 64);
+    assert!(
+        left[0] > 200 && left[2] < 60,
+        "the ramp should start at the first color, got {left:?}"
+    );
+    assert!(
+        right[2] > 200 && right[0] < 60,
+        "and end at the second, got {right:?}"
+    );
+
+    // Sampled at the same two columns, so a program that ignored the
+    // coordinates fails here and nowhere else.
+    let mirrored_left = reversed.pixel(20, 64);
+    let mirrored_right = reversed.pixel(108, 64);
+    assert!(
+        mirrored_left[2] > 200 && mirrored_left[0] < 60,
+        "reversing the coordinates should put the second color on the left, got \
+         {mirrored_left:?}"
+    );
+    assert!(
+        mirrored_right[0] > 200 && mirrored_right[2] < 60,
+        "and the first on the right, got {mirrored_right:?}"
+    );
+}

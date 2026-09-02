@@ -110,7 +110,7 @@ evaluated blur admits, because on a coverage it means `dst * (1 - c)` --
 `DstOut` against a white source, exact because `Clear` discards the source color
 by definition. Upstream makes the same special case in the same one place. The
 other six such modes, and `Clear` over a shape with no evaluated blur, still
-take the layer route and still clear their bounds: §16 of
+take the layer route and still clear their bounds: §15 of
 `docs/non-parity.md`.
 
 `ImageFilter::Blur` carries `sigma_x` and `sigma_y` where it carried one
@@ -121,7 +121,7 @@ is a `Vec2` for the same reason, with `Layer::with_blur` setting both and
 `Layer::with_blur_xy` stating them apart. A pass whose deviation is zero is
 skipped rather than run as an identity, which is what keeps a blur along one
 axis from resampling the other. The passes run along the target's own axes, so
-a blur whose deviations differ does not turn with a rotation -- §15 of
+a blur whose deviations differ does not turn with a rotation -- §14 of
 `docs/non-parity.md` has the measurement and what fixing it would take.
 
 `Color` stores sRGB-encoded components rather than linear light. `Color::srgb`

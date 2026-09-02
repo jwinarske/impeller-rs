@@ -666,6 +666,7 @@ where
         (0, crate::fixture::effect()),
         (1, crate::fixture::two_image_effect()),
         (2, crate::fixture::image_effect()),
+        (3, crate::fixture::mesh_uv_effect()),
     ] {
         let id = ctx.register_program(&program)?;
         if id != expected {

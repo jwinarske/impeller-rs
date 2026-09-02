@@ -5914,6 +5914,65 @@ fn vertices() -> Vec<Scene> {
                 },
             ),
         ),
+        Scene::tree(
+            "vertices/draw-vertices-texture-coordinates-with-fragment-shader",
+            // Four quads tiling one square, each stating texture coordinates
+            // that are its own share of a single range, all filled by one
+            // caller's program that ramps along them.
+            //
+            // The picture is the assertion. Read together the four make one
+            // continuous ramp; a renderer where the coordinate did not reach
+            // the program would draw the whole ramp four times over, with three
+            // seams down the middle, because each quad's own clip position runs
+            // the same way as every other's.
+            //
+            // Upstream's is four `DrawVertices` calls with
+            // `texture_coordinates` set to the positions. Here the coordinates
+            // are those positions over the square's extent, since the program
+            // ramps across nought to one rather than across a hundred pixels --
+            // the same statement in the units the fixture reads.
+            //
+            // This scene is why `docs/non-parity.md` section 14 is gone. It had
+            // recorded that a program cannot be read at a mesh's coordinates,
+            // on the reasoning that a program replaces the fragment shader and
+            // leaves the attribute nowhere to arrive. The vertex stage is this
+            // renderer's own whatever the fragment does, and it hands on `uv`.
+            [
+                ([0.0, 0.0], [60.0, 60.0]),
+                ([60.0, 0.0], [120.0, 60.0]),
+                ([0.0, 60.0], [60.0, 120.0]),
+                ([60.0, 60.0], [120.0, 120.0]),
+            ]
+            .into_iter()
+            .map(|(min, max)| {
+                let corners = [
+                    [min[0], min[1]],
+                    [max[0], min[1]],
+                    [max[0], max[1]],
+                    [min[0], max[1]],
+                ];
+                Node::Mesh(Box::new(MeshSpec {
+                    positions: corners.to_vec(),
+                    // The same points, over the square the four of them cover.
+                    texture_coords: corners
+                        .iter()
+                        .map(|p| [p[0] / 120.0, p[1] / 120.0])
+                        .collect(),
+                    indices: vec![0, 1, 2, 0, 2, 3],
+                    ..mesh_of(
+                        Vec::new(),
+                        Fill::RuntimeEffect {
+                            program: 3,
+                            uniforms: crate::fixture::effect_uniforms(RED, BLUE, 0.0),
+                            images: Vec::new(),
+                        },
+                    )
+                }))
+            })
+            .collect(),
+        )
+        .with_background(DARK)
+        .with_samples(4),
         mesh(
             "vertices/a-mesh-under-a-transform-filled-by-a-runtime-effect",
             // The same triangles turned. The program splits on the clip-space
@@ -8399,7 +8458,7 @@ fn blur_variants() -> Vec<Scene> {
     // carries. Two squares, one blurred along x alone and one along y, so
     // either plate on its own says the sigma arrived and the pair says which
     // of the two it was. Upstream's own scene for this turns the whole thing
-    // and is not mirrored -- see `docs/non-parity.md` section 15.
+    // and is not mirrored -- see `docs/non-parity.md` section 14.
     for (name, filter) in [
         ("blur/a-blur-along-one-axis", ImageFilter::blur_xy(9.0, 0.0)),
         (

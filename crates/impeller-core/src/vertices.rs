@@ -54,10 +54,13 @@ impl Vertices {
         Self::build(mode, positions, Vec::new(), Vec::new(), None)
     }
 
-    /// A mesh whose vertices name where in an image they read.
+    /// A mesh whose vertices name where in the paint they read.
     ///
-    /// Requires an image paint; anything else has no texture to read and the
-    /// draw is refused rather than quietly ignoring the coordinates.
+    /// Any shader reads there, which is what `dart:ui` means by a color source
+    /// at a mesh's coordinates: an image samples its texture, a gradient
+    /// measures its ramp, and a caller's program receives them as `uv` beside
+    /// the clip position and chooses. This used to say "requires an image
+    /// paint", which was true of neither the last two.
     pub fn textured(
         mode: VertexMode,
         positions: Vec<Vec2>,

@@ -166,7 +166,7 @@ column is right and the obvious way to check it is wrong.
 | `aiks_dl_opacity_unittests.cc` | ~3 | 3 | nothing; this file is covered |
 | `aiks_dl_blend_unittests.cc` | ~79 | 77 | capability injection, for one of them; see below |
 | `aiks_dl_blur_unittests.cc` | ~59 | 57 | nothing; see below |
-| `aiks_dl_vertices_unittests.cc` | ~16 | 21 | a caller's program cannot be read at a mesh's texture coordinates, for one of them; see below |
+| `aiks_dl_vertices_unittests.cc` | ~16 | 22 | nothing; see below |
 | `aiks_dl_atlas_unittests.cc` | ~11 | 12 | nothing; see below |
 | `aiks_dl_shadow_unittests.cc` | ~30 | 24 | two casters the scene model cannot describe; see below |
 | `aiks_dl_primitive_shape_unittests.cc` | ~2 | 0 | one is a playground harness, one wants a stroke width of zero to mean a hairline |
@@ -174,7 +174,7 @@ column is right and the obvious way to check it is wrong.
 | `aiks_dl_runtime_effect_unittests.cc` | — | 15 | a sampler bound to something that is not a texture, for one of them; see below |
 | `aiks_dl_unittests.cc` | ~36 | 27 | one whose picture cannot show what it is for; see below |
 
-The catalog holds four hundred and eighteen scenes against a column totalling
+The catalog holds four hundred and nineteen scenes against a column totalling
 about four hundred, and the two are not a ratio: five chapters hold more than
 the file they mirror, because a scene here is one picture where a test there can
 be a loop over every blend mode or a family drawn twice. What the totals meeting
@@ -250,7 +250,7 @@ A note on that chapter before the rest of it, because it was drawn wrong for
 longer than any of what follows was missing. Ten of its plates put a mask blur
 under `BlendMode::Src`, which is not a choice any of them made: `Item::fill`
 defaults to it, upstream's paint defaults to `kSrcOver`, and `Src` is one of the
-seven modes `docs/non-parity.md` section 16 names as erasing a mask blur's whole
+seven modes `docs/non-parity.md` section 15 names as erasing a mask blur's whole
 bounds. So ten plates named after upstream's blur scenes were drawing that
 deviation instead of the picture -- a blurred circle inside a hard-edged
 rectangle of erased ground, which is what the section describes and none of what
@@ -290,7 +290,7 @@ derivations themselves.
 
 So there are two costs and the choice between them is real. What is not in doubt
 is the mask blur, where the deviation is not a matter of degree: `Src` puts the
-draw into a case `docs/non-parity.md` section 16 describes and upstream never
+draw into a case `docs/non-parity.md` section 15 describes and upstream never
 reaches. Those eight draws name their blend.
 
 The blur row was wrong in a more interesting way, and checking it changed the

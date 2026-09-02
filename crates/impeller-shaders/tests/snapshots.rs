@@ -122,12 +122,43 @@ fn the_translated_glsl_is_what_it_was() {
         "effect_two_images.frag.glsl",
         impeller_shaders::EFFECT_TWO_IMAGES_FS_GLSL,
     );
+    check(
+        "effect_mesh_uv.frag.glsl",
+        impeller_shaders::EFFECT_MESH_UV_FS_GLSL,
+    );
+    // The list above is by hand, because the constants it names are separate
+    // identifiers and nothing can iterate them. This is what stops a shader
+    // being added and quietly going unsnapshotted: the count comes from the
+    // directory walk `build.rs` does, so a new `.wgsl` fails here until
+    // somebody names it.
+    assert_eq!(
+        snapshotted_shaders(),
+        5,
+        "the shader directory holds {} sources and this test names five of them: \
+         `solid` and the four stand-ins for a caller's program. A shader added \
+         to the tree goes unsnapshotted until it is named above, and this is \
+         what says so.",
+        snapshotted_shaders()
+    );
+}
+
+/// The WGSL sources the build found, from the same walk that compiled them.
+mod sources {
+    include!(concat!(env!("OUT_DIR"), "/sources.rs"));
+}
+
+fn snapshotted_shaders() -> usize {
+    sources::SHADER_SOURCES.len()
 }
 
 #[test]
 fn the_translated_spirv_is_what_it_was() {
     check("solid.spv.txt", &digest(impeller_shaders::SOLID_SPV));
     check("effect.spv.txt", &digest(impeller_shaders::EFFECT_SPV));
+    check(
+        "effect_mesh_uv.spv.txt",
+        &digest(impeller_shaders::EFFECT_MESH_UV_SPV),
+    );
     check(
         "effect_image.spv.txt",
         &digest(impeller_shaders::EFFECT_IMAGE_SPV),
