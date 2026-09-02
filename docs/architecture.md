@@ -857,8 +857,9 @@ route works in the shape's own space and simply stopped dividing by the scale �
 that division existed to bring a device sigma back into shape space and had
 nothing left to do.
 
-**What caught the shadow half.** Not design. A test named
-`a_mask_blurs_deviation_is_in_device_pixels` had pinned the old convention, and
+**What caught the shadow half.** Not design. The test now named
+`a_shadows_softness_is_fixed_in_device_pixels` had pinned the old convention
+under an earlier name, and
 its doc comment had already worked out upstream's arrangement in full — that
 the sigma is local and the shadow's division cancels it — and concluded,
 correctly for the convention then in force, that copying the division would

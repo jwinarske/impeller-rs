@@ -95,17 +95,19 @@ fn sources() -> Vec<String> {
             }
         }
     }
-    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+    let workspace = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .parent()
         .expect("xtask sits inside the workspace")
-        .join("crates");
+        .to_path_buf();
     let mut files = Vec::new();
-    walk(&root, &mut files);
-    assert!(
-        !files.is_empty(),
-        "no sources found under {}",
-        root.display()
-    );
+    // `xtask` as well as `crates`, because the tests in here are cited by the
+    // documents like any other and a citation that resolves to nothing reads
+    // the same whichever directory the test lives in.
+    for root in [workspace.join("crates"), workspace.join("xtask")] {
+        assert!(root.is_dir(), "no directory at {}", root.display());
+        walk(&root, &mut files);
+    }
+    assert!(!files.is_empty(), "no sources found in the workspace");
     files
 }
 
@@ -1053,4 +1055,92 @@ fn the_ratios_here_are_the_ones_the_baseline_records() {
              not say that anywhere -- a row moved and the reasoning above it did not"
         );
     }
+}
+
+/// A test named in prose is a test that exists.
+///
+/// `docs/parity.md`'s evidence column has been checked for a while, because a
+/// row whose evidence has been renamed is a row with nothing behind it. The
+/// documents cite tests everywhere else too -- the architecture cites the one
+/// that caught a convention change, the playground inventory cites the ones
+/// that make a plate mean something -- and none of those was checked. One had
+/// already gone stale: the architecture named
+/// `a_mask_blurs_deviation_is_in_device_pixels`, which was renamed in `3e505eb`
+/// and left a reader following the citation nowhere.
+///
+/// A citation is recognized by this tree's own naming convention rather than by
+/// where it appears: a backticked identifier with four or more underscores is a
+/// test here, and a field, a method or a lint is not. That is a heuristic and
+/// the two exceptions it needs are listed below rather than hidden in the
+/// pattern -- both are symbols in somebody else's library, which is exactly the
+/// case the convention cannot distinguish.
+#[test]
+fn every_test_the_documents_name_exists() {
+    // Names from outside this tree that happen to look like tests here. Kept
+    // short on purpose: a growing list is a sign the rule below has stopped
+    // fitting, rather than a reason to keep adding to it.
+    const FOREIGN: [&str; 3] = [
+        // A lint, in `Cargo.toml`.
+        "unsafe_op_in_unsafe_fn",
+        // libgbm, named where the DRM presentation path explains what it asks
+        // that library for.
+        "gbm_bo_create_with_modifiers",
+        // The Vulkan loader, named where the architecture explains what it
+        // does before a driver is reached.
+        "loader_get_icd_and_device",
+    ];
+
+    let sources = sources().join("\n");
+    let mut dangling = Vec::new();
+    let mut checked = 0usize;
+    let mut documents = vec![
+        ("README.md", doc("../README.md")),
+        ("CHANGELOG.md", doc("../CHANGELOG.md")),
+    ];
+    for name in [
+        "architecture.md",
+        "parity.md",
+        "non-parity.md",
+        "playground-parity.md",
+        "on-a-board.md",
+    ] {
+        documents.push((name, doc(name)));
+    }
+
+    for (name, text) in &documents {
+        let mut rest = text.as_str();
+        while let Some(open) = rest.find('`') {
+            rest = &rest[open + 1..];
+            let Some(close) = rest.find('`') else { break };
+            let cited = &rest[..close];
+            rest = &rest[close + 1..];
+            let looks_like_a_test = cited.len() > 8
+                && cited.matches('_').count() >= 4
+                && cited
+                    .chars()
+                    .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_')
+                && !cited.starts_with('_')
+                && !cited.ends_with('_');
+            if !looks_like_a_test || FOREIGN.contains(&cited) {
+                continue;
+            }
+            checked += 1;
+            if !sources.contains(&format!("fn {cited}(")) {
+                dangling.push(format!("{name} names {cited}"));
+            }
+        }
+    }
+
+    assert!(
+        checked >= 40,
+        "only {checked} test citations were found across the documents, which is \
+         fewer than there are and means the walk missed some"
+    );
+    assert!(
+        dangling.is_empty(),
+        "these documents name tests that do not exist:\n  {}\n\
+         Either the test was renamed and the prose should follow it, or what the \
+         prose says was checked is no longer checked by anything.",
+        dangling.join("\n  ")
+    );
 }
