@@ -185,7 +185,7 @@ column is right and the obvious way to check it is wrong.
 | `aiks_dl_primitive_shape_unittests.cc` | ~2 | 0 | one is a playground harness, one wants a stroke width of zero to mean a hairline |
 | `aiks_dl_text_unittests.cc` | — | 7 | shaping and font parsing, which are out of scope; glyph rendering is not, and these use synthetic coverage |
 | `aiks_dl_runtime_effect_unittests.cc` | — | 15 | nothing; two of that file's tests exercise machinery this renderer does not have, which is not the same as a gap; see below |
-| `aiks_dl_unittests.cc` | 39 | 28 | two whose pictures cannot show what they are for; see below |
+| `aiks_dl_unittests.cc` | 39 | 28 | nine that are texture or dispatcher machinery rather than pictures, one the scene model cannot say, one removed as unshowable, and two unwritten; see below |
 
 One row now carries an exact number rather than an approximate one.
 `aiks_dl_unittests.cc` holds thirty-nine `TEST_P` and expands none of them over
@@ -797,6 +797,31 @@ that were: five of that file's tests read like resource tests from their names
 -- mipmap generation, releasing a texture on teardown, setting contents with a
 region, two about depth values -- and all five open a playground and are
 scenes. Only the two named above do not.
+
+The thirteen of that file still unmirrored, read one body at a time rather than
+sorted by their names, because the names mislead in both directions and so does
+grepping for `OpenPlaygroundHere` -- `ToImageFromImage` opens one and is a test
+of a round trip through a host buffer, not of a picture.
+
+Eight are about a recording rendered into a texture the caller then owns, and
+what becomes of that texture: an empty picture and a full one converted to an
+image, the round trip out to a host buffer and back, the null a zero-sized
+target returns, mip generation on that path and on a texture built by hand,
+releasing on teardown, and replacing a region of one's contents. What they draw
+is incidental to the machinery under test. One more is the dispatcher's own
+culling, reached through a render-target cache.
+
+One the scene model cannot say: a run of points painted from a texture, where a
+run here carries a single color. One is `CollapsedDrawPaintInSubpassBackdropFilter`,
+which was built and then removed -- it drew a uniform picture with its features
+stripped as with them, so nothing could tell whether the optimization it names
+had happened.
+
+That leaves two, and they are pictures nobody has written rather than anything
+blocked: the coverage the first restored clip gives a backdrop filter, and a
+stroked path whose `MoveTo` is followed by a `Close`, which upstream's own
+comment says is there so that closing does not add a second nearly-empty
+contour.
 
 The clip row said "nothing; this file is covered" and the file was not covered.
 Six scenes against five tests reads as a surplus, and two of the six are this
