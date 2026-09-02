@@ -62,6 +62,9 @@
   layer-blended-composite                      2      3       44      114       1     0
   layer-bounded                                2      3       40      102       1     0
   layer-nested-clipped                         3      6       47      105       2     0
+  image-sampled                                1      1        4        6       1     0
+  mesh-interpolated                            1      1        4        6       0     0
+  layer-dilated                                4      4       20       30       3     0
   nine-patch-stretched                         1      1       36       54       1     0
   point-field                                  1      1       48       72       0     0
   glyph-run                                    1      1      140      210       1     0

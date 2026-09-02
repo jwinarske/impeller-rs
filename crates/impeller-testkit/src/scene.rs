@@ -1166,6 +1166,29 @@ impl Node {
         }
     }
 
+    /// Whether anything here has the rasterizer interpolate a color for it.
+    ///
+    /// A mesh with per-vertex colors, and nothing else: every other shading
+    /// here is computed by a shader both backends share, where this is computed
+    /// by two different rasterizers from the same three corners. A mesh without
+    /// colors is shaded like any other draw and is not this.
+    fn interpolates_a_color(&self) -> bool {
+        match self {
+            Self::Mesh(mesh) => !mesh.colors.is_empty(),
+            Self::Draw(_)
+            | Self::Atlas(_)
+            | Self::Glyphs(_)
+            | Self::Points(_)
+            | Self::NinePatch(_)
+            | Self::Paint(_)
+            | Self::Shadow(_) => false,
+            Self::Picture(picture) => picture.children.iter().any(Node::interpolates_a_color),
+            Self::Layer { children, .. } | Self::Clip { children, .. } => {
+                children.iter().any(Node::interpolates_a_color)
+            }
+        }
+    }
+
     fn uses_glyphs(&self) -> bool {
         let reads_atlas = |fill: &Fill| match fill {
             Fill::RuntimeEffect { images, .. } => images.contains(&1),
@@ -1623,8 +1646,16 @@ impl Scene {
         // same trap being sprung by a new *fill* kind; this is a new *node*
         // kind doing it again, which suggests the lesson is about derivations
         // that enumerate rather than about either list.
+        //
+        // And the third time, by a mesh, which is what that suggestion
+        // predicted. `draw_vertices` interpolates a color per fragment across a
+        // triangle, and the rasterizer does it -- so two devices land a unit
+        // apart on nearly half the frame and neither is wrong. A mesh is not an
+        // item either, and the scene came out `EXACT` for the same reason a
+        // glyph run did.
         let computed = self.items.iter().any(Node::has_layer)
             || self.items.iter().any(Node::uses_glyphs)
+            || self.items.iter().any(Node::interpolates_a_color)
             || self.items().any(|item| {
                 item.blend == BlendMode::SrcOver || !matches!(item.fill, Fill::Solid(_))
             });
@@ -3168,6 +3199,114 @@ pub fn corpus() -> Vec<Scene> {
         // catalog. Both wins were asserted directly when they landed; neither
         // was guarded against creeping back, which is what a row in
         // `tests/cost-baseline.txt` is for.
+        // Three capabilities the corpus had no scene for at all, found by asking
+        // it which node kinds and fills it holds. Each is here on the rule this
+        // collection is built on -- a scene earns its place by exercising
+        // something the others do not -- and each was being compared only in the
+        // catalog, whose budget is three per cent of a frame against this one's
+        // unit or two per pixel.
+        Scene::new(
+            "image-sampled",
+            vec![Item::filled(
+                Shape::Rect {
+                    min: [8.0, 8.0],
+                    max: [120.0, 120.0],
+                },
+                // Magnified about fourteen times from an eight-texel sheet, so
+                // every interior pixel is an interpolation between four texels
+                // rather than a texel copied. That is the arithmetic two
+                // backends can disagree about and nothing else here performs:
+                // the nine-patch beside this one stretches too, but through a
+                // call that places nine quads, where this is one draw and the
+                // sampler.
+                Fill::Image {
+                    rect: [8.0, 8.0, 120.0, 120.0],
+                    source: [0.0, 0.0, 1.0, 1.0],
+                    tile: TileMode::Clamp,
+                    sampling: Sampling::Linear,
+                    alpha: 1.0,
+                    tint: [1.0, 1.0, 1.0, 1.0],
+                },
+            )
+            .with_blend(BlendMode::SrcOver)],
+        )
+        .with_background([0.06, 0.07, 0.10, 1.0]),
+        Scene::tree(
+            "mesh-interpolated",
+            // Two triangles sharing an edge, each vertex a different color, so
+            // every interior fragment is a barycentric mix of three of them.
+            // `draw_vertices` is a whole call this collection did not reach, and
+            // the interpolation is the part of it that is arithmetic rather than
+            // geometry -- a fragment's color here is computed by the rasterizer,
+            // not by any shader either backend shares.
+            //
+            // The shared edge is what makes it more than a gradient: the two
+            // triangles must agree exactly along it, and a renderer that
+            // interpolated per triangle in device space rather than per vertex
+            // would leave a seam that neither triangle alone would show.
+            vec![Node::Mesh(Box::new(MeshSpec {
+                mode: VertexMode::Triangles,
+                positions: vec![[16.0, 16.0], [112.0, 16.0], [112.0, 112.0], [16.0, 112.0]],
+                colors: vec![
+                    [1.0, 0.0, 0.0, 1.0],
+                    [0.0, 1.0, 0.0, 1.0],
+                    [0.0, 0.0, 1.0, 1.0],
+                    [1.0, 1.0, 0.0, 1.0],
+                ],
+                texture_coords: Vec::new(),
+                indices: vec![0, 1, 2, 0, 2, 3],
+                fill: Fill::Solid([1.0, 1.0, 1.0, 1.0]),
+                tint_blend: BlendMode::Modulate,
+                blend: BlendMode::SrcOver,
+                transform: Transform::default(),
+                image_filter: ImageFilter::None,
+                mask_blur: 0.0,
+            }))],
+        )
+        .with_background([0.06, 0.07, 0.10, 1.0]),
+        Scene::tree(
+            "layer-dilated",
+            // A cross dilated by a layer's morphology, which is a separable
+            // maximum over the neighborhood rather than a weighted sum -- the
+            // one filter here whose arithmetic is a comparison. A cross rather
+            // than a rectangle because a dilation fills an inner corner by its
+            // radius, which a convex shape cannot show.
+            //
+            // Asymmetric radii, so a pass that ran the same distance along both
+            // axes would draw this and a scene with one radius identically.
+            vec![Node::Layer {
+                layer: Box::new(LayerSpec {
+                    morphology: Some(MorphologySpec {
+                        radius: [8.0, 3.0],
+                        dilate: true,
+                    }),
+                    ..LayerSpec::default()
+                }),
+                bounds: None,
+                transform: Transform::default(),
+                children: vec![
+                    Item::fill(
+                        Shape::Rect {
+                            min: [56.0, 24.0],
+                            max: [72.0, 104.0],
+                        },
+                        [1.0, 1.0, 1.0, 1.0],
+                    )
+                    .with_blend(BlendMode::SrcOver)
+                    .into(),
+                    Item::fill(
+                        Shape::Rect {
+                            min: [24.0, 56.0],
+                            max: [104.0, 72.0],
+                        },
+                        [1.0, 1.0, 1.0, 1.0],
+                    )
+                    .with_blend(BlendMode::SrcOver)
+                    .into(),
+                ],
+            }],
+        )
+        .with_background([0.06, 0.07, 0.10, 1.0]),
         Scene::tree(
             "nine-patch-stretched",
             vec![Node::NinePatch(Box::new(NinePatchSpec {
