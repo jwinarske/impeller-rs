@@ -321,10 +321,38 @@ the same Mesa through a different extension -- is correct for both. Neither is
 this renderer: the pipeline state is the same either way and the pictures agree
 on GLES.
 
-The first is any advanced blend under multisampling. Fifteen catalog plates were
-reporting a mode they never drew because of it, and they are single-sampled now,
-which costs them nothing: their subject is what a blend computes rather than
-where an edge falls.
+The first was written down here as "any advanced blend under multisampling",
+which is wrong, and the correction is more useful than the claim was. Sample
+count is not a thing the blend can see. What it changes is the *route*: at four
+samples the executor asks for antialiasing and a shape is drawn from its
+distance field, at one it is tessellated. So the failing arrangement was being
+named by the switch that selected it.
+
+Reduced to bare Vulkan, with no renderer in it, the trigger is the **fragment's
+alpha varying across the primitive**. One pass, a ground laid down as a draw,
+then a full-screen draw over it with `VK_BLEND_OP_MULTIPLY_EXT`:
+
+| the fragment shader | result |
+|---|---|
+| a push-constant color, alpha 1 everywhere | multiplies correctly |
+| a coverage from a distance field, alpha 0 to 1 | **0 of 1024 pixels change** |
+| the same coverage shader, ordinary alpha blending | 572 of 1024 change, edges soft |
+
+Not the sample count -- it fails at one sample as readily as four. Not the
+derivative either: stating the per-pixel rate as a constant instead of taking
+`dFdx`/`dFdy` of the distance leaves the failure exactly where it was. Not a
+translucent source in general, since
+`every_advanced_mode_agrees_with_the_reference_formulas` pushes a constant alpha
+of 0.92 through the same op and gets the equation's answer. What is left is that
+the alpha *varies*, and when it does the whole draw is dropped -- at every
+pixel, including the interior ones where coverage is one and the emitted
+fragment is byte-identical to the one the solid shader emits.
+
+Fifteen catalog plates were reporting a mode they never drew because of it, and
+they are single-sampled now, which costs them nothing: their subject is what a
+blend computes rather than where an edge falls. That fix still works, and now
+for a stated reason -- a single-sampled plate tessellates, and a tessellated
+shape's fragments all carry the paint's own alpha.
 
 The second is a *group* whose contents do not reach the edge of its own target,
 composited with an advanced mode -- which is every group a plate is likely to
