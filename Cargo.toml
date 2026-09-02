@@ -130,7 +130,9 @@ codegen-units = 1
 # runs.
 #
 # See `crates/impeller-geometry/tests/hostile.rs` for the case that found it,
-# pinned there as a test of its own.
+# pinned there as a test of its own, and nical/lyon#963 for the report -- which
+# carries a seven-point reproduction rather than that one, shrunk from it by
+# deleting points while the panic held.
 [profile.dev.package.lyon_tessellation]
 debug-assertions = false
 

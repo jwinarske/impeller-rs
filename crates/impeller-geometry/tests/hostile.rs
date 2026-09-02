@@ -548,7 +548,8 @@ mod found_by_generation {
 /// recovers into a real tessellation, a thousand and forty-nine vertices of
 /// one; in a debug build it panicked, so the same path drew a shape in release
 /// and took the process down under test. The workspace manifest turns that
-/// package's debug assertions off and says why.
+/// package's debug assertions off and says why; the report is nical/lyon#963,
+/// which carries a seven-point reproduction shrunk out of this one.
 ///
 /// Reduced from what proptest handed over, and each of the three curves earns
 /// its place: replacing the conic with a line, or shrinking the magnitude to a

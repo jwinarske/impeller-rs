@@ -311,8 +311,8 @@ approximation rather than in the rasterizer.
 
 Deviating rather than matching, because a blur whose width depends on which way
 the rectangle is turned is a defect rather than a convention, and because
-matching it would mean keeping a test that asserts the wrong thing. Worth
-reporting upstream.
+matching it would mean keeping a test that asserts the wrong thing. Reported as
+flutter/flutter#192189.
 
 **Impact.** None on agreement with the sampled blur, which is the check that
 matters for the approximation as a whole: the seven shapes in
@@ -373,7 +373,8 @@ further from the curve it is approximating rather than closer.
 So this is carried rather than fixed. Smoothing it would put this renderer's
 squircle where Flutter's is not, which is the substitution refused everywhere
 else here; refitting the table would be inventing a shape rather than matching
-one. *Impact:* none against upstream, which is the point -- the outline is
+one. Reported as flutter/flutter#192190, including the measurement that says the
+one-line fix is worse than the bug. *Impact:* none against upstream, which is the point -- the outline is
 wrong in exactly the way Flutter's is. It is written down because the next
 person to measure this shape will find the jump and reasonably think it is a
 local mistake.
