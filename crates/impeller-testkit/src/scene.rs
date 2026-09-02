@@ -1086,24 +1086,6 @@ impl Node {
         }
     }
 
-    fn has_layer(&self) -> bool {
-        match self {
-            // A picture is composited from a target of its own whatever it
-            // holds, which is the same per-fragment arithmetic a layer is.
-            Self::Picture(_) => true,
-            Self::Draw(_)
-            | Self::Mesh(_)
-            | Self::Atlas(_)
-            | Self::Shadow(_)
-            | Self::Glyphs(_)
-            | Self::Points(_)
-            | Self::NinePatch(_)
-            | Self::Paint(_) => false,
-            Self::Layer { .. } => true,
-            Self::Clip { children, .. } => children.iter().any(Node::has_layer),
-        }
-    }
-
     fn samples_fixture(&self) -> bool {
         let reads_sheet = |fill: &Fill| match fill {
             Fill::Image { .. } => true,
@@ -1166,26 +1148,60 @@ impl Node {
         }
     }
 
-    /// Whether anything here has the rasterizer interpolate a color for it.
+    /// Whether every fragment this node produces is a color written as it was
+    /// given, rather than one arrived at by arithmetic.
     ///
-    /// A mesh with per-vertex colors, and nothing else: every other shading
-    /// here is computed by a shader both backends share, where this is computed
-    /// by two different rasterizers from the same three corners. A mesh without
-    /// colors is shaded like any other draw and is not this.
-    fn interpolates_a_color(&self) -> bool {
+    /// The distinction decides whether a scene is held to `Tolerance::EXACT`,
+    /// so being wrong in the false direction costs a byte-for-byte comparison
+    /// and being wrong in the true direction costs a failing test on a second
+    /// device. Three derivations here have been wrong in the true direction, by
+    /// enumerating the kinds that compute and missing one added later -- a
+    /// glyph run, a mesh, an atlas -- so this enumerates *everything* and the
+    /// compiler keeps the list complete.
+    ///
+    /// When a new kind arrives, the question to answer is whether two
+    /// rasterizers could put its fragments a unit apart. If that cannot be
+    /// settled, `false` is the answer to give: a scene compared a unit loosely
+    /// still catches every failure worth catching, and one compared exactly
+    /// that should not have been fails on a machine nobody has in front of
+    /// them.
+    fn stores_rather_than_computes(&self) -> bool {
         match self {
-            Self::Mesh(mesh) => !mesh.colors.is_empty(),
-            Self::Draw(_)
-            | Self::Atlas(_)
-            | Self::Glyphs(_)
-            | Self::Points(_)
-            | Self::NinePatch(_)
-            | Self::Paint(_)
-            | Self::Shadow(_) => false,
-            Self::Picture(picture) => picture.children.iter().any(Node::interpolates_a_color),
-            Self::Layer { children, .. } | Self::Clip { children, .. } => {
-                children.iter().any(Node::interpolates_a_color)
+            // A solid color, written rather than blended, is the whole of the
+            // case: any other fill computes, and `SrcOver` combines what it
+            // computed with what was there.
+            Self::Draw(item) => {
+                item.blend != BlendMode::SrcOver && matches!(item.fill, Fill::Solid(_))
             }
+            // A flood fill is a draw without a shape and answers the same way.
+            Self::Paint(paint) => {
+                paint.blend != BlendMode::SrcOver && matches!(paint.fill, Fill::Solid(_))
+            }
+            // Points are stroked geometry in one color, so they store like any
+            // other draw of one.
+            Self::Points(points) => points.blend != BlendMode::SrcOver,
+            // A mesh's colors are interpolated across a triangle by the
+            // rasterizer, which is arithmetic neither backend's shader
+            // performs; without colors it is a draw of whatever its fill says.
+            Self::Mesh(mesh) => {
+                mesh.colors.is_empty()
+                    && mesh.blend != BlendMode::SrcOver
+                    && matches!(mesh.fill, Fill::Solid(_))
+            }
+            // These sample a texture, which is an interpolation whatever else
+            // they do: sprites out of the sheet, coverage out of the glyph
+            // atlas, nine quads of a stretched image.
+            Self::Atlas(_) | Self::Glyphs(_) | Self::NinePatch(_) => false,
+            // A shadow is a blur, and a layer is composited out of a target it
+            // was rendered into.
+            Self::Shadow(_) | Self::Layer { .. } => false,
+            // Neither a clip nor a picture computes anything itself; both are
+            // whatever they hold.
+            Self::Clip { children, .. } => children.iter().all(Node::stores_rather_than_computes),
+            Self::Picture(picture) => picture
+                .children
+                .iter()
+                .all(Node::stores_rather_than_computes),
         }
     }
 
@@ -1640,25 +1656,20 @@ impl Scene {
         // fragment, which is the same arithmetic a translucent draw does.
         //
         // Asked of the nodes rather than of the items, and that is the whole
-        // point. A run is not an item, so the walk below cannot see it -- the
-        // scene came out `EXACT` and diverged by one unit on every partially
-        // covered pixel the moment it was added. The comment above records the
-        // same trap being sprung by a new *fill* kind; this is a new *node*
-        // kind doing it again, which suggests the lesson is about derivations
-        // that enumerate rather than about either list.
+        // point. A run is not an item, so a walk over items cannot see it --
+        // the scene came out `EXACT` and diverged by one unit on every
+        // partially covered pixel the moment it was added. That was the second
+        // time a derivation here enumerated what it cared about and missed what
+        // came later, the first being a new *fill* kind.
         //
-        // And the third time, by a mesh, which is what that suggestion
-        // predicted. `draw_vertices` interpolates a color per fragment across a
-        // triangle, and the rasterizer does it -- so two devices land a unit
-        // apart on nearly half the frame and neither is wrong. A mesh is not an
-        // item either, and the scene came out `EXACT` for the same reason a
-        // glyph run did.
-        let computed = self.items.iter().any(Node::has_layer)
-            || self.items.iter().any(Node::uses_glyphs)
-            || self.items.iter().any(Node::interpolates_a_color)
-            || self.items().any(|item| {
-                item.blend == BlendMode::SrcOver || !matches!(item.fill, Fill::Solid(_))
-            });
+        // It sprang twice more the same afternoon -- a mesh, whose colors the
+        // rasterizer interpolates, and an atlas, which samples the sheet -- and
+        // at four instances the lesson stopped being about which kinds to add.
+        // The question is asked the other way round now: `stores_rather_than_computes`
+        // is an exhaustive match over every node kind, so a kind added to the
+        // scene format cannot be missed here. It has to say which it is, and
+        // the direction to be wrong in is written down beside it.
+        let computed = !self.items.iter().all(Node::stores_rather_than_computes);
         if !computed {
             return self.allowing_ties(crate::image::Tolerance::EXACT);
         }
@@ -3300,6 +3311,92 @@ pub fn corpus() -> Vec<Scene> {
                             max: [104.0, 72.0],
                         },
                         [1.0, 1.0, 1.0, 1.0],
+                    )
+                    .with_blend(BlendMode::SrcOver)
+                    .into(),
+                ],
+            }],
+        )
+        .with_background([0.06, 0.07, 0.10, 1.0]),
+        Scene::tree(
+            "atlas-turned-sprites",
+            // Sprites out of the sheet, each turned and scaled by an amount
+            // nothing else uses, which is what `drawAtlas` is: one call
+            // producing many quads, each placed by its own similarity. Turned
+            // rather than merely placed, because an axis-aligned sprite lands
+            // texel on pixel and never asks the sampler anything -- the
+            // rotation is what makes every fragment an interpolation, and it is
+            // computed per sprite from a transform this collection has no other
+            // scene for.
+            vec![Node::Atlas(Box::new(AtlasSpec {
+                sprites: (0..4)
+                    .map(|i| {
+                        let n = i as f32;
+                        SpriteSpec {
+                            // A quadrant of the eight-texel sheet each, so the
+                            // four differ in what they sample as well as where
+                            // they land.
+                            source: [(i % 2) as f32 * 4.0, (i / 2) as f32 * 4.0, 0.0, 0.0],
+                            rotate: 0.2 + n * 0.35,
+                            scale: 6.0,
+                            translate: [32.0 + (i % 2) as f32 * 64.0, 32.0 + (i / 2) as f32 * 64.0],
+                            color: [1.0, 1.0, 1.0, 1.0],
+                        }
+                    })
+                    .map(|mut sprite| {
+                        sprite.source[2] = sprite.source[0] + 4.0;
+                        sprite.source[3] = sprite.source[1] + 4.0;
+                        sprite
+                    })
+                    .collect(),
+                tint_blend: BlendMode::Modulate,
+                blend: BlendMode::SrcOver,
+                alpha: 1.0,
+            }))],
+        )
+        .with_background([0.06, 0.07, 0.10, 1.0]),
+        Scene::tree(
+            "layer-resampled-by-its-matrix",
+            // A group whose matrix magnifies it on the way back, which is a
+            // different thing from drawing its contents larger: what is
+            // resampled is the finished image, so the edges arrive soft and
+            // enlarged rather than redrawn sharp. `dart:ui` has both and the
+            // distinction is the reason.
+            //
+            // Here for the sampler rather than for the distinction, which the
+            // catalog states with a pair of plates side by side. Every interior
+            // pixel of the magnified region is an interpolation between four
+            // texels of a target this renderer produced, and the machinery that
+            // performs it is the same seed-and-composite path a backdrop filter
+            // uses -- so a change to that path moves this scene, which was true
+            // of no scene here until now.
+            vec![Node::Layer {
+                layer: Box::new(LayerSpec {
+                    matrix: Some(Transform {
+                        scale: [3.0, 3.0],
+                        translate: [-56.0, -56.0],
+                        ..Transform::default()
+                    }),
+                    ..LayerSpec::default()
+                }),
+                bounds: Some([40.0, 40.0, 88.0, 88.0]),
+                transform: Transform::default(),
+                children: vec![
+                    Item::fill(
+                        Shape::Circle {
+                            center: [64.0, 64.0],
+                            radius: 16.0,
+                        },
+                        [1.0, 0.4, 0.1, 1.0],
+                    )
+                    .with_blend(BlendMode::SrcOver)
+                    .into(),
+                    Item::fill(
+                        Shape::Rect {
+                            min: [44.0, 44.0],
+                            max: [60.0, 60.0],
+                        },
+                        [0.2, 0.7, 1.0, 1.0],
                     )
                     .with_blend(BlendMode::SrcOver)
                     .into(),

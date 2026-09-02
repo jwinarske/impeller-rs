@@ -65,6 +65,8 @@
   image-sampled                                1      1        4        6       1     0
   mesh-interpolated                            1      1        4        6       0     0
   layer-dilated                                4      4       20       30       3     0
+  atlas-turned-sprites                         1      1       16       24       1     0
+  layer-resampled-by-its-matrix                2      3       32       78       1     0
   nine-patch-stretched                         1      1       36       54       1     0
   point-field                                  1      1       48       72       0     0
   glyph-run                                    1      1      140      210       1     0
