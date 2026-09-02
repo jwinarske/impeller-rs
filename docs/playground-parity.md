@@ -181,7 +181,7 @@ column is right and the obvious way to check it is wrong.
 | `aiks_dl_blur_unittests.cc` | ~59 | 57 | nothing; see below |
 | `aiks_dl_vertices_unittests.cc` | ~16 | 22 | nothing; see below |
 | `aiks_dl_atlas_unittests.cc` | ~11 | 12 | nothing; see below |
-| `aiks_dl_shadow_unittests.cc` | ~30 | 24 | two casters the scene model cannot describe; see below |
+| `aiks_dl_shadow_unittests.cc` | ~30 | 24 | two casters the scene model cannot describe, and measured as near-duplicates of ones it can; see below |
 | `aiks_dl_primitive_shape_unittests.cc` | ~2 | 0 | one is a playground harness, one wants a stroke width of zero to mean a hairline |
 | `aiks_dl_text_unittests.cc` | — | 7 | shaping and font parsing, which are out of scope; glyph rendering is not, and these use synthetic coverage |
 | `aiks_dl_runtime_effect_unittests.cc` | — | 15 | nothing; two of that file's tests exercise machinery this renderer does not have, which is not the same as a gap; see below |
@@ -1110,7 +1110,18 @@ differs by whole triangles rather than by an edge sample. The three casters
 upstream declines to optimize are here too, for the other side of the same
 question. What is left out is two of them that the scene model cannot describe:
 a circle and an oval built from conics tweaked off the exact weight, which
-needs a closed multi-segment curve the model has no variant for. The mesh
+needs a closed multi-segment curve the model has no variant for.
+
+Worth stating what that costs, because the obvious repair is a general curve
+path and it would buy very little. Upstream's tweak is there to defeat *its*
+shape recognition, so that the general convex path is exercised rather than an
+oval fast path. This renderer has no such recognition for a shadow: a circle, a
+sixty-four-sided polygon approximating one, and a rounded rectangle all record
+as four passes and four draws, differing only in the vertex count of the shape
+itself. So the two missing casters would take the same route as the octagon and
+the triangle that are here, with their curves flattened first -- which the path
+chapter already covers from several directions. The variant is worth adding when
+something else wants it, and not for these. The mesh
 comparison upstream makes stays out as well, and it is the only part of that
 file that was ever about the optimization rather than about the shadow.
 
