@@ -234,6 +234,15 @@ this machine -- that is the `blend/blend-mode-*` family, which the run that
 found this compared and passed. What differs is compositing a layer's texture
 with one of those modes when the layer sits anywhere but the frame's corner.
 
+What it is at the Vulkan level is *not* established, and two readings that fit
+the table are both wrong. It is not a `renderArea` offset -- this backend never
+sets one, the area is always the whole target. And it is not the negative
+viewport offset that crops a narrowed target: at the HAL level, one batch into
+one target with an advanced mode composites correctly with that offset, for a
+solid material and for a sampled texture alike. So it is something about the
+arrangement rather than the draw state -- the layer is rendered in one pass of a
+submission and sampled by the next -- and that has not been narrowed further.
+
 Which side is at fault is not established here and the note stops short of
 saying. What can be said is that this renderer's use of the extension is plain
 -- `VK_EXT_blend_operation_advanced` named in the pipeline's blend op, both
