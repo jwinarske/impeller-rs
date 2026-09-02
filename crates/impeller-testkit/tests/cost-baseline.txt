@@ -24,7 +24,7 @@
   stroke-polygon-and-curve                     1      2       64      180       0     0
   perspective                                  1      2       46      126       0     0
   transformed                                  1      2        8       12       0     0
-  circle-antialiased                           1      1       40      114       0     0
+  circle-antialiased                           1      1        4        6       0     0
   gradient-horizontal                          1      1        4        6       0     0
   gradient-vertical                            1      1       40      114       0     0
   gradient-transformed                         1      1        4        6       0     0
@@ -54,7 +54,7 @@
   round-superellipse                           1      2      305      903       0     0
   round-superellipse-stroked                   1      1      274      816       0     0
   rounded-rect-analytic                        1      1        4        6       0     0
-  rounded-rect-stroked                         1      1       74      216       0     0
+  rounded-rect-stroked                         1      1        4        6       0     0
   layer-blurred                                4      5       40       90       3     0
   layer-backdrop-blurred                       5      9       80      186       5     0
   layer-backdrop-under-a-difference-clip       5     11       70      138       5     0

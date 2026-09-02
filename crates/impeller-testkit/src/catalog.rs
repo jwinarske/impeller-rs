@@ -7719,6 +7719,13 @@ fn blur_variants() -> Vec<Scene> {
             // outline returns to about where it started: a picture neither
             // filter gives on its own, which is what makes it worth comparing
             // across backends.
+            //
+            // The radius has to beat half the notch or the closing is the
+            // identity on this shape and the plate draws what it would have
+            // drawn unfiltered. The notch is twenty-four across, so nine --
+            // which is what this asked for until the default blend stopped
+            // erasing the ground and made the plate's own picture visible --
+            // filled nothing.
             vec![Item::fill(
                 Shape::Polygon(vec![
                     [30.0, 34.0],
@@ -7734,12 +7741,12 @@ fn blur_variants() -> Vec<Scene> {
             )
             .with_image_filter(ImageFilter::compose(
                 ImageFilter::Erode {
-                    radius_x: 9.0,
-                    radius_y: 9.0,
+                    radius_x: 14.0,
+                    radius_y: 14.0,
                 },
                 ImageFilter::Dilate {
-                    radius_x: 9.0,
-                    radius_y: 9.0,
+                    radius_x: 14.0,
+                    radius_y: 14.0,
                 },
             ))],
         ),
