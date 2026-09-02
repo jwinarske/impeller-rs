@@ -474,6 +474,40 @@ The lesson is the one above it, with the sign removed. Shader size is a step
 function on this board, the steps are not all downhill, and the only way to know
 which way one goes is to run it.
 
+### The two per cent is not lying around to be picked up
+
+The obvious next question is whether the GLES row can have its two per cent back
+without Vulkan giving up its three. Four shapes of the same function were
+benched on the board, three runs each, all in one sitting, and the answer is no
+-- at least not from rewriting this function.
+
+| the function's shape | vulkan frame | gles frame |
+|---|---|---|
+| folded, as it is now | 13.95 | 14.83 |
+| the fill given its own call, tail still shared | 13.86 | **14.98** |
+| the redundant `select` deleted | 13.93 | **14.96** |
+| two paths and an early return, as before the fold | **14.55** | 14.49 |
+
+The middle two are the interesting rows. Both are perfectly reasonable
+rewrites, one splits the shape in two and one merges it further, and *both* make
+the GLES frame worse than what is there now. So the current shape is not merely
+the one nobody has looked past -- among the shapes tried it is a local minimum
+on that row, and the two per cent is not slack waiting to be reclaimed.
+
+The last row is the trade stated plainly: put the function back the way it was
+and GLES returns to 14.49, better than the 14.54 it had, while Vulkan goes to
+14.55 from 13.95. It is the same change read from either end. Nothing here
+splits the difference.
+
+Two things are worth carrying out of it. The GLES *distance-field* row does not
+move across any of the four -- 8.91, 8.92, 8.83, 8.92 -- so this function's own
+cost is not what is being measured on the frame row at all; what moves is the
+rest of the program compiled around it. And the `select` really is redundant,
+since `outer_radius` already carries the clamped radius wherever the stroke is
+zero. Deleting it costs a per cent of the GLES frame, which is a strange price
+for removing something that does nothing, and is the clearest statement in this
+file of how little the generated source predicts.
+
 ## What a shader costs on this board, measured the hard way
 
 The baseline went sixteen renderer commits unchecked, and checking it found
