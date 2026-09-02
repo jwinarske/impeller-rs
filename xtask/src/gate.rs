@@ -150,6 +150,11 @@ pub fn run(software: bool) -> bool {
     if let Some(line) = crate::bench::drift_line() {
         print!("\n{line}");
     }
+    // And the other machine's answer, which this one cannot produce. Printed
+    // whatever it says, including that it could not be asked: the failure this
+    // is here for is a run going red and nobody noticing, and silence is what
+    // that looked like.
+    print!("{}", crate::ci::line());
     !(outcome.broke || outcome.failed > 0)
 }
 

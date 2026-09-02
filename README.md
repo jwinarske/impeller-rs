@@ -287,6 +287,13 @@ only thing that reports a Vulkan object outliving its device; without it those
 tests still pass, and on a machine that has no layer they say so, a hundred and
 twenty times, in skips nobody reads.
 
+The gate says what CI last said, in a line beside the skip census and the
+timing drift, and for the same reason both of those are there: it is something
+this machine cannot check, so it is reported rather than enforced. It went
+unreported once and CI stayed red for twenty-six commits on one assertion while
+every local gate passed. No `gh`, no network or no run is itself a line -- the
+outcome this must not have is silence.
+
 To run what CI runs:
 
 ```sh

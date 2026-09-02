@@ -32,6 +32,7 @@
 //! desktop must survive a failed test run.
 
 mod bench;
+mod ci;
 mod drivers;
 mod drm;
 mod gallery;
