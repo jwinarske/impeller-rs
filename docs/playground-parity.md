@@ -185,7 +185,7 @@ column is right and the obvious way to check it is wrong.
 | `aiks_dl_primitive_shape_unittests.cc` | ~2 | 0 | one is a playground harness, one wants a stroke width of zero to mean a hairline |
 | `aiks_dl_text_unittests.cc` | — | 7 | shaping and font parsing, which are out of scope; glyph rendering is not, and these use synthetic coverage |
 | `aiks_dl_runtime_effect_unittests.cc` | — | 15 | nothing; two of that file's tests exercise machinery this renderer does not have, which is not the same as a gap; see below |
-| `aiks_dl_unittests.cc` | 39 | 28 | nine that are texture or dispatcher machinery rather than pictures, two the scene model cannot say, one removed as unshowable, and one unwritten; see below |
+| `aiks_dl_unittests.cc` | 39 | 28 | nine that are texture or dispatcher machinery rather than pictures, two the scene model cannot say, and two that cannot show what they are for; see below |
 
 One row now carries an exact number rather than an approximate one.
 `aiks_dl_unittests.cc` holds thirty-nine `TEST_P` and expands none of them over
