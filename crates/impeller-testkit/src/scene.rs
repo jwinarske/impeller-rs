@@ -1860,6 +1860,23 @@ const DARK_GROUND: [f32; 4] = [15.0 / 255.0, 18.0 / 255.0, 26.0 / 255.0, 1.0];
 /// it exercises something the others do not, so a failure names a capability
 /// rather than merely a picture. Regression pins are appended as bugs are
 /// fixed, and that set only grows.
+///
+/// Audited on 2026-09-02 by asking which node kinds and fills it actually held,
+/// which turned out to be seven of them. Meshes, atlases, shadows, pictures,
+/// flood fills, image fills and morphologies were all absent -- each a
+/// capability compared only in the catalog, whose budget is three per cent of a
+/// frame against this collection's unit or two per pixel. All seven are here
+/// now, chosen for arithmetic two devices can disagree about rather than to
+/// complete a list.
+///
+/// Two are still absent on purpose. A layer's *general* filter is a composition
+/// of things already here -- its blur, its morphology and its color filter each
+/// have a scene -- so a scene for the general spelling would exercise the
+/// composing and not the filter. And a caller's program has
+/// `tests/runtime_effect.rs`, which builds a pipeline from a module on each
+/// backend and compares the pictures: a stronger check than a scene here, since
+/// it is the pipeline construction that differs between them rather than the
+/// arithmetic.
 pub fn corpus() -> Vec<Scene> {
     vec![
         Scene::new(
@@ -3499,6 +3516,44 @@ pub fn corpus() -> Vec<Scene> {
                     })),
                 ],
             }))],
+        )
+        .with_background(DARK_GROUND),
+        Scene::tree(
+            "flood-fill-under-a-rotation",
+            // `drawPaint`, which covers whatever the clip admits rather than
+            // any shape. The call is the last of this collection's uncovered
+            // ones and it earns a scene for the extent rather than the fill:
+            // what a paint covers is the clip carried *back* through the
+            // transform, and a renderer taking it forward instead leaves the
+            // frame's corners empty under a rotation.
+            //
+            // Filled with a gradient rather than a color so the picture says
+            // which way the paint's own space runs, and clipped away from one
+            // corner so the scene shows a paint obeying a clip as well as
+            // covering one.
+            vec![Node::Clip {
+                rect: None,
+                rect_out: Some([96.0, 96.0, 128.0, 128.0]),
+                children: vec![Node::Paint(Box::new(PaintSpec {
+                    fill: Fill::LinearGradient {
+                        start: [0.0, 0.0],
+                        end: [128.0, 128.0],
+                        stops: vec![
+                            Stop::new([0.10, 0.16, 0.55, 1.0], 0.0),
+                            Stop::new([0.95, 0.80, 0.20, 1.0], 1.0),
+                        ],
+                        tile: TileMode::Clamp,
+                    },
+                    blend: BlendMode::SrcOver,
+                    clip: None,
+                    clip_out: None,
+                    transform: Transform {
+                        rotate: 30.0f32.to_radians(),
+                        translate: [64.0, 64.0],
+                        ..Transform::default()
+                    },
+                }))],
+            }],
         )
         .with_background(DARK_GROUND),
         Scene::tree(
