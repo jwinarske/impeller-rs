@@ -8632,6 +8632,55 @@ fn ruled_ground(horizontal: bool) -> Vec<Node> {
 /// about grouping rather than about any one shape.
 fn layers() -> Vec<Scene> {
     vec![
+        // The same question asked of an image rather than of two shapes, which
+        // is upstream's own variant of it. What a translucent group is worth
+        // depends on the group being finished before the alpha is applied, and
+        // a photograph is the operand that shows it: every texel differs, so a
+        // group faded per-draw instead of per-group would not merely be the
+        // wrong strength, it would be the wrong picture where the two copies
+        // overlap.
+        //
+        // Both copies of the sheet are in the frame at once, one straight and
+        // one through the group, so the plate carries its own reference.
+        Scene::tree(
+            "dl/translucent-save-layer-image-draws-correctly",
+            vec![
+                Node::Draw(Box::new(Item::filled(
+                    Shape::Rect {
+                        min: [8.0, 8.0],
+                        max: [64.0, 64.0],
+                    },
+                    sheet(
+                        [8.0, 8.0, 64.0, 64.0],
+                        ALL,
+                        TileMode::Clamp,
+                        Sampling::Linear,
+                    ),
+                ))),
+                Node::Layer {
+                    layer: Box::new(LayerSpec {
+                        alpha: 0.5,
+                        ..LayerSpec::default()
+                    }),
+                    bounds: None,
+                    transform: Transform::default(),
+                    children: vec![Node::Draw(Box::new(Item::filled(
+                        Shape::Rect {
+                            min: [64.0, 64.0],
+                            max: [120.0, 120.0],
+                        },
+                        sheet(
+                            [64.0, 64.0, 120.0, 120.0],
+                            ALL,
+                            TileMode::Clamp,
+                            Sampling::Linear,
+                        ),
+                    )))],
+                },
+            ],
+        )
+        .with_background(DARK)
+        .with_samples(4),
         grouped(
             "dl/translucent-save-layer-draws-correctly",
             LayerSpec {
