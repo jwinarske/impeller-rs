@@ -177,7 +177,7 @@ column is right and the obvious way to check it is wrong.
 | `aiks_dl_gradient_unittests.cc` | ~40 | 46 | nothing; see below |
 | `aiks_dl_clip_unittests.cc` | ~5 | 7 | nothing; this file is covered |
 | `aiks_dl_opacity_unittests.cc` | ~3 | 3 | nothing; this file is covered |
-| `aiks_dl_blend_unittests.cc` | ~79 | 77 | capability injection, for one of them; see below |
+| `aiks_dl_blend_unittests.cc` | ~79 | 77 | capability injection for one, a wide-gamut target for two, a callback for one, and a non-separable blend as a color filter for one; see below |
 | `aiks_dl_blur_unittests.cc` | ~59 | 57 | nothing; see below |
 | `aiks_dl_vertices_unittests.cc` | ~16 | 22 | nothing; see below |
 | `aiks_dl_atlas_unittests.cc` | ~11 | 12 | nothing; see below |
@@ -492,14 +492,22 @@ contour cannot be recognized as a rounded rectangle, so the blur cannot be
 evaluated in the fragment stage and takes the general route -- on a target sized
 for a shape most of which is not there.
 
-What is left of the file is six scenes and each has a reason. Three are
-interactive harnesses with sliders. Two are unit tests that build a texture and
-assert it exists rather than opening a playground, in the way four of the atlas
-file's are. One is `MaskBlurOnZeroDimensionIsSkippedWideGamut`, which needs a
-wide-gamut target to present and is §4. And one is
+What is left of the file is nine, and each has a reason. Four drive a callback
+rather than building one picture -- three named `Interactive` with sliders, and
+`GaussianBlurAnimatedBackdrop`, which is the same shape without the name. Two
+are unit tests that build a texture and assert it exists rather than opening a
+playground, in the way four of the atlas file's are:
+`GaussianBlurSolidColorTinyMipMap` and `GaussianBlurBackdropTinyMipMap`. One is
+`MaskBlurOnZeroDimensionIsSkippedWideGamut`, which needs a wide-gamut target to
+present and is §4. And two are ordinary pictures nobody has written,
+`CanRenderBoundedBlurWithTranslation` and `BlurredRectangleWithShader`.
+
+This paragraph said six and listed seven, and one of the seven --
 `CanRenderForegroundAdvancedBlendWithMaskBlur`, whose color filter is a blend in
-a non-separable mode -- a color filter here is an affine map, and `Color` is not
-one.
+a non-separable mode -- has since been built and is
+`blur/can-render-foreground-advanced-blend-with-mask-blur`. A list that is one
+longer than the number in front of it is the cheapest thing to check in a
+document like this one and nothing checks it.
 
 The default style blurs coverage and fills through it, which works for any
 fill. The three that combine a blurred mask with a sharp one -- solid, outer,
