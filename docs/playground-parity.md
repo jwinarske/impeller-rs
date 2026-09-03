@@ -201,8 +201,28 @@ all: `FormatSRGB` asserts the context's default color format is one of the two
 eight-bit ones and `FormatWideGamut` asserts it is `kB10G10R10A10XR`, both
 `EXPECT` and no playground. So that file is eighty-three scenes and eighty-five
 tests, and its tilde is carrying a real difference rather than an unchecked
-one. The row's own count of what is here has not been audited scene by scene
-the way the two exact rows were, and the tilde says so.
+one. Of the rest, two more are named rather than counted, because they are a
+capability question and not an arithmetic one.
+`CanRenderColorFilterWithInvertColors` and its `drawPaint` twin put a *blend*
+color filter and an inversion on the same paint, and a `ColorFilter` here is
+`None`, `Matrix` or `Blend` with no composition among them --
+`docs/parity.md` reaches `invertColors` through a matrix, which is the other
+half of the same paint. Folding the two into one matrix by hand would draw the
+right picture and test something else: upstream's filter is yellow over
+anything, so the composition collapses to a constant and a plate stating the
+answer would agree with itself. That is the scene model's gap rather than an
+unwritten scene.
+
+Seven remain unadjudicated and are listed so nobody has to find them again:
+`CanRenderClippedBackdropFilter`, `BackdropFilterOverUnclosedClip`,
+`CanDrawPerspectiveTransformWithClips`, `PerspectiveRectangle`,
+`CoordinateConversionsAreCorrect`, `CanPerformFullScreenMSAA` and
+`PipelineBlendSingleParameter`. Each is a picture, and the catalog covers each
+subject from some other direction -- there are backdrop filters under clips,
+perspective under a clip and under a curve, images under a transform, and a
+great many multisampled circles. Whether that counts as mirroring them is a
+judgment about what a plate is for, not a count, and it is the one part of this
+row nobody has made.
 
 The catalog holds four hundred and twenty scenes against a column totalling
 about four hundred, and the two are not a ratio: five chapters hold more than
