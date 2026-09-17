@@ -7885,6 +7885,147 @@ fn blur_variants() -> Vec<Scene> {
     ));
     scenes.push(
         Scene::tree(
+            "blur/can-render-bounded-blur-with-translation",
+            // A backdrop blur bounded to a rectangle, twice: once only moved,
+            // the way a scrolled list item is, and once moved, scaled and
+            // turned. Upstream states each rectangle twice over -- as a clip
+            // and as the filter's own bounds. Here each subcase is one layer
+            // whose bounds travel with its transform, and what that checks is
+            // that they do: bounds left in the frame's axes would put the first
+            // band in the wrong place and leave the second unmoved by its turn.
+            //
+            // The second band is upright here and tilted upstream, and that is
+            // the scene's limit rather than the renderer's. A layer's target is
+            // an axis-aligned box in device space -- upstream's is too -- so a
+            // turned rectangle's bounds become the box around it, and upstream
+            // gets its tilted edge from the clip it states under the same
+            // transform. A clip that turns is something a scene can put on one
+            // draw and not around a layer, so that edge has nothing to say it
+            // with. Looked at rather than assumed: at thirty degrees the band is
+            // the upright box around the turned rectangle.
+            // `a_bounded_backdrop_blur_moves_with_the_transform_it_was_opened_under`
+            // checks that each band's bounds follow its own transform.
+            vec![
+                Node::Draw(Box::new(Item::filled(
+                    Shape::Rect {
+                        min: [0.0, 0.0],
+                        max: [128.0, 128.0],
+                    },
+                    sheet(
+                        [0.0, 0.0, 128.0, 128.0],
+                        ALL,
+                        TileMode::Clamp,
+                        Sampling::Nearest,
+                    ),
+                ))),
+                Node::Layer {
+                    layer: Box::new(LayerSpec::default().with_backdrop_blur(4.0)),
+                    bounds: Some([0.0, 0.0, 44.0, 22.0]),
+                    transform: Transform {
+                        translate: [20.0, 28.0],
+                        ..Transform::default()
+                    },
+                    children: Vec::new(),
+                },
+                Node::Layer {
+                    layer: Box::new(LayerSpec::default().with_backdrop_blur(3.0)),
+                    bounds: Some([2.0, 2.0, 40.0, 18.0]),
+                    transform: Transform {
+                        scale: [1.2, 1.2],
+                        // Five degrees, as upstream turns it.
+                        rotate: 5.0_f32.to_radians(),
+                        translate: [12.0, 70.0],
+                        ..Transform::default()
+                    },
+                    children: Vec::new(),
+                },
+            ],
+        )
+        .with_background(DARK)
+        .with_samples(4),
+    );
+    scenes.push({
+        // Upstream's shader is a five-by-five checkerboard rendered into a
+        // texture first, which is `Picture.toImage` and machinery this catalog
+        // does not state. The fixture sheet stands in for it: what the scene is
+        // about is an image-shaded paint drawn plain and through a blur, on a
+        // rectangle and on strokes, and any image that varies says that. The
+        // sheet lands in a twenty-pixel tile at the origin and repeats, as the
+        // checkerboard did, so a shape away from the origin reads a tile other
+        // than the first.
+        let shader = || {
+            sheet(
+                [4.0, 4.0, 24.0, 24.0],
+                ALL,
+                TileMode::Repeat,
+                Sampling::Linear,
+            )
+        };
+        // Scaled from upstream's six hundred pixels by a fifth. The blur is
+        // doubled from what that scale gives, since a deviation of one does not
+        // show at this size, and the strokes are two pixels rather than one.
+        let blur = ImageFilter::blur(2.0);
+        let crossed = |dx: f32, dy: f32, filter: ImageFilter| -> Vec<Node> {
+            let at = |x: f32, y: f32| [4.0 + dx + x, 4.0 + dy + y];
+            [
+                (at(20.0, 20.0), at(40.0, 40.0)),
+                (at(20.0, 40.0), at(40.0, 20.0)),
+                (at(30.0, 20.0), at(40.0, 30.0)),
+                (at(20.0, 30.0), at(30.0, 40.0)),
+            ]
+            .into_iter()
+            .map(|(from, to)| {
+                Node::Draw(Box::new(
+                    Item {
+                        stroke: Some(StrokeSpec::new(2.0)),
+                        ..Item::filled(Shape::Line { from, to }, shader())
+                    }
+                    .with_image_filter(filter.clone()),
+                ))
+            })
+            .collect()
+        };
+        let mut nodes = vec![
+            Node::Draw(Box::new(Item::fill(
+                Shape::Rect {
+                    min: [4.0, 4.0],
+                    max: [64.0, 124.0],
+                },
+                [0.0, 100.0 / 255.0, 0.0, 1.0],
+            ))),
+            Node::Draw(Box::new(Item::filled(
+                Shape::Rect {
+                    min: [24.0, 24.0],
+                    max: [44.0, 44.0],
+                },
+                shader(),
+            ))),
+            Node::Draw(Box::new(Item::fill(
+                Shape::Rect {
+                    min: [64.0, 4.0],
+                    max: [124.0, 124.0],
+                },
+                RED,
+            ))),
+            Node::Draw(Box::new(
+                Item::filled(
+                    Shape::Rect {
+                        min: [84.0, 24.0],
+                        max: [104.0, 44.0],
+                    },
+                    shader(),
+                )
+                .with_image_filter(blur.clone()),
+            )),
+        ];
+        nodes.extend(crossed(0.0, 60.0, ImageFilter::None));
+        nodes.extend(crossed(60.0, 60.0, blur));
+        Scene::tree("blur/blurred-rectangle-with-shader", nodes)
+            .with_background(DARK)
+            .with_samples(4)
+    });
+    scenes.push(
+        Scene::tree(
             "blur/blur-under-a-rotated-scale",
             // A blur is a device-space filter over a finished layer: it runs on
             // the target, in the target's own axes, after the transform has

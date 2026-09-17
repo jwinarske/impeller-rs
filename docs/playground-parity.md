@@ -178,7 +178,7 @@ column is right and the obvious way to check it is wrong.
 | `aiks_dl_clip_unittests.cc` | ~5 | 7 | nothing; this file is covered |
 | `aiks_dl_opacity_unittests.cc` | ~3 | 3 | nothing; this file is covered |
 | `aiks_dl_blend_unittests.cc` | ~79 | 77 | capability injection for one, a wide-gamut target for two, a callback for one, and a non-separable blend as a color filter for one; see below |
-| `aiks_dl_blur_unittests.cc` | ~59 | 57 | nothing; see below |
+| `aiks_dl_blur_unittests.cc` | ~59 | 59 | nothing; see below |
 | `aiks_dl_vertices_unittests.cc` | ~16 | 22 | nothing; see below |
 | `aiks_dl_atlas_unittests.cc` | ~11 | 12 | nothing; see below |
 | `aiks_dl_shadow_unittests.cc` | 29 | 24 | twelve casters the scene model cannot spell or cannot wind, measured as near-duplicates of ones it can; see below |
@@ -224,7 +224,7 @@ great many multisampled circles. Whether that counts as mirroring them is a
 judgment about what a plate is for, not a count, and it is the one part of this
 row nobody has made.
 
-The catalog holds four hundred and twenty scenes against a column totalling
+The catalog holds four hundred and twenty-two scenes against a column totalling
 about four hundred, and the two are not a ratio: five chapters hold more than
 the file they mirror, because a scene here is one picture where a test there can
 be a loop over every blend mode or a family drawn twice. What the totals meeting
@@ -492,15 +492,29 @@ contour cannot be recognized as a rounded rectangle, so the blur cannot be
 evaluated in the fragment stage and takes the general route -- on a target sized
 for a shape most of which is not there.
 
-What is left of the file is nine, and each has a reason. Four drive a callback
-rather than building one picture -- three named `Interactive` with sliders, and
-`GaussianBlurAnimatedBackdrop`, which is the same shape without the name. Two
-are unit tests that build a texture and assert it exists rather than opening a
-playground, in the way four of the atlas file's are:
-`GaussianBlurSolidColorTinyMipMap` and `GaussianBlurBackdropTinyMipMap`. One is
-`MaskBlurOnZeroDimensionIsSkippedWideGamut`, which needs a wide-gamut target to
-present and is §4. And two are ordinary pictures nobody has written,
-`CanRenderBoundedBlurWithTranslation` and `BlurredRectangleWithShader`.
+What is left of the file is seven, and each has a reason. Four drive a
+callback rather than building one picture -- three named `Interactive` with
+sliders, and `GaussianBlurAnimatedBackdrop`, which is the same shape without the
+name. Two are unit tests that build a texture and assert it exists rather than
+opening a playground, in the way four of the atlas file's are:
+`GaussianBlurSolidColorTinyMipMap` and `GaussianBlurBackdropTinyMipMap`. And one
+is `MaskBlurOnZeroDimensionIsSkippedWideGamut`, which needs a wide-gamut target
+to present and is §4.
+
+The two that were merely unwritten are written, each short of upstream in one
+stated way. `BlurredRectangleWithShader` shades with a checkerboard that
+upstream renders into a texture first, which is `Picture.toImage`; the fixture
+sheet stands in, tiled the same way, since what the scene is about is an
+image-shaded paint drawn plain and through a blur on rectangles and strokes.
+`CanRenderBoundedBlurWithTranslation` blurs two bounded backdrops, one moved and
+one moved, scaled and turned, and the turned one comes out upright here where it
+is tilted upstream. A layer's target is an axis-aligned box in device space on
+both sides, so upstream's tilted edge comes from the clip it states under the
+same transform -- and a clip that turns is something a scene can put on one draw
+and not around a layer. The plate still checks what it can:
+`a_bounded_backdrop_blur_moves_with_the_transform_it_was_opened_under` moves the
+first band and unturns the second, and requires the picture to change both
+times.
 
 This paragraph said six and listed seven, and one of the seven --
 `CanRenderForegroundAdvancedBlendWithMaskBlur`, whose color filter is a blend in

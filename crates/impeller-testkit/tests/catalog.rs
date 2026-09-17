@@ -24,7 +24,9 @@ use impeller_hal_gles::Validated as GlesValidated;
 use impeller_hal_gles::{DisplayTarget, GlesHal};
 use impeller_hal_vulkan::Validated;
 use impeller_hal_vulkan::{DevicePreference, VulkanHal};
-use impeller_testkit::{accepts, catalog, compare, render_scene, Image, Scene, Tolerance};
+use impeller_testkit::{
+    accepts, catalog, compare, render_scene, Image, Node, Scene, Tolerance, Transform,
+};
 
 /// What the two backends are allowed to disagree by across the whole catalog.
 ///
@@ -543,6 +545,52 @@ fn every_plate_that_asks_for_a_mask_blur_can_show_one() {
         "only {checked} plates were found to hold a mask blur, which is fewer \
          than the catalog has and means the walk missed some"
     );
+}
+
+#[test]
+fn a_bounded_backdrop_blur_moves_with_the_transform_it_was_opened_under() {
+    // The plate's own subject, which its comment could only state. Both of its
+    // blurred bands are bounded by layers whose bounds travel with the layer's
+    // transform; bounds left in the frame's axes would put the first band in
+    // the wrong place and leave the second exactly where it was however it was
+    // turned. So each subcase is checked by changing its transform alone and
+    // requiring the picture to change with it.
+    //
+    // A change, not an amount. How many pixels a turn moves depends on the
+    // device's rasterization of the band's edge, and a count recorded on one
+    // device is a claim no other device can check.
+    let Ok(mut ctx) = Validated::new(DevicePreference::Auto) else {
+        eprintln!("skipping: no Vulkan device");
+        return;
+    };
+    let scene = catalog()
+        .into_iter()
+        .find(|s| s.name == "blur/can-render-bounded-blur-with-translation")
+        .expect("the plate is in the catalog");
+    let base = render::<VulkanHal>(&mut ctx, &scene);
+
+    let varied = |ctx: &mut Validated, index: usize, change: &dyn Fn(&mut Transform)| {
+        let mut changed = scene.clone();
+        match &mut changed.items[index] {
+            Node::Layer { transform, .. } => change(transform),
+            other => panic!("item {index} should be a bounded layer, and is {other:?}"),
+        }
+        render::<VulkanHal>(ctx, &changed)
+    };
+    let moved = varied(&mut ctx, 1, &|t| t.translate[0] += 16.0);
+    let turned = varied(&mut ctx, 2, &|t| t.rotate = 0.0);
+
+    for (what, other) in [
+        ("moving the first band", &moved),
+        ("unturning the second", &turned),
+    ] {
+        let difference = compare(&base, other).expect("same size");
+        assert!(
+            !difference.is_identical(),
+            "{what} left the picture unchanged, so its bounds are not following \
+             the layer's transform"
+        );
+    }
 }
 
 #[test]
