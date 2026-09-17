@@ -538,7 +538,7 @@ impl VulkanContext {
     /// render has. Neither is expressible with a fence, because both are
     /// device-side orderings that no one should be blocking a thread to
     /// enforce.
-    /// `textures` is the table a [`Material::Image`] slot indexes, exactly as
+    /// `textures` is the table a [`impeller_hal::Material::Image`] slot indexes, exactly as
     /// the waiting form takes it. A frame that composites a layer needs it:
     /// the pass that lands in a presentable image is the one that samples the
     /// layer, so a deferred submission that could not sample anything meant a

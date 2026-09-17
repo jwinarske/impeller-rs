@@ -255,6 +255,7 @@ Run these in order before committing, and do not commit on a failure:
 cargo clippy --workspace --all-targets --fix --allow-dirty   # lint, applying fixes
 cargo fmt --all                                              # format
 cargo build --workspace --all-targets                        # smoke test
+RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps   # resolve doc links
 cargo test --workspace
 ```
 

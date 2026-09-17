@@ -167,7 +167,7 @@ impl Rect {
     /// caller's own compound outline -- needs both contours in one path, and a
     /// path built from two paths is not something this crate offers.
     ///
-    /// The radii are fitted on the way in by [`Self::fitted_radii`], so a
+    /// The radii are fitted on the way in, so a
     /// caller passing radii that overrun a side gets the same scaling
     /// `drawRRect` would apply rather than an outline that crosses itself.
     pub fn add_rounded_outline(self, path: &mut PathBuilder, radii: RoundingRadii) {

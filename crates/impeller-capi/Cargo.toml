@@ -21,6 +21,13 @@ categories = ["external-ffi-bindings", "graphics"]
 # cargo currently warns about and intends to make an error.
 name = "impeller"
 crate-type = ["cdylib", "staticlib"]
+# Not documented by `cargo doc` either, for the same collision: rustdoc writes a
+# library's pages under its name, and the facade's are `target/doc/impeller`
+# too, so `cargo doc --workspace` refuses to build at all while both ask. The
+# facade's are the ones a Rust reader wants. This crate's contract is upstream's
+# `impeller.h`, and its module documentation stays where its readers are, in
+# the source.
+doc = false
 
 [lints]
 workspace = true

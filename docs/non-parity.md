@@ -45,7 +45,7 @@ clone of unknown vintage can encode behavior upstream has since changed. Where
 a claim names a symbol or a file, that is what to re-read when checking whether
 this file has gone stale.
 
-**Last re-read: 2026-09-01**, and the date is here because the sentence above it
+**Last re-read: 2026-09-16**, and the date is here because the sentence above it
 is worthless without one. "It was checked" is not a fact a later reader can act
 on; "it was checked on this day, and these are the symbols that were still
 saying what this file says they say" is. The same lesson is written out at
