@@ -141,15 +141,10 @@ impl Context {
         }
     }
 
-    /// Allocate an image this context can sample.
-    ///
-    /// The format decides how the bytes written into it are read, and the
-    /// choice is not cosmetic -- though it now points the other way. Color
-    /// inside the renderer is sRGB-encoded, and an
     /// Register a fragment program a caller's own build produced.
     ///
-    /// Returns the index to name it by, which is what goes into
-    /// [`Paint::runtime_effect`]. Indices are per context: a recording that
+    /// Returns the index to name it by, which is what goes into the `program`
+    /// of [`Shader::RuntimeEffect`]. Indices are per context: a recording that
     /// names one is bound to the context that registered it, in exactly the
     /// way one naming a texture slot is bound to the textures supplied
     /// beside it.
@@ -159,6 +154,8 @@ impl Context {
     /// for the other backend alone is refused rather than silently ignored.
     /// See the architecture document for why a single source translated on
     /// load was declined.
+    ///
+    /// [`Shader::RuntimeEffect`]: impeller_core::Shader::RuntimeEffect
     pub fn register_program(&mut self, program: &RuntimeProgram) -> Result<u32> {
         match self {
             #[cfg(feature = "vulkan")]
@@ -168,7 +165,12 @@ impl Context {
         }
     }
 
-    /// sRGB format decodes on sample. A picture's bytes are sRGB-encoded,
+    /// Allocate an image this context can sample.
+    ///
+    /// The format decides how the bytes written into it are read, and the
+    /// choice is not cosmetic -- though it now points the other way. Color
+    /// inside the renderer is sRGB-encoded, and an sRGB format decodes on
+    /// sample. A picture's bytes are sRGB-encoded,
     /// because that is what every image file holds, and the pipeline wants them
     /// encoded -- so a picture wants a *plain* format, and
     /// [`PixelFormat::Rgba8UnormSrgb`] would decode it into light that nothing

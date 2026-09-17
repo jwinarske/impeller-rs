@@ -68,6 +68,17 @@ const STEPS: &[Step] = &[
         args: &["build", "--workspace", "--all-targets"],
         env: &[],
     },
+    Step {
+        // Links in documentation are resolved only by rustdoc, so nothing else
+        // here notices one pointing at an item that was renamed or never in
+        // scope. The workspace went a while unable to document at all -- two
+        // libraries claimed the same output path -- and five broken links had
+        // collected behind that without anything saying so.
+        what: "document every crate, with warnings fatal",
+        program: "cargo",
+        args: &["doc", "--workspace", "--no-deps"],
+        env: &[("RUSTDOCFLAGS", "-D warnings")],
+    },
 ];
 
 /// Feature combinations that must each compile on their own.

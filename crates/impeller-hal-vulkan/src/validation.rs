@@ -141,7 +141,7 @@ pub(crate) fn messenger_create_info<'a>() -> vk::DebugUtilsMessengerCreateInfoEX
 /// Dropping is the one moment that happens exactly once per context however
 /// the test around it is written, so that is where the check goes.
 ///
-/// Derefs to the context, so code that takes a [`VulkanContext`] is unchanged.
+/// Derefs to the context, so code that takes a [`crate::VulkanContext`] is unchanged.
 pub struct Validated(std::mem::ManuallyDrop<crate::VulkanContext>);
 
 impl Validated {

@@ -244,7 +244,7 @@ impl BlendMode {
 
     /// Whether this mode needs advanced blending.
     ///
-    /// Callers check [`Capabilities::advanced_blend`] before using one, and a
+    /// Callers check [`crate::Capabilities::advanced_blend`] before using one, and a
     /// backend without it refuses rather than substituting something that looks
     /// close: a silently wrong blend mode is a picture nobody can debug from.
     /// The number a shader reads to identify this mode.
