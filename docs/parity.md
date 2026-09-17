@@ -26,7 +26,7 @@ something about *upstream's implementation* instead, and those age the way
 `docs/non-parity.md` says its own do: a claim is worth exactly as much as the
 source it was read from, and nothing in a table announces when the source moved.
 
-**Last re-read: 2026-09-02**, at tip in `flutter/flutter` under
+**Last re-read: 2026-09-16**, at tip in `flutter/flutter` under
 `engine/src/flutter`, not from a checkout. Three rows name something specific
 enough to re-read, and all three were:
 
@@ -49,7 +49,10 @@ enough to re-read, and all three were:
   contradicted the code it described.
 
 Two of three wrong is the argument for the date rather than against it, and the
-entries stay after being fixed so the next reader knows what was checked.
+entries stay after being fixed so the next reader knows what was checked. The
+"was wrong" is the first read's finding, on 2026-09-02. The second found all
+three rows saying what upstream does, though `canvas.cc` had moved six commits
+in the meantime.
 
 ### The level this measures at, which is not Impeller's own
 
