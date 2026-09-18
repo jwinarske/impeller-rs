@@ -16537,3 +16537,61 @@ fn a_color_filter_that_recolors_nothing_still_draws_the_shape() {
         "a color filter that recolors nothing should cost no pass"
     );
 }
+
+/// A point smaller than a pixel still covers one, and zero is a point.
+///
+/// `PointFieldGeometry` widens a point's radius to `0.5f / max_basis` --
+/// `std::max(radius_, min_size)` -- so the smallest point upstream draws covers
+/// a whole pixel. A radius of zero takes that path like any other, since the
+/// only radius it refuses is a negative one, and nothing is dimmed to pay for
+/// the widening the way a thin stroke is.
+///
+/// This renderer drew nothing at a width of zero and drew a sub-pixel point at
+/// whatever the sample grid gave it, which is the same pair of faults a thin
+/// stroke had. Both routes are checked, because a point field is one draw for
+/// the whole scatter while a blurred or shaded point falls back to a circle
+/// each: a widening applied to one and not the other would show only on a scene
+/// carrying a filter.
+#[test]
+fn a_point_smaller_than_a_pixel_still_covers_one() {
+    let Some(mut ctx) = context() else { return };
+
+    let lit = |ctx: &mut Context, width: f32, blurred: bool| {
+        let mut canvas = Canvas::new(SIZE);
+        canvas.clear(Color::WHITE);
+        let mut paint =
+            Paint::fill(Color::srgb(0.0, 0.0, 0.0, 1.0)).with_style(Style::Stroke(StrokeStyle {
+                cap: LineCap::Round,
+                ..StrokeStyle::new(width)
+            }));
+        if blurred {
+            // Anything that needs a layer takes the per-point route instead.
+            paint.image_filter = ImageFilter::blur(1.0);
+        }
+        canvas
+            .draw_points(PointMode::Points, &[Vec2::new(64.0, 64.0)], &paint)
+            .expect("the point");
+        let pixels = render(ctx, canvas);
+        (0..128u32)
+            .flat_map(|y| (0..128u32).map(move |x| (x, y)))
+            .filter(|(x, y)| pixel(&pixels, *x, *y)[0] < 250)
+            .count()
+    };
+
+    for blurred in [false, true] {
+        let route = match blurred {
+            true => "the per-point route",
+            false => "the field route",
+        };
+        assert!(
+            lit(&mut ctx, 0.0, blurred) > 0,
+            "{route}: a width of zero is a point one pixel across, and drew \
+             nothing"
+        );
+        assert!(
+            lit(&mut ctx, 0.1, blurred) > 0,
+            "{route}: a point a twentieth of a pixel in radius is widened to \
+             half of one, and drew nothing"
+        );
+    }
+}

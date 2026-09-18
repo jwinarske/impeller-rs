@@ -4368,7 +4368,10 @@ impl Canvas {
             Style::Stroke(stroke) => *stroke,
             Style::Fill => StrokeStyle::default(),
         };
-        if !stroke.width.is_finite() || stroke.width <= 0.0 {
+        // Negative only, which is upstream's guard -- `PointFieldGeometry`
+        // refuses `radius_ < 0.0` and widens everything else. A width of zero is
+        // a point one pixel across, the same reading a zero-width stroke gets.
+        if !stroke.width.is_finite() || stroke.width < 0.0 {
             return Ok(self);
         }
 
@@ -4392,7 +4395,7 @@ impl Canvas {
             // pixel rather than forming a distance, and a derivative of an
             // interpolated value is as good as one of a computed value.
             PointMode::Points => {
-                let radius = stroke.width / 2.0;
+                let radius = point_radius(self.transform, stroke.width);
                 if !matches!(stroke.cap, LineCap::Round | LineCap::Square) {
                     // A butt cap extends a segment by nothing, and nothing is
                     // what a segment of no length becomes.
@@ -4504,7 +4507,10 @@ impl Canvas {
         stroke: &StrokeStyle,
         paint: &Paint,
     ) -> Result<&mut Self> {
-        let radius = stroke.width / 2.0;
+        // Widened on the same terms the field route is, so which route a point
+        // takes stays invisible -- this one is reached for a mask blur, an image
+        // filter or a shader, none of which changes how small a point may be.
+        let radius = point_radius(self.transform, stroke.width);
         // Filled rather than stroked: what is being drawn is the cap itself,
         // and asking the stroker for a segment of no length is asking it for a
         // direction that does not exist.
@@ -5778,6 +5784,45 @@ fn thin_stroke(transform: Transform2D, width: f32, zero: Zero) -> (f32, f32) {
     };
     (MIN_STROKE_PIXELS / basis, coverage)
 }
+
+/// The radius a point is drawn at, which for a small one is wider than asked.
+///
+/// The same problem `thin_stroke` solves and a different constant, both taken
+/// from upstream. A point smaller than a pixel lands on a sample or misses it,
+/// so `PointFieldGeometry` widens the *radius* to `0.5f / max_basis` --
+/// `std::max(radius_, min_size)`, half a pixel, so the point comes out one pixel
+/// across. A stroke's constant is a whole pixel because a stroke width spans the
+/// line rather than reaching from its middle.
+///
+/// Nothing is dimmed to pay for it, which is upstream's rule and not an omission
+/// here: a stroke fades as it thins and a point does not. A point is a disc
+/// whose area falls away as the square of its radius, so dimming it as well
+/// would take it to nothing twice over, and a field of them is a scatter plot
+/// whose small marks are the ones a reader has to see.
+///
+/// A projective transform is left alone, as it is for a stroke: the stretch a
+/// homography applies is a different answer at every point.
+fn point_radius(transform: Transform2D, width: f32) -> f32 {
+    let radius = width / 2.0;
+    let Some(affine) = transform.to_affine() else {
+        return radius;
+    };
+    if !radius.is_finite() || radius < 0.0 {
+        return radius;
+    }
+    let basis = max_scale(&affine);
+    if !basis.is_finite() || basis <= 0.0 {
+        return radius;
+    }
+    radius.max(MIN_POINT_RADIUS_PIXELS / basis)
+}
+
+/// Half a device pixel, so the smallest point drawn covers one.
+///
+/// Upstream's `min_size` in `PointFieldGeometry::GetPositionBuffer`, which is
+/// `0.5f / max_basis` rather than [`MIN_STROKE_PIXELS`] over it, for the reason
+/// [`point_radius`] gives: this one is a radius.
+const MIN_POINT_RADIUS_PIXELS: f32 = 0.5;
 
 /// What a stroke width of zero means at a call site, which is not always the
 /// same thing.

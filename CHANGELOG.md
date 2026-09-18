@@ -22,6 +22,14 @@ duplication the paragraph above rules out. `docs/parity.md` says what is built,
 a test checks that it says so truly, and a copy of that claim kept by hand here
 is the same claim without the check. So there is no list.
 
+A point smaller than a pixel covers one, and a width of zero is a point. Upstream
+widens a point field's radius to `max(radius, 0.5 / max_basis)` and refuses only a
+negative one, so the smallest point it draws covers a whole pixel; this renderer
+drew nothing at zero and drew a sub-pixel point at whatever the sample grid gave
+it. Nothing is dimmed to pay for the widening, which is upstream's rule as well
+and the opposite of what a thin stroke gets: a point's area already falls away as
+the square of its radius.
+
 A stroke width of zero is a hairline. `dart:ui` documents `Paint.strokeWidth` as
 defaulting to zero and zero as "a hairline width", and Impeller widens it to the
 thinnest line the device can draw at full coverage -- an explicit exception at the
