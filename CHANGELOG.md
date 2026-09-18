@@ -22,6 +22,37 @@ duplication the paragraph above rules out. `docs/parity.md` says what is built,
 a test checks that it says so truly, and a copy of that claim kept by hand here
 is the same claim without the check. So there is no list.
 
+A hairline drawn through `draw_line` lands on a pixel rather than between two. A
+line one pixel wide whose center sits on a pixel boundary covers half of each row
+it straddles, so it drew gray and two pixels soft where upstream draws it crisp:
+`LineGeometry::GetPositionBuffer` carries the endpoints into device space, drops
+the transform and rounds the constant coordinate to a pixel's middle. Gated as
+upstream gates it, on a width of exactly zero and a transform that is a
+translation and a scale, and narrower in one way -- a paint wanting a layer keeps
+the ordinary path, since a mask blur's sigma is stated in user space and this
+draws in device space. A two-point path is not snapped, there or here.
+
+A point smaller than a pixel covers one, and a width of zero is a point. Upstream
+widens a point field's radius to `max(radius, 0.5 / max_basis)` and refuses only a
+negative one, so the smallest point it draws covers a whole pixel; this renderer
+drew nothing at zero and drew a sub-pixel point at whatever the sample grid gave
+it. Nothing is dimmed to pay for the widening, which is upstream's rule as well
+and the opposite of what a thin stroke gets: a point's area already falls away as
+the square of its radius.
+
+A stroke width of zero is a hairline. `dart:ui` documents `Paint.strokeWidth` as
+defaulting to zero and zero as "a hairline width", and Impeller widens it to the
+thinnest line the device can draw at full coverage -- an explicit exception at the
+top of `ComputeStrokeAlphaCoverage` rather than something falling out of the
+dimming. This renderer read it as no stroke, on the reasoning that a width
+animating to nothing should fade out rather than jump back to full at the end. The
+default settled it: a Flutter app that strokes without setting a width drew a
+hairline there and nothing here, which is not an edge a caller opts into. So the
+jump comes with the rule. `Paint::is_visible` answers true for a zero-width
+stroke now, and `StrokeStyle` grew `can_draw` beside `is_visible` to keep the two
+questions apart -- the tessellator still cannot build a stroke of no width, and a
+caller's zero is widened before it gets there.
+
 A color filter that recolors nothing no longer costs a pass. `ImageFilter::Color`
 reported itself the identity only when it wrapped `ColorFilter::None`, so a blend
 in `Dst` mode -- return the destination untouched -- and an identity color matrix

@@ -14004,25 +14004,28 @@ fn a_mask_blur_over_a_gradient_matches_what_a_caller_would_assemble() {
     );
 }
 
-/// A thin stroke under a shear draws, and a stroke of no width does not.
+/// A thin stroke under a shear draws, and a stroke of no width is a hairline.
 ///
 /// Worth pinning together, because the inventory once put a scene out of reach
 /// with "a hairline skew" and the two halves of that are different questions. A
 /// shear is not the difficulty -- half a pixel of width under one draws exactly
-/// as it should. What this renderer does not have is `strokeWidth` of zero
-/// meaning the thinnest line the device can draw, which is what `dart:ui`
-/// documents it as: here it means no line, deliberately, so that a caller
-/// animating a width down to nothing stops drawing rather than watching a
-/// shape refuse to disappear.
+/// as it should.
 ///
-/// That reason is better than it was. A sub-pixel stroke now dims with its
-/// width rather than quantizing against the sample grid, so the animation this
-/// describes fades smoothly to nothing instead of holding at a quarter and
-/// dropping -- see `a_stroke_thinner_than_a_pixel_fades_instead_of_disappearing`.
-/// Upstream, which reads zero as a hairline, jumps back to full opacity at the
-/// end of that same animation.
+/// The other half is `strokeWidth` of zero, which `dart:ui` documents as "a
+/// hairline width" and makes the default value of the field. This renderer read
+/// it as no line until 2026-09-17, on the reasoning that a caller animating a
+/// width to nothing should stop drawing rather than watch a shape refuse to
+/// disappear. What settled it against that reasoning was the default: a Flutter
+/// app that strokes without setting a width drew a hairline upstream and nothing
+/// here, which is not an edge a caller opts into. So zero is a hairline, and the
+/// discontinuity comes with it -- the same one upstream has, and has on purpose,
+/// since `ComputeStrokeAlphaCoverage` opens by returning full coverage for it.
+///
+/// The width either side of zero is checked here too, because the jump is the
+/// part that is easy to get wrong in one direction only: a sub-pixel stroke dims
+/// with its width, and zero does not.
 #[test]
-fn a_shear_is_no_obstacle_to_a_thin_stroke_and_zero_still_means_none() {
+fn a_shear_is_no_obstacle_to_a_thin_stroke_and_zero_is_a_hairline() {
     let Some(mut ctx) = context() else { return };
     let sheared = |ctx: &mut Context, width: f32| {
         let mut canvas = Canvas::new(SIZE);
@@ -14043,15 +14046,45 @@ fn a_shear_is_no_obstacle_to_a_thin_stroke_and_zero_still_means_none() {
             .count()
     };
 
+    let half = sheared(&mut ctx, 0.5);
     assert!(
-        sheared(&mut ctx, 0.5) > 40,
+        half > 40,
         "half a pixel of width under a shear should still draw a line"
     );
-    assert_eq!(
-        sheared(&mut ctx, 0.0),
-        0,
-        "a width of zero draws nothing, which is this renderer's own choice \
-         rather than an inability to draw something thin"
+    let none = sheared(&mut ctx, 0.0);
+    assert!(
+        none > 40,
+        "a width of zero is a hairline and should draw a line of its own, and \
+         lit {none} pixels against {half} for half a pixel of width"
+    );
+
+    // The jump, stated as the thing it is: zero is full coverage and a width
+    // just above it is nearly none. A rule that dimmed zero along with
+    // everything thinner than a pixel would draw it at almost nothing, and
+    // would pass the count above while looking wrong.
+    let lit_at = |ctx: &mut Context, width: f32| {
+        let mut canvas = Canvas::new(SIZE);
+        canvas.clear(Color::BLACK);
+        canvas
+            .draw_line(
+                Vec2::new(8.0, 64.0),
+                Vec2::new(120.0, 64.0),
+                &Paint::stroke(Color::WHITE, width),
+            )
+            .expect("a line");
+        let pixels = render(ctx, canvas);
+        pixel(&pixels, 64, 64)[0]
+    };
+    let at_zero = lit_at(&mut ctx, 0.0);
+    let just_above = lit_at(&mut ctx, 0.02);
+    assert!(
+        at_zero > 100,
+        "a hairline is drawn at full coverage, and came back at {at_zero}"
+    );
+    assert!(
+        just_above < 40,
+        "a fiftieth of a pixel is dimmed to nearly nothing, and came back at \
+         {just_above}"
     );
 }
 
@@ -16502,5 +16535,202 @@ fn a_color_filter_that_recolors_nothing_still_draws_the_shape() {
         passes(true),
         passes(false),
         "a color filter that recolors nothing should cost no pass"
+    );
+}
+
+/// A point smaller than a pixel still covers one, and zero is a point.
+///
+/// `PointFieldGeometry` widens a point's radius to `0.5f / max_basis` --
+/// `std::max(radius_, min_size)` -- so the smallest point upstream draws covers
+/// a whole pixel. A radius of zero takes that path like any other, since the
+/// only radius it refuses is a negative one, and nothing is dimmed to pay for
+/// the widening the way a thin stroke is.
+///
+/// This renderer drew nothing at a width of zero and drew a sub-pixel point at
+/// whatever the sample grid gave it, which is the same pair of faults a thin
+/// stroke had. Both routes are checked, because a point field is one draw for
+/// the whole scatter while a blurred or shaded point falls back to a circle
+/// each: a widening applied to one and not the other would show only on a scene
+/// carrying a filter.
+#[test]
+fn a_point_smaller_than_a_pixel_still_covers_one() {
+    let Some(mut ctx) = context() else { return };
+
+    let lit = |ctx: &mut Context, width: f32, blurred: bool| {
+        let mut canvas = Canvas::new(SIZE);
+        canvas.clear(Color::WHITE);
+        let mut paint =
+            Paint::fill(Color::srgb(0.0, 0.0, 0.0, 1.0)).with_style(Style::Stroke(StrokeStyle {
+                cap: LineCap::Round,
+                ..StrokeStyle::new(width)
+            }));
+        if blurred {
+            // Anything that needs a layer takes the per-point route instead.
+            paint.image_filter = ImageFilter::blur(1.0);
+        }
+        canvas
+            .draw_points(PointMode::Points, &[Vec2::new(64.0, 64.0)], &paint)
+            .expect("the point");
+        let pixels = render(ctx, canvas);
+        (0..128u32)
+            .flat_map(|y| (0..128u32).map(move |x| (x, y)))
+            .filter(|(x, y)| pixel(&pixels, *x, *y)[0] < 250)
+            .count()
+    };
+
+    for blurred in [false, true] {
+        let route = match blurred {
+            true => "the per-point route",
+            false => "the field route",
+        };
+        assert!(
+            lit(&mut ctx, 0.0, blurred) > 0,
+            "{route}: a width of zero is a point one pixel across, and drew \
+             nothing"
+        );
+        assert!(
+            lit(&mut ctx, 0.1, blurred) > 0,
+            "{route}: a point a twentieth of a pixel in radius is widened to \
+             half of one, and drew nothing"
+        );
+    }
+}
+
+/// A hairline lands on a pixel rather than between two.
+///
+/// The third part of upstream's minimum-size rule, and the one that decides
+/// whether a hairline looks like one. A line one pixel wide whose center sits on
+/// a pixel boundary covers half of each row it straddles, so it draws gray and
+/// two pixels soft; centered in a row it covers that row and draws crisp.
+/// `LineGeometry::GetPositionBuffer` carries the endpoints into device space,
+/// drops the transform and rounds the constant coordinate with `RoundToHalf`.
+///
+/// Measured here rather than asserted structurally, because the whole claim is
+/// about which pixels the ink lands in.
+#[test]
+fn a_hairline_lands_on_one_row_of_pixels() {
+    let Some(mut ctx) = context() else { return };
+
+    // On a boundary, which is where an unsnapped hairline splits.
+    let drawn = |ctx: &mut Context, y: f32| {
+        let mut canvas = Canvas::new(SIZE);
+        canvas.clear(Color::WHITE);
+        canvas
+            .draw_line(
+                Vec2::new(8.0, y),
+                Vec2::new(120.0, y),
+                &Paint::stroke(Color::srgb(0.0, 0.0, 0.0, 1.0), 0.0),
+            )
+            .expect("the hairline");
+        let pixels = render(ctx, canvas);
+        let lit = (0..128u32)
+            .flat_map(|y| (0..128u32).map(move |x| (x, y)))
+            .filter(|(x, y)| pixel(&pixels, *x, *y)[0] < 250)
+            .count();
+        let darkest = (0..128u32)
+            .map(|row| pixel(&pixels, 64, row)[0])
+            .min()
+            .unwrap_or(255);
+        (lit, darkest)
+    };
+
+    // 112 pixels of length, one row of them, and that row fully covered.
+    let (lit, darkest) = drawn(&mut ctx, 64.0);
+    assert_eq!(
+        lit, 112,
+        "a snapped hairline covers one row of 112 pixels, and covered {lit}"
+    );
+    assert!(
+        darkest < 40,
+        "the row it lands on is fully covered, and its darkest pixel is {darkest}"
+    );
+
+    // And it does not matter where between two pixels the caller put it: half a
+    // pixel down is the same row, drawn the same way.
+    let (offset_lit, offset_darkest) = drawn(&mut ctx, 64.5);
+    assert_eq!(
+        (offset_lit, offset_darkest),
+        (lit, darkest),
+        "a hairline at 64.5 should draw exactly as one at 64.0"
+    );
+}
+
+/// A hairline carrying a shader is not snapped, because the snap would move it.
+///
+/// The snap draws in device space with an identity transform, which is what lets
+/// the widening read a basis of one. Every shader but a solid color is *mapped*
+/// by the transform instead -- a gradient's stops are stated in the space the
+/// draw was recorded in -- so a snapped gradient would be read without the scale.
+/// Measured while writing the snap: a hairline under a doubling read its gradient
+/// at sixteen per cent of the way along where the same line a pixel wide read it
+/// at four.
+///
+/// So such a hairline keeps the ordinary path and stays half a pixel off center.
+/// Both halves are pinned here: the gradient has to be read where the wider line
+/// reads it, and the line has to still straddle two rows, which is what says the
+/// snap declined rather than that it ran and happened to agree.
+#[test]
+fn a_hairline_with_a_shader_keeps_its_shader_over_the_snap() {
+    let Some(mut ctx) = context() else { return };
+
+    let shot = |ctx: &mut Context, width: f32| {
+        let mut canvas = Canvas::new(SIZE);
+        canvas.clear(Color::WHITE);
+        // A scale, so a mapping taken without it lands somewhere else.
+        canvas.scale(2.0, 2.0);
+        let paint = Paint::default()
+            .with_style(Style::Stroke(StrokeStyle::new(width)))
+            .with_shader(Shader::LinearGradient {
+                start: Vec2::new(4.0, 0.0),
+                end: Vec2::new(60.0, 0.0),
+                stops: vec![
+                    GradientStop {
+                        offset: 0.0,
+                        color: Color::srgb(1.0, 0.0, 0.0, 1.0),
+                    },
+                    GradientStop {
+                        offset: 1.0,
+                        color: Color::srgb(0.0, 0.0, 1.0, 1.0),
+                    },
+                ],
+                tile: TileMode::Clamp,
+            });
+        canvas
+            .draw_line(Vec2::new(4.0, 32.0), Vec2::new(60.0, 32.0), &paint)
+            .expect("the line");
+        render(ctx, canvas)
+    };
+
+    // Where the ramp crosses from redder to bluer, which is the gradient's
+    // middle and moves if the mapping is taken in the wrong space.
+    let crossing = |pixels: &[u8]| {
+        (8..120u32).find(|x| {
+            (0..128u32)
+                .map(|y| pixel(pixels, *x, y))
+                .filter(|p| p[0] < 250 || p[2] < 250)
+                .any(|p| p[2] > p[0])
+        })
+    };
+    let hairline = shot(&mut ctx, 0.0);
+    let wider = shot(&mut ctx, 1.0);
+    let (thin, thick) = (
+        crossing(&hairline).expect("the hairline has a ramp"),
+        crossing(&wider).expect("the wider line has a ramp"),
+    );
+    assert!(
+        thin.abs_diff(thick) <= 3,
+        "the gradient's middle is at {thin} on a hairline and {thick} on a line a \
+         pixel wide, so the hairline read its shader in the wrong space"
+    );
+
+    // And it straddles two rows, which is the snap declining rather than
+    // running and agreeing by luck.
+    let rows = (0..128u32)
+        .filter(|y| (0..128u32).any(|x| pixel(&hairline, x, *y)[1] < 250))
+        .count();
+    assert_eq!(
+        rows, 2,
+        "a shaded hairline is not snapped, so it covers two rows at half \
+         coverage and covered {rows}"
     );
 }

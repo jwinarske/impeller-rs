@@ -277,8 +277,11 @@ fn catalog_names_say_which_file_they_came_from() {
     // The name is the only link back to the test each scene mirrors, so it
     // carries the topic its file is named for. A scene that does not is one
     // whose original nobody can find.
-    const TOPICS: [&str; 13] = [
+    const TOPICS: [&str; 14] = [
         "basic/",
+        // `aiks_dl_primitive_shape_unittests.cc`, whose whole subject is a
+        // hairline holding its weight under a transform.
+        "primitive/",
         "path/",
         "gradient/",
         "clip/",
@@ -751,11 +754,24 @@ fn the_same_thin_line_said_four_ways_says_what_it_should() {
     // with the general route is a bug nobody sees until the two are side by
     // side. Two claims here, and neither is the same as "they all agree".
     //
-    // The line and the path are the same picture to the byte, because
-    // `Canvas::draw_line` builds a two-point path and hands it to
-    // `draw_path`. That is worth pinning rather than assuming: if the line
-    // ever gains a route of its own, this is what says so, and the plates are
-    // already there to look at.
+    // The line and the path used to be the same picture to the byte, because
+    // `Canvas::draw_line` built a two-point path and handed it to `draw_path`.
+    // That was pinned here rather than assumed, with the note that if the line
+    // ever gained a route of its own this is what would say so. It has, and this
+    // did.
+    //
+    // The route is the hairline snap: at a width of exactly zero, under a
+    // transform that is a translation and a scale, an axis-aligned line is
+    // carried into device space and its constant coordinate rounded to a
+    // pixel's middle, so the one pixel it covers is covered fully instead of
+    // split half and half across two. Upstream does it in `LineGeometry` and
+    // nowhere else, so a two-point *path* does not get it there either -- which
+    // is exactly why this family of four plates exists, and the difference is
+    // upstream's rather than a disagreement to fix.
+    //
+    // So the claim tightens instead of going away: they differ, and only in the
+    // column where the snap can apply. The grid's three columns are widths of
+    // zero, three tenths and one, left to right.
     //
     // The filled forms are not the same picture, and should not be. A stroke
     // narrower than a device pixel is widened to one and dimmed to match,
@@ -780,11 +796,24 @@ fn the_same_thin_line_said_four_ways_says_what_it_should() {
     let line = get("path/draw-lines-with-draw-line");
     let path = get("path/draw-lines-with-path");
     let diff = compare(&line, &path).expect("the two renders are the same size");
-    assert_eq!(
-        diff.differing, 0,
-        "draw_line and a two-point stroked path should be the same picture \
-         while the first is written in terms of the second: {diff:?}"
+    assert!(
+        diff.differing > 0,
+        "draw_line snaps a hairline to a pixel and a two-point stroked path does \
+         not, so the two plates cannot be identical: {diff:?}"
     );
+    // And the snap reaches no further than the hairline column. A third of the
+    // plate, less a pixel of margin for the widened line's own edge.
+    let column = (128.0 / 3.0) as u32 + 1;
+    for y in 0..128u32 {
+        for x in column..128u32 {
+            assert_eq!(
+                line.pixel(x, y),
+                path.pixel(x, y),
+                "({x}, {y}) is outside the hairline column and differs, so the \
+                 snap is reaching widths the caller stated"
+            );
+        }
+    }
 
     for name in [
         "path/draw-lines-with-filled-rects",
@@ -1906,4 +1935,69 @@ fn a_clip_drawn_before_an_image_does_not_bound_it() {
         square,
         "the difference clip should have spared the middle of the surround"
     );
+}
+
+#[test]
+fn a_hairline_holds_its_weight_under_a_transform() {
+    // What `aiks_dl_primitive_shape_unittests.cc` exists for, in its own words:
+    // "the effects of scaling, rotation and skew transforms on the consistency
+    // of a stroke (particularly hairlines)". Its three scenes all stroke at a
+    // width of zero, so each is a hairline over a filled shape, and the claim is
+    // that the hairline is there and is thin however the shape is stretched.
+    //
+    // Both halves are checkable without a reference image. The outline has to
+    // exist -- a renderer reading zero as no stroke draws none of it, which is
+    // what this renderer did until the rule was taken -- and it has to be about
+    // one pixel wide, which a scan across the plate counts directly.
+    let Ok(mut ctx) = Validated::new(DevicePreference::Auto) else {
+        eprintln!("skipping: no Vulkan device");
+        return;
+    };
+    for scene in catalog()
+        .into_iter()
+        .filter(|s| s.name.starts_with("primitive/"))
+    {
+        let image = render::<VulkanHal>(&mut ctx, &scene);
+        // The outline is white over a blue fill and a darkened middle, so it is
+        // the only thing in the plate with every channel high.
+        let white = |x: u32, y: u32| {
+            let p = image.pixel(x, y);
+            p[0] > 150 && p[1] > 150 && p[2] > 150
+        };
+        let lit: Vec<(u32, u32)> = (0..128u32)
+            .flat_map(|y| (0..128u32).map(move |x| (x, y)))
+            .filter(|(x, y)| white(*x, *y))
+            .collect();
+        assert!(
+            lit.len() > 60,
+            "{}: the hairline should trace the inner shape and lit {} pixels",
+            scene.name,
+            lit.len()
+        );
+
+        // And it is thin. Taken as the widest unbroken white run on any row,
+        // which for a one-pixel outline is small even where the outline runs
+        // along the scan -- upstream's shapes are curves or turned rectangles,
+        // so no edge here is exactly horizontal.
+        let widest = (0..128u32)
+            .map(|y| {
+                let mut best = 0u32;
+                let mut run = 0u32;
+                for x in 0..128u32 {
+                    run = match white(x, y) {
+                        true => run + 1,
+                        false => 0,
+                    };
+                    best = best.max(run);
+                }
+                best
+            })
+            .max()
+            .unwrap_or(0);
+        assert!(
+            widest <= 12,
+            "{}: the widest white run is {widest} pixels, which is not a hairline",
+            scene.name
+        );
+    }
 }

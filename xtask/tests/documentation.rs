@@ -341,12 +341,14 @@ fn the_playground_inventory_counts_each_file_correctly() {
             })
             .count()
     };
-    // The C++ file each topic mirrors. Primitive shapes are absent because
-    // the catalog holds nothing under that topic yet, so there would be
-    // nothing to check; the total test still covers what it would contribute
-    // once there is.
+    // The C++ file each topic mirrors. Primitive shapes used to be absent, on
+    // the grounds that the catalog held nothing under that topic and there would
+    // be nothing to check -- which is also why the row's count went unchecked
+    // and was wrong from the day it was written. A topic with no scenes is worth
+    // naming here for exactly that reason, so it is named now that it has three.
     let mirrors = [
         ("aiks_dl_basic_unittests.cc", "basic"),
+        ("aiks_dl_primitive_shape_unittests.cc", "primitive"),
         ("aiks_dl_path_unittests.cc", "path"),
         ("aiks_dl_gradient_unittests.cc", "gradient"),
         ("aiks_dl_clip_unittests.cc", "clip"),

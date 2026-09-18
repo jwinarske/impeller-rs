@@ -2394,7 +2394,8 @@ impl Canvas {
         // available to it and one of them is none.
         let (style, coverage) = match &paint.style {
             Style::Stroke(stroke) => {
-                let (width, coverage) = thin_stroke(self.transform, stroke.width);
+                let (width, coverage) =
+                    thin_stroke(self.transform, stroke.width, Zero::IsAHairline);
                 (Style::Stroke(stroke.with_width(width)), coverage)
             }
             other => (*other, 1.0),
@@ -2944,7 +2945,7 @@ impl Canvas {
             // wider than the width it asked for. A bound taken from the asked
             // width would cut the widening off at the edge of the layer.
             Style::Stroke(stroke) if stroke.width.is_finite() => {
-                thin_stroke(self.transform, stroke.width).0 / 2.0
+                thin_stroke(self.transform, stroke.width, Zero::IsAHairline).0 / 2.0
             }
             _ => 0.0,
         };
@@ -3727,7 +3728,8 @@ impl Canvas {
         };
         // Widened and dimmed on the same terms the tessellated route is, so
         // that which route a shape takes stays invisible. See `thin_stroke`.
-        let (stroke, coverage) = thin_stroke(self.transform, analytic_stroke(paint)?);
+        let (stroke, coverage) =
+            thin_stroke(self.transform, analytic_stroke(paint)?, Zero::IsNotAStroke);
         let Shader::Solid(color) = &paint.shader else {
             return None;
         };
@@ -3781,8 +3783,13 @@ impl Canvas {
         // A pixel for the coverage ramp, plus half the stroke where one is
         // traced: an outline straddles the edge, so it reaches outward by half
         // its width beyond the shape it belongs to.
-        let reach =
-            1.0 + thin_stroke(self.transform, analytic_stroke(paint).unwrap_or(0.0)).0 / 2.0;
+        let reach = 1.0
+            + thin_stroke(
+                self.transform,
+                analytic_stroke(paint).unwrap_or(0.0),
+                Zero::IsNotAStroke,
+            )
+            .0 / 2.0;
         let outset = Rect::new(
             rect.left - reach,
             rect.top - reach,
@@ -3954,7 +3961,8 @@ impl Canvas {
         if !paint.is_visible() || self.clip.is_some_and(Scissor::is_empty) {
             return None;
         }
-        let (stroke, coverage) = thin_stroke(self.transform, analytic_stroke(paint)?);
+        let (stroke, coverage) =
+            thin_stroke(self.transform, analytic_stroke(paint)?, Zero::IsNotAStroke);
         let Shader::Solid(color) = &paint.shader else {
             return None;
         };
@@ -4360,7 +4368,10 @@ impl Canvas {
             Style::Stroke(stroke) => *stroke,
             Style::Fill => StrokeStyle::default(),
         };
-        if !stroke.width.is_finite() || stroke.width <= 0.0 {
+        // Negative only, which is upstream's guard -- `PointFieldGeometry`
+        // refuses `radius_ < 0.0` and widens everything else. A width of zero is
+        // a point one pixel across, the same reading a zero-width stroke gets.
+        if !stroke.width.is_finite() || stroke.width < 0.0 {
             return Ok(self);
         }
 
@@ -4384,7 +4395,7 @@ impl Canvas {
             // pixel rather than forming a distance, and a derivative of an
             // interpolated value is as good as one of a computed value.
             PointMode::Points => {
-                let radius = stroke.width / 2.0;
+                let radius = point_radius(self.transform, stroke.width);
                 if !matches!(stroke.cap, LineCap::Round | LineCap::Square) {
                     // A butt cap extends a segment by nothing, and nothing is
                     // what a segment of no length becomes.
@@ -4496,7 +4507,10 @@ impl Canvas {
         stroke: &StrokeStyle,
         paint: &Paint,
     ) -> Result<&mut Self> {
-        let radius = stroke.width / 2.0;
+        // Widened on the same terms the field route is, so which route a point
+        // takes stays invisible -- this one is reached for a mask blur, an image
+        // filter or a shader, none of which changes how small a point may be.
+        let radius = point_radius(self.transform, stroke.width);
         // Filled rather than stroked: what is being drawn is the cap itself,
         // and asking the stroker for a segment of no length is asking it for a
         // direction that does not exist.
@@ -4911,11 +4925,100 @@ impl Canvas {
         self.draw_vertices(&mesh, &painted)
     }
 
+    /// A line, and for a hairline one snapped to a pixel.
+    ///
+    /// The snap is the third part of upstream's minimum-size rule and the one
+    /// that decides whether a hairline *looks* like one. A line one pixel wide
+    /// whose center sits on a pixel boundary covers half of each of the two rows
+    /// it straddles, so it draws gray and two pixels soft; the same line centered
+    /// in a row covers it and draws black and one pixel crisp. Upstream moves it:
+    /// `LineGeometry::GetPositionBuffer` carries the endpoints into device space,
+    /// drops the transform, and rounds the constant coordinate to a half with
+    /// `RoundToHalf` -- which is a pixel's middle.
+    ///
+    /// Gated exactly as upstream gates it, on `width_ == 0.f` and
+    /// `IsTranslationScaleOnly`. A width the caller stated is a width to respect,
+    /// and under a rotation or a shear no axis-aligned line stays one.
+    ///
+    /// Narrower than upstream in one way, which is deliberate: a paint wanting a
+    /// layer keeps the ordinary path. A mask blur's sigma is stated in user space
+    /// and this draws in device space, so the two would disagree under a scale --
+    /// and a snap is worth half a pixel, not a wrong blur.
     pub fn draw_line(&mut self, from: Vec2, to: Vec2, paint: &Paint) -> Result<&mut Self> {
+        if let Some((p0, p1)) = self.hairline_snap(from, to, paint) {
+            let mut b = PathBuilder::new();
+            b.move_to(p0).line_to(p1);
+            let path = b.build();
+            // Drawn in device space, so the widening reads a basis of one and
+            // gives exactly the pixel the snap aligned it to.
+            let held = self.transform;
+            self.transform = Transform2D::IDENTITY;
+            let drawn = self.draw_path(&path, paint).map(|_| ());
+            self.transform = held;
+            drawn?;
+            return Ok(self);
+        }
         let mut b = PathBuilder::new();
         b.move_to(from).line_to(to);
         let path = b.build();
         self.draw_path(&path, paint)
+    }
+
+    /// The device-space endpoints of a hairline worth snapping, or `None`.
+    ///
+    /// `None` covers every case that keeps the ordinary path: a stated width, a
+    /// transform that is not a translation and a scale, a paint that wants a
+    /// layer, and a line that is not axis-aligned once transformed.
+    fn hairline_snap(&self, from: Vec2, to: Vec2, paint: &Paint) -> Option<(Vec2, Vec2)> {
+        let Style::Stroke(stroke) = &paint.style else {
+            return None;
+        };
+        if stroke.width != 0.0 {
+            return None;
+        }
+        if paint.mask_blur > 0.0 || !paint.image_filter.is_identity() {
+            return None;
+        }
+        // A solid color only, and this is the guard that matters most. Every
+        // other shader is *mapped* by the transform -- a gradient's stops are
+        // stated in the space the draw was recorded in, an image's source
+        // rectangle likewise -- and this draw hands the batch an identity
+        // transform, so the mapping would be taken without the scale. Measured
+        // while writing this: a hairline under a doubling read its gradient at
+        // sixteen per cent where the same line a pixel wide read it at four.
+        //
+        // Such a hairline keeps the ordinary path and stays half a pixel off
+        // center, which is the right way round: a snap is worth half a pixel,
+        // and a shader read in the wrong place is worth nothing.
+        if !matches!(paint.shader, Shader::Solid(_)) {
+            return None;
+        }
+        let affine = self.transform.to_affine()?;
+        // A translation and a scale, which is what leaves an axis-aligned line
+        // axis-aligned. Read off the matrix rather than tracked, so a caller who
+        // arrived here through `concat` is judged on what they actually have.
+        let m = affine.matrix2;
+        if m.x_axis.y != 0.0 || m.y_axis.x != 0.0 {
+            return None;
+        }
+        let (p0, p1) = (affine.transform_point2(from), affine.transform_point2(to));
+        if !p0.is_finite() || !p1.is_finite() {
+            return None;
+        }
+        // A pixel's middle, which is where a one-pixel line has to sit to cover
+        // one pixel. Upstream's `RoundToHalf`.
+        let to_half = |v: f32| v.floor() + 0.5;
+        // Vertical first, matching upstream's order, and either branch leaves
+        // the other coordinate alone -- the line's length is the caller's.
+        if (p0.x - p1.x).abs() < CLOSE_ENOUGH {
+            let x = to_half(p0.x);
+            return Some((Vec2::new(x, p0.y), Vec2::new(x, p1.y)));
+        }
+        if (p0.y - p1.y).abs() < CLOSE_ENOUGH {
+            let y = to_half(p0.y);
+            return Some((Vec2::new(p0.x, y), Vec2::new(p1.x, y)));
+        }
+        None
     }
 
     /// Close a layer: file its pass, and composite it onto the parent.
@@ -5719,21 +5822,38 @@ const MIN_STROKE_PIXELS: f32 = 1.0;
 /// point is that a Flutter app's hairlines look here as they look there, and a
 /// different constant would be a different picture at every sub-pixel width.
 ///
-/// **Zero is not thin, it is nothing.** Upstream reads a width of zero as a
-/// hairline — one pixel at full alpha — and this renderer reads it as no
-/// stroke, which is `docs/parity.md`'s `strokeWidth` row and is a decision
-/// rather than an omission. It is left alone here, and the fade above only
-/// strengthens it: a caller animating a width down to nothing now sees it
-/// dim continuously to nothing rather than stopping at a quarter and jumping.
+/// **Zero is a hairline**, which is upstream's reading and `dart:ui`'s
+/// documented one: "Defaults to 0.0, which correspond to a hairline width".
+/// Upstream spells it as an explicit exception rather than letting it fall out
+/// of the arithmetic — `ComputeStrokeAlphaCoverage` opens with
+/// `if (scaled_stroke_width == 0.0 || scaled_stroke_width >= kMinStrokeSize)
+/// return 1.0`, so zero takes the widening to a whole pixel and pays nothing in
+/// alpha for it.
+///
+/// This renderer read zero as no stroke until 2026-09-17, on the reasoning that
+/// a caller animating a width to nothing should dim continuously rather than
+/// jump back to full at the end. That reasoning is sound and it is not
+/// upstream's: the jump is in upstream on purpose, and zero is the *default*
+/// value of `Paint.strokeWidth` rather than an edge a caller has to ask for --
+/// so a Flutter app that strokes without setting a width drew a hairline there
+/// and nothing here. Parity wins, and the discontinuity comes with it.
+///
+/// Which zero means which is what [`Zero`] carries. The analytic route spells a
+/// *fill* as a stroke width of zero, and widening that one would put a
+/// one-pixel outline around every filled shape, so the distinction cannot be
+/// left to the number.
 ///
 /// A projective transform is left alone too. The widening asks how much a
 /// transform stretches, which for a homography is a different answer at every
 /// point; upstream guards the same case with `HasPerspective2D`.
-fn thin_stroke(transform: Transform2D, width: f32) -> (f32, f32) {
+fn thin_stroke(transform: Transform2D, width: f32, zero: Zero) -> (f32, f32) {
     let Some(affine) = transform.to_affine() else {
         return (width, 1.0);
     };
-    if !width.is_finite() || width <= 0.0 {
+    if !width.is_finite() || width < 0.0 {
+        return (width, 1.0);
+    }
+    if width == 0.0 && zero == Zero::IsNotAStroke {
         return (width, 1.0);
     }
     let basis = max_scale(&affine);
@@ -5744,7 +5864,76 @@ fn thin_stroke(transform: Transform2D, width: f32) -> (f32, f32) {
     if scaled >= MIN_STROKE_PIXELS {
         return (width, 1.0);
     }
-    (MIN_STROKE_PIXELS / basis, (scaled * 2.0).clamp(0.0, 1.0))
+    // Upstream's exception, and the reason it is one: the dimming below would
+    // take a width of zero to an alpha of zero, which is a hairline nobody can
+    // see rather than the thinnest line the device can draw.
+    let coverage = match scaled == 0.0 {
+        true => 1.0,
+        false => (scaled * 2.0).clamp(0.0, 1.0),
+    };
+    (MIN_STROKE_PIXELS / basis, coverage)
+}
+
+/// The radius a point is drawn at, which for a small one is wider than asked.
+///
+/// The same problem `thin_stroke` solves and a different constant, both taken
+/// from upstream. A point smaller than a pixel lands on a sample or misses it,
+/// so `PointFieldGeometry` widens the *radius* to `0.5f / max_basis` --
+/// `std::max(radius_, min_size)`, half a pixel, so the point comes out one pixel
+/// across. A stroke's constant is a whole pixel because a stroke width spans the
+/// line rather than reaching from its middle.
+///
+/// Nothing is dimmed to pay for it, which is upstream's rule and not an omission
+/// here: a stroke fades as it thins and a point does not. A point is a disc
+/// whose area falls away as the square of its radius, so dimming it as well
+/// would take it to nothing twice over, and a field of them is a scatter plot
+/// whose small marks are the ones a reader has to see.
+///
+/// A projective transform is left alone, as it is for a stroke: the stretch a
+/// homography applies is a different answer at every point.
+fn point_radius(transform: Transform2D, width: f32) -> f32 {
+    let radius = width / 2.0;
+    let Some(affine) = transform.to_affine() else {
+        return radius;
+    };
+    if !radius.is_finite() || radius < 0.0 {
+        return radius;
+    }
+    let basis = max_scale(&affine);
+    if !basis.is_finite() || basis <= 0.0 {
+        return radius;
+    }
+    radius.max(MIN_POINT_RADIUS_PIXELS / basis)
+}
+
+/// When two coordinates are the same coordinate, for deciding axis alignment.
+///
+/// Upstream's `kEhCloseEnough`, and the same value. A line off vertical by less
+/// than this covers the same pixels a vertical one does, so treating it as
+/// vertical moves nothing a reader could see.
+const CLOSE_ENOUGH: f32 = 1e-3;
+
+/// Half a device pixel, so the smallest point drawn covers one.
+///
+/// Upstream's `min_size` in `PointFieldGeometry::GetPositionBuffer`, which is
+/// `0.5f / max_basis` rather than [`MIN_STROKE_PIXELS`] over it, for the reason
+/// [`point_radius`] gives: this one is a radius.
+const MIN_POINT_RADIUS_PIXELS: f32 = 0.5;
+
+/// What a stroke width of zero means at a call site, which is not always the
+/// same thing.
+///
+/// A caller asking for a zero-width stroke wants a hairline. The analytic route
+/// reaches [`thin_stroke`] through `analytic_stroke`, which reports a *fill* as
+/// a width of zero -- and a fill widened to a pixel would grow an outline it
+/// never asked for. So the two are told apart here rather than by the number,
+/// which they share.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Zero {
+    /// A stroke of no width, which draws the thinnest line the device can.
+    IsAHairline,
+    /// Not a stroke at all, so there is no width to widen.
+    IsNotAStroke,
 }
 
 /// A color at `factor` of its opacity.
