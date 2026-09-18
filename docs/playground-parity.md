@@ -536,13 +536,24 @@ forty pixels across in a frame of a hundred and twenty-eight went from five
 frame-sized passes to two, the other three being the clip's size -- 37568 pixels
 of pass area against 81920.
 
-What is left is the sharing, and it is the harder half. A capture shared by key
-has to cover every group that names the id, which is upstream's coverage union;
-this renderer knows the groups only as it reaches them, so the first capture is
-made before the last sharer is known. Layers naming a key are excluded from the
-narrowing above for that reason, and are still frame-sized. The capture itself
-is the pass being cut, so it is the parent's size whatever happens -- that one
-is not an allocation this layer asks for.
+A layer naming a key is narrowed on the same terms, which took reading the
+sharing to see. It was left out of the first pass on the reasoning that a shared
+capture has to cover every group naming the id -- true, and about the capture
+rather than about the layer. The layer's own target holds only its own content,
+which its clip binds whether or not the key is shared, so the exclusion was
+protecting the wrong region. Two keyed panels in opposite corners now record
+their own targets at the clip's size and read one capture and one filtered image
+between them: six passes, of which two are narrowed, where before none were.
+
+What is left is the capture and the filter over it. Both stay the parent's size
+because both serve every group that names the id, and this renderer meets those
+groups one at a time -- the first capture is made before the last sharer is
+known, where upstream takes the coverage union at display-list build time and
+sizes one snapshot from it. Filtering per group instead was tried and is worse
+for the case the id exists for: a list of frosted rows would take one blur each
+where upstream takes one in total, and the blur is where nearly all of the cost
+is. The capture itself is the pass being cut, so it is the parent's size whatever
+happens -- that one is not an allocation a layer asks for.
 
 What is left of the file is eight, and each has a reason. Four drive a
 callback rather than building one picture -- three named `Interactive` with

@@ -15004,6 +15004,68 @@ fn a_shared_backdrop_id_captures_once_and_filters_once() {
 }
 
 #[test]
+fn a_clipped_shared_backdrop_draws_what_stating_the_clip_would() {
+    // A layer naming a backdrop key is narrowed to the clip in force, the same
+    // as an unshared one, and this is what says the narrowing is only that.
+    // Two panels in opposite corners, both naming one key: the clip decides
+    // each layer's target while the capture and the filter over it stay the
+    // parent's size, because they serve both. Built twice -- relying on the
+    // clip, and writing the clip out as the layer's bounds -- and required
+    // identical to the byte.
+    let Some(mut ctx) = context() else { return };
+
+    let corners = [
+        Rect::new(8.0, 8.0, 56.0, 56.0),
+        Rect::new(72.0, 72.0, 120.0, 120.0),
+    ];
+    let shot = |ctx: &mut Context, bounded: bool| {
+        let mut canvas = Canvas::new(SIZE);
+        canvas.clear(Color::WHITE);
+        // Something with structure under the panels, so a target placed a few
+        // pixels off would show rather than land on flat color.
+        for row in 0..8 {
+            let top = 16.0 * row as f32;
+            canvas
+                .draw_rect(
+                    Rect::new(0.0, top, 128.0, top + 8.0),
+                    &Paint::fill(Color::srgb(0.1, 0.4, 0.8, 1.0)),
+                )
+                .expect("the stripes");
+        }
+        for clip in corners {
+            let layer = Layer::opacity(1.0).with_backdrop_id(11);
+            canvas.save();
+            canvas.clip_rect(clip).expect("the clip");
+            let bounds = bounded.then_some(clip);
+            canvas
+                .save_layer_backdrop(layer, bounds, &half_every_channel())
+                .expect("backdrop");
+            canvas.restore();
+            canvas.restore();
+        }
+        render(ctx, canvas)
+    };
+
+    let from_clip = shot(&mut ctx, false);
+    let from_bounds = shot(&mut ctx, true);
+    assert_eq!(
+        from_clip, from_bounds,
+        "the two spellings of one clipped shared backdrop draw the same picture"
+    );
+    // And the filter ran, so the comparison is of a picture rather than of two
+    // copies of the ground. The same stripe inside the panel and outside it,
+    // which the halving separates.
+    let inside = pixel(&from_clip, 16, 16);
+    let outside = pixel(&from_clip, 64, 16);
+    for channel in 0..3 {
+        assert!(
+            inside[channel].abs_diff(outside[channel] / 2) <= 2,
+            "the panel holds the stripe halved: {inside:?} against {outside:?}"
+        );
+    }
+}
+
+#[test]
 fn a_backdrop_id_reaches_into_a_layer_opened_after_it() {
     // Upstream's `CanRenderMultipleBackdropBlurWithSingleBackdropIdDifferentLayers`
     // wraps every panel but the first in a save layer of its own, names one id

@@ -1478,7 +1478,12 @@ impl Canvas {
         // A layer that captures a backdrop is handed to the bounded path with
         // no bounds, which narrows it to the clip in force. That path scales
         // the layer itself, so this one hands it over unscaled.
-        if layer.backdrop_blur > 0.0 && layer.backdrop_id.is_none() && layer.matrix.is_none() {
+        //
+        // A shared key goes that way too. What the key shares is the capture
+        // and the filtered image over it, both of which stay the parent's size
+        // because they have to serve every group naming it; the layer's own
+        // target is bound by the clip like any other.
+        if layer.backdrop_blur > 0.0 && layer.matrix.is_none() {
             let (min, max) = unbounded();
             // Cannot fail: only a backdrop *filter* can refuse, and this
             // passes none -- the blur rides on the layer.
@@ -2099,16 +2104,15 @@ impl Canvas {
         // the composite can touch at all, so there is nothing outside it left
         // to affect.
         let captures_backdrop = backdrop.is_some() || layer.backdrop_blur > 0.0;
-        let (min, max) =
-            if captures_backdrop && layer.backdrop_id.is_none() && layer.matrix.is_none() {
-                let clip = self.clip_bounds;
-                (
-                    Vec2::new(min.x.max(clip.left), min.y.max(clip.top)),
-                    Vec2::new(max.x.min(clip.right), max.y.min(clip.bottom)),
-                )
-            } else {
-                (min, max)
-            };
+        let (min, max) = if captures_backdrop && layer.matrix.is_none() {
+            let clip = self.clip_bounds;
+            (
+                Vec2::new(min.x.max(clip.left), min.y.max(clip.top)),
+                Vec2::new(max.x.min(clip.right), max.y.min(clip.bottom)),
+            )
+        } else {
+            (min, max)
+        };
         // A filter given to the layer as a whole reaches past what it is handed
         // too, and by how much only the filter knows. Asked here rather than
         // left to the narrowing below, because the narrowing only runs for a
@@ -6126,6 +6130,66 @@ mod tests {
                 extent.height
             );
         }
+    }
+
+    /// A layer sharing a backdrop key is narrowed too, and its capture is not.
+    ///
+    /// These two are separate regions and were once excluded together. The
+    /// layer's own target is bound by the clip exactly as an unshared one is.
+    /// What the key shares is the capture and the filtered image over it, and
+    /// those have to cover every group naming the key -- so they stay the
+    /// parent's size, and a second group somewhere else reads the same pass.
+    #[test]
+    fn a_shared_backdrop_layer_is_narrowed_while_its_capture_is_not() {
+        let mut canvas = canvas();
+        canvas.clear(Color::srgb(0.2, 0.3, 0.4, 1.0));
+        let panel = |canvas: &mut Canvas, clip: Rect| {
+            canvas.save();
+            canvas.clip_rect(clip).expect("the clip");
+            canvas.save_layer(
+                Layer::opacity(1.0)
+                    .with_backdrop_blur(4.0)
+                    .with_backdrop_id(7),
+            );
+            canvas
+                .draw_rect(clip, &Paint::fill(Color::srgb(1.0, 0.6, 0.0, 0.6)))
+                .expect("the panel");
+            canvas.restore();
+            canvas.restore();
+        };
+        // Opposite corners, so nothing can pass by covering one with the other.
+        panel(&mut canvas, Rect::new(8.0, 8.0, 48.0, 48.0));
+        panel(&mut canvas, Rect::new(80.0, 80.0, 120.0, 120.0));
+
+        let recording = canvas.finish();
+        let frame = recording.extent;
+        let extents: Vec<_> = recording.passes.iter().map(|pass| pass.extent).collect();
+        let narrowed: Vec<_> = extents.iter().filter(|e| **e != frame).collect();
+        // One target per panel, and nothing else: the capture and the two
+        // passes its blur takes are shared, and all three cover the parent.
+        assert_eq!(
+            narrowed.len(),
+            2,
+            "one narrowed target per panel and no more, in {extents:?}"
+        );
+        for extent in narrowed {
+            assert!(
+                extent.width <= 40 && extent.height <= 40,
+                "a panel target came out {}x{} for a clip forty pixels across",
+                extent.width,
+                extent.height
+            );
+        }
+        // The second panel pays for its own target and nothing else: the cut,
+        // and the two passes of the blur over it, are taken once between them.
+        // Six in all -- the cut, the blur's two, a target each, and the pass
+        // the frame ends in, which holds both composites.
+        assert_eq!(
+            extents.len(),
+            6,
+            "a cut, two blur passes, a target each, and the frame's own, in \
+             {extents:?}"
+        );
     }
 
     /// And it draws what stating the clip as the layer's bounds would.
