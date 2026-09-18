@@ -207,7 +207,7 @@ column is right and the obvious way to check it is wrong.
 | `aiks_dl_gradient_unittests.cc` | ~40 | 46 | nothing; see below |
 | `aiks_dl_clip_unittests.cc` | ~6 | 8 | nothing; this file is covered |
 | `aiks_dl_opacity_unittests.cc` | ~3 | 3 | nothing; this file is covered |
-| `aiks_dl_blend_unittests.cc` | ~79 | 77 | capability injection for one, a callback for one, and one whose color filter is the identity by arithmetic; see below |
+| `aiks_dl_blend_unittests.cc` | ~79 | 77 | capability injection for one and a callback for one; see below |
 | `aiks_dl_blur_unittests.cc` | ~64 | 64 | nothing; see below |
 | `aiks_dl_vertices_unittests.cc` | ~16 | 22 | nothing; see below |
 | `aiks_dl_atlas_unittests.cc` | ~11 | 12 | nothing; see below |
@@ -829,6 +829,22 @@ different answers depending on which route a draw took, on exactly the targets
 that can tell them apart -- invisible in eight bits, which is why nothing caught
 it. The clamp is gone and
 `an_atlas_tint_in_plus_is_not_clipped_by_a_float_target` holds the agreement.
+
+The scene that widening caught is mirrored now too, as a test rather than a
+plate and for the reason it was caught: its feature leaves the picture unchanged,
+so the catalog rejects it and a test is where the claim belongs.
+`an_advanced_color_filter_against_a_transparent_color_is_the_identity` builds the
+group twice, once with the filter and once without, and requires them identical
+-- and separately requires the picture to be a picture, since two blank frames
+would satisfy the first line and say nothing.
+
+What it guards is the weighting rather than the arithmetic of the mode. A shader
+that applied the blended color without weighting it by the source alpha would
+flood the group with the saturation result, which is what upstream's "solid red"
+would look like; dropping `sa` from that term fails the test. It does not guard
+the unpremultiply, and that was checked rather than assumed -- opening the divide
+to a source alpha of zero leaves it passing, because the clamp around it takes
+the NaN to zero and the term it feeds is multiplied by that same zero.
 
 Widening the rule also retired an exemption. Two atlas plates carry an identity
 matrix image filter whose whole claim is that it changes nothing, and they had
