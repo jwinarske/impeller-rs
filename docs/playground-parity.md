@@ -175,7 +175,7 @@ column is right and the obvious way to check it is wrong.
 | `aiks_dl_basic_unittests.cc` | ~85 | 87 | nothing; see below |
 | `aiks_dl_path_unittests.cc` | ~30 | 37 | nothing; see below |
 | `aiks_dl_gradient_unittests.cc` | ~40 | 46 | nothing; see below |
-| `aiks_dl_clip_unittests.cc` | ~5 | 7 | nothing; this file is covered |
+| `aiks_dl_clip_unittests.cc` | ~6 | 7 | one clips a group with a round superellipse, which a `Node::Clip` cannot state -- it takes rectangles, and a shape clip belongs to one draw rather than to a run of them |
 | `aiks_dl_opacity_unittests.cc` | ~3 | 3 | nothing; this file is covered |
 | `aiks_dl_blend_unittests.cc` | ~79 | 77 | capability injection for one, a wide-gamut target for two, a callback for one, and one whose color filter is the identity by arithmetic; see below |
 | `aiks_dl_blur_unittests.cc` | ~64 | 64 | nothing; see below |
@@ -509,9 +509,22 @@ contour cannot be recognized as a rounded rectangle, so the blur cannot be
 evaluated in the fragment stage and takes the general route -- on a target sized
 for a shape most of which is not there.
 
-Upstream added five to this file since the last count, the same gradient
-oval stroke at each blur style translated and turned, and they are mirrored
-below. What is left of the file is seven, and each has a reason. Four drive a
+Upstream added six to this file since the last count. Five are the same
+gradient oval stroke at each blur style translated and turned, and they are
+mirrored below. The sixth is `BackdropGroupUsesCoverageUnionSnapshot`, which
+draws nothing anyone looks at: it renders two grouped backdrop blurs sharing a
+key, then reads upstream's render target cache and requires the intermediates to
+be sized to the union of the two groups rather than to the canvas.
+
+That is a claim about allocation rather than about a picture, and this renderer
+does not satisfy it. Two keyed backdrop groups forty pixels across, in a frame
+of a hundred and twenty-eight, record six passes and every one of them is the
+full frame; upstream's fix crops them to the union. Nothing is wrong on screen
+-- the plates sharing a backdrop key draw what they should -- so this is a cost
+rather than a difference in pictures, which is why it is here and not in
+`docs/non-parity.md`.
+
+What is left of the file is eight, and each has a reason. Four drive a
 callback rather than building one picture -- three named `Interactive` with
 sliders, and `GaussianBlurAnimatedBackdrop`, which is the same shape without the
 name. Two are unit tests that build a texture and assert it exists rather than
