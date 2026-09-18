@@ -16595,3 +16595,142 @@ fn a_point_smaller_than_a_pixel_still_covers_one() {
         );
     }
 }
+
+/// A hairline lands on a pixel rather than between two.
+///
+/// The third part of upstream's minimum-size rule, and the one that decides
+/// whether a hairline looks like one. A line one pixel wide whose center sits on
+/// a pixel boundary covers half of each row it straddles, so it draws gray and
+/// two pixels soft; centered in a row it covers that row and draws crisp.
+/// `LineGeometry::GetPositionBuffer` carries the endpoints into device space,
+/// drops the transform and rounds the constant coordinate with `RoundToHalf`.
+///
+/// Measured here rather than asserted structurally, because the whole claim is
+/// about which pixels the ink lands in.
+#[test]
+fn a_hairline_lands_on_one_row_of_pixels() {
+    let Some(mut ctx) = context() else { return };
+
+    // On a boundary, which is where an unsnapped hairline splits.
+    let drawn = |ctx: &mut Context, y: f32| {
+        let mut canvas = Canvas::new(SIZE);
+        canvas.clear(Color::WHITE);
+        canvas
+            .draw_line(
+                Vec2::new(8.0, y),
+                Vec2::new(120.0, y),
+                &Paint::stroke(Color::srgb(0.0, 0.0, 0.0, 1.0), 0.0),
+            )
+            .expect("the hairline");
+        let pixels = render(ctx, canvas);
+        let lit = (0..128u32)
+            .flat_map(|y| (0..128u32).map(move |x| (x, y)))
+            .filter(|(x, y)| pixel(&pixels, *x, *y)[0] < 250)
+            .count();
+        let darkest = (0..128u32)
+            .map(|row| pixel(&pixels, 64, row)[0])
+            .min()
+            .unwrap_or(255);
+        (lit, darkest)
+    };
+
+    // 112 pixels of length, one row of them, and that row fully covered.
+    let (lit, darkest) = drawn(&mut ctx, 64.0);
+    assert_eq!(
+        lit, 112,
+        "a snapped hairline covers one row of 112 pixels, and covered {lit}"
+    );
+    assert!(
+        darkest < 40,
+        "the row it lands on is fully covered, and its darkest pixel is {darkest}"
+    );
+
+    // And it does not matter where between two pixels the caller put it: half a
+    // pixel down is the same row, drawn the same way.
+    let (offset_lit, offset_darkest) = drawn(&mut ctx, 64.5);
+    assert_eq!(
+        (offset_lit, offset_darkest),
+        (lit, darkest),
+        "a hairline at 64.5 should draw exactly as one at 64.0"
+    );
+}
+
+/// A hairline carrying a shader is not snapped, because the snap would move it.
+///
+/// The snap draws in device space with an identity transform, which is what lets
+/// the widening read a basis of one. Every shader but a solid color is *mapped*
+/// by the transform instead -- a gradient's stops are stated in the space the
+/// draw was recorded in -- so a snapped gradient would be read without the scale.
+/// Measured while writing the snap: a hairline under a doubling read its gradient
+/// at sixteen per cent of the way along where the same line a pixel wide read it
+/// at four.
+///
+/// So such a hairline keeps the ordinary path and stays half a pixel off center.
+/// Both halves are pinned here: the gradient has to be read where the wider line
+/// reads it, and the line has to still straddle two rows, which is what says the
+/// snap declined rather than that it ran and happened to agree.
+#[test]
+fn a_hairline_with_a_shader_keeps_its_shader_over_the_snap() {
+    let Some(mut ctx) = context() else { return };
+
+    let shot = |ctx: &mut Context, width: f32| {
+        let mut canvas = Canvas::new(SIZE);
+        canvas.clear(Color::WHITE);
+        // A scale, so a mapping taken without it lands somewhere else.
+        canvas.scale(2.0, 2.0);
+        let paint = Paint::default()
+            .with_style(Style::Stroke(StrokeStyle::new(width)))
+            .with_shader(Shader::LinearGradient {
+                start: Vec2::new(4.0, 0.0),
+                end: Vec2::new(60.0, 0.0),
+                stops: vec![
+                    GradientStop {
+                        offset: 0.0,
+                        color: Color::srgb(1.0, 0.0, 0.0, 1.0),
+                    },
+                    GradientStop {
+                        offset: 1.0,
+                        color: Color::srgb(0.0, 0.0, 1.0, 1.0),
+                    },
+                ],
+                tile: TileMode::Clamp,
+            });
+        canvas
+            .draw_line(Vec2::new(4.0, 32.0), Vec2::new(60.0, 32.0), &paint)
+            .expect("the line");
+        render(ctx, canvas)
+    };
+
+    // Where the ramp crosses from redder to bluer, which is the gradient's
+    // middle and moves if the mapping is taken in the wrong space.
+    let crossing = |pixels: &[u8]| {
+        (8..120u32).find(|x| {
+            (0..128u32)
+                .map(|y| pixel(pixels, *x, y))
+                .filter(|p| p[0] < 250 || p[2] < 250)
+                .any(|p| p[2] > p[0])
+        })
+    };
+    let hairline = shot(&mut ctx, 0.0);
+    let wider = shot(&mut ctx, 1.0);
+    let (thin, thick) = (
+        crossing(&hairline).expect("the hairline has a ramp"),
+        crossing(&wider).expect("the wider line has a ramp"),
+    );
+    assert!(
+        thin.abs_diff(thick) <= 3,
+        "the gradient's middle is at {thin} on a hairline and {thick} on a line a \
+         pixel wide, so the hairline read its shader in the wrong space"
+    );
+
+    // And it straddles two rows, which is the snap declining rather than
+    // running and agreeing by luck.
+    let rows = (0..128u32)
+        .filter(|y| (0..128u32).any(|x| pixel(&hairline, x, *y)[1] < 250))
+        .count();
+    assert_eq!(
+        rows, 2,
+        "a shaded hairline is not snapped, so it covers two rows at half \
+         coverage and covered {rows}"
+    );
+}

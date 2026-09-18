@@ -115,8 +115,8 @@ laid down identical ink and one of 0.15 laid down none. Upstream's widening and
 dimming were copied constant for constant, which left the deviation at zero and
 nowhere else.
 
-That last piece is taken now too, and the argument that settled it is worth
-keeping because it is not the one that was being had. The case for reading zero
+Both remaining pieces are taken now, and the argument that settled the first is
+worth keeping because it is not the one that was being had. The case for reading zero
 as no stroke was continuity: a width animating to nothing fades out rather than
 jumping back to full at the end, and upstream jumps. The case against it is that
 zero is the *default* value of `Paint.strokeWidth` and is documented as "a
@@ -124,8 +124,22 @@ hairline width" -- so a Flutter app that strokes without setting a width drew a
 hairline there and nothing here, which is not an edge a caller opts into. The
 discontinuity is upstream's on purpose, spelled as an exception at the top of
 `ComputeStrokeAlphaCoverage`, and it comes along with the rest of the rule. So
-the row is no longer short by a decision, and the whole of upstream's rule is
-here.
+the row is no longer short by a decision.
+
+The snap went with it, and it is the piece that decides whether a hairline *looks*
+like one. A line one pixel wide centered on a pixel boundary covers half of each
+row it straddles and draws gray and two pixels soft; upstream carries an
+axis-aligned hairline into device space and rounds its constant coordinate to a
+pixel's middle, so it covers one row fully. That is `LineGeometry` alone upstream,
+so a two-point path is not snapped there and is not snapped here -- which is what
+the four `path/draw-lines-with-*` plates are for, and
+`the_same_thin_line_said_four_ways_says_what_it_should` now requires the line and
+the path forms to differ in the hairline column and nowhere else. It used to
+require them identical, with a note that if the line ever gained a route of its
+own this is what would say so. It did, and it did.
+
+So the whole of upstream's minimum-size rule is here: the widening, the dimming,
+the exception at zero, the point field's own constant, and the snap.
 
 All fourteen of the rows below have now been read against the file they name, at
 tip of tree, and the results are set out after the table. One named its obstacle

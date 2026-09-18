@@ -4925,11 +4925,100 @@ impl Canvas {
         self.draw_vertices(&mesh, &painted)
     }
 
+    /// A line, and for a hairline one snapped to a pixel.
+    ///
+    /// The snap is the third part of upstream's minimum-size rule and the one
+    /// that decides whether a hairline *looks* like one. A line one pixel wide
+    /// whose center sits on a pixel boundary covers half of each of the two rows
+    /// it straddles, so it draws gray and two pixels soft; the same line centered
+    /// in a row covers it and draws black and one pixel crisp. Upstream moves it:
+    /// `LineGeometry::GetPositionBuffer` carries the endpoints into device space,
+    /// drops the transform, and rounds the constant coordinate to a half with
+    /// `RoundToHalf` -- which is a pixel's middle.
+    ///
+    /// Gated exactly as upstream gates it, on `width_ == 0.f` and
+    /// `IsTranslationScaleOnly`. A width the caller stated is a width to respect,
+    /// and under a rotation or a shear no axis-aligned line stays one.
+    ///
+    /// Narrower than upstream in one way, which is deliberate: a paint wanting a
+    /// layer keeps the ordinary path. A mask blur's sigma is stated in user space
+    /// and this draws in device space, so the two would disagree under a scale --
+    /// and a snap is worth half a pixel, not a wrong blur.
     pub fn draw_line(&mut self, from: Vec2, to: Vec2, paint: &Paint) -> Result<&mut Self> {
+        if let Some((p0, p1)) = self.hairline_snap(from, to, paint) {
+            let mut b = PathBuilder::new();
+            b.move_to(p0).line_to(p1);
+            let path = b.build();
+            // Drawn in device space, so the widening reads a basis of one and
+            // gives exactly the pixel the snap aligned it to.
+            let held = self.transform;
+            self.transform = Transform2D::IDENTITY;
+            let drawn = self.draw_path(&path, paint).map(|_| ());
+            self.transform = held;
+            drawn?;
+            return Ok(self);
+        }
         let mut b = PathBuilder::new();
         b.move_to(from).line_to(to);
         let path = b.build();
         self.draw_path(&path, paint)
+    }
+
+    /// The device-space endpoints of a hairline worth snapping, or `None`.
+    ///
+    /// `None` covers every case that keeps the ordinary path: a stated width, a
+    /// transform that is not a translation and a scale, a paint that wants a
+    /// layer, and a line that is not axis-aligned once transformed.
+    fn hairline_snap(&self, from: Vec2, to: Vec2, paint: &Paint) -> Option<(Vec2, Vec2)> {
+        let Style::Stroke(stroke) = &paint.style else {
+            return None;
+        };
+        if stroke.width != 0.0 {
+            return None;
+        }
+        if paint.mask_blur > 0.0 || !paint.image_filter.is_identity() {
+            return None;
+        }
+        // A solid color only, and this is the guard that matters most. Every
+        // other shader is *mapped* by the transform -- a gradient's stops are
+        // stated in the space the draw was recorded in, an image's source
+        // rectangle likewise -- and this draw hands the batch an identity
+        // transform, so the mapping would be taken without the scale. Measured
+        // while writing this: a hairline under a doubling read its gradient at
+        // sixteen per cent where the same line a pixel wide read it at four.
+        //
+        // Such a hairline keeps the ordinary path and stays half a pixel off
+        // center, which is the right way round: a snap is worth half a pixel,
+        // and a shader read in the wrong place is worth nothing.
+        if !matches!(paint.shader, Shader::Solid(_)) {
+            return None;
+        }
+        let affine = self.transform.to_affine()?;
+        // A translation and a scale, which is what leaves an axis-aligned line
+        // axis-aligned. Read off the matrix rather than tracked, so a caller who
+        // arrived here through `concat` is judged on what they actually have.
+        let m = affine.matrix2;
+        if m.x_axis.y != 0.0 || m.y_axis.x != 0.0 {
+            return None;
+        }
+        let (p0, p1) = (affine.transform_point2(from), affine.transform_point2(to));
+        if !p0.is_finite() || !p1.is_finite() {
+            return None;
+        }
+        // A pixel's middle, which is where a one-pixel line has to sit to cover
+        // one pixel. Upstream's `RoundToHalf`.
+        let to_half = |v: f32| v.floor() + 0.5;
+        // Vertical first, matching upstream's order, and either branch leaves
+        // the other coordinate alone -- the line's length is the caller's.
+        if (p0.x - p1.x).abs() < CLOSE_ENOUGH {
+            let x = to_half(p0.x);
+            return Some((Vec2::new(x, p0.y), Vec2::new(x, p1.y)));
+        }
+        if (p0.y - p1.y).abs() < CLOSE_ENOUGH {
+            let y = to_half(p0.y);
+            return Some((Vec2::new(p0.x, y), Vec2::new(p1.x, y)));
+        }
+        None
     }
 
     /// Close a layer: file its pass, and composite it onto the parent.
@@ -5816,6 +5905,13 @@ fn point_radius(transform: Transform2D, width: f32) -> f32 {
     }
     radius.max(MIN_POINT_RADIUS_PIXELS / basis)
 }
+
+/// When two coordinates are the same coordinate, for deciding axis alignment.
+///
+/// Upstream's `kEhCloseEnough`, and the same value. A line off vertical by less
+/// than this covers the same pixels a vertical one does, so treating it as
+/// vertical moves nothing a reader could see.
+const CLOSE_ENOUGH: f32 = 1e-3;
 
 /// Half a device pixel, so the smallest point drawn covers one.
 ///
