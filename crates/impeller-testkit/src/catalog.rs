@@ -1202,6 +1202,167 @@ fn basic() -> Vec<Scene> {
             }],
         ),
         Scene::tree(
+            "basic/can-render-clipped-backdrop-filter",
+            // A backdrop filter whose bounds are the clip's bounding rectangle
+            // while the clip itself is rounded. Upstream states the two that
+            // way deliberately -- "the clip coverage and SaveLayer size are the
+            // same" -- so the corners have to come off the composite because
+            // the clip takes them, not because the layer is smaller.
+            //
+            // That is the arrangement a backdrop layer's target is now sized
+            // from: it takes the clip's size, and the clip here is a curve
+            // inside the rectangle the caller asked for. A target sized to the
+            // curve's bounding box is right and a composite that forgot the
+            // curve fills the corners with exclusion-blended ground.
+            //
+            // The ground is a repeating gradient rather than a flat color for
+            // the reason the rest of this chapter's backdrop plates give: a
+            // filter over one color is one color, and the bands are what say
+            // where the filtered region starts and stops.
+            vec![
+                Node::Paint(Box::new(PaintSpec {
+                    fill: Fill::LinearGradient {
+                        start: [0.0, 0.0],
+                        end: [32.0, 32.0],
+                        stops: vec![
+                            Stop::new([0.9568, 0.2627, 0.2118, 1.0], 0.0),
+                            Stop::new([0.1294, 0.5882, 0.9529, 1.0], 1.0),
+                        ],
+                        tile: TileMode::Repeat,
+                    },
+                    blend: BlendMode::SrcOver,
+                    clip: None,
+                    clip_out: None,
+                    transform: Transform::default(),
+                })),
+                Node::Clip {
+                    rect: None,
+                    rect_out: None,
+                    shape: Some(Shape::RoundedRect {
+                        min: [12.0, 12.0],
+                        max: [116.0, 84.0],
+                        radius: 26.0,
+                    }),
+                    transform: Transform::default(),
+                    children: vec![Node::Layer {
+                        layer: Box::new(LayerSpec {
+                            backdrop: ImageFilter::Color(ColorFilter::blend(
+                                RED,
+                                BlendMode::Exclusion,
+                            )),
+                            ..LayerSpec::default()
+                        }),
+                        // The clip's bounding rectangle, as upstream states it.
+                        bounds: Some([12.0, 12.0, 116.0, 84.0]),
+                        transform: Transform::default(),
+                        // Nothing drawn inside it. The filtered backdrop is the
+                        // whole of the picture, which is upstream's scene too --
+                        // its save paint is default and it draws nothing before
+                        // the restore the builder makes for it.
+                        children: vec![],
+                    }],
+                },
+            ],
+        ),
+        Scene::tree(
+            "basic/backdrop-filter-over-unclosed-clip",
+            // A clip pushed and popped *before* a backdrop filter cuts the
+            // pass. The cut takes the batch away and the clips are made again
+            // in the pass that follows, so the thing this pins is which ones:
+            // the outer clip is still in force and the inner two are not, and a
+            // rebuild that replayed the batch's narrowings would resurrect them
+            // and blur the corner alone.
+            //
+            // The other direction is already covered -- the superellipse sheet
+            // fails if a parent clip is popped too early -- and this is the one
+            // nothing asked: a popped clip coming back.
+            //
+            // Upstream leaves the layer for the enclosing restore to close
+            // rather than closing it itself, which is where its name comes
+            // from. A scene is a tree, so the layer being the clip's last child
+            // says the same thing; what a tree cannot say is the order of two
+            // closes, and nothing here depends on it.
+            vec![
+                Node::Paint(Box::new(PaintSpec {
+                    fill: Fill::Solid(WHITE),
+                    blend: BlendMode::SrcOver,
+                    clip: None,
+                    clip_out: None,
+                    transform: Transform::default(),
+                })),
+                Node::Clip {
+                    rect: Some([16.0, 16.0, 128.0, 128.0]),
+                    rect_out: None,
+                    shape: None,
+                    transform: Transform::default(),
+                    children: vec![
+                        // The corner, under two clips of its own, both gone by
+                        // the time the backdrop reads.
+                        Node::Clip {
+                            rect: Some([96.0, 96.0, 128.0, 128.0]),
+                            rect_out: None,
+                            shape: None,
+                            transform: Transform::default(),
+                            children: vec![
+                                Node::Paint(Box::new(PaintSpec {
+                                    fill: Fill::Solid(RED),
+                                    blend: BlendMode::SrcOver,
+                                    clip: None,
+                                    clip_out: None,
+                                    transform: Transform::default(),
+                                })),
+                                Node::Paint(Box::new(PaintSpec {
+                                    fill: Fill::Solid([0.0, 0.0, 1.0, 0.5]),
+                                    blend: BlendMode::SrcOver,
+                                    clip: None,
+                                    clip_out: None,
+                                    transform: Transform::default(),
+                                })),
+                                // Narrower again, and upstream states this one
+                                // without a save of its own, so it stands until
+                                // the block ends. A clip wrapping the one draw
+                                // that follows it is the same region.
+                                Node::Clip {
+                                    rect: Some([112.0, 112.0, 120.0, 128.0]),
+                                    rect_out: None,
+                                    shape: None,
+                                    transform: Transform::default(),
+                                    children: vec![Node::Paint(Box::new(PaintSpec {
+                                        fill: Fill::Solid([1.0, 0.0, 0.0, 0.5]),
+                                        blend: BlendMode::SrcOver,
+                                        clip: None,
+                                        clip_out: None,
+                                        transform: Transform::default(),
+                                    }))],
+                                },
+                            ],
+                        },
+                        // Unbounded, so what it filters is everything the outer
+                        // clip admits. Blurring flat white gives flat white, so
+                        // the corner's edges are the whole of what moves -- and
+                        // they are inside the region a resurrected clip would
+                        // have kept, which is why the picture tells the two
+                        // apart at all.
+                        Node::Layer {
+                            layer: Box::new(LayerSpec::default().with_backdrop_blur(8.0)),
+                            bounds: None,
+                            transform: Transform::default(),
+                            children: vec![],
+                        },
+                    ],
+                },
+                // And a draw after the outer clip, three quarters of it outside.
+                // A clip that survived its own restore would cut it square.
+                Node::Draw(Box::new(Item::fill(
+                    Shape::Circle {
+                        center: [16.0, 16.0],
+                        radius: 16.0,
+                    },
+                    [0.0, 1.0, 1.0, 1.0],
+                ))),
+            ],
+        ),
+        Scene::tree(
             "basic/matrix-image-filter-doesnt-cull-when-translated-from-offscreen",
             // A circle drawn well off the left of the frame, inside a group
             // whose matrix carries it back into view. What the group captures
@@ -2212,8 +2373,7 @@ fn path() -> Vec<Scene> {
                 .with_color_filter(
                     // Alice blue, which is upstream's, kept only where the
                     // stroke put coverage.
-                    ColorFilter::blend([240.0 / 255.0, 248.0 / 255.0, 1.0, 1.0], BlendMode::SrcIn)
-                        .expect("a source-in tint is affine"),
+                    ColorFilter::blend([240.0 / 255.0, 248.0 / 255.0, 1.0, 1.0], BlendMode::SrcIn),
                 )
                 .with_transform(Transform {
                     rotate: std::f32::consts::FRAC_PI_2,
@@ -2925,10 +3085,10 @@ fn gradient() -> Vec<Scene> {
                     tile: TileMode::Decal,
                 },
             )
-            .with_color_filter(
-                ColorFilter::blend([0.0, 1.0, 0.0, 64.0 / 255.0], BlendMode::SrcOver)
-                    .expect("a source-over tint is affine"),
-            )
+            .with_color_filter(ColorFilter::blend(
+                [0.0, 1.0, 0.0, 64.0 / 255.0],
+                BlendMode::SrcOver,
+            ))
             .with_blend(BlendMode::SrcOver)],
         ),
         plate(
@@ -3386,7 +3546,7 @@ fn gradient() -> Vec<Scene> {
             "gradient/can-render-linear-gradient-with-dithering-enabled",
             // 0xCCCCCC to 0x333333, which is upstream's pair and is taken from
             // the issue that put dithering in the renderer at all. Both are
-            // grey, so all three channels band together and in step, which is
+            // gray, so all three channels band together and in step, which is
             // what makes it visible rather than merely present.
             vec![Item::filled(
                 band.clone(),
@@ -4220,10 +4380,10 @@ fn blend() -> Vec<Scene> {
                 Sampling::Linear,
             ),
         )
-        .with_color_filter(
-            ColorFilter::blend([1.0, 165.0 / 255.0, 0.0, 1.0], BlendMode::SrcIn)
-                .expect("a source-in tint is affine"),
-        )
+        .with_color_filter(ColorFilter::blend(
+            [1.0, 165.0 / 255.0, 0.0, 1.0],
+            BlendMode::SrcIn,
+        ))
         .with_transform(Transform {
             rotate: 30.0f32.to_radians(),
             translate: [64.0, 64.0],
@@ -4251,10 +4411,10 @@ fn blend() -> Vec<Scene> {
                 Sampling::Linear,
             ),
         )
-        .with_color_filter(
-            ColorFilter::blend([1.0, 165.0 / 255.0, 0.0, 1.0], BlendMode::ColorDodge)
-                .expect("an advanced mode is a filter the shader evaluates"),
-        )
+        .with_color_filter(ColorFilter::blend(
+            [1.0, 165.0 / 255.0, 0.0, 1.0],
+            BlendMode::ColorDodge,
+        ))
         .with_transform(Transform {
             rotate: 30.0f32.to_radians(),
             translate: [64.0, 64.0],
@@ -4284,8 +4444,7 @@ fn blend() -> Vec<Scene> {
         // than shape by shape.
         vec![Node::Layer {
             layer: Box::new(LayerSpec {
-                color_filter: ColorFilter::blend(RED, BlendMode::ColorDodge)
-                    .expect("every advanced mode is a filter"),
+                color_filter: ColorFilter::blend(RED, BlendMode::ColorDodge),
                 ..LayerSpec::default()
             }),
             bounds: None,
@@ -4338,10 +4497,7 @@ fn blend() -> Vec<Scene> {
                         tile: TileMode::Clamp,
                     },
                 )
-                .with_color_filter(
-                    ColorFilter::blend([0.95, 0.45, 0.15, 1.0], *mode)
-                        .expect("every advanced mode is a filter"),
-                )
+                .with_color_filter(ColorFilter::blend([0.95, 0.45, 0.15, 1.0], *mode))
             })
             .collect(),
     ));
@@ -4357,8 +4513,7 @@ fn blend() -> Vec<Scene> {
             // composite rather than on each draw.
             vec![Node::Layer {
                 layer: Box::new(LayerSpec {
-                    color_filter: ColorFilter::blend([0.0, 1.0, 0.0, 0.5], BlendMode::Difference)
-                        .expect("difference is a filter"),
+                    color_filter: ColorFilter::blend([0.0, 1.0, 0.0, 0.5], BlendMode::Difference),
                     ..LayerSpec::default()
                 }),
                 bounds: Some([0.0, 0.0, 128.0, 128.0]),
@@ -4530,9 +4685,7 @@ fn blend() -> Vec<Scene> {
         // framebuffer -- which is the distinction this scene exists to show,
         // since the picture is the one the blend mode would give against a
         // flat destination of that color.
-        .with_color_filter(
-            ColorFilter::blend([0.2, 0.5, 1.0, 1.0], BlendMode::SrcIn).expect("affine"),
-        )],
+        .with_color_filter(ColorFilter::blend([0.2, 0.5, 1.0, 1.0], BlendMode::SrcIn))],
     ));
 
     scenes.push(plate(
@@ -6438,7 +6591,7 @@ fn atlas_scenes() -> Vec<Scene> {
         ),
         atlas(
             "atlas/draw-atlas-with-color-burn",
-            // Four greys running black to white against a mode that divides by
+            // Four grays running black to white against a mode that divides by
             // what it is given: `ColorBurn` leaves the destination alone at
             // white and takes it to black at black, so the four sprites make a
             // sweep from untouched to erased over the same texels. The plate
@@ -6467,10 +6620,7 @@ fn atlas_scenes() -> Vec<Scene> {
         ),
         plate_tree(
             "atlas/draw-image-rect-with-blend-color-filter",
-            image_rect_filtered(
-                ColorFilter::blend([1.0, 0.0, 0.0, 0.4], BlendMode::SrcOver)
-                    .expect("a source-over tint is affine"),
-            ),
+            image_rect_filtered(ColorFilter::blend([1.0, 0.0, 0.0, 0.4], BlendMode::SrcOver)),
         ),
         plate_tree(
             "atlas/draw-image-rect-with-matrix-color-filter",
@@ -6605,9 +6755,7 @@ fn blur() -> Vec<Scene> {
             [128.0 / 255.0, 128.0 / 255.0, 128.0 / 255.0, 1.0],
         )
         .with_mask_blur(2.0)
-        .with_color_filter(
-            ColorFilter::blend(GREEN, BlendMode::Color).expect("every advanced mode is a filter"),
-        )
+        .with_color_filter(ColorFilter::blend(GREEN, BlendMode::Color))
         .with_clip_shape(Shape::Rect {
             min: [16.0, 24.0],
             max: [80.0, 88.0],
@@ -8542,9 +8690,7 @@ fn blur_variants() -> Vec<Scene> {
             },
             WHITE,
         )
-        .with_color_filter(
-            ColorFilter::blend(GREEN, BlendMode::Src).expect("a source tint is affine"),
-        )
+        .with_color_filter(ColorFilter::blend(GREEN, BlendMode::Src))
         .with_mask_blur(6.0)
         .with_clip([16.0, 24.0, 112.0, 112.0])
         .with_blend(BlendMode::SrcOver)],
@@ -9081,10 +9227,7 @@ fn layers() -> Vec<Scene> {
                 // so it runs over the finished group where the entry below runs
                 // over each color on its way out. The pair is here to show the
                 // two are not the same picture.
-                filter: ImageFilter::Color(
-                    ColorFilter::blend(RED, BlendMode::DstOver)
-                        .expect("destination-over against a constant is affine"),
-                ),
+                filter: ImageFilter::Color(ColorFilter::blend(RED, BlendMode::DstOver)),
                 ..LayerSpec::default()
             },
             None,
@@ -9128,8 +9271,7 @@ fn layers() -> Vec<Scene> {
                     0.0, 0.2, 1.0, 0.0, 0.0, //
                     0.0, 0.0, 0.0, 0.5, 0.0,
                 ])),
-                color_filter: ColorFilter::blend(GREEN, BlendMode::Modulate)
-                    .expect("modulate against a constant is affine"),
+                color_filter: ColorFilter::blend(GREEN, BlendMode::Modulate),
                 ..LayerSpec::default()
             },
             None,
@@ -9170,8 +9312,7 @@ fn layers() -> Vec<Scene> {
                 // contributes is strongest where the group is thinnest. That
                 // reads the group's own alpha, which is what makes it a test of
                 // the order rather than of the color.
-                color_filter: ColorFilter::blend(RED, BlendMode::DstOver)
-                    .expect("destination-over against a constant is affine"),
+                color_filter: ColorFilter::blend(RED, BlendMode::DstOver),
                 ..LayerSpec::default()
             },
             None,

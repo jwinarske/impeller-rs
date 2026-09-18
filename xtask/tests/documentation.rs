@@ -486,15 +486,44 @@ fn the_tree_is_written_in_american_english() {
     // anyway. None of these is a substring of an American word, which is what
     // makes an unanchored search the right one -- "recolours" has to be found
     // as surely as "colours".
-    const BRITISH: [&str; 9] = [
+    //
+    // Stems rather than whole words, and that is a fix rather than a tidy-up.
+    // The list held "recognise" and "normalise", which are not substrings of
+    // "recognising" or "normalisation" -- so every inflected form walked
+    // straight past a check named for catching them, and eight did: a
+    // "recognising", a "normalising", a "quantise", a "serialise", an
+    // "optimisation", a "Honouring", and "grey" in two spellings of the same
+    // identifier. Each was in the tree while this test was green.
+    //
+    // "analyse" stays a whole word on purpose: "analys" is a substring of
+    // "analysis", which is spelled that way on both sides of the Atlantic. The
+    // same reading turned up "licence", which is the noun in British English
+    // and "license" in American for both parts of speech, and four test names
+    // spelled in the wrong one.
+    const BRITISH: [&str; 24] = [
         "colour",
         "neighbour",
         "centre",
         "behaviour",
-        "recognise",
-        "normalise",
+        "recognis",
+        "normalis",
+        "optimis",
+        "organis",
+        "serialis",
+        "visualis",
+        "initialis",
+        "prioritis",
+        "summaris",
+        "quantis",
+        "analyse",
         "favour",
+        "honour",
+        "grey",
+        "whilst",
+        "licence",
+        "catalogue",
         "modelled",
+        "labelled",
         "cancelled",
     ];
     // Everything tracked that a reader or a caller sees. The two untracked

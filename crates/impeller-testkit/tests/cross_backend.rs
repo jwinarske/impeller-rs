@@ -289,7 +289,7 @@ fn a_scene_renders_the_same_after_an_unrelated_frame() {
     // So: render a scene, render something that sets as much state as the
     // corpus can, then render the first scene again and require the two to be
     // identical. Not similar -- identical, because the same recording on the
-    // same device has no licence to differ at all.
+    // same device has no license to differ at all.
     //
     // What this guards is the property, not any one mechanism that provides
     // it, and the difference matters. The GLES backend disables the scissor

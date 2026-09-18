@@ -7305,8 +7305,7 @@ fn a_blend_filter_agrees_with_the_same_blend_done_by_the_blender() {
         let blended = render(&mut ctx, canvas);
 
         // The filter's answer: one draw, with the same blend compiled in.
-        let filter = ColorFilter::blend(constant.to_array(), mode)
-            .unwrap_or_else(|e| panic!("{mode:?} should be expressible as a filter: {e}"));
+        let filter = ColorFilter::blend(constant.to_array(), mode);
         let mut canvas = Canvas::new(SIZE);
         canvas.clear(Color::linear(0.0, 0.0, 0.0, 0.0));
         canvas
@@ -7399,8 +7398,7 @@ fn an_advanced_blend_mode_is_a_filter_the_shader_evaluates_rather_than_a_matrix(
         BlendMode::Hue,
         BlendMode::Luminosity,
     ] {
-        let filter = ColorFilter::blend([1.0, 1.0, 1.0, 1.0], mode)
-            .unwrap_or_else(|e| panic!("{mode:?} should be available as a filter: {e}"));
+        let filter = ColorFilter::blend([1.0, 1.0, 1.0, 1.0], mode);
         assert!(
             matches!(filter, ColorFilter::Blend { .. }),
             "{mode:?} is not affine and must not become a matrix: {filter:?}"
@@ -7416,7 +7414,7 @@ fn an_advanced_blend_mode_is_a_filter_the_shader_evaluates_rather_than_a_matrix(
         BlendMode::Modulate,
         BlendMode::Plus,
     ] {
-        let filter = ColorFilter::blend([1.0, 1.0, 1.0, 1.0], mode).expect("affine");
+        let filter = ColorFilter::blend([1.0, 1.0, 1.0, 1.0], mode);
         assert!(
             matches!(filter, ColorFilter::Matrix { .. }),
             "{mode:?} is affine and should stay a matrix: {filter:?}"
@@ -7470,11 +7468,11 @@ fn a_color_matrix_is_applied_to_straight_color_not_premultiplied() {
 }
 
 #[test]
-fn a_luminance_matrix_turns_every_color_the_same_grey_it_weighs() {
+fn a_luminance_matrix_turns_every_color_the_same_gray_it_weighs() {
     // The canonical color filter, and the one that pins the matrix's
     // orientation. Every row is the same set of weights, so the matrix is not
     // symmetric -- transposed, it would scale each channel by its own weight
-    // and leave red red instead of making it grey. The two matrices this file
+    // and leave red red instead of making it gray. The two matrices this file
     // tests elsewhere are both symmetric and cannot tell the difference.
     let Some(mut ctx) = context() else { return };
 
@@ -7482,7 +7480,7 @@ fn a_luminance_matrix_turns_every_color_the_same_grey_it_weighs() {
     const G: f32 = 0.7152;
     const B: f32 = 0.0722;
     #[rustfmt::skip]
-    let grey = ColorFilter::matrix([
+    let gray = ColorFilter::matrix([
         R, G, B, 0.0, 0.0,
         R, G, B, 0.0, 0.0,
         R, G, B, 0.0, 0.0,
@@ -7500,7 +7498,7 @@ fn a_luminance_matrix_turns_every_color_the_same_grey_it_weighs() {
             .draw_rect(
                 Rect::from_size(128.0, 128.0),
                 &Paint::fill(color)
-                    .with_color_filter(grey)
+                    .with_color_filter(gray)
                     .with_anti_alias(false),
             )
             .expect("filtered");
@@ -10017,7 +10015,7 @@ fn cubic_sampling_keeps_a_translucent_image_premultiplied() {
 /// columns, so a linear read misses all of them and the image comes out black.
 /// Its true average is one part in eight, which is what reading the level built
 /// for that size gives. A checkerboard -- the obvious pattern -- proves nothing
-/// here, because it averages to the same middle grey whether or not any
+/// here, because it averages to the same middle gray whether or not any
 /// averaging happened.
 fn striped_image() -> Vec<u8> {
     let mut texels = vec![0u8; 64 * 64 * 4];
@@ -11024,7 +11022,7 @@ fn a_mask_blur_on_a_mesh_is_refused_rather_than_dropped() {
 }
 
 #[test]
-fn every_draw_that_takes_a_paint_honours_its_image_filter() {
+fn every_draw_that_takes_a_paint_honors_its_image_filter() {
     // The check that would have caught a mesh dropping its filter, written as a
     // sweep rather than one test per call. A filter is noticed in `draw_path`,
     // and every entry point that does not pass through there has to notice it
@@ -11222,11 +11220,11 @@ fn every_draw_that_takes_a_paint_honours_its_image_filter() {
 }
 
 #[test]
-fn every_draw_that_takes_a_paint_honours_its_color_filter_and_blend() {
+fn every_draw_that_takes_a_paint_honors_its_color_filter_and_blend() {
     // The companion sweep to the image-filter one. Those three fields are
     // routed differently -- a color filter travels in the material, a blend
-    // is chosen per draw, an image filter needs a layer -- so honouring one
-    // says nothing about honouring the others, and only the image filter
+    // is chosen per draw, an image filter needs a layer -- so honoring one
+    // says nothing about honoring the others, and only the image filter
     // turned out to have a seam.
     //
     // Kept as a sweep rather than folded into the other because what it probes
@@ -16221,8 +16219,7 @@ fn a_blend_color_filter_in_an_advanced_mode_computes_the_specified_formula() {
         .draw_rect(
             Rect::new(16.0, 16.0, 112.0, 112.0),
             &Paint::fill(Color::srgb(dst[0], dst[1], dst[2], 1.0)).with_color_filter(
-                ColorFilter::blend([src[0], src[1], src[2], 1.0], BlendMode::Difference)
-                    .expect("difference is available as a filter"),
+                ColorFilter::blend([src[0], src[1], src[2], 1.0], BlendMode::Difference),
             ),
         )
         .expect("a filtered rectangle");
@@ -16396,5 +16393,114 @@ fn a_gradient_on_a_mesh_is_read_at_the_texture_coordinates() {
         apart, 0,
         "coordinates equal to the positions should read the gradient exactly \
          where the positions do; {apart} pixels differ"
+    );
+}
+
+#[test]
+fn a_color_filter_that_recolors_nothing_still_draws_the_shape() {
+    // Upstream's `PipelineBlendSingleParameter`, whose whole subject is a
+    // filter that does nothing: it puts a blend color filter in `Dst` mode --
+    // "return the destination untouched", the one mode that is the identity --
+    // on the paint of a green circle clipped to a square, over a blue circle,
+    // and says in a comment what has to come out. A green square in the middle
+    // of a blue circle.
+    //
+    // It is not a plate, and cannot be: a catalog scene whose feature leaves
+    // the picture unchanged is rejected by the check that every feature has to
+    // reach the picture, and this one leaves it unchanged by design. So the
+    // claim is stated here instead, against the picture with no filter at all.
+    //
+    // It used to have ways to fail, and measuring them is what turned this into
+    // a second change. `ImageFilter::Color` asked whether the filter *was*
+    // `ColorFilter::None` rather than whether it does nothing, so a `Dst` blend
+    // routed the draw through an offscreen and resampled it coming back, under
+    // a clip, inside a layer -- three passes where the plain draw takes two, to
+    // arrive at what it was handed. It asks `ColorFilter::is_identity` now, so
+    // the filter is recognized and elided, and the pass count is pinned below
+    // alongside the picture.
+    let Some(mut ctx) = context() else { return };
+
+    let blue = Color::srgb(0.0, 0.0, 1.0, 1.0);
+    let green = Color::srgb(0.0, 1.0, 0.0, 1.0);
+    let shot = |ctx: &mut Context, filtered: bool| {
+        let mut canvas = Canvas::new(SIZE);
+        canvas.clear(Color::WHITE);
+        canvas.save_layer(Layer::opacity(1.0));
+        canvas
+            .draw_circle(Vec2::new(64.0, 64.0), 48.0, &Paint::fill(blue))
+            .expect("the blue circle");
+        canvas.save();
+        canvas
+            .clip_rect(Rect::new(40.0, 40.0, 88.0, 88.0))
+            .expect("the clip");
+        let mut paint = Paint::fill(green);
+        if filtered {
+            // Affine, so it becomes a color matrix -- the identity one.
+            paint = paint.with_image_filter(ImageFilter::Color(ColorFilter::blend(
+                Color::WHITE.to_array(),
+                BlendMode::Dst,
+            )));
+        }
+        canvas
+            .draw_circle(Vec2::new(64.0, 64.0), 48.0, &paint)
+            .expect("the green circle");
+        canvas.restore();
+        canvas.restore();
+        render(ctx, canvas)
+    };
+
+    let plain = shot(&mut ctx, false);
+    let filtered = shot(&mut ctx, true);
+
+    // The picture upstream's comment describes, checked before the two are
+    // compared: green inside the square, blue outside it and inside the circle,
+    // white outside both.
+    let inside = pixel(&plain, 64, 64);
+    assert!(
+        inside[1] > 200 && inside[2] < 60,
+        "the square should be green, and is {inside:?}"
+    );
+    let ring = pixel(&plain, 64, 24);
+    assert!(
+        ring[2] > 200 && ring[1] < 60,
+        "the circle outside the square should be blue, and is {ring:?}"
+    );
+    assert_eq!(
+        pixel(&plain, 4, 4),
+        [255, 255, 255, 255],
+        "and white outside"
+    );
+
+    // A resample of a flat color is that color, so this is exact rather than
+    // within a level: nothing here has an edge the two versions place
+    // differently, the clip and the circle being the same geometry in both.
+    assert_eq!(
+        plain, filtered,
+        "a color filter in Dst mode changed the picture, and the mode is the \
+         identity"
+    );
+
+    // And it costs nothing, which is the half that would pass silently: a
+    // filter routed through an offscreen arrives at the same picture and spends
+    // a pass and a resample doing it.
+    let passes = |filtered: bool| {
+        let mut canvas = Canvas::new(SIZE);
+        canvas.clear(Color::WHITE);
+        let mut paint = Paint::fill(green);
+        if filtered {
+            paint = paint.with_image_filter(ImageFilter::Color(ColorFilter::blend(
+                Color::WHITE.to_array(),
+                BlendMode::Dst,
+            )));
+        }
+        canvas
+            .draw_circle(Vec2::new(64.0, 64.0), 48.0, &paint)
+            .expect("the circle");
+        canvas.finish().passes.len()
+    };
+    assert_eq!(
+        passes(true),
+        passes(false),
+        "a color filter that recolors nothing should cost no pass"
     );
 }

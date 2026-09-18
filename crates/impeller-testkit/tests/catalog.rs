@@ -1767,3 +1767,50 @@ fn a_program_reads_the_coordinate_the_vertices_state() {
         "and the first on the right, got {mirrored_right:?}"
     );
 }
+
+#[test]
+fn a_clip_popped_before_a_backdrop_cuts_does_not_come_back() {
+    // What `basic/backdrop-filter-over-unclosed-clip` is for, stated as a
+    // number the plate itself cannot.
+    //
+    // A backdrop filter cannot sample the attachment it is writing, so the pass
+    // stops and the narrowings are made again in the one that follows. Which
+    // ones is the question: the outer clip is still in force where the layer
+    // opens and the two around the corner are not. A rebuild that replayed the
+    // batch rather than the stack would put them back, and the blur would then
+    // read only the corner -- so the corner's color would stop dead at the
+    // clip's edge instead of spreading past it.
+    //
+    // Sampled to the left of that edge, well inside the outer clip, where the
+    // plate draws nothing at all: white if the blur was confined, colored if it
+    // reached over the region the outer clip admits.
+    let Ok(mut ctx) = Validated::new(DevicePreference::Auto) else {
+        eprintln!("skipping: no Vulkan device");
+        return;
+    };
+    let scene = catalog()
+        .into_iter()
+        .find(|s| s.name == "basic/backdrop-filter-over-unclosed-clip")
+        .expect("the plate is in the catalog");
+    let image = render::<VulkanHal>(&mut ctx, &scene);
+
+    // Six pixels left of the corner clip's edge. The plate's sigma of eight
+    // reaches thirteen, and the corner arrives here twenty levels down from
+    // white -- measured, because how far a blur shows in eight bits is not the
+    // radius its kernel is truncated at.
+    let bled = image.pixel(90, 112);
+    assert!(
+        bled[1] < 250 || bled[2] < 250,
+        "the blur should have carried the corner past the clip that is no \
+         longer in force, and (90, 112) came back {bled:?}"
+    );
+    // And it is the corner's color arriving rather than the plate being dark
+    // everywhere: a point the same distance the other side of the frame's
+    // middle has nothing to bleed from and stays white.
+    let clean = image.pixel(40, 64);
+    assert_eq!(
+        clean,
+        [255, 255, 255, 255],
+        "nothing should reach the middle of the plate"
+    );
+}

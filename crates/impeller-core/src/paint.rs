@@ -353,7 +353,7 @@ impl ImageFilter {
             // is zero or less.
             Self::Blur { sigma_x, sigma_y } => !Self::blurs(*sigma_x) && !Self::blurs(*sigma_y),
             // A matrix that changes nothing is one that costs a layer for
-            // nothing, so it is worth recognising.
+            // nothing, so it is worth recognizing.
             Self::Matrix { transform } => {
                 !transform.is_finite() || *transform == Transform2D::IDENTITY
             }
@@ -367,8 +367,13 @@ impl ImageFilter {
             // and costs two layers to say so.
             // A color filter that recolors nothing is one, which keeps a
             // caller who builds one from a default out of a layer they did not
-            // ask to pay for.
-            Self::Color(filter) => *filter == ColorFilter::None,
+            // ask to pay for. Asked of the filter rather than compared against
+            // `ColorFilter::None`, which is what this used to do: a blend in
+            // `Dst` mode returns the destination untouched and an identity
+            // matrix recolors nothing, and both paid for a pass and a resample
+            // to arrive at what they were handed. `ColorFilter::is_identity`
+            // knows all three and is the same question.
+            Self::Color(filter) => filter.is_identity(),
             // Never. What a caller's program does is the caller's business and
             // nothing here can read it, so the only safe answer is that it does
             // something -- and answering otherwise would drop the pass that

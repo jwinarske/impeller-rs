@@ -85,7 +85,7 @@ pub struct FrameSync<'a> {
     /// Leave the target in the layout a presentation engine reads from.
     ///
     /// Folded into the render pass rather than done as a transition afterwards,
-    /// and not as an optimisation: a separate transition is a separate
+    /// and not as an optimization: a separate transition is a separate
     /// submission, and nothing orders it after a render that has not been
     /// waited for. Doing it here makes the ordering the render pass's, which is
     /// where it can be expressed without a stall.
@@ -794,7 +794,7 @@ impl VulkanContext {
             .collect();
         // Color output is the only stage that touches the attachment, so
         // earlier stages may run before the wait is satisfied. Waiting at the
-        // top of the pipe instead would serialise vertex work behind an image
+        // top of the pipe instead would serialize vertex work behind an image
         // the vertex stage never reads.
         let wait_stages: Vec<vk::PipelineStageFlags> =
             vec![vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT; sync.wait.len()];

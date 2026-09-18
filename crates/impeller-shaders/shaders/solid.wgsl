@@ -535,7 +535,7 @@ fn sample_image(clip: vec3<f32>) -> vec4<f32> {
 /// is where a stroked path gets its vertices and its joins.
 ///
 /// Both arguments are in the shape's own space, which is where a width is
-/// stated. Taking the absolute value here rather than after normalising is
+/// stated. Taking the absolute value here rather than after normalizing is
 /// deliberate: the gradient is taken of the field before this, because `abs`
 /// puts a crease exactly on the curve and a derivative across it would be the
 /// one place the edge is measured wrongly.
