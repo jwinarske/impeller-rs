@@ -13704,6 +13704,11 @@ fn wide_pixels(ctx: &mut Context, canvas: Canvas) -> Vec<[f32; 4]> {
     ctx.draw(&mut surface, &canvas.finish()).expect("draw");
     let bytes = ctx.read(&mut surface).expect("read");
     ctx.destroy_surface(surface);
+    unpack_half(&bytes)
+}
+
+/// Half-floats as this machine wrote them, four to a texel.
+fn unpack_half(bytes: &[u8]) -> Vec<[f32; 4]> {
     bytes
         .chunks_exact(8)
         .map(|texel| {
@@ -13715,6 +13720,26 @@ fn wide_pixels(ctx: &mut Context, canvas: Canvas) -> Vec<[f32; 4]> {
             out
         })
         .collect()
+}
+
+/// The same, for a drawing that reads a sheet.
+///
+/// `draw_atlas` needs its image bound, which `wide_pixels` has no way to pass.
+/// Split rather than given an empty slice everywhere, because the two call sites
+/// that need images are the only ones that should have to name them.
+fn wide_pixels_with_images(
+    ctx: &mut Context,
+    canvas: Canvas,
+    images: &[&impeller::Image],
+) -> Vec<[f32; 4]> {
+    let mut surface = ctx
+        .create_surface(SIZE, PixelFormat::Rgba16Float)
+        .expect("floating-point surface");
+    ctx.draw_with_images(&mut surface, &canvas.finish(), images)
+        .expect("draw");
+    let bytes = ctx.read(&mut surface).expect("read");
+    ctx.destroy_surface(surface);
+    unpack_half(&bytes)
 }
 
 fn wide_pixel(pixels: &[[f32; 4]], x: u32, y: u32) -> [f32; 4] {
@@ -16732,5 +16757,182 @@ fn a_hairline_with_a_shader_keeps_its_shader_over_the_snap() {
         rows, 2,
         "a shaded hairline is not snapped, so it covers two rows at half \
          coverage and covered {rows}"
+    );
+}
+
+/// `Plus` keeps going past one when the target can hold it.
+///
+/// Upstream's `BlendModePlusAlphaWideGamut` and its color-filter twin are the
+/// two scenes `docs/playground-parity.md` recorded as wanting "a wide-gamut
+/// target". Both open by requiring one -- `EXPECT_EQ(GetDefaultColorFormat(),
+/// kB10G10R10A10XR)` and a skip otherwise -- and then add red to a bright ground
+/// through `Plus`. The sum exceeds one, so an eight-bit target clips it and an
+/// extended-range one does not, and that difference is the whole picture.
+///
+/// Tests rather than plates, for the reason `PipelineBlendSingleParameter` is a
+/// test: a catalog scene cannot opt into a floating-point target. Every test
+/// binary here runs concurrently and peak allocation is their sum, so a
+/// four-times multisampled float layer in the shared collections is memory the
+/// architecture notes already record a run dying for want of.
+///
+/// What they guard is the clamps that came out of the shader tail with wide
+/// gamut. A renderer that still clamped there would return exactly one here and
+/// pass every other blend test in this file, because every other one renders
+/// into eight bits where the answer is the same either way.
+#[test]
+fn plus_saturates_in_eight_bits_and_does_not_in_a_float_target() {
+    let Some(mut ctx) = context() else { return };
+    if !ctx.capabilities().float_render_targets {
+        eprintln!("skipping: this device cannot render into a floating-point target");
+        return;
+    }
+
+    // Upstream's ground is (0.9, 1, 0.9); red through `Plus` takes the red
+    // channel past one and leaves the others alone.
+    let ground = Color::srgb(0.9, 1.0, 0.9, 1.0);
+    let build = |filtered: bool| {
+        let mut canvas = Canvas::new(SIZE);
+        canvas.clear(ground);
+        let layer = Layer::opacity(1.0);
+        match filtered {
+            // The twin puts the `Plus` on the *group* as a blend color filter
+            // rather than on the draw, which is a different route to the same
+            // arithmetic and the reason upstream has both.
+            true => {
+                canvas.save_layer(layer.with_color_filter(ColorFilter::blend(
+                    Color::srgb(1.0, 0.0, 0.0, 1.0).to_array(),
+                    BlendMode::Plus,
+                )));
+                canvas
+                    .draw_rect(
+                        Rect::new(16.0, 16.0, 112.0, 112.0),
+                        &Paint::fill(Color::WHITE).with_anti_alias(false),
+                    )
+                    .expect("the rect");
+            }
+            // Straight onto the ground, with no group between them. Upstream
+            // wraps this one in a `SaveLayer` and relies on the layer being
+            // collapsed into the parent pass for the blend to meet the ground
+            // at all -- a layer starts transparent, so an uncollapsed one would
+            // add red to nothing and composite the red over the ground. That
+            // collapse is an optimization this renderer does not have, and the
+            // claim being mirrored is about the target rather than about the
+            // layer, so the group goes.
+            false => {
+                canvas
+                    .draw_rect(
+                        Rect::new(16.0, 16.0, 112.0, 112.0),
+                        &Paint::fill(Color::srgb(1.0, 0.0, 0.0, 1.0))
+                            .with_blend(BlendMode::Plus)
+                            .with_anti_alias(false),
+                    )
+                    .expect("the rect");
+                return canvas;
+            }
+        }
+        canvas.restore();
+        canvas
+    };
+
+    for filtered in [false, true] {
+        let route = match filtered {
+            true => "a Plus color filter on the group",
+            false => "a Plus blend on the draw",
+        };
+        let wide = wide_pixels(&mut ctx, build(filtered));
+        let inside = wide_pixel(&wide, 64, 64);
+        assert!(
+            inside[0] > 1.05,
+            "{route}: red plus a ground of nine tenths should pass one in a \
+             float target, and came back {}",
+            inside[0]
+        );
+
+        // And the same drawing into eight bits saturates, which is what makes
+        // the line above a statement about the target rather than about the
+        // blend.
+        let narrow = render(&mut ctx, build(filtered));
+        assert_eq!(
+            pixel(&narrow, 64, 64)[0],
+            255,
+            "{route}: an eight-bit target has to clip the same sum"
+        );
+    }
+}
+
+/// And an atlas whose per-sprite color is added rather than multiplied.
+///
+/// Upstream's `DrawAtlasPlusWideGamut` is the third scene recorded as wanting a
+/// wide-gamut target, in the atlas chapter rather than the blend one, and it is
+/// the same claim through a third route: four sprites tinted red, green, blue
+/// and yellow with `Plus` as the tint blend, into a target that can hold what
+/// that sums to. A sprite over a bright texel passes one and an eight-bit target
+/// clips it.
+///
+/// Worth having beside the pair above rather than folded into it. A tint blend
+/// is applied per sprite inside the atlas draw, where a paint's blend is applied
+/// per draw against the frame and a color filter is applied to a group -- three
+/// different places for the arithmetic to be clamped, and only this one is
+/// reached by `draw_atlas`.
+#[test]
+fn an_atlas_tint_in_plus_is_not_clipped_by_a_float_target() {
+    let Some(mut ctx) = context() else { return };
+    if !ctx.capabilities().float_render_targets {
+        eprintln!("skipping: this device cannot render into a floating-point target");
+        return;
+    }
+    let mut image = ctx
+        .create_image(Extent2D::new(4, 4), PixelFormat::Rgba8Unorm)
+        .expect("image");
+    ctx.write_image(&mut image, &quadrant_image())
+        .expect("upload");
+
+    let build = || {
+        let mut canvas = Canvas::new(SIZE);
+        canvas.clear(Color::BLACK);
+        // Every sprite tinted white, so what is added is the texel's own color
+        // on top of itself: a quadrant that is already saturated in a channel
+        // comes out at twice it.
+        let sprites: Vec<Sprite> = shuffled_quadrants()
+            .into_iter()
+            .map(|sprite| Sprite {
+                color: Color::WHITE,
+                ..sprite
+            })
+            .collect();
+        canvas
+            .draw_atlas(
+                &sprites,
+                Extent2D::new(4, 4),
+                &Paint::image(0, Rect::from_size(128.0, 128.0)).with_tint_blend(BlendMode::Plus),
+            )
+            .expect("atlas");
+        canvas
+    };
+
+    let wide = wide_pixels_with_images(&mut ctx, build(), &[&image]);
+    // The top-left of the target holds the sheet's yellow quadrant, so red and
+    // green are saturated there and blue is not.
+    let inside = wide_pixel(&wide, 32, 32);
+    assert!(
+        inside[0] > 1.5 && inside[1] > 1.5,
+        "a saturated channel plus white should pass one in a float target, and \
+         the yellow quadrant came back {inside:?}"
+    );
+
+    // And eight bits clip it, which is what makes the line above about the
+    // target rather than about the tint.
+    let mut surface = ctx
+        .create_surface(SIZE, PixelFormat::Rgba8Unorm)
+        .expect("surface");
+    ctx.draw_with_images(&mut surface, &build().finish(), &[&image])
+        .expect("draw");
+    let narrow = ctx.read(&mut surface).expect("read");
+    ctx.destroy_surface(surface);
+    ctx.destroy_image(image);
+    assert_eq!(
+        pixel(&narrow, 32, 32),
+        [255, 255, 255, 255],
+        "an eight-bit target has to clip the same sum"
     );
 }

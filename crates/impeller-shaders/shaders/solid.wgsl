@@ -1157,7 +1157,13 @@ fn blend_tint(mode: i32, src: vec4<f32>, dst: vec4<f32>) -> vec4<f32> {
         case 9: { return src * da + dst * (1.0 - sa); }
         case 10: { return dst * sa + src * (1.0 - da); }
         case 11: { return src * (1.0 - da) + dst * (1.0 - sa); }
-        case 12: { return min(src + dst, vec4<f32>(1.0)); }
+        // Plus, and unclamped on purpose. The hardware path reaches this mode
+        // as `One, One` and leaves the saturation to the target, so an
+        // eight-bit attachment clips the sum and a floating-point one keeps it.
+        // Clamping here made the tint route disagree with the paint route on
+        // exactly the targets that can tell them apart, which upstream's
+        // `DrawAtlasPlusWideGamut` is the scene for.
+        case 12: { return src + dst; }
         case 13: { return src * dst; }
         default: {}
     }

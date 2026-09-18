@@ -22,6 +22,14 @@ duplication the paragraph above rules out. `docs/parity.md` says what is built,
 a test checks that it says so truly, and a copy of that claim kept by hand here
 is the same claim without the check. So there is no list.
 
+An atlas tint in `Plus` is no longer clamped in the shader. `blend_tint`'s arm for
+that mode was `min(src + dst, 1)` while the hardware path reaches it as
+`One, One` and leaves the saturation to the target, so the same mode gave
+different answers depending on whether a draw carried the blend on its paint or
+as a per-sprite tint. Invisible in eight bits, where the target clips either way,
+and visible in a floating-point one -- which is what upstream's
+`DrawAtlasPlusWideGamut` is the scene for.
+
 A hairline drawn through `draw_line` lands on a pixel rather than between two. A
 line one pixel wide whose center sits on a pixel boundary covers half of each row
 it straddles, so it drew gray and two pixels soft where upstream draws it crisp:
