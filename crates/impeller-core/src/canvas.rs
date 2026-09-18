@@ -2963,10 +2963,23 @@ impl Canvas {
         // rather than its color: the fill supplies the color and this supplies
         // where it lands.
         let coverage = Paint::fill(Color::WHITE).with_anti_alias(paint.anti_alias);
+        // This one floods the held region with the caller's paint, so it has to
+        // be a *fill* whatever the caller asked for. Left as the caller's own
+        // style it drew the outline of the held rectangle when the caller was
+        // stroking, and the mask below then cut that away to nothing -- the
+        // rectangle's border is nowhere near the shape. A stroked shape with a
+        // fill that varies came out empty, on both backends.
+        //
+        // Only the flood needs it. Handing the coverage the caller's style as
+        // well changes no pixel of any plate here, so something other than this
+        // line is already giving the mask the band rather than the region, and
+        // a line that changes nothing does not go in with a comment saying it
+        // does.
         let fill = paint
             .clone()
             .with_mask_blur(0.0)
-            .with_blend(BlendMode::SrcOver);
+            .with_blend(BlendMode::SrcOver)
+            .with_style(Style::Fill);
 
         self.save_layer_bounds(Layer::opacity(1.0).with_blend(paint.blend), held);
         // Across everything the blur reaches, not across the shape: a blurred

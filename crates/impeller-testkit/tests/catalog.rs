@@ -403,6 +403,72 @@ fn a_backdrop_key_plate_would_notice_if_the_key_stopped_working() {
     );
 }
 
+/// A mask blur over a stroke keeps the fill that stroke was given.
+///
+/// The five `gradient-oval-stroke-mask-blur` plates exist to say that a mask
+/// blur acts on coverage and the fill colors whatever survives. They said it
+/// for weeks while drawing no color at all: the route for a fill that varies
+/// floods the held region with the caller's paint and then masks it by the
+/// blurred coverage, and it was carrying the caller's *stroke* style into the
+/// flood -- so the flood was the outline of a rectangle the mask then cut away
+/// -- while dropping that style from the coverage, which made the mask the
+/// region the outline encloses rather than the band it covers.
+///
+/// Nothing caught it. Both backends agreed, being wrong the same way, and the
+/// sweep that asks whether a plate can show its blur only asks whether taking
+/// the blur away changes the picture, which it did: from a gradient to
+/// nothing. So the claim is checked here instead, on the thing the plates are
+/// named for -- that the gradient reaches the blurred stroke.
+#[test]
+fn a_mask_blur_over_a_stroke_keeps_its_gradient() {
+    let Ok(mut ctx) = Validated::new(DevicePreference::Auto) else {
+        eprintln!("skipping: no Vulkan device");
+        return;
+    };
+    for name in [
+        "blur/gradient-oval-stroke-mask-blur",
+        "blur/gradient-oval-stroke-mask-blur-translated-and-rotated",
+    ] {
+        let scene = catalog()
+            .into_iter()
+            .find(|s| s.name == name)
+            .expect("the plate is in the catalog");
+        let img = render::<VulkanHal>(&mut ctx, &scene);
+        // The gradient runs red to blue, so a pixel it reached has channels
+        // that differ. The guide lines and the ground are gray and do not.
+        let colored = img
+            .pixels
+            .chunks(4)
+            .filter(|p| p[0].abs_diff(p[2]) > 12)
+            .count();
+        assert!(
+            colored > 500,
+            "{name} left {colored} pixels carrying the gradient, which is as \
+             good as none: the blurred stroke is not being filled with what \
+             the caller asked for"
+        );
+
+        // And the mask has to be the band the outline covers rather than the
+        // region it encloses, which is the other half of the same route. A
+        // coverage drawn without the caller's style makes the two the same
+        // picture, so the same scene with its stroke taken off is the control.
+        let mut filled = scene.clone();
+        for node in filled.items.iter_mut() {
+            if let Node::Draw(item) = node {
+                if item.stroke.is_some() {
+                    item.stroke = None;
+                }
+            }
+        }
+        let difference = compare(&img, &render::<VulkanHal>(&mut ctx, &filled)).expect("same size");
+        assert!(
+            !difference.is_identical(),
+            "{name} drew the same picture with its stroke removed, so the \
+             blurred mask is the shape rather than its outline"
+        );
+    }
+}
+
 /// The blue an unoverlapped `BLUE_HALF` stroke leaves on the catalog ground.
 ///
 /// Read off a render rather than derived, and the two doubled values are
