@@ -178,7 +178,7 @@ column is right and the obvious way to check it is wrong.
 | `aiks_dl_clip_unittests.cc` | ~5 | 7 | nothing; this file is covered |
 | `aiks_dl_opacity_unittests.cc` | ~3 | 3 | nothing; this file is covered |
 | `aiks_dl_blend_unittests.cc` | ~79 | 77 | capability injection for one, a wide-gamut target for two, a callback for one, and one whose color filter is the identity by arithmetic; see below |
-| `aiks_dl_blur_unittests.cc` | ~59 | 59 | nothing; see below |
+| `aiks_dl_blur_unittests.cc` | ~64 | 64 | nothing; see below |
 | `aiks_dl_vertices_unittests.cc` | ~16 | 22 | nothing; see below |
 | `aiks_dl_atlas_unittests.cc` | ~11 | 12 | nothing; see below |
 | `aiks_dl_shadow_unittests.cc` | 30 | 24 | twelve casters the scene model cannot spell or cannot wind, measured as near-duplicates of ones it can; see below |
@@ -241,7 +241,7 @@ great many multisampled circles. Whether that counts as mirroring them is a
 judgment about what a plate is for, not a count, and it is the one part of this
 row nobody has made.
 
-The catalog holds four hundred and twenty-five scenes against a column totalling
+The catalog holds four hundred and thirty scenes against a column totalling
 about four hundred, and the two are not a ratio: five chapters hold more than
 the file they mirror, because a scene here is one picture where a test there can
 be a loop over every blend mode or a family drawn twice. What the totals meeting
@@ -509,7 +509,9 @@ contour cannot be recognized as a rounded rectangle, so the blur cannot be
 evaluated in the fragment stage and takes the general route -- on a target sized
 for a shape most of which is not there.
 
-What is left of the file is seven, and each has a reason. Four drive a
+Upstream added five to this file since the last count, the same gradient
+oval stroke at each blur style translated and turned, and they are mirrored
+below. What is left of the file is seven, and each has a reason. Four drive a
 callback rather than building one picture -- three named `Interactive` with
 sliders, and `GaussianBlurAnimatedBackdrop`, which is the same shape without the
 name. Two are unit tests that build a texture and assert it exists rather than

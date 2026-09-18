@@ -8210,6 +8210,62 @@ fn blur_variants() -> Vec<Scene> {
         items
     };
 
+    // The same five turned, which is upstream's own second set of them. A blur
+    // runs on the target in the target's own axes, and the input it is handed
+    // is snapshotted in a space with the rotation taken out -- so a snapshot
+    // that kept a property it should not, or a bound computed in the wrong one
+    // of those two spaces, cuts the stroke off along a line that is not in the
+    // picture. Upstream's fix was exactly that, and these are the plates it
+    // came with.
+    //
+    // Turned about the stadium's own center rather than about the origin after
+    // a translation, as upstream does it: the frame here is 128 pixels and a
+    // rotation about the origin would carry the shape out of it.
+    let turned = |degrees: f32| {
+        let (cx, cy) = (64.0f32, 59.0f32);
+        let radians = degrees.to_radians();
+        let (sin, cos) = radians.sin_cos();
+        Transform {
+            rotate: radians,
+            translate: [cx - (cx * cos - cy * sin), cy - (cx * sin + cy * cos)],
+            ..Transform::default()
+        }
+    };
+
+    for (name, sigma, style) in [
+        (
+            "blur/gradient-oval-stroke-mask-blur-translated-and-rotated",
+            5.0,
+            MaskBlurStyle::Normal,
+        ),
+        (
+            "blur/gradient-oval-stroke-mask-blur-sigma-zero-translated-and-rotated",
+            0.0,
+            MaskBlurStyle::Normal,
+        ),
+        (
+            "blur/gradient-oval-stroke-mask-blur-outer-translated-and-rotated",
+            5.0,
+            MaskBlurStyle::Outer,
+        ),
+        (
+            "blur/gradient-oval-stroke-mask-blur-inner-translated-and-rotated",
+            5.0,
+            MaskBlurStyle::Inner,
+        ),
+        (
+            "blur/gradient-oval-stroke-mask-blur-solid-translated-and-rotated",
+            5.0,
+            MaskBlurStyle::Solid,
+        ),
+    ] {
+        let items = banded(sigma, style)
+            .into_iter()
+            .map(|item| item.with_transform(turned(45.0)))
+            .collect();
+        scenes.push(plate(name, items));
+    }
+
     for (name, sigma, style) in [
         (
             "blur/gradient-oval-stroke-mask-blur",
