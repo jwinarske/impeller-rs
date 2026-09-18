@@ -46,7 +46,7 @@ jobs:
       # repository's CI over a warning in somebody else's crate.
       RUSTFLAGS: -D warnings
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
 
       # The runner ships with several toolchains this repository never uses,
       # and they are large enough to decide whether the job finishes. It ran
@@ -113,8 +113,16 @@ jobs:
           echo "apt did not finish after three refreshes"
           exit 1
 
+      # v6 and v7 across the three: the majors this skipped when it moved off
+      # the Node 20 runtime, taken now that the runtime change has run green on
+      # its own. Each carries a behavior change and none of them reaches this
+      # workflow -- `cache` and `upload-artifact` migrated to ESM,
+      # `upload-artifact` added an opt-in unzipped upload this does not ask for,
+      # `checkout` persists credentials to a separate file, and `checkout@v7`
+      # refuses to check a fork out for `pull_request_target` and
+      # `workflow_run`, neither of which triggers this.
       - name: Cache cargo
-        uses: actions/cache@v5
+        uses: actions/cache@v6
         with:
           path: |
             ~/.cargo/registry/index
@@ -171,7 +179,7 @@ jobs:
       # kept whether or not anything parsed it.
       - name: Keep the test output
         if: failure()
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v7
         with:
           name: verify-log
           path: |
@@ -184,7 +192,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
       # Read from the manifest rather than written twice. A job that pinned its
       # own version would keep passing after somebody raised the declared one,
       # which is the failure mode this job exists to prevent.
@@ -217,7 +225,7 @@ jobs:
           - aarch64-unknown-linux-gnu
           - riscv64gc-unknown-linux-gnu
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
       - name: Add the target
         run: rustup target add ${{ matrix.target }}
       # `check` rather than `build`, deliberately: linking would want a cross
@@ -240,9 +248,9 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
       - name: Cache cargo-deny
-        uses: actions/cache@v5
+        uses: actions/cache@v6
         with:
           path: ~/.cargo/bin/cargo-deny
           key: cargo-deny-${{ runner.os }}
