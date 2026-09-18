@@ -22,13 +22,15 @@ duplication the paragraph above rules out. `docs/parity.md` says what is built,
 a test checks that it says so truly, and a copy of that claim kept by hand here
 is the same claim without the check. So there is no list.
 
-An atlas tint in `Plus` is no longer clamped in the shader. `blend_tint`'s arm for
-that mode was `min(src + dst, 1)` while the hardware path reaches it as
-`One, One` and leaves the saturation to the target, so the same mode gave
-different answers depending on whether a draw carried the blend on its paint or
-as a per-sprite tint. Invisible in eight bits, where the target clips either way,
-and visible in a floating-point one -- which is what upstream's
-`DrawAtlasPlusWideGamut` is the scene for.
+An atlas tint in `Plus` saturates in the shader rather than at the target, and that
+is now a recorded deviation rather than an accident. `blend_tint`'s arm for the mode
+is `min(src + dst, 1)` while the hardware path reaches it as `One, One`, so the same
+mode answers differently depending on whether a draw carries the blend on its paint
+or as a per-sprite tint. The clamp was removed to make the two agree and put back
+after benching a Pi 5: it costs 2.4 per cent on the Vulkan distance-field row and
+1.2 on the GLES full frame, and buys agreement only on a floating-point target,
+which nothing here presents. §13 of `docs/non-parity.md` records it with the
+measurements.
 
 A hairline drawn through `draw_line` lands on a pixel rather than between two. A
 line one pixel wide whose center sits on a pixel boundary covers half of each row

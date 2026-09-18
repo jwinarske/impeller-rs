@@ -1157,13 +1157,25 @@ fn blend_tint(mode: i32, src: vec4<f32>, dst: vec4<f32>) -> vec4<f32> {
         case 9: { return src * da + dst * (1.0 - sa); }
         case 10: { return dst * sa + src * (1.0 - da); }
         case 11: { return src * (1.0 - da) + dst * (1.0 - sa); }
-        // Plus, and unclamped on purpose. The hardware path reaches this mode
-        // as `One, One` and leaves the saturation to the target, so an
-        // eight-bit attachment clips the sum and a floating-point one keeps it.
-        // Clamping here made the tint route disagree with the paint route on
-        // exactly the targets that can tell them apart, which upstream's
-        // `DrawAtlasPlusWideGamut` is the scene for.
-        case 12: { return src + dst; }
+        // Plus, clamped here rather than left to the target, which is a
+        // deviation and is measured rather than assumed. The hardware path
+        // reaches this mode as `One, One` and leaves the saturation to the
+        // attachment, so removing this `min` is what makes the tint route agree
+        // with the paint route on a floating-point target.
+        //
+        // It was removed for exactly that reason and put back after benching a
+        // Pi 5: the line costs 2.4 per cent on the Vulkan distance-field row and
+        // 1.2 on the GLES full frame, state for state, and buys agreement only
+        // where a float target is in play -- which is tests, since nothing here
+        // presents one. Paying that on every frame for a difference no shipped
+        // configuration can see is the wrong way round. §13 of
+        // `docs/non-parity.md` records it with the numbers.
+        //
+        // Removing an instruction made the shader *slower*, which is V3D's
+        // register allocation rather than anything arithmetic; the same commit
+        // is why `docs/architecture.md` says to bench both backends after
+        // shader work.
+        case 12: { return min(src + dst, vec4<f32>(1.0)); }
         case 13: { return src * dst; }
         default: {}
     }

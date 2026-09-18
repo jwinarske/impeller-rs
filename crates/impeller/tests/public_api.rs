@@ -16860,22 +16860,29 @@ fn plus_saturates_in_eight_bits_and_does_not_in_a_float_target() {
     }
 }
 
-/// And an atlas whose per-sprite color is added rather than multiplied.
+/// An atlas tint in `Plus` *is* clipped, and that is the recorded deviation.
 ///
-/// Upstream's `DrawAtlasPlusWideGamut` is the third scene recorded as wanting a
-/// wide-gamut target, in the atlas chapter rather than the blend one, and it is
-/// the same claim through a third route: four sprites tinted red, green, blue
-/// and yellow with `Plus` as the tint blend, into a target that can hold what
-/// that sums to. A sprite over a bright texel passes one and an eight-bit target
-/// clips it.
+/// Upstream's `DrawAtlasPlusWideGamut` is the third scene that wanted a
+/// wide-gamut target, and it is the same claim as the pair above through a third
+/// route: sprites tinted with `Plus`, into a target that can hold what the sum
+/// comes to. The two routes above keep the sum -- a paint's blend reaches the
+/// hardware as `One, One`, and a `Plus` color filter is affine and becomes a
+/// matrix -- and this one does not, because `blend_tint` clamps it in the shader.
 ///
-/// Worth having beside the pair above rather than folded into it. A tint blend
-/// is applied per sprite inside the atlas draw, where a paint's blend is applied
-/// per draw against the frame and a color filter is applied to a group -- three
-/// different places for the arithmetic to be clamped, and only this one is
-/// reached by `draw_atlas`.
+/// The clamp was removed to make the three agree, and put back after benching a
+/// Pi 5. Removing it cost 2.4 per cent on the Vulkan distance-field row and 1.2
+/// on the GLES full frame, state for state, on a board where three runs of the
+/// commit before it held every row inside three tenths of a per cent. What it
+/// bought was agreement on a floating-point target, and nothing here presents
+/// one, so the only place the difference can be seen is a test like this. §13 of
+/// `docs/non-parity.md` has the numbers and the reasoning.
+///
+/// So this test pins the deviation rather than the agreement. It is written the
+/// way round that fails if the clamp comes out again, because the next person to
+/// read `blend_tint` and notice the inconsistency should find a test that says it
+/// is deliberate and what it costs to fix.
 #[test]
-fn an_atlas_tint_in_plus_is_not_clipped_by_a_float_target() {
+fn an_atlas_tint_in_plus_is_clipped_where_the_other_routes_are_not() {
     let Some(mut ctx) = context() else { return };
     if !ctx.capabilities().float_render_targets {
         eprintln!("skipping: this device cannot render into a floating-point target");
@@ -16912,16 +16919,19 @@ fn an_atlas_tint_in_plus_is_not_clipped_by_a_float_target() {
 
     let wide = wide_pixels_with_images(&mut ctx, build(), &[&image]);
     // The top-left of the target holds the sheet's yellow quadrant, so red and
-    // green are saturated there and blue is not.
+    // green are saturated there and the sum would be two if the shader let it
+    // be. It comes back at one, which is the clamp.
     let inside = wide_pixel(&wide, 32, 32);
     assert!(
-        inside[0] > 1.5 && inside[1] > 1.5,
-        "a saturated channel plus white should pass one in a float target, and \
-         the yellow quadrant came back {inside:?}"
+        (inside[0] - 1.0).abs() < 0.01 && (inside[1] - 1.0).abs() < 0.01,
+        "the tint route clamps in the shader, so a saturated channel plus white \
+         has to come back at one even in a float target, and the yellow quadrant \
+         came back {inside:?} -- if this now passes one, the clamp came out and \
+         §13 of docs/non-parity.md needs deleting rather than editing"
     );
 
-    // And eight bits clip it, which is what makes the line above about the
-    // target rather than about the tint.
+    // And eight bits are the same, which is the half of the deviation that costs
+    // nothing: the target would have clipped the sum anyway.
     let mut surface = ctx
         .create_surface(SIZE, PixelFormat::Rgba8Unorm)
         .expect("surface");
