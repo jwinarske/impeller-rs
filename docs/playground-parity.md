@@ -207,7 +207,7 @@ column is right and the obvious way to check it is wrong.
 | `aiks_dl_gradient_unittests.cc` | ~40 | 46 | nothing; see below |
 | `aiks_dl_clip_unittests.cc` | ~6 | 8 | nothing; this file is covered |
 | `aiks_dl_opacity_unittests.cc` | ~3 | 3 | nothing; this file is covered |
-| `aiks_dl_blend_unittests.cc` | ~79 | 77 | capability injection for one, a wide-gamut target for two, a callback for one, and one whose color filter is the identity by arithmetic; see below |
+| `aiks_dl_blend_unittests.cc` | ~79 | 77 | capability injection for one, a callback for one, and one whose color filter is the identity by arithmetic; see below |
 | `aiks_dl_blur_unittests.cc` | ~64 | 64 | nothing; see below |
 | `aiks_dl_vertices_unittests.cc` | ~16 | 22 | nothing; see below |
 | `aiks_dl_atlas_unittests.cc` | ~11 | 12 | nothing; see below |
@@ -802,6 +802,34 @@ copied from the scene above it -- the flood case, which is already here as
 `destructive-blend-color-filter-floods-clip`. So the scene is not mirrored, and
 this is the reason rather than a capability.
 
+The two that wanted a wide-gamut target no longer want anything.
+`BlendModePlusAlphaWideGamut` and its color-filter twin both open by requiring
+the default color format to be `kB10G10R10A10XR` and skipping otherwise, and
+then add red to a bright ground through `Plus`: the sum passes one, so an
+eight-bit target clips it and an extended-range one does not, and that difference
+is the whole picture. The pipeline reaches a floating-point target now, so the
+obstacle is gone -- what the column was really deferring to was §4 of
+`docs/non-parity.md`, which is about *presenting* a wide gamut and says nothing
+about rendering into one.
+
+They are tests rather than plates, for the reason `PipelineBlendSingleParameter`
+is: a catalog scene cannot opt into a floating-point target, because every test
+binary here runs concurrently and peak allocation is their sum.
+`plus_saturates_in_eight_bits_and_does_not_in_a_float_target` takes both routes
+upstream takes -- the blend on the draw and the same arithmetic as a color filter
+on a group -- and each is checked twice, once into a float target where it has to
+pass one and once into eight bits where it has to clip.
+
+Mirroring them found a defect, and it was in a third route neither of them takes.
+The atlas chapter's `DrawAtlasPlusWideGamut` is the same claim through a per-sprite
+tint, and that path clamped: `blend_tint`'s `Plus` arm was
+`min(src + dst, vec4(1.0))` where the hardware path reaches the mode as
+`One, One` and leaves the saturation to the target. So the same mode gave
+different answers depending on which route a draw took, on exactly the targets
+that can tell them apart -- invisible in eight bits, which is why nothing caught
+it. The clamp is gone and
+`an_atlas_tint_in_plus_is_not_clipped_by_a_float_target` holds the agreement.
+
 Widening the rule also retired an exemption. Two atlas plates carry an identity
 matrix image filter whose whole claim is that it changes nothing, and they had
 to be named and checked backwards. They carry a color filter as well, which the
@@ -1113,8 +1141,10 @@ tests that happen to live in the playground file, and counting them as scenes
 made the chapter look a third emptier than it is. So the count beside it is
 eleven.
 
-Of the rest: one is `Plus` into a wide-gamut target, which §4 of
-`docs/non-parity.md` covers, and one is a four-color modulate that is the plate
+Of the rest: one is `Plus` into a wide-gamut target, which is a test now --
+`an_atlas_tint_in_plus_is_not_clipped_by_a_float_target`, and it found the tint
+path clamping a mode the hardware path does not -- and one is a four-color
+modulate that is the plate
 already here under `draw-atlas-with-color-simple` -- the same four sprites, the
 same mode, a different name upstream. The other three went in.
 
