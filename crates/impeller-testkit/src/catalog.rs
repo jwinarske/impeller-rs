@@ -3458,6 +3458,106 @@ fn gradient() -> Vec<Scene> {
 /// `aiks_dl_clip_unittests.cc`.
 fn clip() -> Vec<Scene> {
     vec![
+        Scene::tree(
+            "clip/can-render-clipped-backdrop-filter-with-superellipse",
+            // Upstream's sheet: a round superellipse clipping a whole group,
+            // translucent rows inside it, a blurred panel clipped to a rounded
+            // rectangle of its own, and a bar drawn over the lot afterwards.
+            // The shape it came from is a Cupertino sheet with a frosted app
+            // bar, and what it is for is the clip stack across the pass the
+            // backdrop cuts -- a parent clip popped too early takes the rows
+            // with it, and a backdrop reading past its own clip blurs the bar.
+            //
+            // The corners are equal here where upstream rounds only the top
+            // two. The asymmetry is the sheet's, not the clip stack's, and a
+            // squircle with one radius is the shape this catalog already has a
+            // plate for.
+            vec![Node::Clip {
+                rect: None,
+                rect_out: None,
+                shape: Some(Shape::RoundSuperellipse {
+                    min: [8.0, 14.0],
+                    max: [120.0, 128.0],
+                    radii: [[10.0, 10.0]; 4],
+                }),
+                transform: Transform::default(),
+                children: vec![
+                    Node::Draw(Box::new(Item::fill(
+                        Shape::Rect {
+                            min: [8.0, 14.0],
+                            max: [120.0, 128.0],
+                        },
+                        [0.20, 0.22, 0.28, 1.0],
+                    ))),
+                    // The rows, each barely darker than the sheet, so a clip
+                    // that dropped one is a missing band rather than a
+                    // different shade.
+                    Node::Draw(Box::new(Item::fill(
+                        Shape::Rect {
+                            min: [8.0, 26.0],
+                            max: [120.0, 38.0],
+                        },
+                        [0.0, 0.0, 0.0, 0.18],
+                    ))),
+                    Node::Draw(Box::new(Item::fill(
+                        Shape::Rect {
+                            min: [8.0, 44.0],
+                            max: [120.0, 56.0],
+                        },
+                        [0.0, 0.0, 0.0, 0.18],
+                    ))),
+                    Node::Draw(Box::new(Item::fill(
+                        Shape::Rect {
+                            min: [8.0, 62.0],
+                            max: [120.0, 74.0],
+                        },
+                        [0.0, 0.0, 0.0, 0.18],
+                    ))),
+                    // The frosted panel, clipped to its own rounded rectangle
+                    // inside the sheet's clip, and placed over the third row
+                    // rather than below them all: a blur over flat color is a
+                    // flat color, so the row's edge running under the panel is
+                    // the only thing in the frame that shows the backdrop was
+                    // read at all.
+                    Node::Clip {
+                        rect: None,
+                        rect_out: None,
+                        shape: Some(Shape::RoundedRect {
+                            min: [16.0, 58.0],
+                            max: [112.0, 82.0],
+                            radius: 6.0,
+                        }),
+                        transform: Transform::default(),
+                        children: vec![Node::Layer {
+                            layer: Box::new(LayerSpec {
+                                backdrop: ImageFilter::blur(5.0),
+                                ..LayerSpec::default()
+                            }),
+                            bounds: None,
+                            transform: Transform::default(),
+                            children: vec![Node::Draw(Box::new(Item::fill(
+                                Shape::Rect {
+                                    min: [16.0, 58.0],
+                                    max: [112.0, 82.0],
+                                },
+                                [1.0, 0.6, 0.0, 0.35],
+                            )))],
+                        }],
+                    },
+                    // And the bar over everything, which the backdrop must not
+                    // have blurred: it is drawn after.
+                    Node::Draw(Box::new(Item::fill(
+                        Shape::Rect {
+                            min: [8.0, 14.0],
+                            max: [120.0, 24.0],
+                        },
+                        WHITE,
+                    ))),
+                ],
+            }],
+        )
+        .with_background(DARK)
+        .with_samples(4),
         plate(
             "clip/difference-clip-keeps-what-is-outside",
             // `clipRect` with `ClipOp.difference`, which is the one clip that
@@ -7122,6 +7222,8 @@ fn pictures() -> Vec<Scene> {
                 Node::Clip {
                     rect: Some([64.0, 64.0, 124.0, 124.0]),
                     rect_out: None,
+                    shape: None,
+                    transform: Transform::default(),
                     children: vec![Node::Layer {
                         layer: Box::new(LayerSpec {
                             backdrop: ImageFilter::Matrix {
@@ -7994,9 +8096,16 @@ fn blur_variants() -> Vec<Scene> {
                     },
                     children: Vec::new(),
                 },
-                Node::Layer {
-                    layer: Box::new(LayerSpec::default().with_backdrop_blur(3.0)),
-                    bounds: Some([2.0, 2.0, 40.0, 18.0]),
+                // The turned one, and the turn is stated as a clip rather than
+                // only as the layer's transform. A layer's target is an
+                // axis-aligned box in device space, here and upstream alike, so
+                // the bounds of a turned rectangle are the box around it; what
+                // gives upstream's band its tilted edge is the clip it states
+                // under the same transform, and this is that clip.
+                Node::Clip {
+                    rect: Some([2.0, 2.0, 40.0, 18.0]),
+                    rect_out: None,
+                    shape: None,
                     transform: Transform {
                         scale: [1.2, 1.2],
                         // Five degrees, as upstream turns it.
@@ -8004,7 +8113,12 @@ fn blur_variants() -> Vec<Scene> {
                         translate: [12.0, 70.0],
                         ..Transform::default()
                     },
-                    children: Vec::new(),
+                    children: vec![Node::Layer {
+                        layer: Box::new(LayerSpec::default().with_backdrop_blur(3.0)),
+                        bounds: None,
+                        transform: Transform::default(),
+                        children: Vec::new(),
+                    }],
                 },
             ],
         )

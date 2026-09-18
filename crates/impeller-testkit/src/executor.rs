@@ -573,6 +573,8 @@ fn record_node(canvas: &mut Canvas, node: &Node, anti_alias: bool) -> Result<()>
         Node::Clip {
             rect,
             rect_out,
+            shape,
+            transform,
             children,
         } => {
             // A save and a restore around the clip, which is what makes it a
@@ -580,11 +582,18 @@ fn record_node(canvas: &mut Canvas, node: &Node, anti_alias: bool) -> Result<()>
             // canvas carries it until the restore, and everything recorded
             // between them is under it.
             canvas.save();
+            // Before the clip is taken, so the shape and the rectangles are
+            // stated in the space this opens rather than in the frame's, and
+            // what the clip scopes is drawn under it too.
+            canvas.concat(transform.to_projective());
             if let Some(rect) = rect {
                 canvas.clip_rect(rect_of(*rect))?;
             }
             if let Some(out) = rect_out {
                 canvas.clip_out_rect(rect_of(*out))?;
+            }
+            if let Some(shape) = shape {
+                canvas.clip_path(&shape.to_path())?;
             }
             for child in children {
                 record_node(canvas, child, anti_alias)?;
