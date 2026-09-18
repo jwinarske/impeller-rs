@@ -44,6 +44,59 @@
 # later reader can find. Update it when a `--check` run passes, whether or not
 # the numbers are re-recorded.
 #
+# Re-recorded a sixth time on 2026-09-18, for the `recording` section and for a
+# board setting the numbers turn out to depend on.
+#
+# That section is what building each frame costs, before anything is submitted:
+# tessellation, stroking, the thin-stroke rule, the batching. It needs no device,
+# so it is measured even where every backend was skipped, and it closes a blind
+# spot this file's own header used to name and guess the size of. The guess was
+# the wrong shape rather than the wrong size. A frame of mixed content builds in
+# 0.018 ms against 13.9 to draw, which is the tenth of a per cent the old note
+# expected. A *stroked path* builds in 0.739 and draws in 1.184 -- sixty-two per
+# cent of the draw, on the row that is cheapest to draw. Timing only the drawing
+# made the stroker look free.
+#
+# **These numbers require `scaling_governor` to be `performance`, and that setting
+# does not survive a reboot.** Under `ondemand`, which is this board's default, the
+# recording rows land in two or three states: the distance field at 0.136 and
+# 0.154, the four-sample tessellation at 0.268 and 0.341, and single spikes of
+# plus forty per cent on two more. Pinned, every one of them holds inside one per
+# cent over four runs. The reason is not subtle -- 1.5 GHz to 2.4 is a factor of
+# 1.6, and every gap observed sits inside it -- but nothing in the output said
+# which governor had produced a number, so `cargo xtask bench` now prints it in
+# its header. A run whose header says `ondemand` is not comparable with this file.
+#
+# Two GPU rows moved with the governor as well, and they are the two with enough
+# processor work in them to notice: the stroked path, which is the cheapest frame
+# here, went 1.226 to 1.184 on Vulkan and 1.351 to 1.319 on GLES, and the
+# twelve-draw frame went 14.150 to 13.908 and 14.831 to 14.748. Everything that is
+# GPU-bound did not move at all. The GLES rows' occasional four and five per cent
+# outliers went with it too, which had been put down to contention.
+#
+# The two tessellated recording rows read the same number to a thousandth, and
+# should: antialiasing decides how many samples the pass takes and not what
+# geometry is built. Under `ondemand` they read 0.341 and 0.244 and the difference
+# was the clock. `the_two_tessellated_rows_build_the_same_recording` now holds them
+# together, so a future divergence means something began depending on the sample
+# count at record time.
+#
+# Tolerances for the new rows are measured: five per cent covers the three per cent
+# each moved across five pinned runs. The frame's build carries ten, and not
+# because it is noisy -- it read 0.018 in every run -- but because eighteen
+# microseconds is eighteen units of the thousandth this file stores, so one unit of
+# granularity is five and a half per cent and a tighter tolerance would be gating
+# the format rather than the renderer.
+#
+# **The Vulkan bimodality is not claimed to be gone.** It would be the obvious
+# thing to conclude: it is a processor-frequency-shaped effect on the row with a
+# hundred and sixty draws, the older notes above could not establish a mechanism,
+# and none of the four pinned runs showed the slow state where nine unpinned ones
+# showed it five times. But four runs against a coin that lands slow half the time
+# is not evidence, and the four Vulkan tolerances are therefore left as wide as
+# they were. Settling it wants eight to ten pinned runs, which is worth doing and
+# was not done here.
+#
 # Re-recorded a fifth time on 2026-09-18, for two new rows rather than for a
 # change in the renderer. `stroked field, 1 sample` and `stroked path, 1 sample`
 # are the same hundred and sixty rounded rectangles *stroked* at four device
@@ -204,15 +257,21 @@
 #
 #
 # device	configuration	median in milliseconds	[tolerance %]
-vulkan:0 V3D 7.1.7.0	distance field, 1 sample	8.863	5.0
-vulkan:0 V3D 7.1.7.0	tessellated, 4 samples	4.521	2.0
-vulkan:0 V3D 7.1.7.0	tessellated, 1 sample	3.694	2.0
-vulkan:0 V3D 7.1.7.0	stroked field, 1 sample	9.427	5.0
-vulkan:0 V3D 7.1.7.0	stroked path, 1 sample	1.218	2.0
-vulkan:0 V3D 7.1.7.0	full frame, mixed content	14.135	2.5
-gles V3D 7.1.7.0	distance field, 1 sample	8.908
+recording	distance field, 1 sample	0.099	5.0
+recording	tessellated, 4 samples	0.235	5.0
+recording	tessellated, 1 sample	0.240	5.0
+recording	stroked field, 1 sample	0.098	5.0
+recording	stroked path, 1 sample	0.739	5.0
+recording	full frame, mixed content	0.018	10.0
+vulkan:0 V3D 7.1.7.0	distance field, 1 sample	8.852	5.0
+vulkan:0 V3D 7.1.7.0	tessellated, 4 samples	4.525	2.0
+vulkan:0 V3D 7.1.7.0	tessellated, 1 sample	3.688	2.0
+vulkan:0 V3D 7.1.7.0	stroked field, 1 sample	9.431	5.0
+vulkan:0 V3D 7.1.7.0	stroked path, 1 sample	1.184	2.0
+vulkan:0 V3D 7.1.7.0	full frame, mixed content	13.908	2.5
+gles V3D 7.1.7.0	distance field, 1 sample	8.899
 gles V3D 7.1.7.0	tessellated, 4 samples	5.460
-gles V3D 7.1.7.0	tessellated, 1 sample	3.641
-gles V3D 7.1.7.0	stroked field, 1 sample	9.480	5.0
-gles V3D 7.1.7.0	stroked path, 1 sample	1.351	2.0
-gles V3D 7.1.7.0	full frame, mixed content	14.828
+gles V3D 7.1.7.0	tessellated, 1 sample	3.644
+gles V3D 7.1.7.0	stroked field, 1 sample	9.483	5.0
+gles V3D 7.1.7.0	stroked path, 1 sample	1.319	2.0
+gles V3D 7.1.7.0	full frame, mixed content	14.748

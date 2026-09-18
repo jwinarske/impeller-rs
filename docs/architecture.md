@@ -2429,15 +2429,18 @@ rather than in principle.
 
   | device | field ÷ tessellated at one sample | cost of four samples |
   |---|---|---|
-  | Pi 5 V3D, Vulkan | 0.98× → **2.40×** | 1.17× → 1.22× |
-  | Pi 5 V3D, GLES | 1.00× → **2.45×** | 1.17× → 1.50× |
+  | Pi 5 V3D, Vulkan | 0.98× → **2.40×** | 1.17× → 1.23× |
+  | Pi 5 V3D, GLES | 1.00× → **2.44×** | 1.17× → 1.50× |
 
-  The four-sample cost read 1.23× until the baseline was re-recorded on
-  2026-09-18 for the two stroked rows, and reads 1.22× from the same two numbers
-  measured again -- 4.521 against 4.522, 3.694 against 3.691. Nothing about
-  multisampling changed; the third decimal place moved and the second followed
-  it. Said here because a reader comparing two revisions of this table should not
-  go looking for a cause that does not exist.
+  Two of these cells have moved in the third decimal place across the two
+  baseline re-recordings of 2026-09-18, and neither move has a cause worth looking
+  for. The Vulkan four-sample cost read 1.23×, then 1.22× from the same two rows
+  measured again, then 1.23× once the processor was held at one frequency; the
+  GLES field ratio went 2.45× to 2.44× the same way. These are quotients of two
+  measurements each good to a few thousandths of a millisecond, so the second
+  decimal place is the first one that is theirs rather than the clock's. The
+  conclusions the table is here for -- which route wins, and by roughly how much
+  -- are an order of magnitude away from that.
 
   The paragraph above this table said the margin was expected to narrow on a
   tiler and possibly invert, and that both halves held. The first half no longer

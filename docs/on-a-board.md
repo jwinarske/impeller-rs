@@ -142,6 +142,28 @@ flags read clean beforehand and two of the four were from a cold boot. The
 board's own GPU is the number worth having and it is measurable without ever
 starting that stage.
 
+**Pin the frequency governor before benching, or the numbers are the governor's.**
+The Pi 5 defaults to `ondemand` over 1.5 to 2.4 GHz, and anything with processor
+work in it reads whichever clock it caught:
+
+```sh
+for c in /sys/devices/system/cpu/cpu[0-9]*; do
+  echo performance | sudo tee $c/cpufreq/scaling_governor
+done
+```
+
+Measured 2026-09-18. The recording rows -- which are pure processor work -- landed
+in two or three states under `ondemand`, up to forty per cent apart, and held
+inside one per cent pinned. Two GPU rows moved with it as well, and they are the
+two with enough processor work to notice: the cheap stroked path and the
+twelve-draw frame, each about two per cent. Everything GPU-bound did not move.
+Several four and five per cent GLES outliers that had been put down to contention
+went away too.
+
+It does not survive a reboot, so `cargo xtask bench` prints the governor in its
+header and the baseline names the one it was recorded under. A run whose header
+says `ondemand` is not comparable with that file.
+
 **Check the board is quiet first, because it is not always.** `pgrep homescreen`
 before a run, and a glance at `ps -eo pcpu,comm --sort=-pcpu | head`. A Flutter
 embedder left running on the Pi 5 -- about a sixth of a core, drawing through the
