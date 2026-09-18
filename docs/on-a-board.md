@@ -142,6 +142,17 @@ flags read clean beforehand and two of the four were from a cold boot. The
 board's own GPU is the number worth having and it is measurable without ever
 starting that stage.
 
+**Check the board is quiet first, because it is not always.** `pgrep homescreen`
+before a run, and a glance at `ps -eo pcpu,comm --sort=-pcpu | head`. A Flutter
+embedder left running on the Pi 5 -- about a sixth of a core, drawing through the
+same V3D, and not a service, so nothing restarts it and nothing announces it --
+made a verification fail three times over on 2026-09-18, one run's GLES group
+reading 57 and 71 per cent slow while its Vulkan group was perfect to four
+tenths. That asymmetry is what it looks like: the two devices are measured in
+sequence, so contention lands on whichever group was running. A group several per
+cent slow together while the other device's group is clean is interference and not
+a renderer.
+
 `/tmp` is wiped on reboot, so a lockup costs the binary as well as the run.
 A bench that dies instantly with `nohup: failed to run command './xtask'` is
 that, not the board.

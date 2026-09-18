@@ -2429,8 +2429,15 @@ rather than in principle.
 
   | device | field ÷ tessellated at one sample | cost of four samples |
   |---|---|---|
-  | Pi 5 V3D, Vulkan | 0.98× → **2.40×** | 1.17× → 1.23× |
+  | Pi 5 V3D, Vulkan | 0.98× → **2.40×** | 1.17× → 1.22× |
   | Pi 5 V3D, GLES | 1.00× → **2.45×** | 1.17× → 1.50× |
+
+  The four-sample cost read 1.23× until the baseline was re-recorded on
+  2026-09-18 for the two stroked rows, and reads 1.22× from the same two numbers
+  measured again -- 4.521 against 4.522, 3.694 against 3.691. Nothing about
+  multisampling changed; the third decimal place moved and the second followed
+  it. Said here because a reader comparing two revisions of this table should not
+  go looking for a cause that does not exist.
 
   The paragraph above this table said the margin was expected to narrow on a
   tiler and possibly invert, and that both halves held. The first half no longer
@@ -2443,7 +2450,7 @@ rather than in principle.
 
   It goes further than narrowing. At these sample counts the field at one sample
   costs about twice the *tessellated* shapes at four -- 1.96× on Vulkan and
-  1.64× on GLES -- so on this board, for this scene, tessellating and
+  1.63× on GLES -- so on this board, for this scene, tessellating and
   multisampling is cheaper than evaluating the field, which is the opposite of
   what the numbers said a week ago.
 

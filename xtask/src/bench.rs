@@ -113,6 +113,19 @@ pub enum Path {
     /// The same again with antialiasing off, which leaves the pass at one
     /// sample and is the third of the document's three figures.
     TessellatedSingleSampled,
+    /// The same shape *stroked*, through the analytic field: a distance to the
+    /// outline rather than to the interior, still one sample.
+    ///
+    /// Strokes were timed by nothing at all until this, which is how a shader
+    /// change that cost two and a half per cent reached a release. They are
+    /// their own pair of routes and deserve their own comparison: what an
+    /// outline costs is not what a fill costs, and the tessellated one has to
+    /// build two contours where a fill builds one.
+    StrokedAnalytic,
+    /// The stroked shape as a path, which sends it through the stroker.
+    /// Antialiasing off, so this and the field above are one sample each and
+    /// the difference between them is the route.
+    StrokedTessellated,
 }
 
 impl Path {
@@ -121,9 +134,40 @@ impl Path {
             Self::Analytic => "distance field, 1 sample",
             Self::TessellatedMultisampled => "tessellated, 4 samples",
             Self::TessellatedSingleSampled => "tessellated, 1 sample",
+            Self::StrokedAnalytic => "stroked field, 1 sample",
+            Self::StrokedTessellated => "stroked path, 1 sample",
         }
     }
+
+    /// Whether this path strokes rather than fills.
+    fn strokes(self) -> bool {
+        matches!(self, Self::StrokedAnalytic | Self::StrokedTessellated)
+    }
+
+    /// Whether the shape goes to the tessellator rather than the field.
+    fn tessellates(self) -> bool {
+        matches!(
+            self,
+            Self::TessellatedMultisampled
+                | Self::TessellatedSingleSampled
+                | Self::StrokedTessellated
+        )
+    }
 }
+
+/// Wide enough that the stroke is geometry rather than the thin-stroke rule.
+///
+/// A width under a device pixel is widened to one and dimmed to pay for it,
+/// which is a different measurement and a much smaller one -- what these two
+/// rows are for is what an outline costs when there is an outline. Four device
+/// pixels at this frame size, on shapes a hundred and twenty across.
+const STROKE_WIDTH: f32 = 4.0;
+
+/// Under a device pixel the width is widened to one and dimmed to pay for it,
+/// which is a different measurement and a much smaller one. Held here so that
+/// lowering the constant fails the build rather than quietly changing what the
+/// two rows mean.
+const _: () = assert!(STROKE_WIDTH >= 1.0);
 
 /// Lay the shapes out in a grid that fills the frame.
 ///
@@ -147,15 +191,27 @@ fn shapes() -> impl Iterator<Item = Rect> {
 pub fn recording(path: Path) -> Recording {
     let mut canvas = Canvas::new(EXTENT);
     canvas.clear(Color::BLACK);
-    let paint = Paint::fill(Color::WHITE).with_anti_alias(path != Path::TessellatedSingleSampled);
+    // The field route needs antialiasing -- its coverage *is* the distance, and
+    // the analytic path declines a paint that asked for none -- while the
+    // tessellated rows turn it off to stay at one sample. So this is which
+    // route the path names rather than a per-path flag.
+    let anti_alias = !matches!(
+        path,
+        Path::TessellatedSingleSampled | Path::StrokedTessellated
+    );
+    let paint = match path.strokes() {
+        true => Paint::stroke(Color::WHITE, STROKE_WIDTH),
+        false => Paint::fill(Color::WHITE),
+    }
+    .with_anti_alias(anti_alias);
     for rect in shapes() {
-        let drawn = match path {
-            Path::Analytic => canvas.draw_rrect(rect, 12.0, &paint),
+        let drawn = match path.tessellates() {
             // The same shape and the same paint, stated as a path so that the
             // tessellator sees it rather than the fragment stage. Comparing
             // the two forms of one shape is what makes this a measurement of
             // the path rather than of the content.
-            _ => canvas.draw_path(&rect.to_rounded_path(12.0), &paint),
+            true => canvas.draw_path(&rect.to_rounded_path(12.0), &paint),
+            false => canvas.draw_rrect(rect, 12.0, &paint),
         };
         drawn.expect("a rounded rectangle");
     }
@@ -428,6 +484,8 @@ pub fn gather(skip: &[String], report: &mut dyn FnMut(Event)) {
         Path::Analytic,
         Path::TessellatedMultisampled,
         Path::TessellatedSingleSampled,
+        Path::StrokedAnalytic,
+        Path::StrokedTessellated,
     ];
 
     for index in 0.. {
@@ -593,14 +651,22 @@ fn render(event: &Event) -> String {
 }
 
 fn epilogue() -> &'static str {
-    "\nThe first three lines of each device are one comparison: the same \n\
-     shapes drawn two ways, so the difference between them is the route and \n\
-     not the content. The last line is not part of it. That is a whole frame \n\
-     of mixed content -- a tabulated gradient behind, shadowed cards over it, \n\
-     a blurred layer on top -- and it is there because a renderer can be \n\
-     quick at a hundred and sixty identical rectangles and slow at \n\
-     everything an interface is made of. Read it against a frame budget; \n\
-     read the three above it against each other.\n\
+    "\nEach device's lines are two comparisons and a budget. The first three \n\
+     are one shape filled two ways and the next two are the same shape \n\
+     stroked two ways, so within a group the difference is the route and not \n\
+     the content -- and a fill's cost is not an outline's, which is why they \n\
+     are not read across. The last line is not part of either. That is a whole \n\
+     frame of mixed content -- a tabulated gradient behind, shadowed cards \n\
+     over it, a blurred layer on top -- and it is there because a renderer can \n\
+     be quick at a hundred and sixty identical rectangles and slow at \n\
+     everything an interface is made of.\n\
+     \n\
+     None of these times the *recording*, which is where the stroke rules \n\
+     live: a width widened to a pixel, the alpha that pays for it, and a \n\
+     hairline snapped onto one all happen while the frame is being built, and \n\
+     the clock starts after that. What the two stroked rows measure is what an \n\
+     outline costs to draw -- the field's fragment work, and the geometry the \n\
+     stroker emits, which is two contours where a fill has one.\n\
      \n\
      Medians, with the frame ninety-nine hundredths came in under beside \n\
      them. Nothing here passes or fails: these are what this machine did, \n\
@@ -1042,6 +1108,40 @@ mod tests {
         // would look like a measurement of shading alone.
         let rendered = text(&[Event::Measured(a_timing(Path::Analytic.name()))]);
         assert!(rendered.contains("160 draws"), "{rendered}");
+    }
+
+    #[test]
+    fn a_stroked_row_strokes_and_takes_the_route_it_is_named_for() {
+        // The two stroked rows exist to be a comparison, which they are only if
+        // each takes the route its name claims. Read off the draw count, which
+        // is what separates the two: the analytic field carries the shape's
+        // parameters in its own material, so a hundred and sixty of them cannot
+        // merge, and the tessellated one puts every outline through a single
+        // solid material and comes out as one draw. A stroked row that had
+        // quietly fallen back to tessellation would report one draw here and
+        // measure the same thing twice.
+        assert_eq!(
+            recording(Path::StrokedAnalytic).draw_count(),
+            SHAPES,
+            "a stroked field is one draw per shape, so falling back to the \
+             tessellator would show here"
+        );
+        assert_eq!(
+            recording(Path::StrokedTessellated).draw_count(),
+            1,
+            "stroked outlines share one material and merge"
+        );
+
+        // And they stroke. A fill and an outline of the same rounded rectangle
+        // differ in the geometry submitted, so the vertex counts cannot match --
+        // an outline is two contours where a fill is one.
+        let vertices = |path| recording(path).passes[0].batch.vertices().len();
+        assert_ne!(
+            vertices(Path::StrokedTessellated),
+            vertices(Path::TessellatedSingleSampled),
+            "a stroked path and a filled one submitted the same geometry, so one \
+             of them is not doing what it says"
+        );
     }
 
     #[test]

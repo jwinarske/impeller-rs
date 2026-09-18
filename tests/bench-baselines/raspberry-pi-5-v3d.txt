@@ -44,6 +44,76 @@
 # later reader can find. Update it when a `--check` run passes, whether or not
 # the numbers are re-recorded.
 #
+# Re-recorded a fifth time on 2026-09-18, for two new rows rather than for a
+# change in the renderer. `stroked field, 1 sample` and `stroked path, 1 sample`
+# are the same hundred and sixty rounded rectangles *stroked* at four device
+# pixels, once through the analytic field and once through the tessellator, so
+# strokes get the route comparison the fills already had. Nothing timed a stroke
+# before this, which is how a shader change that cost two and a half per cent
+# reached a release.
+#
+# What they measure, and what they do not. Only `execute` is timed and the
+# recording is built before the clock starts, so the stroke *rules* -- a width
+# widened to a pixel, the alpha that pays for it, a hairline snapped onto one --
+# are not in these numbers. They live in the recording. What is here is what an
+# outline costs to draw: the field's fragment work, and the geometry the stroker
+# emits.
+#
+# The stroked path is the cheapest row in the file, at a fifth of the filled
+# tessellated one, and that is not a mistake. An outline four pixels wide covers
+# a band around each shape where a fill covers the whole interior, and fragments
+# are what a tiler spends. Stroking costs more to *build* and far less to draw.
+#
+# Two new tolerances, measured over ten runs. The Vulkan stroked field joins the
+# bimodal family: it separates into 9.432/9.432/9.437 and
+# 9.790/9.794/9.795/9.800/9.806/9.818, a gap of 3.9 per cent, so it carries 5.0
+# like the distance field beside it. Both stroked path rows hold one cluster
+# about one per cent wide and carry 2.0. The GLES stroked field holds
+# 9.475-9.515 across six runs and spiked once to 9.905 in a seventh whose other
+# rows were clean, so it carries 5.0 as well rather than reporting that spike as
+# a regression every few runs.
+#
+# **The Vulkan frame row moved and the renderer did not.** It was 13.955 and is
+# 14.135, up 1.3 per cent, and the commit that re-recorded this touches
+# `xtask/src/bench.rs` and nothing else -- no renderer code at all. Two more
+# configurations now run before the frame in the same process, and that is what
+# it responded to. Checked for heat and it is not heat: a run from a cold board
+# at 58 C gives 14.135 to the thousandth, the same as one taken at 66 C. So this
+# row's number is not portable across changes to the bench's own shape, which is
+# worth knowing before reading a future move in it as a renderer's doing.
+#
+# One older claim above is now doubtful. It says all four Vulkan rows land in one
+# of two states, the frame moving 1.6 per cent with them. Over nine clean runs
+# here the frame held 14.138-14.202 -- one cluster, less than half a per cent --
+# while the distance field and the stroked field each separated cleanly. So with
+# five rows the frame did not follow them. Not asserted as a change in the
+# board, since nothing here re-tested the older measurement's conditions; noted
+# so the next person to read that paragraph knows it was not reproduced.
+#
+# Checked three times on a quiet board after recording, from 58 C, all three
+# passing. Two of the three landed in the slower Vulkan state and stayed inside
+# the tolerances that exist for it -- distance field +4.0 and +4.1, stroked field
+# +3.9 and +4.0 against 5.0 -- and the third landed in the faster one and held
+# every row to two tenths. GLES held every row to three tenths in all three. So
+# the two new tolerances are sized by what the board does rather than by taste.
+#
+# **A quiet board is a precondition and this one is not always quiet.** The first
+# attempt at that verification failed three times over, with one run's GLES group
+# reading 57 and 71 per cent slow while its Vulkan group was perfect to four
+# tenths. The cause was `homescreen`, a Flutter embedder, running at about a
+# sixth of a core and drawing through the same V3D: not a service, so nothing
+# restarts it and nothing announces it. `pgrep homescreen` before a run is worth
+# more than any amount of re-running, and a group of rows that comes back several
+# per cent slow together while the other device's group is clean is what it looks
+# like.
+#
+# Contaminated sections are excluded from all of the above, and the rule is
+# stated rather than applied quietly: a device's whole group of rows comes back
+# several per cent slow together, the frame row worst, which is the descheduling
+# the epilogue describes. Of ten runs, one had a bad Vulkan group and three a
+# bad GLES group, and they are dropped per group rather than per run because the
+# two devices are measured in sequence and only one was ever affected at a time.
+#
 # Re-recorded a fourth time on 2026-09-01, for one commit: `1f64a28`, which
 # folded a rounded rectangle's fill and its outline into one expression. It was
 # written for the duplication rather than for the clock, and the shader it left
@@ -134,11 +204,15 @@
 #
 #
 # device	configuration	median in milliseconds	[tolerance %]
-vulkan:0 V3D 7.1.7.0	distance field, 1 sample	8.853	5.0
-vulkan:0 V3D 7.1.7.0	tessellated, 4 samples	4.522	2.0
-vulkan:0 V3D 7.1.7.0	tessellated, 1 sample	3.691	2.0
-vulkan:0 V3D 7.1.7.0	full frame, mixed content	13.955	2.5
-gles V3D 7.1.7.0	distance field, 1 sample	8.917
-gles V3D 7.1.7.0	tessellated, 4 samples	5.452
-gles V3D 7.1.7.0	tessellated, 1 sample	3.642
-gles V3D 7.1.7.0	full frame, mixed content	14.835
+vulkan:0 V3D 7.1.7.0	distance field, 1 sample	8.863	5.0
+vulkan:0 V3D 7.1.7.0	tessellated, 4 samples	4.521	2.0
+vulkan:0 V3D 7.1.7.0	tessellated, 1 sample	3.694	2.0
+vulkan:0 V3D 7.1.7.0	stroked field, 1 sample	9.427	5.0
+vulkan:0 V3D 7.1.7.0	stroked path, 1 sample	1.218	2.0
+vulkan:0 V3D 7.1.7.0	full frame, mixed content	14.135	2.5
+gles V3D 7.1.7.0	distance field, 1 sample	8.908
+gles V3D 7.1.7.0	tessellated, 4 samples	5.460
+gles V3D 7.1.7.0	tessellated, 1 sample	3.641
+gles V3D 7.1.7.0	stroked field, 1 sample	9.480	5.0
+gles V3D 7.1.7.0	stroked path, 1 sample	1.351	2.0
+gles V3D 7.1.7.0	full frame, mixed content	14.828
