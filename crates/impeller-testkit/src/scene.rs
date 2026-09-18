@@ -943,6 +943,23 @@ pub enum Node {
         rect: Option<[f32; 4]>,
         /// And remove this from it.
         rect_out: Option<[f32; 4]>,
+        /// And keep only what this shape admits, for a clip that is not a
+        /// rectangle.
+        ///
+        /// Separate from the rectangles rather than replacing them: a
+        /// rectangular clip is the one an axis-aligned scissor can carry, and
+        /// the renderer takes that route when it can. Stating a rectangle as a
+        /// shape here would send it down the stencil instead and quietly
+        /// measure something else.
+        shape: Option<Shape>,
+        /// In force over the clip and over what it scopes alike.
+        ///
+        /// Upstream's shape clips arrive under a `Save` and a transform, and
+        /// the transform is what makes them interesting: a clip that did not
+        /// turn with the caller would stay square. It applies before the clip
+        /// is taken, so the shape is stated in the space the caller is drawing
+        /// in rather than in the frame's.
+        transform: Transform,
         children: Vec<Node>,
     },
 }
@@ -1418,9 +1435,9 @@ impl Node {
                 Some(matrix) => vec![transform, matrix],
                 None => vec![transform],
             },
-            // A clip has no transform of its own. Its rectangles are stated in
-            // the space it is opened in, like a layer's bounds.
-            Self::Clip { .. } => Vec::new(),
+            // Its rectangles are stated in the space it is opened in, like a
+            // layer's bounds, and its own transform is what opens that space.
+            Self::Clip { transform, .. } => vec![transform],
         }
     }
 
@@ -3081,6 +3098,8 @@ pub fn corpus() -> Vec<Scene> {
                 // Never a scissor whatever the transform: the complement of a
                 // rectangle is not one, so this goes to the stencil.
                 rect_out: Some([96.0, 96.0, 128.0, 128.0]),
+                shape: None,
+                transform: Transform::default(),
                 children: vec![
                     Item::fill(
                         Shape::Rect {
@@ -3585,6 +3604,8 @@ pub fn corpus() -> Vec<Scene> {
             vec![Node::Clip {
                 rect: None,
                 rect_out: Some([96.0, 96.0, 128.0, 128.0]),
+                shape: None,
+                transform: Transform::default(),
                 children: vec![Node::Paint(Box::new(PaintSpec {
                     fill: Fill::LinearGradient {
                         start: [0.0, 0.0],

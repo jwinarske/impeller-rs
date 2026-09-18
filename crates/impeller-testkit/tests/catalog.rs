@@ -638,8 +638,11 @@ fn a_bounded_backdrop_blur_moves_with_the_transform_it_was_opened_under() {
     let varied = |ctx: &mut Validated, index: usize, change: &dyn Fn(&mut Transform)| {
         let mut changed = scene.clone();
         match &mut changed.items[index] {
-            Node::Layer { transform, .. } => change(transform),
-            other => panic!("item {index} should be a bounded layer, and is {other:?}"),
+            // The first band is a layer whose bounds travel with its own
+            // transform; the second states its turn as a clip around one, the
+            // way upstream does, so the transform to change is the clip's.
+            Node::Layer { transform, .. } | Node::Clip { transform, .. } => change(transform),
+            other => panic!("item {index} should carry a transform, and is {other:?}"),
         }
         render::<VulkanHal>(ctx, &changed)
     };

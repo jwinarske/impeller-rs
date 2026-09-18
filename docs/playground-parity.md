@@ -175,7 +175,7 @@ column is right and the obvious way to check it is wrong.
 | `aiks_dl_basic_unittests.cc` | ~85 | 87 | nothing; see below |
 | `aiks_dl_path_unittests.cc` | ~30 | 37 | nothing; see below |
 | `aiks_dl_gradient_unittests.cc` | ~40 | 46 | nothing; see below |
-| `aiks_dl_clip_unittests.cc` | ~6 | 7 | one clips a group with a round superellipse, which a `Node::Clip` cannot state -- it takes rectangles, and a shape clip belongs to one draw rather than to a run of them |
+| `aiks_dl_clip_unittests.cc` | ~6 | 8 | nothing; this file is covered |
 | `aiks_dl_opacity_unittests.cc` | ~3 | 3 | nothing; this file is covered |
 | `aiks_dl_blend_unittests.cc` | ~79 | 77 | capability injection for one, a wide-gamut target for two, a callback for one, and one whose color filter is the identity by arithmetic; see below |
 | `aiks_dl_blur_unittests.cc` | ~64 | 64 | nothing; see below |
@@ -241,7 +241,7 @@ great many multisampled circles. Whether that counts as mirroring them is a
 judgment about what a plate is for, not a count, and it is the one part of this
 row nobody has made.
 
-The catalog holds four hundred and thirty scenes against a column totalling
+The catalog holds four hundred and thirty-one scenes against a column totalling
 about four hundred, and the two are not a ratio: five chapters hold more than
 the file they mirror, because a scene here is one picture where a test there can
 be a loop over every blend mode or a family drawn twice. What the totals meeting
@@ -529,14 +529,20 @@ exactly what a caller writing the clip out as the layer's bounds always got --
 `narrowing_to_the_clip_records_what_stating_it_would` holds the two spellings to
 the same recording.
 
+The blur that filters the capture is narrowed too, which turned out to need no
+padding at all: those passes read the whole capture and only have to *write* the
+region the layer will hold, so what shrinks is the writing. A frosted panel
+forty pixels across in a frame of a hundred and twenty-eight went from five
+frame-sized passes to two, the other three being the clip's size -- 37568 pixels
+of pass area against 81920.
+
 What is left is the sharing, and it is the harder half. A capture shared by key
 has to cover every group that names the id, which is upstream's coverage union;
 this renderer knows the groups only as it reaches them, so the first capture is
 made before the last sharer is known. Layers naming a key are excluded from the
-narrowing above for that reason, and they are still frame-sized. So are the
-capture and its blur passes even for an unshared layer: those are built when the
-layer opens, from the parent, and narrowing them needs the target's padding to
-cover the *backdrop* blur's kernel, which `Layer::reach` does not report.
+narrowing above for that reason, and are still frame-sized. The capture itself
+is the pass being cut, so it is the parent's size whatever happens -- that one
+is not an allocation this layer asks for.
 
 What is left of the file is eight, and each has a reason. Four drive a
 callback rather than building one picture -- three named `Interactive` with
@@ -553,11 +559,13 @@ upstream renders into a texture first, which is `Picture.toImage`; the fixture
 sheet stands in, tiled the same way, since what the scene is about is an
 image-shaded paint drawn plain and through a blur on rectangles and strokes.
 `CanRenderBoundedBlurWithTranslation` blurs two bounded backdrops, one moved and
-one moved, scaled and turned, and the turned one comes out upright here where it
-is tilted upstream. A layer's target is an axis-aligned box in device space on
-both sides, so upstream's tilted edge comes from the clip it states under the
-same transform -- and a clip that turns is something a scene can put on one draw
-and not around a layer. The plate still checks what it can:
+one moved, scaled and turned. Its turned band came out upright at first, and the
+reason was the scene format rather than the renderer: a layer's target is an
+axis-aligned box in device space on both sides, so upstream's tilted edge comes
+from the clip it states under the same transform, and a clip could be put on one
+draw here but not around a group. `Node::Clip` takes a shape and a transform
+now, so the plate states the turn as upstream does and the band is tilted. The
+plate checks the rest:
 `a_bounded_backdrop_blur_moves_with_the_transform_it_was_opened_under` moves the
 first band and unturns the second, and requires the picture to change both
 times.
