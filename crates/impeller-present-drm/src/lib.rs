@@ -22,7 +22,7 @@
 //! | board | controller | outcome |
 //! |---|---|---|
 //! | Pi 4 | `vc4` | the import is refused |
-//! | Pi 5 | `vc4`, HDMI | **every test passes**, since `possible_crtcs` is honoured |
+//! | Pi 5 | `vc4`, HDMI | **every test passes**, since `possible_crtcs` is honored |
 //! | Pi 5 | `rp1-dsi`, DSI | **every test passes** |
 //!
 //! So direct scanout does work on a board, end to end: over DSI at 800x1280 and
@@ -30,7 +30,7 @@
 //! has been shown to reach a panel rather than a virtual display controller.
 //!
 //! The HDMI half of that took a fix rather than a discovery. It refused every
-//! commit until `primary_plane_for` began honouring the kernel's
+//! commit until `primary_plane_for` began honoring the kernel's
 //! `possible_crtcs` mask, which the comment there had said would be the precise
 //! answer and had not been consulted -- see that function for what the mask
 //! says on a Pi 5 and why the first CRTC is the wrong one to pair with the
@@ -73,7 +73,7 @@
 //! undiagnosed. It was a plane committed to a CRTC that cannot drive it: four
 //! CRTCs, forty-eight planes, and a `possible_crtcs` mask of `1110` that
 //! excludes exactly the CRTC a single connected output is otherwise given.
-//! Honouring the mask fixed it.
+//! Honoring the mask fixed it.
 //!
 //! Worth noticing how it hid. The kernel logs nothing for this, the error names
 //! the commit rather than the plane, and every one of the three other

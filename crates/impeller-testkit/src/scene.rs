@@ -2421,7 +2421,7 @@ pub fn corpus() -> Vec<Scene> {
         // a color that varies, which is what makes it a filter rather than a
         // recoloring of the stops. Asymmetric on purpose -- every row is the
         // same weights, so a transposed matrix would leave each end its own
-        // hue instead of turning both grey.
+        // hue instead of turning both gray.
         Scene::new(
             "color-filter-luminance",
             vec![Item::filled(

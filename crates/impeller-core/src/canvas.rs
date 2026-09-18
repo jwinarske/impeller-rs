@@ -5971,10 +5971,10 @@ fn tonal_shadow_color(color: Color) -> Color {
     let color_alpha = (3.544_762 + (-4.891_428 + 2.346_6 * luminance) * luminance) * luminance;
     let color_alpha = (alpha_adjust * color_alpha).clamp(0.0, 1.0);
 
-    let greyscale_alpha = (alpha * (1.0 - 0.4 * luminance)).clamp(0.0, 1.0);
+    let grayscale_alpha = (alpha * (1.0 - 0.4 * luminance)).clamp(0.0, 1.0);
 
-    let color_scale = color_alpha * (1.0 - greyscale_alpha);
-    let tonal_alpha = color_scale + greyscale_alpha;
+    let color_scale = color_alpha * (1.0 - grayscale_alpha);
+    let tonal_alpha = color_scale + grayscale_alpha;
     // Guarded because a fully transparent shadow leaves both terms at zero, and
     // the ratio below is the only place that could divide by it.
     let unpremul_scale = if tonal_alpha != 0.0 {
@@ -6436,7 +6436,7 @@ mod tests {
             .unwrap();
 
         // Sampling is a property of the pass, so it cannot vary per shape.
-        // Honouring the request for the frame beats silently ignoring it.
+        // Honoring the request for the frame beats silently ignoring it.
         assert!(canvas.finish().root().descriptor.samples > 1);
     }
 
@@ -6490,7 +6490,7 @@ mod tests {
         //   alpha_adjust    = (2.6 + (-2.66667 + 1.06667*0.25)*0.25)*0.25 = 0.5
         //   color_alpha     = (3.544762 + (-4.891428 + 2.3466*0.5)*0.5)*0.5
         //                   = 0.842849, times alpha_adjust  = 0.421424
-        //   greyscale_alpha = 0.25 * (1 - 0.4*0.5)           = 0.2
+        //   grayscale_alpha = 0.25 * (1 - 0.4*0.5)           = 0.2
         //   color_scale     = 0.421424 * 0.8                 = 0.337140
         //   tonal_alpha     = 0.537140
         //   unpremul_scale  = 0.337140 / 0.537140            = 0.627650

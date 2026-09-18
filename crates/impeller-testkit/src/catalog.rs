@@ -3546,7 +3546,7 @@ fn gradient() -> Vec<Scene> {
             "gradient/can-render-linear-gradient-with-dithering-enabled",
             // 0xCCCCCC to 0x333333, which is upstream's pair and is taken from
             // the issue that put dithering in the renderer at all. Both are
-            // grey, so all three channels band together and in step, which is
+            // gray, so all three channels band together and in step, which is
             // what makes it visible rather than merely present.
             vec![Item::filled(
                 band.clone(),
@@ -6591,7 +6591,7 @@ fn atlas_scenes() -> Vec<Scene> {
         ),
         atlas(
             "atlas/draw-atlas-with-color-burn",
-            // Four greys running black to white against a mode that divides by
+            // Four grays running black to white against a mode that divides by
             // what it is given: `ColorBurn` leaves the destination alone at
             // white and takes it to black at black, so the four sprites make a
             // sweep from untouched to erased over the same texels. The plate

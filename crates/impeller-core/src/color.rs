@@ -339,7 +339,7 @@ mod tests {
     }
 
     #[test]
-    fn mid_grey_is_not_a_fixed_point() {
+    fn mid_gray_is_not_a_fixed_point() {
         // The whole reason the conversion exists. Half in sRGB is a little over
         // a fifth in linear, and treating them as the same is what makes
         // blended edges too dark.
@@ -353,7 +353,7 @@ mod tests {
     #[test]
     fn the_linear_segment_covers_near_black() {
         // A pure power curve has infinite slope at zero, so the standard uses a
-        // linear segment there. Without it, very dark values quantise badly.
+        // linear segment there. Without it, very dark values quantize badly.
         assert!(close(srgb_to_linear(0.04), 0.04 / 12.92));
         assert!(srgb_to_linear(0.0001) > 0.0);
     }
@@ -577,17 +577,17 @@ mod tests {
         );
     }
 
-    /// The neutral axis is shared, so a grey is a grey in either space. Needs
+    /// The neutral axis is shared, so a gray is a gray in either space. Needs
     /// no derivation to believe.
     #[test]
-    fn greys_agree_between_the_spaces() {
+    fn grays_agree_between_the_spaces() {
         for value in [0.0, 0.25, 0.5, 1.0] {
             let through_srgb = Color::srgb(value, value, value, 1.0).to_array();
             let through_p3 = Color::display_p3(value, value, value, 1.0).to_array();
             for i in 0..4 {
                 assert!(
                     close(through_srgb[i], through_p3[i]),
-                    "grey {value}, component {i}: {} against {}",
+                    "gray {value}, component {i}: {} against {}",
                     through_srgb[i],
                     through_p3[i]
                 );

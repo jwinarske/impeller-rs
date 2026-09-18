@@ -609,7 +609,7 @@ a uniform block — that arrived in 3.10, above this project's floor — so the
 build step adds it, asserts it found exactly what it expected, and a test reads
 the generated source back to confirm.
 
-Changing the mechanism is not a licence to change the size, and the size is
+Changing the mechanism is not a license to change the size, and the size is
 stated once -- below, where the number is under test -- rather than restated
 here where it would go stale. It did go stale here once, which is why.
 
@@ -2601,7 +2601,7 @@ rather than in principle.
   coverage is between nothing and all of it. No iteration and no intermediate
   distance.
 
-  Forming the distance first and then normalising it does work, and was tried:
+  Forming the distance first and then normalizing it does work, and was tried:
   it approximates twice, and two devices need not make the same error at each
   step. That version diverged across devices by six units where this one
   diverges by two, on top of being longer and costing an extra square root.
