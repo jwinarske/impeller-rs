@@ -577,3 +577,54 @@ upstream has derived either.
 `Clear` on a shape with no analytic form. `SrcOver` is what nearly every blurred
 draw uses. Where it does bite it is loud rather than subtle: a rectangle appears
 where a soft shape was asked for.
+
+## 13. A tint blend in `Plus` saturates in the shader, not at the target
+
+**What differs.** `Plus` reaches three different places here, and one of them
+clamps. A paint's own blend mode goes to the hardware as `One, One`, and a `Plus`
+color filter is affine in the destination so it becomes a color matrix; both leave
+the saturation to the attachment, which means an eight-bit target clips the sum
+and a floating-point one keeps it. A per-sprite *tint* on `draw_atlas`, and the
+same field on a mesh, go through the shader's `blend_tint`, whose arm for the mode
+is `min(src + dst, 1)`. So a tint sum stops at one wherever it is written.
+Upstream's `DrawAtlasPlusWideGamut` is the scene that can see the difference: it
+requires an extended-range default format and adds to a bright texel.
+
+**Why.** The clamp was removed to make the three agree, and put back after
+measuring what that cost. On a Raspberry Pi 5, against a baseline the commit
+before it reproduced to within three tenths of a per cent on all eight rows over
+three runs:
+
+| row | with the clamp | without it | shift |
+|---|---|---|---|
+| Vulkan distance field | 8.85 ms | 9.06 ms | +2.4% |
+| Vulkan tessellated, either sample count | — | — | +0.9% |
+| Vulkan full frame | 13.96 ms | 14.18 ms | +1.6% |
+| GLES full frame | 14.84 ms | 15.01 ms | +1.2% |
+| GLES distance field, tessellated | — | — | flat |
+
+Read state for state: that board's four Vulkan rows are bimodal and settle at
+process start, so the fast state is compared with the fast state. The raw
+`--check` output says +6.4%, which is a slow state against a fast one and
+overstates it.
+
+Removing one instruction made the shader slower, which is register allocation on
+V3D rather than anything arithmetic, and is the same step-function behavior
+`docs/architecture.md` records for shader work. Attribution is exact rather than
+inferred: rebuilding the tree with only that line restored produces a
+byte-identical binary to the commit that measured clean, because everything else
+in the two commits between them is test and document text.
+
+What the removal bought was agreement on a floating-point target. Nothing here
+presents one -- §4 above -- so the only place the disagreement can be observed is
+a test that creates such a target itself. Paying one to two and a half per cent on
+every frame of the configurations that do ship, for a difference none of them can
+show, is the wrong way round.
+
+**Impact.** A tint or a mesh's per-vertex color combined with `Plus`, and only
+where the sum would pass one, and only on a target that could have held it. On
+every eight-bit target -- which is every target this renderer can present to --
+the clamp is invisible, because the attachment would have clipped the sum anyway.
+`an_atlas_tint_in_plus_is_clipped_where_the_other_routes_are_not` pins it, and is
+written to fail if the clamp comes out again so that whoever notices the
+inconsistency finds the cost recorded rather than rediscovering it.

@@ -820,15 +820,23 @@ upstream takes -- the blend on the draw and the same arithmetic as a color filte
 on a group -- and each is checked twice, once into a float target where it has to
 pass one and once into eight bits where it has to clip.
 
-Mirroring them found a defect, and it was in a third route neither of them takes.
-The atlas chapter's `DrawAtlasPlusWideGamut` is the same claim through a per-sprite
-tint, and that path clamped: `blend_tint`'s `Plus` arm was
-`min(src + dst, vec4(1.0))` where the hardware path reaches the mode as
-`One, One` and leaves the saturation to the target. So the same mode gave
-different answers depending on which route a draw took, on exactly the targets
-that can tell them apart -- invisible in eight bits, which is why nothing caught
-it. The clamp is gone and
-`an_atlas_tint_in_plus_is_not_clipped_by_a_float_target` holds the agreement.
+Mirroring them found a difference in a third route neither of them takes, and the
+difference is kept on purpose. The atlas chapter's `DrawAtlasPlusWideGamut` is the
+same claim through a per-sprite tint, and that path clamps: `blend_tint`'s `Plus`
+arm is `min(src + dst, vec4(1.0))` where the hardware path reaches the mode as
+`One, One` and leaves the saturation to the target. So the same mode gives
+different answers depending on which route a draw takes, on exactly the targets
+that can tell them apart -- invisible in eight bits, which is why nothing had
+caught it.
+
+The clamp came out and went back in. Removing it cost 2.4 per cent on the Vulkan
+distance-field row and 1.2 on the GLES full frame on a Pi 5, against a baseline the
+commit before it reproduced to within three tenths of a per cent, and what it
+bought was agreement on a floating-point target -- which nothing here presents. §13
+of `docs/non-parity.md` has the numbers and the reasoning, and
+`an_atlas_tint_in_plus_is_clipped_where_the_other_routes_are_not` pins the
+deviation so that the next reader of `blend_tint` finds the cost recorded rather
+than rediscovering it.
 
 The scene that widening caught is mirrored now too, as a test rather than a
 plate and for the reason it was caught: its feature leaves the picture unchanged,
@@ -1158,9 +1166,9 @@ made the chapter look a third emptier than it is. So the count beside it is
 eleven.
 
 Of the rest: one is `Plus` into a wide-gamut target, which is a test now --
-`an_atlas_tint_in_plus_is_not_clipped_by_a_float_target`, and it found the tint
-path clamping a mode the hardware path does not -- and one is a four-color
-modulate that is the plate
+`an_atlas_tint_in_plus_is_clipped_where_the_other_routes_are_not`, and what it
+found is the tint path clamping a mode the hardware path does not, kept for the
+reason §13 of `docs/non-parity.md` gives -- and one is a four-color modulate that is the plate
 already here under `draw-atlas-with-color-simple` -- the same four sprites, the
 same mode, a different name upstream. The other three went in.
 

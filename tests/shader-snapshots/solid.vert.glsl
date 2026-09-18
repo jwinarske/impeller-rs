@@ -287,7 +287,7 @@ vec4 blend_tint(int mode_2, vec4 src, vec4 dst) {
             return ((src * (1.0 - da)) + (dst * (1.0 - sa)));
         }
         case 12: {
-            return (src + dst);
+            return min((src + dst), vec4(1.0));
         }
         case 13: {
             return (src * dst);
@@ -299,16 +299,16 @@ vec4 blend_tint(int mode_2, vec4 src, vec4 dst) {
     vec3 cs_3 = clamp(((sa <= 0.0) ? vec3(0.0) : (src.xyz / vec3(sa))), vec3(0.0), vec3(1.0));
     vec3 cb_3 = clamp(((da <= 0.0) ? vec3(0.0) : (dst.xyz / vec3(da))), vec3(0.0), vec3(1.0));
     if ((mode_2 >= 25)) {
-        vec3 _e71 = nonseparable_b(mode_2, cb_3, cs_3);
-        mixed = _e71;
+        vec3 _e74 = nonseparable_b(mode_2, cb_3, cs_3);
+        mixed = _e74;
     } else {
-        float _e74 = separable_b(mode_2, cb_3.x, cs_3.x);
-        float _e77 = separable_b(mode_2, cb_3.y, cs_3.y);
-        float _e80 = separable_b(mode_2, cb_3.z, cs_3.z);
-        mixed = vec3(_e74, _e77, _e80);
+        float _e77 = separable_b(mode_2, cb_3.x, cs_3.x);
+        float _e80 = separable_b(mode_2, cb_3.y, cs_3.y);
+        float _e83 = separable_b(mode_2, cb_3.z, cs_3.z);
+        mixed = vec3(_e77, _e80, _e83);
     }
-    vec3 _e87 = mixed;
-    vec3 rgb = ((((sa * (1.0 - da)) * cs_3) + ((sa * da) * _e87)) + (((1.0 - sa) * da) * cb_3));
+    vec3 _e90 = mixed;
+    vec3 rgb = ((((sa * (1.0 - da)) * cs_3) + ((sa * da) * _e90)) + (((1.0 - sa) * da) * cb_3));
     return vec4(rgb, (sa + (da * (1.0 - sa))));
 }
 
