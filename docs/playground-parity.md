@@ -252,17 +252,35 @@ asked that. Written as `basic/backdrop-filter-over-unclosed-clip`, with
 `a_clip_popped_before_a_backdrop_cuts_does_not_come_back` sampling six pixels
 outside the corner clip, where a confined blur leaves white.
 
-Five remain unadjudicated and are listed so nobody has to find them again:
-`CanDrawPerspectiveTransformWithClips`, `PerspectiveRectangle`,
-`CoordinateConversionsAreCorrect`, `CanPerformFullScreenMSAA` and
-`PipelineBlendSingleParameter`. Each is a
+Three more are adjudicated the other way, and saying which and why is the
+point of keeping the list. `CanPerformFullScreenMSAA` draws one red circle and
+is named for the target it draws into; a dozen plates here are circles at four
+samples, so it is covered several times over.
+`CoordinateConversionsAreCorrect` draws an image under a translation and a
+scale, then an unbounded half-alpha group over three overlapping rectangles,
+and asks that the offscreen land where the direct draw did --
+`opacity/can-render-group-opacity-to-savelayer` is the second half exactly and
+the image plates are the first. `PipelineBlendSingleParameter` cannot be a
+plate: its feature is a blend color filter in `Dst` mode, which is the identity,
+and a scene whose feature leaves the picture unchanged is rejected by the check
+that every feature has to reach the picture. So it is a test instead,
+`a_color_filter_that_recolors_nothing_still_draws_the_shape`, which holds the
+picture its comment describes -- a green square in the middle of a blue circle
+-- and the pass count, since the filter used to cost one.
+
+Two remain unadjudicated, and both are about perspective:
+`CanDrawPerspectiveTransformWithClips` and `PerspectiveRectangle`. Each is a
 picture, and the catalog covers each subject from some other direction -- there
 are backdrop filters under clips, perspective under a clip and under a curve,
 images under a transform, and a great many multisampled circles. Whether that
 counts as mirroring them is a judgment about what a plate is for, not a count,
-and it is the one part of this row nobody has made. The two adjudicated above
-suggest the question to ask of each: not whether the subject appears elsewhere
-but whether the test pins an arrangement nothing else does.
+and it is the one part of this row nobody has made. The question that settled
+the five above is the one to ask of these: not whether the subject appears
+elsewhere but whether the test pins an arrangement nothing else does. On that
+question both look like yes, and neither is written yet. No plate draws an
+*image* through a perspective transform, none combines perspective with a
+difference clip, and none states perspective on a clip's own transform -- which
+`PerspectiveRectangle` does, since its clip is stated after the projection.
 
 The catalog holds four hundred and thirty-three scenes against a column totalling
 about four hundred, and the two are not a ratio: five chapters hold more than
@@ -1047,7 +1065,7 @@ is the one feature for which that is exactly backwards. So the two are exempt by
 name -- and the exemption asserts the opposite rather than skipping them, since
 an exemption that asserts nothing is a hole with a comment on it.
 
-The third is `ColorBurn` over four greys running black to white. The plate
+The third is `ColorBurn` over four grays running black to white. The plate
 beside it uses `Difference` with one color and says the tint setting is read at
 all; this says the arithmetic is right, because a burn done as a multiply would
 still darken and would darken wrong.

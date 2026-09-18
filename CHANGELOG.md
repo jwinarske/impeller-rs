@@ -22,6 +22,13 @@ duplication the paragraph above rules out. `docs/parity.md` says what is built,
 a test checks that it says so truly, and a copy of that claim kept by hand here
 is the same claim without the check. So there is no list.
 
+A color filter that recolors nothing no longer costs a pass. `ImageFilter::Color`
+reported itself the identity only when it wrapped `ColorFilter::None`, so a blend
+in `Dst` mode -- return the destination untouched -- and an identity color matrix
+each routed the draw through an offscreen and resampled it coming back, to arrive
+at what they were handed. It asks `ColorFilter::is_identity` now, which knows all
+three.
+
 `ColorFilter::blend` no longer answers a `Result`. It never failed: a mode that
 is affine in the destination becomes a matrix and every other mode becomes
 `ColorFilter::Blend`, evaluated per fragment against the constant. Its own
