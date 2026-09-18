@@ -1363,6 +1363,154 @@ fn basic() -> Vec<Scene> {
             ],
         ),
         Scene::tree(
+            "basic/perspective-rectangle",
+            // Upstream states its projection first and its clip after it, so the
+            // clip is a region in projected space and its own edges go through
+            // the divide. That is a clip in force over a run rather than one
+            // narrowing a single draw, which is the arrangement this collection
+            // did not have: `clip/a-rectangular-clip-under-perspective` puts the
+            // projection on the item, where the clip travels with that one draw.
+            //
+            // The term is on Y here, and every other perspective plate puts it
+            // on X. A divide by `1 + p*y` is not the transpose of a divide by
+            // `1 + p*x` as far as a rasterizer is concerned -- the interpolation
+            // runs along the other axis -- so the two are separate pictures and
+            // this is the second.
+            //
+            // The flood at half white is upstream's, and it is inside the clip:
+            // it is the draw that says where the projected region actually is,
+            // since it covers whatever the clip admits and nothing else.
+            vec![
+                Node::Paint(Box::new(PaintSpec {
+                    fill: Fill::Solid([0.1, 0.1, 0.12, 1.0]),
+                    blend: BlendMode::SrcOver,
+                    clip: None,
+                    clip_out: None,
+                    transform: Transform::default(),
+                })),
+                Node::Clip {
+                    rect: Some([8.0, 8.0, 72.0, 120.0]),
+                    rect_out: None,
+                    shape: None,
+                    transform: Transform {
+                        // Positive, so the divisor grows down the plate and the
+                        // region narrows toward the bottom. Upstream's term is
+                        // negative, and the sign is not what it is testing: its
+                        // divisor carries a constant of 2.2 and its translation
+                        // is half the frame, so the region it ends up with is on
+                        // screen. A negative term here magnifies instead, and at
+                        // the far edge of a plate this size it carries the
+                        // bottom of the clip to y = 428 -- a trapezoid nobody
+                        // can see is not the picture the test is about.
+                        perspective: [0.0, 0.006],
+                        translate: [24.0, 0.0],
+                        ..Transform::default()
+                    },
+                    children: vec![
+                        Node::Draw(Box::new(Item::fill(
+                            Shape::Rect {
+                                min: [8.0, 8.0],
+                                max: [72.0, 120.0],
+                            },
+                            [0.1, 0.3, 0.9, 1.0],
+                        ))),
+                        Node::Paint(Box::new(PaintSpec {
+                            fill: Fill::Solid([1.0, 1.0, 1.0, 0.5]),
+                            blend: BlendMode::SrcOver,
+                            clip: None,
+                            clip_out: None,
+                            transform: Transform::default(),
+                        })),
+                    ],
+                },
+            ],
+        ),
+        Scene::tree(
+            "basic/can-draw-perspective-transform-with-clips",
+            // The last of this file's seven, and the one with the most in it.
+            // Three things here appear in no other plate: an image read through
+            // a projection, a stencil clip stated in frame axes with projected
+            // content inside it, and a clip whose geometry is drawn and popped
+            // before the draw it is meant to sit behind.
+            //
+            // Upstream's comments name that third one as the point -- a clip
+            // drawn and restored "will get drawn to the depth buffer behind the
+            // image", and the oval that scopes the image "in front of the image
+            // on the depth buffer". So what it is about is which depth a clip's
+            // own geometry occupies relative to the draws around it, and it puts
+            // one on each side of the image to say so.
+            //
+            // The projection stands in for upstream's rotation about Y, which
+            // this scene model has no term for: a plane turned about the
+            // vertical axis projects to a horizontal squeeze and a horizontal
+            // divide, which is what the scale and the perspective term are.
+            // Stated rather than implied, because a reader comparing the two
+            // would otherwise look for the rotation and not find it.
+            vec![
+                // The surround, and then the difference clip that cuts the
+                // middle out of it. Upstream floods twice, the second time under
+                // a difference clip, so what is left of the first flood is the
+                // square in the middle -- and the clip is gone by the time the
+                // image draws, which is what puts its geometry behind it.
+                Node::Paint(Box::new(PaintSpec {
+                    fill: Fill::Solid(GREEN),
+                    blend: BlendMode::SrcOver,
+                    clip: None,
+                    clip_out: None,
+                    transform: Transform::default(),
+                })),
+                Node::Paint(Box::new(PaintSpec {
+                    fill: Fill::Solid([0.0, 0.0, 0.0, 1.0]),
+                    blend: BlendMode::SrcOver,
+                    clip: None,
+                    clip_out: Some([28.0, 28.0, 100.0, 100.0]),
+                    transform: Transform::default(),
+                })),
+                // The oval, in frame axes, holding an image that is not. Nothing
+                // else here scopes projected content with an unprojected clip,
+                // and the two cannot be folded together: the clip is a stencil
+                // and the image's corners are where the divide put them.
+                Node::Clip {
+                    rect: None,
+                    rect_out: None,
+                    shape: Some(Shape::Oval {
+                        min: [24.0, 24.0],
+                        max: [104.0, 104.0],
+                    }),
+                    transform: Transform::default(),
+                    children: vec![Node::Draw(Box::new(
+                        Item::filled(
+                            Shape::Rect {
+                                min: [20.0, 20.0],
+                                max: [108.0, 108.0],
+                            },
+                            sheet(
+                                [20.0, 20.0, 108.0, 108.0],
+                                ALL,
+                                TileMode::Clamp,
+                                Sampling::Linear,
+                            ),
+                        )
+                        .with_transform(Transform {
+                            perspective: [0.003, 0.0],
+                            translate: [14.0, 0.0],
+                            ..Transform::default()
+                        }),
+                    ))],
+                },
+                // And the translucent disc over the lot, which upstream draws
+                // last and unclipped. It is wider than the oval, so it crosses
+                // every region above and says they are all still there.
+                Node::Draw(Box::new(Item::fill(
+                    Shape::Circle {
+                        center: [64.0, 64.0],
+                        radius: 46.0,
+                    },
+                    [0.0, 0.0, 1.0, 0.4],
+                ))),
+            ],
+        ),
+        Scene::tree(
             "basic/matrix-image-filter-doesnt-cull-when-translated-from-offscreen",
             // A circle drawn well off the left of the frame, inside a group
             // whose matrix carries it back into view. What the group captures
