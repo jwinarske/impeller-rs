@@ -1492,7 +1492,7 @@ impl Canvas {
         // sigma is stated against.
         let layer = layer.scaled_by(max_scale_of(self.transform));
         let widened = self.matrix_preimage(&layer);
-        let pending = self.open_layer(layer, None, None).unwrap_or(None);
+        let pending = self.open_layer(layer, None, None, None).unwrap_or(None);
         if let Some(target) = widened {
             self.aim_at(target);
         }
@@ -1556,8 +1556,13 @@ impl Canvas {
         layer: Layer,
         filter: Option<ImageFilter>,
         backdrop: Option<&ImageFilter>,
+        region: Option<Target>,
     ) -> Result<Option<Backdrop>> {
         let parent = self.target;
+        // Where the backdrop's filter writes, which is the target the layer is
+        // about to take rather than the parent it is captured from. `None` is
+        // the caller that has not worked one out yet, and gets the parent.
+        let region = region.unwrap_or(parent);
         // The layer's own sigma is the `Copy`-friendly spelling of the same
         // thing, so it becomes a filter here and there is one path below.
         let asked = match backdrop {
@@ -1574,7 +1579,7 @@ impl Canvas {
             // The frame is pushed whether or not this succeeds: a layer that
             // fails to filter its backdrop still has to be a layer, or the
             // `restore` the caller has already written closes something else.
-            match self.backdrop_pass(layer.backdrop_id, parent, &asked) {
+            match self.backdrop_pass(layer.backdrop_id, parent, region, &asked) {
                 Ok(pending) => Some(pending),
                 Err(e) => {
                     self.push_layer_frame(layer, filter);
@@ -1609,6 +1614,7 @@ impl Canvas {
         &mut self,
         id: Option<i64>,
         parent: Target,
+        region: Target,
         filter: &ImageFilter,
     ) -> Result<Backdrop> {
         // A matrix is peeled off here rather than run as a pass. Every other
@@ -1643,10 +1649,19 @@ impl Canvas {
             other => (other, None),
         };
         let Some(id) = id else {
+            // The capture is the pass being cut, so it is the parent's size
+            // whatever happens next. What the filter *writes* need not be: its
+            // passes read the whole capture and only have to cover the region
+            // the layer will hold, which is where the seed reads from.
             let cut = self.cut_pass();
+            let pass = self.filter_passes(cut, region, filter, BlurBasis::of(self.transform))?;
             return Ok(Backdrop {
-                pass: self.filter_passes(cut, parent, filter, BlurBasis::of(self.transform))?,
-                of: parent,
+                pass,
+                // Unless the filter had nothing to do -- a matrix backdrop
+                // moves the capture rather than recomputing it, and hands the
+                // cut straight back, which is the parent's region and not this
+                // one.
+                of: if pass == cut { parent } else { region },
                 moved_by,
             });
         };
@@ -2111,11 +2126,6 @@ impl Canvas {
             let (min, max) = filter.covering(unit, unit, &|sigma| basis.reach(sigma));
             (-min).max(max)
         });
-        // Opened without seeding, because the seed has to land in the target
-        // the content will draw into and that target is decided below. A
-        // backdrop drawn into the full-size target and then narrowed would be
-        // the wrong region of the wrong image.
-        let pending = self.open_layer(layer, filter, backdrop)?;
         // A blur reaches past what it was given. The caller states where the
         // content is, which is the question they can answer; how far a blur
         // carries it is this renderer's arithmetic, and a target sized to the
@@ -2146,16 +2156,23 @@ impl Canvas {
             .y
             .ceil()
             .min(parent.origin.y + parent.extent.height as f32);
-        if !(right > left && bottom > top) {
-            // The layer keeps the full-size target it was opened with, so the
-            // backdrop is seeded across that instead.
-            self.seed_backdrop(pending);
-            return Ok(self);
-        }
-        self.aim_at(Target {
+        // Worked out before the layer is opened, because opening it is what
+        // builds the backdrop's passes and those want to know where they are
+        // writing. The layer is still opened without *seeding*: the seed has to
+        // land in the target the content will draw into, so it waits until that
+        // target is the one aimed at.
+        let narrowed = (right > left && bottom > top).then(|| Target {
             origin: Vec2::new(left, top),
             extent: Extent2D::new((right - left) as u32, (bottom - top) as u32),
         });
+        let pending = self.open_layer(layer, filter, backdrop, narrowed)?;
+        let Some(target) = narrowed else {
+            // Nothing survived the clamp, so the layer keeps the full-size
+            // target it was opened with and the backdrop is seeded across that.
+            self.seed_backdrop(pending);
+            return Ok(self);
+        };
+        self.aim_at(target);
         self.seed_backdrop(pending);
         Ok(self)
     }
@@ -6081,19 +6098,34 @@ mod tests {
 
         let recording = canvas.finish();
         let frame = recording.extent;
-        let content = recording
+        let narrowed: Vec<_> = recording
             .passes
             .iter()
             .map(|pass| pass.extent)
             .filter(|extent| *extent != frame)
-            .min_by_key(|extent| extent.width * extent.height)
-            .expect("a pass smaller than the frame");
-        assert!(
-            content.width <= 48 && content.height <= 48,
-            "the layer's own target is {}x{} for a clip forty pixels across",
-            content.width,
-            content.height
+            .collect();
+        // The layer's own target and both passes of the backdrop's blur. What
+        // stays frame-sized is the pass being captured and the one the frame
+        // ends in, and neither is allocated for this layer.
+        assert_eq!(
+            narrowed.len(),
+            3,
+            "three passes should be sized to the clip, and {} are: {:?}",
+            narrowed.len(),
+            recording
+                .passes
+                .iter()
+                .map(|pass| pass.extent)
+                .collect::<Vec<_>>()
         );
+        for extent in narrowed {
+            assert!(
+                extent.width <= 48 && extent.height <= 48,
+                "a pass came out {}x{} for a clip forty pixels across",
+                extent.width,
+                extent.height
+            );
+        }
     }
 
     /// And it draws what stating the clip as the layer's bounds would.

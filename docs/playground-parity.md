@@ -529,14 +529,20 @@ exactly what a caller writing the clip out as the layer's bounds always got --
 `narrowing_to_the_clip_records_what_stating_it_would` holds the two spellings to
 the same recording.
 
+The blur that filters the capture is narrowed too, which turned out to need no
+padding at all: those passes read the whole capture and only have to *write* the
+region the layer will hold, so what shrinks is the writing. A frosted panel
+forty pixels across in a frame of a hundred and twenty-eight went from five
+frame-sized passes to two, the other three being the clip's size -- 37568 pixels
+of pass area against 81920.
+
 What is left is the sharing, and it is the harder half. A capture shared by key
 has to cover every group that names the id, which is upstream's coverage union;
 this renderer knows the groups only as it reaches them, so the first capture is
 made before the last sharer is known. Layers naming a key are excluded from the
-narrowing above for that reason, and they are still frame-sized. So are the
-capture and its blur passes even for an unshared layer: those are built when the
-layer opens, from the parent, and narrowing them needs the target's padding to
-cover the *backdrop* blur's kernel, which `Layer::reach` does not report.
+narrowing above for that reason, and are still frame-sized. The capture itself
+is the pass being cut, so it is the parent's size whatever happens -- that one
+is not an allocation this layer asks for.
 
 What is left of the file is eight, and each has a reason. Four drive a
 callback rather than building one picture -- three named `Interactive` with
