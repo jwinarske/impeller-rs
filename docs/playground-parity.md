@@ -172,7 +172,7 @@ column is right and the obvious way to check it is wrong.
 
 | File | Scenes there | Here | Blocked on |
 |---|---|---|---|
-| `aiks_dl_basic_unittests.cc` | ~85 | 90 | nothing; see below |
+| `aiks_dl_basic_unittests.cc` | ~85 | 91 | nothing; see below |
 | `aiks_dl_path_unittests.cc` | ~30 | 37 | nothing; see below |
 | `aiks_dl_gradient_unittests.cc` | ~40 | 46 | nothing; see below |
 | `aiks_dl_clip_unittests.cc` | ~6 | 8 | nothing; this file is covered |
@@ -230,8 +230,11 @@ and `basic/save-layer-with-bounds-larger-than-the-frame`. The third the wrap
 hid, `TranslucentSaveLayerWithColorFilterAndImageFilterDrawsCorrectly`, is in
 the `dl` chapter and written too.
 
-Two of the seven left unadjudicated turned out to be worth writing after all,
-and reading them said why. `CanRenderClippedBackdropFilter` states the layer's
+The seven that had never been adjudicated are adjudicated now: five written and
+two covered from elsewhere. Reading each of them is what settled it, in the order
+below, and the criterion each was settled on is at the end.
+
+`CanRenderClippedBackdropFilter` states the layer's
 bounds as the *bounding rectangle* of a rounded clip -- "the clip coverage and
 SaveLayer size are the same", in its own comment -- so the corners have to come
 off the composite because the clip takes them and not because the layer is
@@ -252,8 +255,8 @@ asked that. Written as `basic/backdrop-filter-over-unclosed-clip`, with
 `a_clip_popped_before_a_backdrop_cuts_does_not_come_back` sampling six pixels
 outside the corner clip, where a confined blur leaves white.
 
-Three more are adjudicated the other way, and saying which and why is the
-point of keeping the list. `CanPerformFullScreenMSAA` draws one red circle and
+Three are adjudicated the other way, and saying which and why is the point of
+keeping the list. `CanPerformFullScreenMSAA` draws one red circle and
 is named for the target it draws into; a dozen plates here are circles at four
 samples, so it is covered several times over.
 `CoordinateConversionsAreCorrect` draws an image under a translation and a
@@ -268,7 +271,7 @@ that every feature has to reach the picture. So it is a test instead,
 picture its comment describes -- a green square in the middle of a blue circle
 -- and the pass count, since the filter used to cost one.
 
-`PerspectiveRectangle` is the sixth, and it states its projection first and its
+`PerspectiveRectangle` states its projection first and its
 clip after it -- so the clip is a region in projected space, its own edges go
 through the divide, and it is in force over a run rather than narrowing one
 draw. `clip/a-rectangular-clip-under-perspective` puts the projection on the item
@@ -288,19 +291,39 @@ the picture, and passed as covered. `flatten_perspective` did not reach a clip's
 children either, which `plain` hid by recursing through a clip itself.
 `a_projection_on_a_clip_is_a_feature_and_comes_off` holds both halves.
 
-One remains unadjudicated: `CanDrawPerspectiveTransformWithClips`. It is a
+`CanDrawPerspectiveTransformWithClips` is the largest of them, and three
+things in it appear in no other plate: an image read through a projection, a
+stencil clip stated in frame axes with projected content inside it, and a clip
+whose geometry is drawn and popped before the draw it is meant to sit behind.
+Upstream's own comments name that third one -- a clip drawn and restored "will
+get drawn to the depth buffer behind the image", the oval that scopes the image
+sits "in front of the image on the depth buffer" -- so it puts one on each side
+of the image to say which depth a clip's geometry occupies. Written as
+`basic/can-draw-perspective-transform-with-clips`, and both clips are checked
+from the picture by `a_clip_drawn_before_an_image_does_not_bound_it`: the middle
+has to hold the image, since the difference clip was popped before it drew, and a
+point inside the image's projected quad but outside the oval has to come back as
+ground. Turning the oval into a rectangle fails the second.
+
+The projection stands in for upstream's rotation about Y, which this scene model
+has no term for -- a plane turned about the vertical axis projects to a
+horizontal divide, which is what the perspective term is. Said in the plate
+rather than left implied, so a reader comparing the two does not go looking for a
+rotation.
+
+So the seven are adjudicated, and none is a
 picture, and the catalog covers each subject from some other direction -- there
 are backdrop filters under clips, perspective under a clip and under a curve,
 images under a transform, and a great many multisampled circles. Whether that
 counts as mirroring them is a judgment about what a plate is for, not a count,
-and on the question that settled the six above -- whether it pins an arrangement
-nothing else does -- it looks like a yes twice over. No plate draws an *image*
-through a perspective transform, and none combines perspective with a difference
-clip; that scene does both, and adds a third clip drawn and popped before the
-image so that its geometry lands behind the image in the depth buffer. It is also
-the largest of the seven to write, which is why it is still here.
+and the criterion that settled them is worth keeping for the next inventory row
+that stalls: not whether the subject appears elsewhere, but whether the test pins
+an arrangement nothing else does. Five were yes and two were no, and the two are
+named above with what covers them instead. Four defects came out of asking, none
+of them about the subjects the scenes are named for, which is the argument for
+asking rather than counting.
 
-The catalog holds four hundred and thirty-four scenes against a column totalling
+The catalog holds four hundred and thirty-five scenes against a column totalling
 about four hundred, and the two are not a ratio: five chapters hold more than
 the file they mirror, because a scene here is one picture where a test there can
 be a loop over every blend mode or a family drawn twice. What the totals meeting

@@ -1855,3 +1855,55 @@ fn a_projected_clip_narrows_across_the_plate() {
     // would satisfy the inequality above with two zeros.
     assert!(low > 8, "the lower span is {low}, which is not a region");
 }
+
+#[test]
+fn a_clip_drawn_before_an_image_does_not_bound_it() {
+    // `basic/can-draw-perspective-transform-with-clips` puts a clip on each side
+    // of a projected image, which is what upstream's own comments say it is for:
+    // one is drawn and restored so its geometry sits behind the image, the other
+    // scopes the image and sits in front of it.
+    //
+    // Both are checkable from the picture. The difference clip cut the middle
+    // out of the surround and was popped before the image drew, so the image has
+    // to be there in the middle -- if that clip reached the image, the image
+    // would be missing exactly where the cut was. And the oval is a stencil in
+    // frame axes while the image's corners are where the divide put them, so a
+    // point inside the image's projected quad and outside the oval has to come
+    // back as ground.
+    let Ok(mut ctx) = Validated::new(DevicePreference::Auto) else {
+        eprintln!("skipping: no Vulkan device");
+        return;
+    };
+    let scene = catalog()
+        .into_iter()
+        .find(|s| s.name == "basic/can-draw-perspective-transform-with-clips")
+        .expect("the plate is in the catalog");
+    let image = render::<VulkanHal>(&mut ctx, &scene);
+
+    // The two grounds, each under the translucent disc: the square the
+    // difference clip spared, and the surround it flooded.
+    let square = [0u8, 153, 102, 255];
+    let surround = [0u8, 0, 102, 255];
+    let is_ground = |p: [u8; 4]| p == square || p == surround;
+
+    assert!(
+        !is_ground(image.pixel(64, 64)),
+        "the middle should hold the image, and holds {:?} -- the difference clip \
+         was popped before the image drew and must not bound it",
+        image.pixel(64, 64)
+    );
+    assert!(
+        is_ground(image.pixel(34, 34)),
+        "a corner inside the image's quad and outside the oval should be ground, \
+         and is {:?}",
+        image.pixel(34, 34)
+    );
+    // And the square is still there, so the difference clip did cut it: without
+    // it the surround would be flooded over the lot and there would be no
+    // second ground to tell apart.
+    assert_eq!(
+        image.pixel(30, 64),
+        square,
+        "the difference clip should have spared the middle of the surround"
+    );
+}
