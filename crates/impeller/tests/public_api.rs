@@ -16936,3 +16936,79 @@ fn an_atlas_tint_in_plus_is_not_clipped_by_a_float_target() {
         "an eight-bit target has to clip the same sum"
     );
 }
+
+/// An advanced color filter against a transparent color changes nothing.
+///
+/// Upstream's `AdvancedBlendColorFilterWithDestinationOpacity` puts a
+/// `Saturation` blend against `kTransparent` on a group at three tenths opacity,
+/// and its comment says the result "should be solid red as the destructive color
+/// filter floods the clip". It should not, and the comment looks copied from the
+/// scene above it -- the flood case, which is a plate here already. The
+/// compositing specification states the mode as
+/// `cs·(1−ab) + cb·(1−as) + B(cb,cs)·as·ab`, and at a source alpha of zero every
+/// term but `cb` vanishes. The filter is the identity by arithmetic, so no
+/// renderer can draw anything from it.
+///
+/// Which is why it cannot be a plate: a catalog scene whose feature leaves the
+/// picture unchanged is rejected by the check that every feature has to reach
+/// the picture. As a test it pins the weighting in the composite, and the
+/// failure it catches is the one upstream's comment describes -- a shader that
+/// applied the blended color without weighting it by the source alpha would
+/// flood the group with the saturation result, which is what "solid red" would
+/// look like. Dropping `sa` from the `mixed` term fails this.
+///
+/// It does *not* catch an unguarded unpremultiply, and the guess that it would
+/// was checked rather than written down: opening the divide to a source alpha of
+/// zero leaves this passing, because the clamp around it takes the NaN to zero
+/// and the term it feeds is multiplied by that same zero alpha.
+#[test]
+fn an_advanced_color_filter_against_a_transparent_color_is_the_identity() {
+    let Some(mut ctx) = context() else { return };
+
+    let shot = |ctx: &mut Context, filtered: bool| {
+        let mut canvas = Canvas::new(SIZE);
+        canvas.clear(Color::WHITE);
+        let mut layer = Layer::opacity(0.3);
+        if filtered {
+            layer = layer.with_color_filter(ColorFilter::blend(
+                // Transparent: every component zero, alpha included.
+                [0.0, 0.0, 0.0, 0.0],
+                BlendMode::Saturation,
+            ));
+        }
+        canvas.save_layer(layer);
+        canvas
+            .draw_rect(
+                Rect::new(24.0, 24.0, 96.0, 96.0),
+                &Paint::fill(Color::srgb(0.5, 0.0, 0.0, 1.0)).with_anti_alias(false),
+            )
+            .expect("the maroon rect");
+        canvas
+            .draw_rect(
+                Rect::new(48.0, 48.0, 120.0, 120.0),
+                &Paint::fill(Color::srgb(0.0, 0.0, 1.0, 1.0)).with_anti_alias(false),
+            )
+            .expect("the blue rect");
+        canvas.restore();
+        render(ctx, canvas)
+    };
+
+    let plain = shot(&mut ctx, false);
+    let filtered = shot(&mut ctx, true);
+    assert_eq!(
+        plain, filtered,
+        "a Saturation filter against a transparent color is the identity, so it \
+         must leave the group exactly as it found it"
+    );
+
+    // And there is a picture to be identical about. The group is three tenths
+    // opaque over white, so the blue rectangle arrives well short of blue and
+    // well short of white -- a comparison of two blank frames would satisfy the
+    // line above and say nothing.
+    let inside = pixel(&plain, 100, 100);
+    assert!(
+        inside[2] > 200 && inside[0] < 220 && inside[0] > 120,
+        "the blue rectangle at three tenths over white should be a pale blue, \
+         and is {inside:?}"
+    );
+}
