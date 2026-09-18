@@ -49,15 +49,22 @@
 //! desktop discrete part; a run here measures whatever this machine is, which
 //! is why every result names its device.
 //!
-//! And not a whole frame's work: every recording here is built once, before the
-//! clock starts, and only `execute` is timed. An application records a frame
-//! per frame, so whatever it costs to *build* a recording is invisible to every
-//! number this prints. Worth knowing the size of that blind spot rather than
-//! only that it exists -- on the machine this was written on, building the
-//! full frame takes 0.007 ms and building the hundred and sixty tessellated
-//! shapes 0.077 ms, against frame times of one to thirty. So it is under a
-//! percent here and would be a few on a slower processor, which is small
-//! enough to leave outside and too large to forget.
+//! The device rows are not a whole frame's work: each recording is built once,
+//! before the clock starts, and only `execute` is timed. An application records
+//! a frame per frame, so what it costs to *build* one used to be invisible to
+//! every number this printed -- named as a blind spot, with its size guessed at
+//! from two hand measurements and left outside.
+//!
+//! It is measured now, as the `recording` section, and the guess was the wrong
+//! shape rather than the wrong size. Two of the six builds are indeed under a
+//! per cent of their draw: a frame of mixed content builds in 0.006 ms against
+//! 14 to draw. But a *stroked* path builds in 0.240 ms and draws in 1.2, which
+//! is a fifth of the cost on the side nothing was watching -- and it is the
+//! cheapest row in the file to draw, so timing only the drawing made the
+//! stroker look free. The two sections add, since a frame pays for both.
+//!
+//! That section needs no device, which is why it comes first and why it is
+//! measured even where every backend was skipped. A `Canvas` opens nothing.
 
 use impeller_core::{
     Canvas, Color, GradientStop, Layer, Paint, Recording, Rect, Shader, TileMode, Vec2,
@@ -339,6 +346,15 @@ pub struct Timing {
     /// field that could only say which route it was would have to lie about
     /// it.
     pub what: &'static str,
+    /// Whether this row timed *building* a frame rather than drawing one.
+    ///
+    /// Only the presentation needs it, and it needs it for a reason worth more
+    /// than the field: a build row's reciprocal is not a frame rate. A frame
+    /// pays for its recording *and* its execution, one after the other, so
+    /// neither half's rate is achievable on its own and printing "148965 fps"
+    /// beside a seven-microsecond build invites exactly the wrong arithmetic.
+    /// The column is left blank for these instead.
+    pub builds: bool,
     /// How many draws the frame came to.
     ///
     /// Reported because it is not the same between the two paths and the
@@ -409,6 +425,55 @@ fn percentile(sorted: &[Duration], fraction: f64) -> Duration {
 /// timing that measured the driver's willingness to accept work -- a hundred
 /// and sixty rounded rectangles at this size came to nineteen microseconds,
 /// with an occasional frame a hundred times that when the queue backed up.
+/// How long it takes to *build* one frame's recording, which nothing timed.
+///
+/// Every other row here starts its clock after the recording exists. That is the
+/// right shape for measuring a backend -- what a driver does with a fixed list of
+/// draws is the question -- and it leaves a whole half of the renderer unmeasured,
+/// because an application records a frame per frame. Tessellation, stroking, the
+/// thin-stroke rule, clip bookkeeping and batching all happen on this side of the
+/// clock.
+///
+/// No device, and that is the point rather than a convenience: a `Canvas` needs
+/// none, so these rows are measured even where every backend was skipped, and a
+/// regression in them is a regression on any machine rather than on this GPU.
+/// They are keyed as their own section for the same reason.
+///
+/// The builder is a function pointer rather than a closure over a prepared
+/// recording, because what is being timed is the building. Handing this a
+/// `&Recording` would time nothing at all, which is a mistake easy enough to make
+/// that it is worth the type saying so.
+fn time_building(what: &'static str, build: fn() -> Recording) -> Timing {
+    let run = |count: usize| -> (Vec<Duration>, usize) {
+        let mut samples = Vec::with_capacity(count);
+        let mut draws = 0;
+        for _ in 0..count {
+            let started = Instant::now();
+            let recording = build();
+            samples.push(started.elapsed());
+            // Read after the clock stops, and read at all so the optimizer
+            // cannot decide the recording was never wanted.
+            draws = recording.draw_count();
+        }
+        (samples, draws)
+    };
+
+    // The first builds pay for the allocator's first pages, which an application
+    // recording its thousandth frame does not.
+    let _ = run(WARMUP);
+    let (mut samples, draws) = run(FRAMES);
+    samples.sort();
+    Timing {
+        what,
+        builds: true,
+        draws,
+        median: percentile(&samples, 0.5),
+        p99: percentile(&samples, 0.99),
+        fastest: samples[0],
+        slowest: samples[samples.len() - 1],
+    }
+}
+
 fn time_frames<H: Hal>(
     ctx: &mut H::Context,
     what: &'static str,
@@ -444,6 +509,7 @@ where
     samples.sort();
     Ok(Timing {
         what,
+        builds: false,
         draws: recording.draw_count(),
         median: percentile(&samples, 0.5),
         p99: percentile(&samples, 0.99),
@@ -487,6 +553,29 @@ pub fn gather(skip: &[String], report: &mut dyn FnMut(Event)) {
         Path::StrokedAnalytic,
         Path::StrokedTessellated,
     ];
+
+    // Building comes first, in the order a frame happens and in the order that
+    // needs nothing: this section is measured even when every backend is skipped
+    // or absent.
+    const BUILDING: &str = "recording";
+    if skipped(BUILDING, skip) {
+        report(Event::Skipped(BUILDING.to_string()));
+    } else {
+        report(Event::Device(BUILDING.to_string()));
+        for path in paths {
+            report(Event::Measured(time_building(
+                path.name(),
+                match path {
+                    Path::Analytic => || recording(Path::Analytic),
+                    Path::TessellatedMultisampled => || recording(Path::TessellatedMultisampled),
+                    Path::TessellatedSingleSampled => || recording(Path::TessellatedSingleSampled),
+                    Path::StrokedAnalytic => || recording(Path::StrokedAnalytic),
+                    Path::StrokedTessellated => || recording(Path::StrokedTessellated),
+                },
+            )));
+        }
+        report(Event::Measured(time_building(FRAME, full_frame)));
+    }
 
     for index in 0.. {
         let Ok(mut ctx) = VulkanContext::new(DevicePreference::Index(index)) else {
@@ -582,9 +671,39 @@ fn header() -> String {
     format!(
         "{SHAPES} rounded rectangles at {}x{}, then one frame of mixed \
          content at the same size.\n{FRAMES} frames each after {WARMUP} \
-         warm-up\n",
-        EXTENT.width, EXTENT.height
+         warm-up{}\n",
+        EXTENT.width,
+        EXTENT.height,
+        governor()
+            .map(|g| format!(", cpu governor {g}"))
+            .unwrap_or_default()
     )
+}
+
+/// Which frequency governor the processor is under, where that is knowable.
+///
+/// Printed because the numbers depend on it and a reader cannot see it. On a
+/// Raspberry Pi 5 under `ondemand` the recording rows land in two or three states
+/// up to forty per cent apart, and pinning the governor to `performance` brings
+/// every one of them inside one per cent -- so a baseline recorded under one
+/// governor is not comparable with a run under the other, and nothing in the
+/// output said which had happened. Two GPU rows move with it as well, the ones
+/// with enough processor work in them to notice: the cheap stroked path and the
+/// twelve-draw frame.
+///
+/// `None` where the question does not apply or cannot be answered -- no cpufreq,
+/// a different operating system, a container without the sysfs path -- which is
+/// reported as nothing rather than as a guess. It reads policy zero because every
+/// core on the boards here shares one policy; a machine with more would want the
+/// set, and would notice this is not that.
+fn governor() -> Option<String> {
+    let text =
+        std::fs::read_to_string("/sys/devices/system/cpu/cpufreq/policy0/scaling_governor").ok()?;
+    let named = text.trim();
+    match named.is_empty() {
+        true => None,
+        false => Some(named.to_string()),
+    }
 }
 
 /// What a run emits as it goes.
@@ -635,12 +754,20 @@ fn render(event: &Event) -> String {
         Event::Measured(timing) => timing,
     };
     let mut out = String::new();
+    // A dash rather than blank, and not only to keep the column's width: a run
+    // of spaces in a source string is what a dropped line continuation looks
+    // like, and a test reads the sources for exactly that. This says "not a
+    // frame rate" where blank would say "forgot to fill it in".
+    let rate = match timing.builds {
+        true => format!("{:>6}", "--"),
+        false => format!("{:>6.0}", timing.rate()),
+    };
     out.push_str(&format!(
-        "  {:<24} {:>10} ({:>6.0} fps)   p99 {:>10}   fastest {:>10}   \
+        "  {:<24} {:>10} ({} fps)   p99 {:>10}   fastest {:>10}   \
          slowest {:>10}   {:>4} draws{}\n",
         timing.what,
         millis(timing.median),
-        timing.rate(),
+        rate,
         millis(timing.p99),
         millis(timing.fastest),
         millis(timing.slowest),
@@ -661,12 +788,18 @@ fn epilogue() -> &'static str {
      be quick at a hundred and sixty identical rectangles and slow at \n\
      everything an interface is made of.\n\
      \n\
-     None of these times the *recording*, which is where the stroke rules \n\
-     live: a width widened to a pixel, the alpha that pays for it, and a \n\
-     hairline snapped onto one all happen while the frame is being built, and \n\
-     the clock starts after that. What the two stroked rows measure is what an \n\
-     outline costs to draw -- the field's fragment work, and the geometry the \n\
-     stroker emits, which is two contours where a fill has one.\n\
+     The `recording` section is the other half, and it needs no device: it is \n\
+     what building each of those frames costs before anything is submitted, \n\
+     which is where tessellation, stroking, the thin-stroke rule and the \n\
+     batching live. A frame pays for its recording and then for its \n\
+     execution, so the two sections add -- and neither half's reciprocal is a \n\
+     frame rate, which is why a building row leaves that column blank.\n\
+     \n\
+     Read the two halves against each other and one row inverts. Stroking a \n\
+     path is the most expensive frame in the file to build and among the \n\
+     cheapest to draw: the stroker emits two contours where a fill emits one, \n\
+     and then an outline covers a band of fragments where a fill covers an \n\
+     interior. A bench that timed only the drawing made that route look free.\n\
      \n\
      Medians, with the frame ninety-nine hundredths came in under beside \n\
      them. Nothing here passes or fails: these are what this machine did, \n\
@@ -1070,6 +1203,7 @@ mod tests {
     fn a_timing(what: &'static str) -> Timing {
         Timing {
             what,
+            builds: false,
             draws: SHAPES,
             median: Duration::from_micros(100),
             p99: Duration::from_micros(140),
@@ -1108,6 +1242,94 @@ mod tests {
         // would look like a measurement of shading alone.
         let rendered = text(&[Event::Measured(a_timing(Path::Analytic.name()))]);
         assert!(rendered.contains("160 draws"), "{rendered}");
+    }
+
+    #[test]
+    fn the_header_names_the_governor_when_there_is_one_to_name() {
+        // Conditional on purpose: a machine without cpufreq has no answer, and
+        // reporting nothing is right there. What must not happen is knowing the
+        // governor and not saying so, since the recording rows depend on it and a
+        // reader comparing two runs cannot see it.
+        let header = header();
+        match governor() {
+            Some(named) => {
+                assert!(
+                    header.contains("cpu governor") && header.contains(&named),
+                    "the governor is {named} and the header does not say so: {header}"
+                );
+            }
+            None => assert!(
+                !header.contains("cpu governor"),
+                "the header names a governor that could not be read: {header}"
+            ),
+        }
+    }
+
+    #[test]
+    fn the_two_tessellated_rows_build_the_same_recording() {
+        // Antialiasing decides how many samples the *pass* takes. It does not
+        // decide what geometry is built, so these two have to cost the same to
+        // build -- and they do, to a thousandth, once the processor is held at one
+        // frequency. Under a scaling governor they read 0.341 and 0.244 on a Pi 5
+        // and the difference was the clock rather than the work, which is how this
+        // check came to be written.
+        //
+        // If it ever fails, something started depending on the sample count at
+        // record time, and the two rows stopped being one comparison.
+        let geometry = |path| {
+            let recording = recording(path);
+            let batch = &recording.passes[0].batch;
+            (batch.vertices().len(), recording.draw_count())
+        };
+        assert_eq!(
+            geometry(Path::TessellatedMultisampled),
+            geometry(Path::TessellatedSingleSampled),
+            "the two tessellated rows submit different geometry, so their build \
+             cost is no longer one number measured twice"
+        );
+    }
+
+    #[test]
+    fn a_building_row_times_building_and_says_it_is_not_a_frame_rate() {
+        // The way this measurement goes wrong is by not being one: hand the
+        // timer a recording that already exists and it measures nothing, which
+        // looks like a very fast renderer rather than like a mistake. So the
+        // builder is a function, and what it built has to come back.
+        let timed = time_building("probe", || recording(Path::StrokedTessellated));
+        assert_eq!(
+            timed.draws, 1,
+            "the draw count comes from the recording the timer built, so a zero \
+             here means nothing was built"
+        );
+        // A floor rather than "more than zero", which was the first version of
+        // this line and did not hold: an `Instant::now()` immediately followed by
+        // `elapsed()` answers tens of nanoseconds, so a timer that bracketed
+        // nothing still passed. Ten microseconds is far above that pair and far
+        // below any real build of a hundred and sixty stroked shapes -- a
+        // twenty-fifth of what the machine this was written on takes, and the
+        // slower the processor the wider the margin.
+        assert!(
+            timed.median > Duration::from_micros(10),
+            "building a hundred and sixty stroked shapes came back at {:?}, which \
+             is the cost of reading the clock twice rather than of building \
+             anything",
+            timed.median
+        );
+        assert!(timed.builds, "a building row has to say that it builds");
+
+        // And the rate column is blank for it. A frame pays for its recording
+        // and then for its execution, so neither half's reciprocal is a frame
+        // rate, and printing one invites adding two numbers that do not add.
+        let rendered = render(&Event::Measured(timed));
+        assert!(
+            rendered.contains("-- fps"),
+            "a building row printed a frame rate: {rendered}"
+        );
+        let drawing = render(&Event::Measured(a_timing("probe")));
+        assert!(
+            !drawing.contains("-- fps"),
+            "a drawing row lost its frame rate: {drawing}"
+        );
     }
 
     #[test]
@@ -1448,6 +1670,7 @@ mod tests {
     fn a_wide_spread_is_reported_rather_than_hidden() {
         let timing = |fastest: u64, slowest: u64| Timing {
             what: "test",
+            builds: false,
             draws: SHAPES,
             median: Duration::from_micros((fastest + slowest) / 2),
             p99: Duration::from_micros(slowest),
