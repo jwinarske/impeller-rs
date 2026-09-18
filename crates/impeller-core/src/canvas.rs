@@ -1475,6 +1475,16 @@ impl Canvas {
     /// which costs some work in the layer and keeps a stencil clip from having
     /// to be rebuilt in a second target.
     pub fn save_layer(&mut self, layer: Layer) -> &mut Self {
+        // A layer that captures a backdrop is handed to the bounded path with
+        // no bounds, which narrows it to the clip in force. That path scales
+        // the layer itself, so this one hands it over unscaled.
+        if layer.backdrop_blur > 0.0 && layer.backdrop_id.is_none() && layer.matrix.is_none() {
+            let (min, max) = unbounded();
+            // Cannot fail: only a backdrop *filter* can refuse, and this
+            // passes none -- the blur rides on the layer.
+            let _ = self.save_layer_device_bounds_running(layer, min, max, None, None);
+            return self;
+        }
         // The other entry to `open_layer` converts the sigmas where it computes
         // its reach; this one has no bounds to reach past and so converts them
         // here. Both are the same conversion at the same moment -- the layer is
@@ -2050,6 +2060,40 @@ impl Canvas {
         let basis = BlurBasis::of(self.transform);
         let layer = layer.scaled_by(max_scale_of(self.transform));
         let reach = layer.reach(basis);
+        // A layer opened under a clip cannot draw outside it, and neither can
+        // the draw that composites it, so an unbounded one does not need a
+        // target the size of its parent. A frosted panel is the case that
+        // pays: the clip is the panel and the parent is the frame, and the
+        // capture, the blur's passes and the intermediate were all frame-sized
+        // for a panel a fortieth of the area.
+        //
+        // Only where a backdrop is being captured, and only for a layer that
+        // shares no key and has no matrix. Each of those wants a region this
+        // does not know how to compute: a shared capture has to cover every
+        // group naming the id -- which is upstream's coverage union and is not
+        // this -- a matrix records its pre-image, which is where the content
+        // will come *from* rather than where the clip is, and a destructive
+        // group naming the id -- which is upstream's coverage union and is not
+        // this -- and a matrix records its pre-image, which is where the
+        // content will come *from* rather than where the clip is.
+        //
+        // A destructive mode is not excluded, and the difference from
+        // `narrowed` is the whole of why. That one shrinks to the layer's
+        // *content*, which such a mode reaches past -- it writes where the
+        // source drew nothing. This shrinks to the clip, which is the region
+        // the composite can touch at all, so there is nothing outside it left
+        // to affect.
+        let captures_backdrop = backdrop.is_some() || layer.backdrop_blur > 0.0;
+        let (min, max) =
+            if captures_backdrop && layer.backdrop_id.is_none() && layer.matrix.is_none() {
+                let clip = self.clip_bounds;
+                (
+                    Vec2::new(min.x.max(clip.left), min.y.max(clip.top)),
+                    Vec2::new(max.x.min(clip.right), max.y.min(clip.bottom)),
+                )
+            } else {
+                (min, max)
+            };
         // A filter given to the layer as a whole reaches past what it is handed
         // too, and by how much only the filter knows. Asked here rather than
         // left to the narrowing below, because the narrowing only runs for a
@@ -6000,6 +6044,99 @@ mod tests {
 
     fn canvas() -> Canvas {
         Canvas::new(Extent2D::new(128, 128))
+    }
+
+    /// A backdrop layer opened under a clip is the size of the clip.
+    ///
+    /// It used to be the size of the parent, whatever the clip said, so a
+    /// frosted panel a fortieth of the frame's area recorded a frame-sized
+    /// target. The clip binds the layer's content and the draw that composites
+    /// it alike, so there is nothing outside it for the layer to hold.
+    ///
+    /// The extents are asserted rather than the pixels because the pixels do
+    /// not change: the sibling test below is what says they do not.
+    #[test]
+    fn a_backdrop_layer_under_a_clip_is_no_larger_than_the_clip() {
+        let mut canvas = canvas();
+        canvas.clear(Color::srgb(0.2, 0.3, 0.4, 1.0));
+        canvas
+            .draw_rect(
+                Rect::new(0.0, 0.0, 128.0, 128.0),
+                &Paint::fill(Color::srgb(0.9, 0.2, 0.2, 1.0)),
+            )
+            .expect("the ground");
+        canvas.save();
+        canvas
+            .clip_rect(Rect::new(40.0, 40.0, 80.0, 80.0))
+            .expect("the clip");
+        canvas.save_layer(Layer::opacity(1.0).with_backdrop_blur(4.0));
+        canvas
+            .draw_rect(
+                Rect::new(40.0, 40.0, 80.0, 80.0),
+                &Paint::fill(Color::srgb(1.0, 0.6, 0.0, 0.6)),
+            )
+            .expect("the panel");
+        canvas.restore();
+        canvas.restore();
+
+        let recording = canvas.finish();
+        let frame = recording.extent;
+        let content = recording
+            .passes
+            .iter()
+            .map(|pass| pass.extent)
+            .filter(|extent| *extent != frame)
+            .min_by_key(|extent| extent.width * extent.height)
+            .expect("a pass smaller than the frame");
+        assert!(
+            content.width <= 48 && content.height <= 48,
+            "the layer's own target is {}x{} for a clip forty pixels across",
+            content.width,
+            content.height
+        );
+    }
+
+    /// And it draws what stating the clip as the layer's bounds would.
+    ///
+    /// The narrowing above is an optimization, so the thing to check is that it
+    /// is only that. A caller who writes the bounds out has always taken the
+    /// bounded path; a caller who relies on the clip now takes it too, and the
+    /// two recordings have to describe the same picture.
+    #[test]
+    fn narrowing_to_the_clip_records_what_stating_it_would() {
+        let build = |bounded: bool| {
+            let mut canvas = canvas();
+            canvas.clear(Color::srgb(0.1, 0.1, 0.1, 1.0));
+            canvas
+                .draw_rect(
+                    Rect::new(0.0, 20.0, 128.0, 60.0),
+                    &Paint::fill(Color::srgb(0.9, 0.4, 0.1, 1.0)),
+                )
+                .expect("the ground");
+            let clip = Rect::new(24.0, 34.0, 104.0, 94.0);
+            canvas.save();
+            canvas.clip_rect(clip).expect("the clip");
+            let layer = Layer::opacity(1.0).with_backdrop_blur(6.0);
+            if bounded {
+                canvas.save_layer_bounds(layer, clip);
+            } else {
+                canvas.save_layer(layer);
+            }
+            canvas.restore();
+            canvas.restore();
+            canvas.finish()
+        };
+        let from_clip = build(false);
+        let from_bounds = build(true);
+        assert_eq!(from_clip.passes.len(), from_bounds.passes.len());
+        for (a, b) in from_clip.passes.iter().zip(from_bounds.passes.iter()) {
+            assert_eq!(a.extent, b.extent, "the two spellings size a pass alike");
+            assert_eq!(
+                a.batch.vertices(),
+                b.batch.vertices(),
+                "the two spellings record the same geometry"
+            );
+        }
     }
 
     /// How far a blur reaches, which four comments in this tree got wrong.

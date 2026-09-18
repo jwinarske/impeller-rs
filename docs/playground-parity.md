@@ -517,12 +517,26 @@ key, then reads upstream's render target cache and requires the intermediates to
 be sized to the union of the two groups rather than to the canvas.
 
 That is a claim about allocation rather than about a picture, and this renderer
-does not satisfy it. Two keyed backdrop groups forty pixels across, in a frame
-of a hundred and twenty-eight, record six passes and every one of them is the
-full frame; upstream's fix crops them to the union. Nothing is wrong on screen
--- the plates sharing a backdrop key draw what they should -- so this is a cost
-rather than a difference in pictures, which is why it is here and not in
+does not satisfy it. Nothing is wrong on screen -- the plates sharing a backdrop
+key draw what they should -- so it is a cost, which is why it is here and not in
 `docs/non-parity.md`.
+
+Half of the gap was a clip being ignored rather than anything to do with
+sharing, and that half is closed: a backdrop layer opened under a clip used to
+take a target the size of its parent, so a frosted panel a fortieth of the
+frame's area recorded a frame-sized one. It takes the clip's size now, which is
+exactly what a caller writing the clip out as the layer's bounds always got --
+`narrowing_to_the_clip_records_what_stating_it_would` holds the two spellings to
+the same recording.
+
+What is left is the sharing, and it is the harder half. A capture shared by key
+has to cover every group that names the id, which is upstream's coverage union;
+this renderer knows the groups only as it reaches them, so the first capture is
+made before the last sharer is known. Layers naming a key are excluded from the
+narrowing above for that reason, and they are still frame-sized. So are the
+capture and its blur passes even for an unshared layer: those are built when the
+layer opens, from the parent, and narrowing them needs the target's padding to
+cover the *backdrop* blur's kernel, which `Layer::reach` does not report.
 
 What is left of the file is eight, and each has a reason. Four drive a
 callback rather than building one picture -- three named `Interactive` with
