@@ -172,7 +172,7 @@ column is right and the obvious way to check it is wrong.
 
 | File | Scenes there | Here | Blocked on |
 |---|---|---|---|
-| `aiks_dl_basic_unittests.cc` | ~85 | 88 | nothing; see below |
+| `aiks_dl_basic_unittests.cc` | ~85 | 89 | nothing; see below |
 | `aiks_dl_path_unittests.cc` | ~30 | 37 | nothing; see below |
 | `aiks_dl_gradient_unittests.cc` | ~40 | 46 | nothing; see below |
 | `aiks_dl_clip_unittests.cc` | ~6 | 8 | nothing; this file is covered |
@@ -230,8 +230,8 @@ and `basic/save-layer-with-bounds-larger-than-the-frame`. The third the wrap
 hid, `TranslucentSaveLayerWithColorFilterAndImageFilterDrawsCorrectly`, is in
 the `dl` chapter and written too.
 
-One of the seven left unadjudicated turned out to be worth writing after all,
-and reading it said why: `CanRenderClippedBackdropFilter` states the layer's
+Two of the seven left unadjudicated turned out to be worth writing after all,
+and reading them said why. `CanRenderClippedBackdropFilter` states the layer's
 bounds as the *bounding rectangle* of a rounded clip -- "the clip coverage and
 SaveLayer size are the same", in its own comment -- so the corners have to come
 off the composite because the clip takes them and not because the layer is
@@ -242,19 +242,29 @@ defects of its own, neither about clipping: `filters_its_backdrop` counted only
 the sigma spelling of a backdrop filter and not the general one, and
 `ColorFilter::blend` answered a `Result` it never returned an error from.
 
-Six remain unadjudicated and are listed so nobody has to find them again:
-`BackdropFilterOverUnclosedClip`, `CanDrawPerspectiveTransformWithClips`,
-`PerspectiveRectangle`, `CoordinateConversionsAreCorrect`,
-`CanPerformFullScreenMSAA` and `PipelineBlendSingleParameter`. Each is a
+`BackdropFilterOverUnclosedClip` pins the other direction of the same clip
+stack. The superellipse sheet above fails if a parent clip is popped too early;
+this one pushes two clips around a corner, pops them, and *then* opens an
+unbounded backdrop blur -- so what the blur reads is everything the outer clip
+admits, and a rebuild that replayed the batch's narrowings rather than the stack
+would put the popped pair back and confine the blur to the corner. Nothing else
+asked that. Written as `basic/backdrop-filter-over-unclosed-clip`, with
+`a_clip_popped_before_a_backdrop_cuts_does_not_come_back` sampling six pixels
+outside the corner clip, where a confined blur leaves white.
+
+Five remain unadjudicated and are listed so nobody has to find them again:
+`CanDrawPerspectiveTransformWithClips`, `PerspectiveRectangle`,
+`CoordinateConversionsAreCorrect`, `CanPerformFullScreenMSAA` and
+`PipelineBlendSingleParameter`. Each is a
 picture, and the catalog covers each subject from some other direction -- there
 are backdrop filters under clips, perspective under a clip and under a curve,
 images under a transform, and a great many multisampled circles. Whether that
 counts as mirroring them is a judgment about what a plate is for, not a count,
-and it is the one part of this row nobody has made. The one adjudicated above
-suggests the question to ask of each: not whether the subject appears elsewhere
+and it is the one part of this row nobody has made. The two adjudicated above
+suggest the question to ask of each: not whether the subject appears elsewhere
 but whether the test pins an arrangement nothing else does.
 
-The catalog holds four hundred and thirty-two scenes against a column totalling
+The catalog holds four hundred and thirty-three scenes against a column totalling
 about four hundred, and the two are not a ratio: five chapters hold more than
 the file they mirror, because a scene here is one picture where a test there can
 be a loop over every blend mode or a family drawn twice. What the totals meeting

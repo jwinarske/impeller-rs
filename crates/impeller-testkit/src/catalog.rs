@@ -1265,6 +1265,104 @@ fn basic() -> Vec<Scene> {
             ],
         ),
         Scene::tree(
+            "basic/backdrop-filter-over-unclosed-clip",
+            // A clip pushed and popped *before* a backdrop filter cuts the
+            // pass. The cut takes the batch away and the clips are made again
+            // in the pass that follows, so the thing this pins is which ones:
+            // the outer clip is still in force and the inner two are not, and a
+            // rebuild that replayed the batch's narrowings would resurrect them
+            // and blur the corner alone.
+            //
+            // The other direction is already covered -- the superellipse sheet
+            // fails if a parent clip is popped too early -- and this is the one
+            // nothing asked: a popped clip coming back.
+            //
+            // Upstream leaves the layer for the enclosing restore to close
+            // rather than closing it itself, which is where its name comes
+            // from. A scene is a tree, so the layer being the clip's last child
+            // says the same thing; what a tree cannot say is the order of two
+            // closes, and nothing here depends on it.
+            vec![
+                Node::Paint(Box::new(PaintSpec {
+                    fill: Fill::Solid(WHITE),
+                    blend: BlendMode::SrcOver,
+                    clip: None,
+                    clip_out: None,
+                    transform: Transform::default(),
+                })),
+                Node::Clip {
+                    rect: Some([16.0, 16.0, 128.0, 128.0]),
+                    rect_out: None,
+                    shape: None,
+                    transform: Transform::default(),
+                    children: vec![
+                        // The corner, under two clips of its own, both gone by
+                        // the time the backdrop reads.
+                        Node::Clip {
+                            rect: Some([96.0, 96.0, 128.0, 128.0]),
+                            rect_out: None,
+                            shape: None,
+                            transform: Transform::default(),
+                            children: vec![
+                                Node::Paint(Box::new(PaintSpec {
+                                    fill: Fill::Solid(RED),
+                                    blend: BlendMode::SrcOver,
+                                    clip: None,
+                                    clip_out: None,
+                                    transform: Transform::default(),
+                                })),
+                                Node::Paint(Box::new(PaintSpec {
+                                    fill: Fill::Solid([0.0, 0.0, 1.0, 0.5]),
+                                    blend: BlendMode::SrcOver,
+                                    clip: None,
+                                    clip_out: None,
+                                    transform: Transform::default(),
+                                })),
+                                // Narrower again, and upstream states this one
+                                // without a save of its own, so it stands until
+                                // the block ends. A clip wrapping the one draw
+                                // that follows it is the same region.
+                                Node::Clip {
+                                    rect: Some([112.0, 112.0, 120.0, 128.0]),
+                                    rect_out: None,
+                                    shape: None,
+                                    transform: Transform::default(),
+                                    children: vec![Node::Paint(Box::new(PaintSpec {
+                                        fill: Fill::Solid([1.0, 0.0, 0.0, 0.5]),
+                                        blend: BlendMode::SrcOver,
+                                        clip: None,
+                                        clip_out: None,
+                                        transform: Transform::default(),
+                                    }))],
+                                },
+                            ],
+                        },
+                        // Unbounded, so what it filters is everything the outer
+                        // clip admits. Blurring flat white gives flat white, so
+                        // the corner's edges are the whole of what moves -- and
+                        // they are inside the region a resurrected clip would
+                        // have kept, which is why the picture tells the two
+                        // apart at all.
+                        Node::Layer {
+                            layer: Box::new(LayerSpec::default().with_backdrop_blur(8.0)),
+                            bounds: None,
+                            transform: Transform::default(),
+                            children: vec![],
+                        },
+                    ],
+                },
+                // And a draw after the outer clip, three quarters of it outside.
+                // A clip that survived its own restore would cut it square.
+                Node::Draw(Box::new(Item::fill(
+                    Shape::Circle {
+                        center: [16.0, 16.0],
+                        radius: 16.0,
+                    },
+                    [0.0, 1.0, 1.0, 1.0],
+                ))),
+            ],
+        ),
+        Scene::tree(
             "basic/matrix-image-filter-doesnt-cull-when-translated-from-offscreen",
             // A circle drawn well off the left of the frame, inside a group
             // whose matrix carries it back into view. What the group captures
