@@ -22,6 +22,14 @@ duplication the paragraph above rules out. `docs/parity.md` says what is built,
 a test checks that it says so truly, and a copy of that claim kept by hand here
 is the same claim without the check. So there is no list.
 
+`ColorFilter::blend` no longer answers a `Result`. It never failed: a mode that
+is affine in the destination becomes a matrix and every other mode becomes
+`ColorFilter::Blend`, evaluated per fragment against the constant. Its own
+documentation said the advanced modes were "refused rather than approximated",
+which the code has never done, and eighteen call sites carried an `expect` that
+could not fire -- several with messages stating the opposite of what the branch
+they were on does. A caller drops the `expect`.
+
 A stencil clip survives the pass a backdrop filter cuts. A backdrop cannot
 sample the attachment it is writing, so the pass stops there and what follows
 begins by drawing it back in -- which restored the color and not the stencil. A

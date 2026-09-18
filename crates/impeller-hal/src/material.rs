@@ -6,7 +6,6 @@
 //! did.
 
 use crate::blend::BlendMode;
-use crate::error::Error;
 
 /// Floats in the packed representation.
 ///
@@ -378,15 +377,22 @@ impl ColorFilter {
     /// way round `dart:ui` states `ColorFilter.mode` and the way round that
     /// makes an icon sheet tinted by `SrcIn` mean what everyone expects.
     ///
-    /// Every mode here is affine in the destination once the source is fixed,
-    /// so each becomes a matrix and the shader needs no blending arithmetic at
+    /// Most modes are affine in the destination once the source is fixed, so
+    /// each becomes a matrix and the shader needs no blending arithmetic at
     /// all. The advanced modes are not affine -- they are piecewise, or
-    /// exchange components between channels -- and are refused rather than
-    /// approximated. A caller who wants one has the blend mode on the paint,
-    /// which is the hardware's own path for exactly these.
+    /// exchange components between channels -- so those become
+    /// [`Self::Blend`] and are evaluated per fragment against the constant, by
+    /// the same function a mesh's per-vertex tint goes through.
+    ///
+    /// Every mode is therefore a filter and none of them is refused. This used
+    /// to answer a `Result` and say in its own documentation that the advanced
+    /// modes were "refused rather than approximated", which the code below has
+    /// never done. Eighteen call sites carried an `expect` that could not fire, and
+    /// several of their messages stated the opposite of what the branch they
+    /// were on does.
     ///
     /// `color` is straight, like every color a caller states.
-    pub fn blend(color: [f32; 4], mode: BlendMode) -> Result<Self, Error> {
+    pub fn blend(color: [f32; 4], mode: BlendMode) -> Self {
         use BlendMode as B;
         let alpha = color[3];
         // Premultiplied, because the rules below are stated for premultiplied
@@ -434,13 +440,13 @@ impl ColorFilter {
             // Not affine, so not a matrix. Evaluated per fragment instead,
             // against the same constant, by the same function a mesh's
             // per-vertex tint goes through.
-            mode => return Ok(Self::Blend { color: s, mode }),
+            mode => return Self::Blend { color: s, mode },
         };
-        Ok(Self::Matrix {
+        Self::Matrix {
             columns,
             offset,
             form: ColorForm::Premultiplied,
-        })
+        }
     }
 
     /// Whether this changes anything.

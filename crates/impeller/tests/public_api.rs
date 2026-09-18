@@ -7305,8 +7305,7 @@ fn a_blend_filter_agrees_with_the_same_blend_done_by_the_blender() {
         let blended = render(&mut ctx, canvas);
 
         // The filter's answer: one draw, with the same blend compiled in.
-        let filter = ColorFilter::blend(constant.to_array(), mode)
-            .unwrap_or_else(|e| panic!("{mode:?} should be expressible as a filter: {e}"));
+        let filter = ColorFilter::blend(constant.to_array(), mode);
         let mut canvas = Canvas::new(SIZE);
         canvas.clear(Color::linear(0.0, 0.0, 0.0, 0.0));
         canvas
@@ -7399,8 +7398,7 @@ fn an_advanced_blend_mode_is_a_filter_the_shader_evaluates_rather_than_a_matrix(
         BlendMode::Hue,
         BlendMode::Luminosity,
     ] {
-        let filter = ColorFilter::blend([1.0, 1.0, 1.0, 1.0], mode)
-            .unwrap_or_else(|e| panic!("{mode:?} should be available as a filter: {e}"));
+        let filter = ColorFilter::blend([1.0, 1.0, 1.0, 1.0], mode);
         assert!(
             matches!(filter, ColorFilter::Blend { .. }),
             "{mode:?} is not affine and must not become a matrix: {filter:?}"
@@ -7416,7 +7414,7 @@ fn an_advanced_blend_mode_is_a_filter_the_shader_evaluates_rather_than_a_matrix(
         BlendMode::Modulate,
         BlendMode::Plus,
     ] {
-        let filter = ColorFilter::blend([1.0, 1.0, 1.0, 1.0], mode).expect("affine");
+        let filter = ColorFilter::blend([1.0, 1.0, 1.0, 1.0], mode);
         assert!(
             matches!(filter, ColorFilter::Matrix { .. }),
             "{mode:?} is affine and should stay a matrix: {filter:?}"
@@ -16221,8 +16219,7 @@ fn a_blend_color_filter_in_an_advanced_mode_computes_the_specified_formula() {
         .draw_rect(
             Rect::new(16.0, 16.0, 112.0, 112.0),
             &Paint::fill(Color::srgb(dst[0], dst[1], dst[2], 1.0)).with_color_filter(
-                ColorFilter::blend([src[0], src[1], src[2], 1.0], BlendMode::Difference)
-                    .expect("difference is available as a filter"),
+                ColorFilter::blend([src[0], src[1], src[2], 1.0], BlendMode::Difference),
             ),
         )
         .expect("a filtered rectangle");

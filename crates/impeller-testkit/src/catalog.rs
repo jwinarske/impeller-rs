@@ -2212,8 +2212,7 @@ fn path() -> Vec<Scene> {
                 .with_color_filter(
                     // Alice blue, which is upstream's, kept only where the
                     // stroke put coverage.
-                    ColorFilter::blend([240.0 / 255.0, 248.0 / 255.0, 1.0, 1.0], BlendMode::SrcIn)
-                        .expect("a source-in tint is affine"),
+                    ColorFilter::blend([240.0 / 255.0, 248.0 / 255.0, 1.0, 1.0], BlendMode::SrcIn),
                 )
                 .with_transform(Transform {
                     rotate: std::f32::consts::FRAC_PI_2,
@@ -2925,10 +2924,10 @@ fn gradient() -> Vec<Scene> {
                     tile: TileMode::Decal,
                 },
             )
-            .with_color_filter(
-                ColorFilter::blend([0.0, 1.0, 0.0, 64.0 / 255.0], BlendMode::SrcOver)
-                    .expect("a source-over tint is affine"),
-            )
+            .with_color_filter(ColorFilter::blend(
+                [0.0, 1.0, 0.0, 64.0 / 255.0],
+                BlendMode::SrcOver,
+            ))
             .with_blend(BlendMode::SrcOver)],
         ),
         plate(
@@ -4220,10 +4219,10 @@ fn blend() -> Vec<Scene> {
                 Sampling::Linear,
             ),
         )
-        .with_color_filter(
-            ColorFilter::blend([1.0, 165.0 / 255.0, 0.0, 1.0], BlendMode::SrcIn)
-                .expect("a source-in tint is affine"),
-        )
+        .with_color_filter(ColorFilter::blend(
+            [1.0, 165.0 / 255.0, 0.0, 1.0],
+            BlendMode::SrcIn,
+        ))
         .with_transform(Transform {
             rotate: 30.0f32.to_radians(),
             translate: [64.0, 64.0],
@@ -4251,10 +4250,10 @@ fn blend() -> Vec<Scene> {
                 Sampling::Linear,
             ),
         )
-        .with_color_filter(
-            ColorFilter::blend([1.0, 165.0 / 255.0, 0.0, 1.0], BlendMode::ColorDodge)
-                .expect("an advanced mode is a filter the shader evaluates"),
-        )
+        .with_color_filter(ColorFilter::blend(
+            [1.0, 165.0 / 255.0, 0.0, 1.0],
+            BlendMode::ColorDodge,
+        ))
         .with_transform(Transform {
             rotate: 30.0f32.to_radians(),
             translate: [64.0, 64.0],
@@ -4284,8 +4283,7 @@ fn blend() -> Vec<Scene> {
         // than shape by shape.
         vec![Node::Layer {
             layer: Box::new(LayerSpec {
-                color_filter: ColorFilter::blend(RED, BlendMode::ColorDodge)
-                    .expect("every advanced mode is a filter"),
+                color_filter: ColorFilter::blend(RED, BlendMode::ColorDodge),
                 ..LayerSpec::default()
             }),
             bounds: None,
@@ -4338,10 +4336,7 @@ fn blend() -> Vec<Scene> {
                         tile: TileMode::Clamp,
                     },
                 )
-                .with_color_filter(
-                    ColorFilter::blend([0.95, 0.45, 0.15, 1.0], *mode)
-                        .expect("every advanced mode is a filter"),
-                )
+                .with_color_filter(ColorFilter::blend([0.95, 0.45, 0.15, 1.0], *mode))
             })
             .collect(),
     ));
@@ -4357,8 +4352,7 @@ fn blend() -> Vec<Scene> {
             // composite rather than on each draw.
             vec![Node::Layer {
                 layer: Box::new(LayerSpec {
-                    color_filter: ColorFilter::blend([0.0, 1.0, 0.0, 0.5], BlendMode::Difference)
-                        .expect("difference is a filter"),
+                    color_filter: ColorFilter::blend([0.0, 1.0, 0.0, 0.5], BlendMode::Difference),
                     ..LayerSpec::default()
                 }),
                 bounds: Some([0.0, 0.0, 128.0, 128.0]),
@@ -4530,9 +4524,7 @@ fn blend() -> Vec<Scene> {
         // framebuffer -- which is the distinction this scene exists to show,
         // since the picture is the one the blend mode would give against a
         // flat destination of that color.
-        .with_color_filter(
-            ColorFilter::blend([0.2, 0.5, 1.0, 1.0], BlendMode::SrcIn).expect("affine"),
-        )],
+        .with_color_filter(ColorFilter::blend([0.2, 0.5, 1.0, 1.0], BlendMode::SrcIn))],
     ));
 
     scenes.push(plate(
@@ -6467,10 +6459,7 @@ fn atlas_scenes() -> Vec<Scene> {
         ),
         plate_tree(
             "atlas/draw-image-rect-with-blend-color-filter",
-            image_rect_filtered(
-                ColorFilter::blend([1.0, 0.0, 0.0, 0.4], BlendMode::SrcOver)
-                    .expect("a source-over tint is affine"),
-            ),
+            image_rect_filtered(ColorFilter::blend([1.0, 0.0, 0.0, 0.4], BlendMode::SrcOver)),
         ),
         plate_tree(
             "atlas/draw-image-rect-with-matrix-color-filter",
@@ -6605,9 +6594,7 @@ fn blur() -> Vec<Scene> {
             [128.0 / 255.0, 128.0 / 255.0, 128.0 / 255.0, 1.0],
         )
         .with_mask_blur(2.0)
-        .with_color_filter(
-            ColorFilter::blend(GREEN, BlendMode::Color).expect("every advanced mode is a filter"),
-        )
+        .with_color_filter(ColorFilter::blend(GREEN, BlendMode::Color))
         .with_clip_shape(Shape::Rect {
             min: [16.0, 24.0],
             max: [80.0, 88.0],
@@ -8542,9 +8529,7 @@ fn blur_variants() -> Vec<Scene> {
             },
             WHITE,
         )
-        .with_color_filter(
-            ColorFilter::blend(GREEN, BlendMode::Src).expect("a source tint is affine"),
-        )
+        .with_color_filter(ColorFilter::blend(GREEN, BlendMode::Src))
         .with_mask_blur(6.0)
         .with_clip([16.0, 24.0, 112.0, 112.0])
         .with_blend(BlendMode::SrcOver)],
@@ -9081,10 +9066,7 @@ fn layers() -> Vec<Scene> {
                 // so it runs over the finished group where the entry below runs
                 // over each color on its way out. The pair is here to show the
                 // two are not the same picture.
-                filter: ImageFilter::Color(
-                    ColorFilter::blend(RED, BlendMode::DstOver)
-                        .expect("destination-over against a constant is affine"),
-                ),
+                filter: ImageFilter::Color(ColorFilter::blend(RED, BlendMode::DstOver)),
                 ..LayerSpec::default()
             },
             None,
@@ -9128,8 +9110,7 @@ fn layers() -> Vec<Scene> {
                     0.0, 0.2, 1.0, 0.0, 0.0, //
                     0.0, 0.0, 0.0, 0.5, 0.0,
                 ])),
-                color_filter: ColorFilter::blend(GREEN, BlendMode::Modulate)
-                    .expect("modulate against a constant is affine"),
+                color_filter: ColorFilter::blend(GREEN, BlendMode::Modulate),
                 ..LayerSpec::default()
             },
             None,
@@ -9170,8 +9151,7 @@ fn layers() -> Vec<Scene> {
                 // contributes is strongest where the group is thinnest. That
                 // reads the group's own alpha, which is what makes it a test of
                 // the order rather than of the color.
-                color_filter: ColorFilter::blend(RED, BlendMode::DstOver)
-                    .expect("destination-over against a constant is affine"),
+                color_filter: ColorFilter::blend(RED, BlendMode::DstOver),
                 ..LayerSpec::default()
             },
             None,
