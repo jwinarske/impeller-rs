@@ -14004,25 +14004,28 @@ fn a_mask_blur_over_a_gradient_matches_what_a_caller_would_assemble() {
     );
 }
 
-/// A thin stroke under a shear draws, and a stroke of no width does not.
+/// A thin stroke under a shear draws, and a stroke of no width is a hairline.
 ///
 /// Worth pinning together, because the inventory once put a scene out of reach
 /// with "a hairline skew" and the two halves of that are different questions. A
 /// shear is not the difficulty -- half a pixel of width under one draws exactly
-/// as it should. What this renderer does not have is `strokeWidth` of zero
-/// meaning the thinnest line the device can draw, which is what `dart:ui`
-/// documents it as: here it means no line, deliberately, so that a caller
-/// animating a width down to nothing stops drawing rather than watching a
-/// shape refuse to disappear.
+/// as it should.
 ///
-/// That reason is better than it was. A sub-pixel stroke now dims with its
-/// width rather than quantizing against the sample grid, so the animation this
-/// describes fades smoothly to nothing instead of holding at a quarter and
-/// dropping -- see `a_stroke_thinner_than_a_pixel_fades_instead_of_disappearing`.
-/// Upstream, which reads zero as a hairline, jumps back to full opacity at the
-/// end of that same animation.
+/// The other half is `strokeWidth` of zero, which `dart:ui` documents as "a
+/// hairline width" and makes the default value of the field. This renderer read
+/// it as no line until 2026-09-17, on the reasoning that a caller animating a
+/// width to nothing should stop drawing rather than watch a shape refuse to
+/// disappear. What settled it against that reasoning was the default: a Flutter
+/// app that strokes without setting a width drew a hairline upstream and nothing
+/// here, which is not an edge a caller opts into. So zero is a hairline, and the
+/// discontinuity comes with it -- the same one upstream has, and has on purpose,
+/// since `ComputeStrokeAlphaCoverage` opens by returning full coverage for it.
+///
+/// The width either side of zero is checked here too, because the jump is the
+/// part that is easy to get wrong in one direction only: a sub-pixel stroke dims
+/// with its width, and zero does not.
 #[test]
-fn a_shear_is_no_obstacle_to_a_thin_stroke_and_zero_still_means_none() {
+fn a_shear_is_no_obstacle_to_a_thin_stroke_and_zero_is_a_hairline() {
     let Some(mut ctx) = context() else { return };
     let sheared = |ctx: &mut Context, width: f32| {
         let mut canvas = Canvas::new(SIZE);
@@ -14043,15 +14046,45 @@ fn a_shear_is_no_obstacle_to_a_thin_stroke_and_zero_still_means_none() {
             .count()
     };
 
+    let half = sheared(&mut ctx, 0.5);
     assert!(
-        sheared(&mut ctx, 0.5) > 40,
+        half > 40,
         "half a pixel of width under a shear should still draw a line"
     );
-    assert_eq!(
-        sheared(&mut ctx, 0.0),
-        0,
-        "a width of zero draws nothing, which is this renderer's own choice \
-         rather than an inability to draw something thin"
+    let none = sheared(&mut ctx, 0.0);
+    assert!(
+        none > 40,
+        "a width of zero is a hairline and should draw a line of its own, and \
+         lit {none} pixels against {half} for half a pixel of width"
+    );
+
+    // The jump, stated as the thing it is: zero is full coverage and a width
+    // just above it is nearly none. A rule that dimmed zero along with
+    // everything thinner than a pixel would draw it at almost nothing, and
+    // would pass the count above while looking wrong.
+    let lit_at = |ctx: &mut Context, width: f32| {
+        let mut canvas = Canvas::new(SIZE);
+        canvas.clear(Color::BLACK);
+        canvas
+            .draw_line(
+                Vec2::new(8.0, 64.0),
+                Vec2::new(120.0, 64.0),
+                &Paint::stroke(Color::WHITE, width),
+            )
+            .expect("a line");
+        let pixels = render(ctx, canvas);
+        pixel(&pixels, 64, 64)[0]
+    };
+    let at_zero = lit_at(&mut ctx, 0.0);
+    let just_above = lit_at(&mut ctx, 0.02);
+    assert!(
+        at_zero > 100,
+        "a hairline is drawn at full coverage, and came back at {at_zero}"
+    );
+    assert!(
+        just_above < 40,
+        "a fiftieth of a pixel is dimmed to nearly nothing, and came back at \
+         {just_above}"
     );
 }
 

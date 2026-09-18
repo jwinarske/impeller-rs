@@ -33,9 +33,10 @@ enough to re-read, and all three were:
 - `strokeWidth`, on the widening and dimming arithmetic. `line_geometry.cc` has
   `ComputePixelHalfWidth` as `max(width, kMinStrokeSize / max_basis) * 0.5` and
   `geometry.cc` has `ComputeStrokeAlphaCoverage` as `clamp(scaled * 2, 0, 1)`,
-  returning `1.0` at a scaled width of exactly zero. Still true, and that last
-  clause is the discontinuity the row cites as its reason for reading zero as no
-  stroke at all.
+  returning `1.0` at a scaled width of exactly zero. Still true, and re-read at
+  tip on 2026-09-17 when that last clause stopped being a reason and became the
+  rule: the row used to cite it as what this renderer declined to copy, and the
+  whole rule is copied now.
 - `imageFilter`, on the kinds `DlImageFilter` offers. **Was wrong.** It said
   seven where `DlImageFilterType` has eight; the eighth, `kLocalMatrix`, has no
   factory and is what `makeWithLocalMatrix` wraps an existing filter in. The
@@ -147,7 +148,7 @@ reason.
 |---|---|---|---|
 | `color` | yes | `Paint::fill`. A color states which primaries it is against — sRGB, extended sRGB, or Display P3 — and converts between them; the pipeline works in sRGB primaries with no range limit, carrying components in sRGB's transfer function as upstream does, so a color the triangle cannot describe is carried rather than clipped and reaches a floating-point target intact | `a_color_outside_the_srgb_primaries_reaches_a_floating_point_target` |
 | `style` | yes | `with_style` | `rect-fill`, `stroke-polygon-and-curve` |
-| `strokeWidth` | yes | `Style::Stroke`, in the space the shape is drawn in. A stroke narrower than a device pixel is widened to one and dimmed to pay for it, on upstream's arithmetic exactly -- `max(width, 1 / max_basis)` for the geometry and `clamp(2 * scaled_width, 0, 1)` for the alpha -- so a thin line fades with its width instead of quantizing against the sample grid. `dart:ui` documents zero as the thinnest line the device can draw; here it draws nothing, so that a caller animating a width down to it dims continuously to nothing rather than jumping back to full at the end. A caller wanting a line that stays one pixel wide under zoom divides by the current scale | `stroke-polygon-and-curve`, `rounded-rect-stroked`, `a_shear_is_no_obstacle_to_a_thin_stroke_and_zero_still_means_none`, `a_stroke_thinner_than_a_pixel_fades_instead_of_disappearing`, `the_two_stroke_routes_thin_out_the_same_way` |
+| `strokeWidth` | yes | `Style::Stroke`, in the space the shape is drawn in. A stroke narrower than a device pixel is widened to one and dimmed to pay for it, on upstream's arithmetic exactly -- `max(width, 1 / max_basis)` for the geometry and `clamp(2 * scaled_width, 0, 1)` for the alpha -- so a thin line fades with its width instead of quantizing against the sample grid. Zero is a hairline, which is what `dart:ui` documents and what the field defaults to -- one device pixel at full coverage, from upstream's own exception for it, so the fade above stops just short of zero and zero jumps back to full. A caller wanting a line that stays one pixel wide under zoom divides by the current scale | `stroke-polygon-and-curve`, `rounded-rect-stroked`, `a_shear_is_no_obstacle_to_a_thin_stroke_and_zero_is_a_hairline`, `a_stroke_thinner_than_a_pixel_fades_instead_of_disappearing`, `the_two_stroke_routes_thin_out_the_same_way` |
 | `strokeCap` | yes | `StrokeStyle::cap` | `stroke-caps` |
 | `strokeJoin` | yes | `StrokeStyle::join`. A rectangle with no corner radius keeps whichever join it asks for by leaving the fragment-evaluated route, whose stroke band rounds a vertex whatever the join says | `stroke-joins`, `a_stroked_rectangle_has_the_corners_its_join_asks_for` |
 | `strokeMiterLimit` | yes | `StrokeStyle::miter_limit` | `stroke-joins` |

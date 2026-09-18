@@ -67,6 +67,7 @@ const DARK: [f32; 4] = [15.0 / 255.0, 18.0 / 255.0, 26.0 / 255.0, 1.0];
 pub fn catalog() -> Vec<Scene> {
     let mut scenes = Vec::new();
     scenes.extend(basic());
+    scenes.extend(primitive_shape());
     scenes.extend(path());
     scenes.extend(gradient());
     scenes.extend(clip());
@@ -2353,6 +2354,115 @@ fn ramp() -> Fill {
         stops: vec![Stop::new(RED, 0.0), Stop::new(BLUE, 1.0)],
         tile: TileMode::Clamp,
     }
+}
+
+/// `aiks_dl_primitive_shape_unittests.cc` -- a hairline under a transform.
+///
+/// Every scene in that file is the same three draws under a different
+/// transform, which is what its own comment says it is for: "the effects of
+/// scaling, rotation and skew transforms on the consistency of a stroke
+/// (particularly hairlines)". A filled shape, a darker filled shape inside it,
+/// and the inner shape's outline stroked at a width of *zero* -- upstream's
+/// `RenderParameters::stroke_width` defaults to `0.0f` and every one of the
+/// three passes it through untouched.
+///
+/// So the chapter exists at all only because a stroke width of zero means a
+/// hairline here now. It could not have been written before that, and the
+/// inventory said so.
+///
+/// The shapes are centered on the origin and translated into the frame, rather
+/// than centered in the frame and transformed about their middle the way
+/// upstream does it. The two are the same picture and the second cannot be said
+/// here: a `Transform` composes scale, then shear, then rotation, then
+/// translation, so a pivot has to be folded into the translation, and folding
+/// it is arithmetic in the plate rather than in the renderer. Upstream also
+/// skews before it scales where this scales before it skews, which is visible
+/// only in the one scene that does both.
+fn primitive_shape() -> Vec<Scene> {
+    // A hairline is one device pixel whatever the transform does, so the thing
+    // each of these shows is that the outline stays the same weight as the
+    // shape under it is stretched and turned. Radii a little under half the
+    // plate, so the skew has room to carry the shape without clipping it.
+    let plate = |name: &'static str, circle: bool, transform: Transform| {
+        let fill = 40.0f32;
+        let inner = 34.0f32;
+        // Upstream elongates the rectangle past the square the circle would
+        // fill, by a fifth of the radius at this scale.
+        let wide = |r: f32| match circle {
+            true => r,
+            false => r + 8.0,
+        };
+        let shape = move |r: f32| match circle {
+            true => Shape::Circle {
+                center: [0.0, 0.0],
+                radius: r,
+            },
+            false => Shape::Rect {
+                min: [-wide(r), -r],
+                max: [wide(r), r],
+            },
+        };
+        Scene::tree(
+            name,
+            vec![
+                Node::Paint(Box::new(PaintSpec {
+                    fill: Fill::Solid([0.0, 0.0, 0.0, 1.0]),
+                    blend: BlendMode::Src,
+                    clip: None,
+                    clip_out: None,
+                    transform: Transform::default(),
+                })),
+                Node::Draw(Box::new(
+                    Item::fill(shape(fill), [0.1, 0.3, 0.9, 1.0]).with_transform(transform),
+                )),
+                Node::Draw(Box::new(
+                    Item::fill(shape(inner), [0.0, 0.0, 0.0, 0.5]).with_transform(transform),
+                )),
+                // The hairline. Stated as a stroke of no width, which is the
+                // whole subject: `dart:ui` documents that as the thinnest line
+                // the device can draw and upstream widens it to one pixel at
+                // full coverage.
+                Node::Draw(Box::new(
+                    Item::stroke(shape(inner), StrokeSpec::new(0.0), WHITE)
+                        .with_transform(transform),
+                )),
+            ],
+        )
+    };
+    vec![
+        plate(
+            "primitive/can-render-skewed-circle-hairline",
+            true,
+            Transform {
+                skew: [0.75, 0.75],
+                translate: [64.0, 64.0],
+                ..Transform::default()
+            },
+        ),
+        plate(
+            "primitive/can-render-skewed-rect-hairline",
+            false,
+            Transform {
+                skew: [0.75, 0.5],
+                translate: [64.0, 64.0],
+                ..Transform::default()
+            },
+        ),
+        // The one upstream added from a review comment, and the one with an edge
+        // near vertical: a scale, a shear and a turn together, which is where an
+        // estimate of the pixel size taken on the wrong axis shows.
+        plate(
+            "primitive/can-render-transformed-rect-with-near-vertical-edge-hairline",
+            false,
+            Transform {
+                scale: [1.552, 1.0],
+                skew: [0.458, 0.0],
+                rotate: 33.75_f32.to_radians(),
+                translate: [64.0, 64.0],
+                ..Transform::default()
+            },
+        ),
+    ]
 }
 
 /// `aiks_dl_path_unittests.cc` -- curves, strokes and contours.

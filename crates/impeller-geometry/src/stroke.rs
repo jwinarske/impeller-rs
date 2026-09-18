@@ -98,8 +98,31 @@ impl StrokeStyle {
     /// A non-positive or non-finite width strokes nothing. Treating that as
     /// "draw nothing" rather than as an error matches how a caller animating a
     /// width down to zero expects it to behave.
+    ///
+    /// Zero is excluded because the tessellator cannot build a stroke of no
+    /// width: it offsets the path by half of it and normalizes the result, which
+    /// for zero is a direction that does not exist. Asking it anyway put NaN in
+    /// a vertex buffer, which `a_stroked_path_of_any_shape_leaves_addressable_buffers`
+    /// caught. A caller's zero is a hairline and is widened before it arrives --
+    /// see [`Self::can_draw`], which is the question asked before the widening.
     pub fn is_visible(&self) -> bool {
         self.width > 0.0 && self.width.is_finite()
+    }
+
+    /// Whether a stroke of this width can put ink on a frame at all.
+    ///
+    /// Wider than [`Self::is_visible`] by exactly one value, and that value is
+    /// the whole reason both exist: `dart:ui` documents `Paint.strokeWidth` as
+    /// defaulting to zero and zero as "a hairline width", so a zero-width stroke
+    /// draws the thinnest line the device can. It cannot be tessellated at that
+    /// width, so a canvas widens it to a device pixel first and dims nothing to
+    /// pay for it, which is Impeller's rule.
+    ///
+    /// So this is the question to ask *before* the widening -- may this draw at
+    /// all -- and `is_visible` is the question to ask after, with a width the
+    /// tessellator can use.
+    pub fn can_draw(&self) -> bool {
+        self.width >= 0.0 && self.width.is_finite()
     }
 
     /// How far the stroke can extend beyond the path itself.
@@ -136,6 +159,11 @@ mod tests {
         // An animation driving width to zero should stop drawing, not error.
         assert!(!StrokeStyle::new(0.0).is_visible());
         assert!(!StrokeStyle::new(-1.0).is_visible());
+        // Zero may draw, though, and is widened before it reaches geometry:
+        // it is `dart:ui`'s default and means a hairline.
+        assert!(StrokeStyle::new(0.0).can_draw());
+        assert!(!StrokeStyle::new(-1.0).can_draw());
+        assert!(!StrokeStyle::new(f32::NAN).can_draw());
         assert!(!StrokeStyle::new(f32::NAN).is_visible());
         assert!(!StrokeStyle::new(f32::INFINITY).is_visible());
         assert!(StrokeStyle::new(0.5).is_visible());

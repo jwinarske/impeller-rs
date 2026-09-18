@@ -22,6 +22,19 @@ duplication the paragraph above rules out. `docs/parity.md` says what is built,
 a test checks that it says so truly, and a copy of that claim kept by hand here
 is the same claim without the check. So there is no list.
 
+A stroke width of zero is a hairline. `dart:ui` documents `Paint.strokeWidth` as
+defaulting to zero and zero as "a hairline width", and Impeller widens it to the
+thinnest line the device can draw at full coverage -- an explicit exception at the
+top of `ComputeStrokeAlphaCoverage` rather than something falling out of the
+dimming. This renderer read it as no stroke, on the reasoning that a width
+animating to nothing should fade out rather than jump back to full at the end. The
+default settled it: a Flutter app that strokes without setting a width drew a
+hairline there and nothing here, which is not an edge a caller opts into. So the
+jump comes with the rule. `Paint::is_visible` answers true for a zero-width
+stroke now, and `StrokeStyle` grew `can_draw` beside `is_visible` to keep the two
+questions apart -- the tessellator still cannot build a stroke of no width, and a
+caller's zero is widened before it gets there.
+
 A color filter that recolors nothing no longer costs a pass. `ImageFilter::Color`
 reported itself the identity only when it wrapped `ColorFilter::None`, so a blend
 in `Dst` mode -- return the destination untouched -- and an identity color matrix

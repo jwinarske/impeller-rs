@@ -277,8 +277,11 @@ fn catalog_names_say_which_file_they_came_from() {
     // The name is the only link back to the test each scene mirrors, so it
     // carries the topic its file is named for. A scene that does not is one
     // whose original nobody can find.
-    const TOPICS: [&str; 13] = [
+    const TOPICS: [&str; 14] = [
         "basic/",
+        // `aiks_dl_primitive_shape_unittests.cc`, whose whole subject is a
+        // hairline holding its weight under a transform.
+        "primitive/",
         "path/",
         "gradient/",
         "clip/",
@@ -1906,4 +1909,69 @@ fn a_clip_drawn_before_an_image_does_not_bound_it() {
         square,
         "the difference clip should have spared the middle of the surround"
     );
+}
+
+#[test]
+fn a_hairline_holds_its_weight_under_a_transform() {
+    // What `aiks_dl_primitive_shape_unittests.cc` exists for, in its own words:
+    // "the effects of scaling, rotation and skew transforms on the consistency
+    // of a stroke (particularly hairlines)". Its three scenes all stroke at a
+    // width of zero, so each is a hairline over a filled shape, and the claim is
+    // that the hairline is there and is thin however the shape is stretched.
+    //
+    // Both halves are checkable without a reference image. The outline has to
+    // exist -- a renderer reading zero as no stroke draws none of it, which is
+    // what this renderer did until the rule was taken -- and it has to be about
+    // one pixel wide, which a scan across the plate counts directly.
+    let Ok(mut ctx) = Validated::new(DevicePreference::Auto) else {
+        eprintln!("skipping: no Vulkan device");
+        return;
+    };
+    for scene in catalog()
+        .into_iter()
+        .filter(|s| s.name.starts_with("primitive/"))
+    {
+        let image = render::<VulkanHal>(&mut ctx, &scene);
+        // The outline is white over a blue fill and a darkened middle, so it is
+        // the only thing in the plate with every channel high.
+        let white = |x: u32, y: u32| {
+            let p = image.pixel(x, y);
+            p[0] > 150 && p[1] > 150 && p[2] > 150
+        };
+        let lit: Vec<(u32, u32)> = (0..128u32)
+            .flat_map(|y| (0..128u32).map(move |x| (x, y)))
+            .filter(|(x, y)| white(*x, *y))
+            .collect();
+        assert!(
+            lit.len() > 60,
+            "{}: the hairline should trace the inner shape and lit {} pixels",
+            scene.name,
+            lit.len()
+        );
+
+        // And it is thin. Taken as the widest unbroken white run on any row,
+        // which for a one-pixel outline is small even where the outline runs
+        // along the scan -- upstream's shapes are curves or turned rectangles,
+        // so no edge here is exactly horizontal.
+        let widest = (0..128u32)
+            .map(|y| {
+                let mut best = 0u32;
+                let mut run = 0u32;
+                for x in 0..128u32 {
+                    run = match white(x, y) {
+                        true => run + 1,
+                        false => 0,
+                    };
+                    best = best.max(run);
+                }
+                best
+            })
+            .max()
+            .unwrap_or(0);
+        assert!(
+            widest <= 12,
+            "{}: the widest white run is {widest} pixels, which is not a hairline",
+            scene.name
+        );
+    }
 }

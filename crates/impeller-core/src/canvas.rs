@@ -2394,7 +2394,8 @@ impl Canvas {
         // available to it and one of them is none.
         let (style, coverage) = match &paint.style {
             Style::Stroke(stroke) => {
-                let (width, coverage) = thin_stroke(self.transform, stroke.width);
+                let (width, coverage) =
+                    thin_stroke(self.transform, stroke.width, Zero::IsAHairline);
                 (Style::Stroke(stroke.with_width(width)), coverage)
             }
             other => (*other, 1.0),
@@ -2944,7 +2945,7 @@ impl Canvas {
             // wider than the width it asked for. A bound taken from the asked
             // width would cut the widening off at the edge of the layer.
             Style::Stroke(stroke) if stroke.width.is_finite() => {
-                thin_stroke(self.transform, stroke.width).0 / 2.0
+                thin_stroke(self.transform, stroke.width, Zero::IsAHairline).0 / 2.0
             }
             _ => 0.0,
         };
@@ -3727,7 +3728,8 @@ impl Canvas {
         };
         // Widened and dimmed on the same terms the tessellated route is, so
         // that which route a shape takes stays invisible. See `thin_stroke`.
-        let (stroke, coverage) = thin_stroke(self.transform, analytic_stroke(paint)?);
+        let (stroke, coverage) =
+            thin_stroke(self.transform, analytic_stroke(paint)?, Zero::IsNotAStroke);
         let Shader::Solid(color) = &paint.shader else {
             return None;
         };
@@ -3781,8 +3783,13 @@ impl Canvas {
         // A pixel for the coverage ramp, plus half the stroke where one is
         // traced: an outline straddles the edge, so it reaches outward by half
         // its width beyond the shape it belongs to.
-        let reach =
-            1.0 + thin_stroke(self.transform, analytic_stroke(paint).unwrap_or(0.0)).0 / 2.0;
+        let reach = 1.0
+            + thin_stroke(
+                self.transform,
+                analytic_stroke(paint).unwrap_or(0.0),
+                Zero::IsNotAStroke,
+            )
+            .0 / 2.0;
         let outset = Rect::new(
             rect.left - reach,
             rect.top - reach,
@@ -3954,7 +3961,8 @@ impl Canvas {
         if !paint.is_visible() || self.clip.is_some_and(Scissor::is_empty) {
             return None;
         }
-        let (stroke, coverage) = thin_stroke(self.transform, analytic_stroke(paint)?);
+        let (stroke, coverage) =
+            thin_stroke(self.transform, analytic_stroke(paint)?, Zero::IsNotAStroke);
         let Shader::Solid(color) = &paint.shader else {
             return None;
         };
@@ -5719,21 +5727,38 @@ const MIN_STROKE_PIXELS: f32 = 1.0;
 /// point is that a Flutter app's hairlines look here as they look there, and a
 /// different constant would be a different picture at every sub-pixel width.
 ///
-/// **Zero is not thin, it is nothing.** Upstream reads a width of zero as a
-/// hairline — one pixel at full alpha — and this renderer reads it as no
-/// stroke, which is `docs/parity.md`'s `strokeWidth` row and is a decision
-/// rather than an omission. It is left alone here, and the fade above only
-/// strengthens it: a caller animating a width down to nothing now sees it
-/// dim continuously to nothing rather than stopping at a quarter and jumping.
+/// **Zero is a hairline**, which is upstream's reading and `dart:ui`'s
+/// documented one: "Defaults to 0.0, which correspond to a hairline width".
+/// Upstream spells it as an explicit exception rather than letting it fall out
+/// of the arithmetic — `ComputeStrokeAlphaCoverage` opens with
+/// `if (scaled_stroke_width == 0.0 || scaled_stroke_width >= kMinStrokeSize)
+/// return 1.0`, so zero takes the widening to a whole pixel and pays nothing in
+/// alpha for it.
+///
+/// This renderer read zero as no stroke until 2026-09-17, on the reasoning that
+/// a caller animating a width to nothing should dim continuously rather than
+/// jump back to full at the end. That reasoning is sound and it is not
+/// upstream's: the jump is in upstream on purpose, and zero is the *default*
+/// value of `Paint.strokeWidth` rather than an edge a caller has to ask for --
+/// so a Flutter app that strokes without setting a width drew a hairline there
+/// and nothing here. Parity wins, and the discontinuity comes with it.
+///
+/// Which zero means which is what [`Zero`] carries. The analytic route spells a
+/// *fill* as a stroke width of zero, and widening that one would put a
+/// one-pixel outline around every filled shape, so the distinction cannot be
+/// left to the number.
 ///
 /// A projective transform is left alone too. The widening asks how much a
 /// transform stretches, which for a homography is a different answer at every
 /// point; upstream guards the same case with `HasPerspective2D`.
-fn thin_stroke(transform: Transform2D, width: f32) -> (f32, f32) {
+fn thin_stroke(transform: Transform2D, width: f32, zero: Zero) -> (f32, f32) {
     let Some(affine) = transform.to_affine() else {
         return (width, 1.0);
     };
-    if !width.is_finite() || width <= 0.0 {
+    if !width.is_finite() || width < 0.0 {
+        return (width, 1.0);
+    }
+    if width == 0.0 && zero == Zero::IsNotAStroke {
         return (width, 1.0);
     }
     let basis = max_scale(&affine);
@@ -5744,7 +5769,30 @@ fn thin_stroke(transform: Transform2D, width: f32) -> (f32, f32) {
     if scaled >= MIN_STROKE_PIXELS {
         return (width, 1.0);
     }
-    (MIN_STROKE_PIXELS / basis, (scaled * 2.0).clamp(0.0, 1.0))
+    // Upstream's exception, and the reason it is one: the dimming below would
+    // take a width of zero to an alpha of zero, which is a hairline nobody can
+    // see rather than the thinnest line the device can draw.
+    let coverage = match scaled == 0.0 {
+        true => 1.0,
+        false => (scaled * 2.0).clamp(0.0, 1.0),
+    };
+    (MIN_STROKE_PIXELS / basis, coverage)
+}
+
+/// What a stroke width of zero means at a call site, which is not always the
+/// same thing.
+///
+/// A caller asking for a zero-width stroke wants a hairline. The analytic route
+/// reaches [`thin_stroke`] through `analytic_stroke`, which reports a *fill* as
+/// a width of zero -- and a fill widened to a pixel would grow an outline it
+/// never asked for. So the two are told apart here rather than by the number,
+/// which they share.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Zero {
+    /// A stroke of no width, which draws the thinnest line the device can.
+    IsAHairline,
+    /// Not a stroke at all, so there is no width to widen.
+    IsNotAStroke,
 }
 
 /// A color at `factor` of its opacity.

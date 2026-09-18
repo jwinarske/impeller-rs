@@ -85,12 +85,20 @@ not to exist -- a mesh is refused elsewhere, a glyph run tints one color
 whatever is done to it, and what was left was a shape with a fill that varies,
 which is well defined and is now built.
 
-"A hairline skew" survives as an obstacle but not as a description. A shear is
-no difficulty: half a pixel of width under one draws exactly as it should, and
-a test says so. What that scene wants is a stroke width of zero meaning the
-thinnest line a device can draw, which is what `dart:ui` documents and is not
-what it means here -- so it is a row of `docs/parity.md` rather than a gap in
-the catalog.
+Three of the four primitive-shape scenes are written --
+`primitive/can-render-skewed-circle-hairline`,
+`primitive/can-render-skewed-rect-hairline` and
+`primitive/can-render-transformed-rect-with-near-vertical-edge-hairline` -- and
+`a_hairline_holds_its_weight_under_a_transform` states what the chapter is for as
+a pair of numbers: the outline has to be there, and the widest unbroken run of it
+on any row has to stay small. The fourth is `PrimitiveShapePlayground`, sliders
+and a shape chooser, which is a harness rather than a picture.
+
+"A hairline skew" was never an obstacle and is not one now. A shear is no
+difficulty: half a pixel of width under one draws exactly as it should, and a
+test says so. The other half, a stroke width of zero meaning the thinnest line a
+device can draw, is what `dart:ui` documents and is now what it means here as
+well -- so nothing in that scene is out of reach.
 
 This used to add that upstream's own handling was unsettled enough that copying
 it was not the obvious move. Read at tip of tree, that is not so. Upstream's
@@ -104,12 +112,20 @@ Reading it that way found that this renderer had the *thin* half wrong and not
 only the zero. A sub-pixel stroke was drawn at the width it asked for, which
 against a four-sample grid meant a stroke of 0.18 device pixels and one of 0.3
 laid down identical ink and one of 0.15 laid down none. Upstream's widening and
-dimming are now here, copied constant for constant, which leaves the deviation
-where it always was and nowhere else: zero means no stroke, and a width
-approaching it now fades to nothing continuously rather than stopping at a
-quarter and dropping. That is a decision against upstream's decided position
-rather than a gap nobody upstream has filled, and it is the only part of the
-rule not taken.
+dimming were copied constant for constant, which left the deviation at zero and
+nowhere else.
+
+That last piece is taken now too, and the argument that settled it is worth
+keeping because it is not the one that was being had. The case for reading zero
+as no stroke was continuity: a width animating to nothing fades out rather than
+jumping back to full at the end, and upstream jumps. The case against it is that
+zero is the *default* value of `Paint.strokeWidth` and is documented as "a
+hairline width" -- so a Flutter app that strokes without setting a width drew a
+hairline there and nothing here, which is not an edge a caller opts into. The
+discontinuity is upstream's on purpose, spelled as an exception at the top of
+`ComputeStrokeAlphaCoverage`, and it comes along with the rest of the rule. So
+the row is no longer short by a decision, and the whole of upstream's rule is
+here.
 
 All fourteen of the rows below have now been read against the file they name, at
 tip of tree, and the results are set out after the table. One named its obstacle
@@ -182,16 +198,23 @@ column is right and the obvious way to check it is wrong.
 | `aiks_dl_vertices_unittests.cc` | ~16 | 22 | nothing; see below |
 | `aiks_dl_atlas_unittests.cc` | ~11 | 12 | nothing; see below |
 | `aiks_dl_shadow_unittests.cc` | 30 | 24 | twelve casters the scene model cannot spell or cannot wind, measured as near-duplicates of ones it can; see below |
-| `aiks_dl_primitive_shape_unittests.cc` | ~2 | 0 | one is a playground harness, one wants a stroke width of zero to mean a hairline |
+| `aiks_dl_primitive_shape_unittests.cc` | 4 | 3 | one is a playground harness with sliders; see below |
 | `aiks_dl_text_unittests.cc` | — | 7 | shaping and font parsing, which are out of scope; glyph rendering is not, and these use synthetic coverage |
 | `aiks_dl_runtime_effect_unittests.cc` | — | 15 | nothing; two of that file's tests exercise machinery this renderer does not have, which is not the same as a gap; see below |
 | `aiks_dl_unittests.cc` | 40 | 29 | nine that are texture or dispatcher machinery rather than pictures, two the scene model cannot say, and two that cannot show what they are for; see below |
 
-Two rows now carry an exact number rather than an approximate one.
-`aiks_dl_unittests.cc` holds forty `TEST_P` and `aiks_dl_shadow_unittests.cc`
-thirty, and neither expands one over a macro, so for those two the count in
-tests and the count in scenes are the same number and there is nothing to
-approximate.
+Three rows now carry an exact number rather than an approximate one.
+`aiks_dl_unittests.cc` holds forty `TEST_P`, `aiks_dl_shadow_unittests.cc`
+thirty and `aiks_dl_primitive_shape_unittests.cc` four, and none expands one over
+a macro, so for those three the count in tests and the count in scenes are the
+same number and there is nothing to approximate.
+
+The primitive-shape row said two, and it had said two since it was written. It
+was never checked against the file, because nothing in it could be written while
+a stroke width of zero drew nothing -- all four of its tests stroke at zero -- so
+the row was a placeholder that looked like a count. That is the fourth wrong
+number in this column and the first that was wrong for having nothing to be right
+about.
 
 Both of those numbers were wrong when first written -- thirty-nine and
 twenty-nine -- and the reason is worth more than the correction. They came from
@@ -323,7 +346,7 @@ named above with what covers them instead. Four defects came out of asking, none
 of them about the subjects the scenes are named for, which is the argument for
 asking rather than counting.
 
-The catalog holds four hundred and thirty-five scenes against a column totalling
+The catalog holds four hundred and thirty-eight scenes against a column totalling
 about four hundred, and the two are not a ratio: five chapters hold more than
 the file they mirror, because a scene here is one picture where a test there can
 be a loop over every blend mode or a family drawn twice. What the totals meeting

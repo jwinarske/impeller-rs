@@ -966,7 +966,10 @@ impl Paint {
         }
         match &self.style {
             Style::Fill => true,
-            Style::Stroke(stroke) => stroke.is_visible(),
+            // `can_draw` rather than `is_visible`, and the difference is a
+            // width of zero: a hairline, which the canvas widens to a device
+            // pixel before any geometry is built for it.
+            Style::Stroke(stroke) => stroke.can_draw(),
         }
     }
 }
@@ -1003,7 +1006,10 @@ mod tests {
     fn a_zero_width_stroke_draws_nothing() {
         // Animating a width to zero should stop drawing rather than emit
         // degenerate geometry for the tessellator to discard.
-        assert!(!Paint::stroke(Color::BLACK, 0.0).is_visible());
+        // A width of zero is a hairline rather than nothing, so the paint is
+        // visible; a negative one still is not a stroke.
+        assert!(Paint::stroke(Color::BLACK, 0.0).is_visible());
+        assert!(!Paint::stroke(Color::BLACK, -1.0).is_visible());
         assert!(Paint::stroke(Color::BLACK, 0.5).is_visible());
     }
 }
