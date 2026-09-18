@@ -900,7 +900,26 @@ ignored**, with a hundred and twenty-one announced skips and the catalog
 drawing 222 of its 242 scenes across two devices. It was 794 passed and 23 failed the
 first time the board was run.
 
-The Pi 4 is a separate case and is not covered by that number. It has no IOMMU,
-so Vulkan does not come up on it at all, and its vc4 display controller refuses
-to import what this renderer exports for reasons the DRM crate's documentation
-states.
+The Pi 4 is a separate case and is not covered by that number. Its vc4 display
+controller refuses to import what this renderer exports, for reasons the DRM
+crate's documentation states.
+
+This used to add that the board has no IOMMU "so Vulkan does not come up on it at
+all", which is wrong and was wrong in one direction only: the missing IOMMU stops
+`vc4` importing `v3d`'s memory, so what a Pi 4 cannot do is *scan out* what Vulkan
+allocated. Rendering is fine. `impeller-present-drm`'s crate documentation has
+always said so -- "works on a Pi 4 ... what a Pi 4 cannot do is *scan out* what
+Vulkan allocated" -- so the tree contradicted itself here for as long as this
+paragraph stood.
+
+Measured 2026-09-17, kernel 6.18.34+rpt-rpi-v8 on Debian 13: `cargo xtask bench`
+reports `vulkan:0 V3D 4.2.14.0` beside `gles V3D 4.2.14.0` and both give all four
+rows. So a Vulkan *rendering* failure on that board is a bug like any other, which
+is the opposite of what a reader was being told to conclude.
+
+Two things it is worth knowing before benching there. The board is about four
+times slower than a Pi 5 -- 34 ms against 8.9 for the distance-field row -- and
+its bimodality is the Pi 5's: two runs of the same binary came back 34.386 and
+33.668 ms, two per cent apart, so the three-runs-a-side rule applies unchanged.
+The cached Pi 5 sysroot links binaries that run on it without alteration; both
+boards are glibc 2.41 and gcc 14.
