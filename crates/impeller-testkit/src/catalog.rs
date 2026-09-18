@@ -1363,6 +1363,69 @@ fn basic() -> Vec<Scene> {
             ],
         ),
         Scene::tree(
+            "basic/perspective-rectangle",
+            // Upstream states its projection first and its clip after it, so the
+            // clip is a region in projected space and its own edges go through
+            // the divide. That is a clip in force over a run rather than one
+            // narrowing a single draw, which is the arrangement this collection
+            // did not have: `clip/a-rectangular-clip-under-perspective` puts the
+            // projection on the item, where the clip travels with that one draw.
+            //
+            // The term is on Y here, and every other perspective plate puts it
+            // on X. A divide by `1 + p*y` is not the transpose of a divide by
+            // `1 + p*x` as far as a rasterizer is concerned -- the interpolation
+            // runs along the other axis -- so the two are separate pictures and
+            // this is the second.
+            //
+            // The flood at half white is upstream's, and it is inside the clip:
+            // it is the draw that says where the projected region actually is,
+            // since it covers whatever the clip admits and nothing else.
+            vec![
+                Node::Paint(Box::new(PaintSpec {
+                    fill: Fill::Solid([0.1, 0.1, 0.12, 1.0]),
+                    blend: BlendMode::SrcOver,
+                    clip: None,
+                    clip_out: None,
+                    transform: Transform::default(),
+                })),
+                Node::Clip {
+                    rect: Some([8.0, 8.0, 72.0, 120.0]),
+                    rect_out: None,
+                    shape: None,
+                    transform: Transform {
+                        // Positive, so the divisor grows down the plate and the
+                        // region narrows toward the bottom. Upstream's term is
+                        // negative, and the sign is not what it is testing: its
+                        // divisor carries a constant of 2.2 and its translation
+                        // is half the frame, so the region it ends up with is on
+                        // screen. A negative term here magnifies instead, and at
+                        // the far edge of a plate this size it carries the
+                        // bottom of the clip to y = 428 -- a trapezoid nobody
+                        // can see is not the picture the test is about.
+                        perspective: [0.0, 0.006],
+                        translate: [24.0, 0.0],
+                        ..Transform::default()
+                    },
+                    children: vec![
+                        Node::Draw(Box::new(Item::fill(
+                            Shape::Rect {
+                                min: [8.0, 8.0],
+                                max: [72.0, 120.0],
+                            },
+                            [0.1, 0.3, 0.9, 1.0],
+                        ))),
+                        Node::Paint(Box::new(PaintSpec {
+                            fill: Fill::Solid([1.0, 1.0, 1.0, 0.5]),
+                            blend: BlendMode::SrcOver,
+                            clip: None,
+                            clip_out: None,
+                            transform: Transform::default(),
+                        })),
+                    ],
+                },
+            ],
+        ),
+        Scene::tree(
             "basic/matrix-image-filter-doesnt-cull-when-translated-from-offscreen",
             // A circle drawn well off the left of the frame, inside a group
             // whose matrix carries it back into view. What the group captures

@@ -1481,7 +1481,20 @@ impl Node {
                     || layer.matrix.is_some_and(|m| m.perspective != [0.0, 0.0])
                     || children.iter().any(Node::asks_for_perspective)
             }
-            Self::Clip { children, .. } => children.iter().any(Node::asks_for_perspective),
+            // Its own transform as well as its children's. A clip opens the
+            // space its children are stated in, so a projection there is the
+            // one the clip's own edges are drawn through -- and it was left out
+            // here while `plain` stripped it, so a scene whose only perspective
+            // sat on a clip reported no feature and was compared against a copy
+            // of itself.
+            Self::Clip {
+                transform,
+                children,
+                ..
+            } => {
+                transform.perspective != [0.0, 0.0]
+                    || children.iter().any(Node::asks_for_perspective)
+            }
         }
     }
 
@@ -1489,13 +1502,26 @@ impl Node {
         for transform in self.transforms_mut() {
             transform.perspective = [0.0, 0.0];
         }
+        // Exhaustive rather than a catch-all, so a node that gains children has
+        // to say here whether they are reached. `plain` recurses through a clip
+        // itself and re-runs this at each node, which hid the omission: a clip's
+        // children kept their perspective under this function alone.
         match self {
             Self::Picture(picture) => picture
                 .children
                 .iter_mut()
                 .for_each(Node::flatten_perspective),
-            Self::Layer { children, .. } => children.iter_mut().for_each(Node::flatten_perspective),
-            _ => {}
+            Self::Layer { children, .. } | Self::Clip { children, .. } => {
+                children.iter_mut().for_each(Node::flatten_perspective)
+            }
+            Self::Draw(_)
+            | Self::Mesh(_)
+            | Self::Atlas(_)
+            | Self::Shadow(_)
+            | Self::Glyphs(_)
+            | Self::Points(_)
+            | Self::NinePatch(_)
+            | Self::Paint(_) => {}
         }
     }
 
@@ -3802,6 +3828,82 @@ mod tests {
         assert!(
             !of(LayerSpec::default()),
             "and a layer that filters nothing does not count"
+        );
+    }
+
+    /// A projection on a clip's own transform is a feature, and is strippable.
+    ///
+    /// The pair is what makes any feature checkable: a scene is rendered with it
+    /// and again with it taken out, and the two have to differ. Perspective on a
+    /// clip was missing from the first half and present in the second, which is
+    /// the worst way round -- `plain` removed it, `carries_a_visual_feature`
+    /// said there was nothing to remove, and a scene whose only projection sat
+    /// on a clip would have been left out of the comparison it needed and
+    /// reported as covered.
+    #[test]
+    fn a_projection_on_a_clip_is_a_feature_and_comes_off() {
+        let projected = || {
+            Scene::tree(
+                "probe",
+                vec![Node::Clip {
+                    rect: Some([8.0, 8.0, 120.0, 120.0]),
+                    rect_out: None,
+                    shape: None,
+                    transform: Transform {
+                        perspective: [0.004, 0.0],
+                        ..Transform::default()
+                    },
+                    children: vec![Node::Draw(Box::new(Item::fill(
+                        Shape::Rect {
+                            min: [0.0, 0.0],
+                            max: [128.0, 128.0],
+                        },
+                        [1.0, 1.0, 0.0, 1.0],
+                    )))],
+                }],
+            )
+        };
+        assert!(
+            projected().carries_a_visual_feature(),
+            "a projection on the clip's own transform is what the clip's edges \
+             are drawn through"
+        );
+        assert!(
+            !projected().plain().carries_a_visual_feature(),
+            "and stripping has to take it off, or the pair is a scene against \
+             itself"
+        );
+
+        // And the other half of the same omission: a projection under a clip,
+        // which `plain` reached only because it recurses through one itself.
+        let under = || {
+            Scene::tree(
+                "probe",
+                vec![Node::Clip {
+                    rect: Some([8.0, 8.0, 120.0, 120.0]),
+                    rect_out: None,
+                    shape: None,
+                    transform: Transform::default(),
+                    children: vec![Node::Draw(Box::new(
+                        Item::fill(
+                            Shape::Rect {
+                                min: [0.0, 0.0],
+                                max: [128.0, 128.0],
+                            },
+                            [1.0, 1.0, 0.0, 1.0],
+                        )
+                        .with_transform(Transform {
+                            perspective: [0.004, 0.0],
+                            ..Transform::default()
+                        }),
+                    ))],
+                }],
+            )
+        };
+        assert!(under().carries_a_visual_feature());
+        assert!(
+            !under().plain().carries_a_visual_feature(),
+            "a clip's children have to be reached too"
         );
     }
 

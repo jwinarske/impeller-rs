@@ -172,7 +172,7 @@ column is right and the obvious way to check it is wrong.
 
 | File | Scenes there | Here | Blocked on |
 |---|---|---|---|
-| `aiks_dl_basic_unittests.cc` | ~85 | 89 | nothing; see below |
+| `aiks_dl_basic_unittests.cc` | ~85 | 90 | nothing; see below |
 | `aiks_dl_path_unittests.cc` | ~30 | 37 | nothing; see below |
 | `aiks_dl_gradient_unittests.cc` | ~40 | 46 | nothing; see below |
 | `aiks_dl_clip_unittests.cc` | ~6 | 8 | nothing; this file is covered |
@@ -268,21 +268,39 @@ that every feature has to reach the picture. So it is a test instead,
 picture its comment describes -- a green square in the middle of a blue circle
 -- and the pass count, since the filter used to cost one.
 
-Two remain unadjudicated, and both are about perspective:
-`CanDrawPerspectiveTransformWithClips` and `PerspectiveRectangle`. Each is a
+`PerspectiveRectangle` is the sixth, and it states its projection first and its
+clip after it -- so the clip is a region in projected space, its own edges go
+through the divide, and it is in force over a run rather than narrowing one
+draw. `clip/a-rectangular-clip-under-perspective` puts the projection on the item
+instead, where the clip travels with that one draw, so this is a different
+arrangement rather than the same one restated. Its term is on Y as well, where
+every other perspective plate here puts it on X. Written as
+`basic/perspective-rectangle`, with `a_projected_clip_narrows_across_the_plate`
+requiring the lit span to be wider near the top than the bottom -- a clip taken
+in frame axes draws the rectangle that was written down and agrees with itself
+perfectly.
+
+Writing it needed a defect fixing first, of the same kind the clipped backdrop
+filter turned up. `asks_for_perspective` never tested a clip's *own* transform
+while `plain` stripped it, which is the worst way round: this plate would have
+reported no feature, been left out of the comparison that says a feature reaches
+the picture, and passed as covered. `flatten_perspective` did not reach a clip's
+children either, which `plain` hid by recursing through a clip itself.
+`a_projection_on_a_clip_is_a_feature_and_comes_off` holds both halves.
+
+One remains unadjudicated: `CanDrawPerspectiveTransformWithClips`. It is a
 picture, and the catalog covers each subject from some other direction -- there
 are backdrop filters under clips, perspective under a clip and under a curve,
 images under a transform, and a great many multisampled circles. Whether that
 counts as mirroring them is a judgment about what a plate is for, not a count,
-and it is the one part of this row nobody has made. The question that settled
-the five above is the one to ask of these: not whether the subject appears
-elsewhere but whether the test pins an arrangement nothing else does. On that
-question both look like yes, and neither is written yet. No plate draws an
-*image* through a perspective transform, none combines perspective with a
-difference clip, and none states perspective on a clip's own transform -- which
-`PerspectiveRectangle` does, since its clip is stated after the projection.
+and on the question that settled the six above -- whether it pins an arrangement
+nothing else does -- it looks like a yes twice over. No plate draws an *image*
+through a perspective transform, and none combines perspective with a difference
+clip; that scene does both, and adds a third clip drawn and popped before the
+image so that its geometry lands behind the image in the depth buffer. It is also
+the largest of the seven to write, which is why it is still here.
 
-The catalog holds four hundred and thirty-three scenes against a column totalling
+The catalog holds four hundred and thirty-four scenes against a column totalling
 about four hundred, and the two are not a ratio: five chapters hold more than
 the file they mirror, because a scene here is one picture where a test there can
 be a loop over every blend mode or a family drawn twice. What the totals meeting

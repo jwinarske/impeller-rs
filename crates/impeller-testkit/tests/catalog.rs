@@ -1814,3 +1814,44 @@ fn a_clip_popped_before_a_backdrop_cuts_does_not_come_back() {
         "nothing should reach the middle of the plate"
     );
 }
+
+#[test]
+fn a_projected_clip_narrows_across_the_plate() {
+    // `basic/perspective-rectangle` states its clip after its projection, so the
+    // clip's own edges go through the divide and the region it admits is a
+    // trapezoid rather than the rectangle written down. That is the whole
+    // subject, and a renderer that took the clip in frame axes -- a scissor,
+    // say -- would draw the rectangle instead and agree with itself perfectly.
+    //
+    // So the check is the shape of the region: its lit span has to be wider
+    // near the top than near the bottom, by more than a rasterizer's edge.
+    let Ok(mut ctx) = Validated::new(DevicePreference::Auto) else {
+        eprintln!("skipping: no Vulkan device");
+        return;
+    };
+    let scene = catalog()
+        .into_iter()
+        .find(|s| s.name == "basic/perspective-rectangle")
+        .expect("the plate is in the catalog");
+    let image = render::<VulkanHal>(&mut ctx, &scene);
+
+    // The ground is nearly black and everything inside the clip is flooded with
+    // half white, so a lit pixel is any that is not the ground.
+    let span = |y: u32| {
+        (0..128u32)
+            .filter(|x| {
+                let p = image.pixel(*x, y);
+                p[0] > 60 || p[1] > 60 || p[2] > 100
+            })
+            .count()
+    };
+    let (high, low) = (span(16), span(60));
+    assert!(
+        high > low + 4,
+        "the projected clip should narrow down the plate, and spans {high} at \
+         y=16 against {low} at y=60"
+    );
+    // And it is a region rather than nothing: a clip that admitted no pixel
+    // would satisfy the inequality above with two zeros.
+    assert!(low > 8, "the lower span is {low}, which is not a region");
+}
