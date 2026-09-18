@@ -1135,6 +1135,73 @@ fn basic() -> Vec<Scene> {
             },
         ),
         Scene::tree(
+            "basic/matrix-image-filter-doesnt-cull-when-scaled-and-translated-from-offscreen",
+            // The plate below with a scale in the matrix as well, which is
+            // upstream's second version of it. A pre-image computed from the
+            // translation alone would be the right region at the wrong size,
+            // so the circle arrives cropped rather than whole -- and at twice
+            // the scale the crop is half of it.
+            vec![Node::Layer {
+                layer: Box::new(LayerSpec {
+                    matrix: Some(Transform {
+                        scale: [2.0, 2.0],
+                        translate: [128.0, -64.0],
+                        ..Transform::default()
+                    }),
+                    ..LayerSpec::default()
+                }),
+                bounds: None,
+                transform: Transform::default(),
+                children: vec![Node::Draw(Box::new(Item::fill(
+                    Shape::Circle {
+                        center: [-48.0, 64.0],
+                        radius: 16.0,
+                    },
+                    GREEN,
+                )))],
+            }],
+        ),
+        Scene::tree(
+            "basic/save-layer-with-bounds-larger-than-the-frame",
+            // A group given bounds a hundred thousand pixels across. The
+            // bounds say where the content is, and the target is what the
+            // renderer allocates for it -- so a renderer taking them at their
+            // word asks the device for a target it cannot have. They are
+            // clamped to the frame here, and the plate is the three rectangles
+            // upstream draws through such a group, at half alpha.
+            vec![Node::Layer {
+                layer: Box::new(LayerSpec {
+                    alpha: 0.5,
+                    ..LayerSpec::default()
+                }),
+                bounds: Some([0.0, 0.0, 100000.0, 100000.0]),
+                transform: Transform::default(),
+                children: vec![
+                    Node::Draw(Box::new(Item::fill(
+                        Shape::Rect {
+                            min: [8.0, 8.0],
+                            max: [88.0, 88.0],
+                        },
+                        RED,
+                    ))),
+                    Node::Draw(Box::new(Item::fill(
+                        Shape::Rect {
+                            min: [20.0, 20.0],
+                            max: [100.0, 100.0],
+                        },
+                        GREEN,
+                    ))),
+                    Node::Draw(Box::new(Item::fill(
+                        Shape::Rect {
+                            min: [32.0, 32.0],
+                            max: [112.0, 112.0],
+                        },
+                        BLUE,
+                    ))),
+                ],
+            }],
+        ),
+        Scene::tree(
             "basic/matrix-image-filter-doesnt-cull-when-translated-from-offscreen",
             // A circle drawn well off the left of the frame, inside a group
             // whose matrix carries it back into view. What the group captures
@@ -8870,6 +8937,29 @@ fn layers() -> Vec<Scene> {
                     0.0, 0.0, 1.0, 0.0, 0.0, //
                     0.0, 0.0, 0.0, 2.0, 0.0,
                 ])),
+                ..LayerSpec::default()
+            },
+            None,
+        ),
+        grouped(
+            "dl/translucent-save-layer-with-color-filter-and-image-filter-draws-correctly",
+            LayerSpec {
+                alpha: 0.5,
+                // Upstream's other pairing of the two, and the one that says
+                // the image filter stage is not the color filter stage wearing
+                // a different name: here the *image* filter is a color matrix,
+                // so both stages recolor and only their order tells them apart.
+                // The matrix leaks green into blue and halves alpha, and the
+                // color filter modulates by green, so a renderer running them
+                // the other way round leaves a different amount of blue.
+                filter: ImageFilter::Color(ColorFilter::matrix([
+                    1.0, 0.0, 0.0, 0.0, 0.0, //
+                    0.0, 1.0, 0.0, 0.0, 0.0, //
+                    0.0, 0.2, 1.0, 0.0, 0.0, //
+                    0.0, 0.0, 0.0, 0.5, 0.0,
+                ])),
+                color_filter: ColorFilter::blend(GREEN, BlendMode::Modulate)
+                    .expect("modulate against a constant is affine"),
                 ..LayerSpec::default()
             },
             None,

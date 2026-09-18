@@ -172,7 +172,7 @@ column is right and the obvious way to check it is wrong.
 
 | File | Scenes there | Here | Blocked on |
 |---|---|---|---|
-| `aiks_dl_basic_unittests.cc` | ~85 | 85 | nothing; see below |
+| `aiks_dl_basic_unittests.cc` | ~85 | 87 | nothing; see below |
 | `aiks_dl_path_unittests.cc` | ~30 | 37 | nothing; see below |
 | `aiks_dl_gradient_unittests.cc` | ~40 | 46 | nothing; see below |
 | `aiks_dl_clip_unittests.cc` | ~5 | 7 | nothing; this file is covered |
@@ -181,17 +181,25 @@ column is right and the obvious way to check it is wrong.
 | `aiks_dl_blur_unittests.cc` | ~59 | 59 | nothing; see below |
 | `aiks_dl_vertices_unittests.cc` | ~16 | 22 | nothing; see below |
 | `aiks_dl_atlas_unittests.cc` | ~11 | 12 | nothing; see below |
-| `aiks_dl_shadow_unittests.cc` | 29 | 24 | twelve casters the scene model cannot spell or cannot wind, measured as near-duplicates of ones it can; see below |
+| `aiks_dl_shadow_unittests.cc` | 30 | 24 | twelve casters the scene model cannot spell or cannot wind, measured as near-duplicates of ones it can; see below |
 | `aiks_dl_primitive_shape_unittests.cc` | ~2 | 0 | one is a playground harness, one wants a stroke width of zero to mean a hairline |
 | `aiks_dl_text_unittests.cc` | — | 7 | shaping and font parsing, which are out of scope; glyph rendering is not, and these use synthetic coverage |
 | `aiks_dl_runtime_effect_unittests.cc` | — | 15 | nothing; two of that file's tests exercise machinery this renderer does not have, which is not the same as a gap; see below |
-| `aiks_dl_unittests.cc` | 39 | 28 | nine that are texture or dispatcher machinery rather than pictures, two the scene model cannot say, and two that cannot show what they are for; see below |
+| `aiks_dl_unittests.cc` | 40 | 29 | nine that are texture or dispatcher machinery rather than pictures, two the scene model cannot say, and two that cannot show what they are for; see below |
 
 Two rows now carry an exact number rather than an approximate one.
-`aiks_dl_unittests.cc` holds thirty-nine `TEST_P` and `aiks_dl_shadow_unittests.cc`
-twenty-nine, and neither expands one over a macro, so for those two the count in
+`aiks_dl_unittests.cc` holds forty `TEST_P` and `aiks_dl_shadow_unittests.cc`
+thirty, and neither expands one over a macro, so for those two the count in
 tests and the count in scenes are the same number and there is nothing to
-approximate. They said about thirty-six and about thirty. The rest keep their
+approximate.
+
+Both of those numbers were wrong when first written -- thirty-nine and
+twenty-nine -- and the reason is worth more than the correction. They came from
+matching `TEST_P(AiksTest, Name)` on one line, and upstream wraps a declaration
+whose name is long enough onto a second. Counting the `TEST_P(` lines and
+counting the names extracted from them give different answers, which is what
+caught it: forty against thirty-nine here, thirty against twenty-nine in the
+shadow file, and eighty-five against eighty-three in the basic one. The rest keep their
 tildes and should: the paragraph below on `IMPELLER_FOR_EACH_BLEND_MODE` is why
 counting them that way is wrong.
 
@@ -213,6 +221,15 @@ anything, so the composition collapses to a constant and a plate stating the
 answer would agree with itself. That is the scene model's gap rather than an
 unwritten scene.
 
+Two more were never adjudicated because the name match never saw them, both
+declarations that wrap. `MatrixImageFilterDoesntCullWhenScaledAndTranslatedFromOffscreen`
+and `CanPerformSaveLayerWithBoundsAndLargerIntermediateIsNotAllocated` are
+ordinary pictures, and they are written:
+`basic/matrix-image-filter-doesnt-cull-when-scaled-and-translated-from-offscreen`
+and `basic/save-layer-with-bounds-larger-than-the-frame`. The third the wrap
+hid, `TranslucentSaveLayerWithColorFilterAndImageFilterDrawsCorrectly`, is in
+the `dl` chapter and written too.
+
 Seven remain unadjudicated and are listed so nobody has to find them again:
 `CanRenderClippedBackdropFilter`, `BackdropFilterOverUnclosedClip`,
 `CanDrawPerspectiveTransformWithClips`, `PerspectiveRectangle`,
@@ -224,7 +241,7 @@ great many multisampled circles. Whether that counts as mirroring them is a
 judgment about what a plate is for, not a count, and it is the one part of this
 row nobody has made.
 
-The catalog holds four hundred and twenty-two scenes against a column totalling
+The catalog holds four hundred and twenty-five scenes against a column totalling
 about four hundred, and the two are not a ratio: five chapters hold more than
 the file they mirror, because a scene here is one picture where a test there can
 be a loop over every blend mode or a family drawn twice. What the totals meeting
@@ -1224,7 +1241,7 @@ differs by whole triangles rather than by an edge sample. The three casters
 upstream declines to optimize are here too, for the other side of the same
 question.
 
-Twelve of upstream's twenty-nine are left out, and they divide by what stops
+Twelve of upstream's thirty are left out, and they divide by what stops
 them. Eight want a closed contour of several curve segments -- a circle and an
 oval built from conics tweaked off the exact weight, a round rectangle with four
 different corner radii built the same way, and quadratic, conic and cubic
