@@ -1202,6 +1202,69 @@ fn basic() -> Vec<Scene> {
             }],
         ),
         Scene::tree(
+            "basic/can-render-clipped-backdrop-filter",
+            // A backdrop filter whose bounds are the clip's bounding rectangle
+            // while the clip itself is rounded. Upstream states the two that
+            // way deliberately -- "the clip coverage and SaveLayer size are the
+            // same" -- so the corners have to come off the composite because
+            // the clip takes them, not because the layer is smaller.
+            //
+            // That is the arrangement a backdrop layer's target is now sized
+            // from: it takes the clip's size, and the clip here is a curve
+            // inside the rectangle the caller asked for. A target sized to the
+            // curve's bounding box is right and a composite that forgot the
+            // curve fills the corners with exclusion-blended ground.
+            //
+            // The ground is a repeating gradient rather than a flat color for
+            // the reason the rest of this chapter's backdrop plates give: a
+            // filter over one color is one color, and the bands are what say
+            // where the filtered region starts and stops.
+            vec![
+                Node::Paint(Box::new(PaintSpec {
+                    fill: Fill::LinearGradient {
+                        start: [0.0, 0.0],
+                        end: [32.0, 32.0],
+                        stops: vec![
+                            Stop::new([0.9568, 0.2627, 0.2118, 1.0], 0.0),
+                            Stop::new([0.1294, 0.5882, 0.9529, 1.0], 1.0),
+                        ],
+                        tile: TileMode::Repeat,
+                    },
+                    blend: BlendMode::SrcOver,
+                    clip: None,
+                    clip_out: None,
+                    transform: Transform::default(),
+                })),
+                Node::Clip {
+                    rect: None,
+                    rect_out: None,
+                    shape: Some(Shape::RoundedRect {
+                        min: [12.0, 12.0],
+                        max: [116.0, 84.0],
+                        radius: 26.0,
+                    }),
+                    transform: Transform::default(),
+                    children: vec![Node::Layer {
+                        layer: Box::new(LayerSpec {
+                            backdrop: ImageFilter::Color(ColorFilter::blend(
+                                RED,
+                                BlendMode::Exclusion,
+                            )),
+                            ..LayerSpec::default()
+                        }),
+                        // The clip's bounding rectangle, as upstream states it.
+                        bounds: Some([12.0, 12.0, 116.0, 84.0]),
+                        transform: Transform::default(),
+                        // Nothing drawn inside it. The filtered backdrop is the
+                        // whole of the picture, which is upstream's scene too --
+                        // its save paint is default and it draws nothing before
+                        // the restore the builder makes for it.
+                        children: vec![],
+                    }],
+                },
+            ],
+        ),
+        Scene::tree(
             "basic/matrix-image-filter-doesnt-cull-when-translated-from-offscreen",
             // A circle drawn well off the left of the frame, inside a group
             // whose matrix carries it back into view. What the group captures

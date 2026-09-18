@@ -1350,7 +1350,16 @@ impl Node {
             | Self::Paint(_) => false,
             Self::Layer {
                 layer, children, ..
-            } => layer.backdrop_blur > 0.0 || children.iter().any(Node::filters_its_backdrop),
+            } => {
+                // Both spellings. A sigma is the one filter a `Copy` layer can
+                // hold and the general field takes the rest, and a color filter
+                // over the backdrop decides which part of the target it covers
+                // exactly as a blur does -- so a plate stating one that way was
+                // being handed to the comparison this exists to keep it out of.
+                layer.backdrop_blur > 0.0
+                    || !layer.backdrop.is_identity()
+                    || children.iter().any(Node::filters_its_backdrop)
+            }
             Self::Clip { children, .. } => children.iter().any(Node::filters_its_backdrop),
         }
     }
@@ -3745,6 +3754,56 @@ pub fn corpus() -> Vec<Scene> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A backdrop filter counts whichever field it was stated in.
+    ///
+    /// `filters_its_backdrop` is what keeps such a scene out of the
+    /// bounded-against-unbounded comparison, whose premise is that stripping a
+    /// layer's bounds changes only the allocation. For these it changes the
+    /// picture -- the bounds say which part of the target is filtered -- so a
+    /// spelling this missed would be compared against a different picture and
+    /// fail for the wrong reason. It missed the general field until this.
+    #[test]
+    fn a_backdrop_filter_counts_in_either_spelling() {
+        let of = |layer: LayerSpec| {
+            Scene::tree(
+                "probe",
+                vec![Node::Layer {
+                    layer: Box::new(layer),
+                    bounds: Some([8.0, 8.0, 40.0, 40.0]),
+                    transform: Transform::default(),
+                    children: vec![],
+                }],
+            )
+            .filters_its_backdrop()
+        };
+        assert!(
+            of(LayerSpec::default().with_backdrop_blur(4.0)),
+            "the sigma a Copy layer can hold"
+        );
+        assert!(
+            of(LayerSpec {
+                backdrop: ImageFilter::blur(4.0),
+                ..LayerSpec::default()
+            }),
+            "the same blur written as the general filter"
+        );
+        assert!(
+            of(LayerSpec {
+                backdrop: ImageFilter::Color(ColorFilter::blend(
+                    [1.0, 0.0, 0.0, 1.0],
+                    BlendMode::Exclusion
+                )),
+                ..LayerSpec::default()
+            }),
+            "a color filter over the backdrop, which is not a blur and is still \
+             a filter"
+        );
+        assert!(
+            !of(LayerSpec::default()),
+            "and a layer that filters nothing does not count"
+        );
+    }
 
     #[test]
     fn a_shear_composes_in_the_order_the_transform_states() {
