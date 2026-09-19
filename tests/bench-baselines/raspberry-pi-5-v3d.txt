@@ -44,6 +44,50 @@
 # later reader can find. Update it when a `--check` run passes, whether or not
 # the numbers are re-recorded.
 #
+# Tolerances re-derived on 2026-09-18 from ten runs with the governor pinned, and
+# the numbers below are untouched. Five rows tighten and one widens, which is what
+# ten runs say rather than what caution said.
+#
+# **The Vulkan bimodality was the frequency governor.** Ten pinned runs, and all
+# eighteen rows land in one cluster each: the distance field spreads 0.14 per cent
+# where it used to alternate between 8.85 and 9.22, and no row shows a gap with
+# nothing in it. Nine unpinned runs had shown the slow state five times. Taken with
+# the mechanism -- 1.5 GHz against 2.4, a factor that contains every gap ever
+# observed here, and pinning removes it -- that is established rather than
+# suspected, which the paragraphs further down were careful not to claim.
+#
+# Two mechanisms were recorded here before this and both were wrong: heat, tested
+# with a fan and a cold boot, and accumulated session state, tested with a power
+# cycle. This one was tested by removing it.
+#
+# So the four Vulkan tolerances that existed *only* to cover the slow state come
+# down, and that matters more than tidiness. The shader regression found on the same
+# day was 2.35 per cent on the distance field, state for state -- **under the 5.0
+# that row carried.** It failed its check only because that run happened to land in
+# the slow state and read 6.3 per cent. A tolerance wide enough to hold two states
+# is wide enough to hide the regression it is there to catch, and this file was
+# doing both at once. At 2.0 that change fails on its merits.
+#
+# Sized at five to ten times the worst deviation seen over the ten runs:
+#
+#   vulkan distance field   0.14%  ->  2.0   was 5.0
+#   vulkan stroked field    0.15%  ->  2.0   was 5.0
+#   vulkan full frame       0.37%  ->  2.0   was 2.5
+#   vulkan tessellated x4   0.20%  ->  2.0   unchanged
+#   vulkan tessellated x1   0.30%  ->  2.0   unchanged
+#   vulkan stroked path     1.77%  ->  3.0   was 2.0, and this one widens
+#   gles stroked field      0.11%  ->  default, was 5.0
+#   gles everything else    under 0.7%, all at the default already
+#
+# The Vulkan stroked path is the one row that needed more rather than less, and it
+# is the cheapest frame in the file at 1.2 ms -- so the fixed cost of getting a
+# frame started is a larger fraction of it than of anything else, and that is what
+# moves. Recorded rather than smoothed over, because a row that widens in the same
+# commit as five that narrow is the evidence that the numbers were read.
+#
+# The recording rows keep 5.0, and the frame's build keeps 10.0: their worst
+# deviations were 1.35 per cent and one unit of the thousandth this file stores.
+#
 # Re-recorded a sixth time on 2026-09-18, for the `recording` section and for a
 # board setting the numbers turn out to depend on.
 #
@@ -263,15 +307,15 @@ recording	tessellated, 1 sample	0.240	5.0
 recording	stroked field, 1 sample	0.098	5.0
 recording	stroked path, 1 sample	0.739	5.0
 recording	full frame, mixed content	0.018	10.0
-vulkan:0 V3D 7.1.7.0	distance field, 1 sample	8.852	5.0
+vulkan:0 V3D 7.1.7.0	distance field, 1 sample	8.852	2.0
 vulkan:0 V3D 7.1.7.0	tessellated, 4 samples	4.525	2.0
 vulkan:0 V3D 7.1.7.0	tessellated, 1 sample	3.688	2.0
-vulkan:0 V3D 7.1.7.0	stroked field, 1 sample	9.431	5.0
-vulkan:0 V3D 7.1.7.0	stroked path, 1 sample	1.184	2.0
-vulkan:0 V3D 7.1.7.0	full frame, mixed content	13.908	2.5
+vulkan:0 V3D 7.1.7.0	stroked field, 1 sample	9.431	2.0
+vulkan:0 V3D 7.1.7.0	stroked path, 1 sample	1.184	3.0
+vulkan:0 V3D 7.1.7.0	full frame, mixed content	13.908	2.0
 gles V3D 7.1.7.0	distance field, 1 sample	8.899
 gles V3D 7.1.7.0	tessellated, 4 samples	5.460
 gles V3D 7.1.7.0	tessellated, 1 sample	3.644
-gles V3D 7.1.7.0	stroked field, 1 sample	9.483	5.0
+gles V3D 7.1.7.0	stroked field, 1 sample	9.483
 gles V3D 7.1.7.0	stroked path, 1 sample	1.319	2.0
 gles V3D 7.1.7.0	full frame, mixed content	14.748
