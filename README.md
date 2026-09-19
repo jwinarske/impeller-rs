@@ -107,14 +107,14 @@ of scope, so converting to something friendlier is `magick frame.ppm frame.png`.
 
 ## How much of a renderer this is
 
-[`docs/parity.md`](docs/parity.md) is the operation-by-operation comparison
+[`docs/parity.md`](https://github.com/jwinarske/impeller-rs/blob/main/docs/parity.md) is the operation-by-operation comparison
 against the `dart:ui` `Canvas` and `Paint` surface — the contract a
 Flutter-class renderer owes, and a more useful yardstick than any one
 implementation's internals. It distinguishes what exists from what a caller
 could assemble, and every row claiming something works names the scene or test
 that renders it.
 
-[`docs/non-parity.md`](docs/non-parity.md) is the other half of that question.
+[`docs/non-parity.md`](https://github.com/jwinarske/impeller-rs/blob/main/docs/non-parity.md) is the other half of that question.
 Technical parity with upstream Impeller is what this project decides against,
 so the places it knowingly does not have parity are worth being able to find in
 one list rather than inferring from a diff. Each entry says what differs, why,
@@ -203,7 +203,7 @@ It is **not** a drop-in for Impeller inside the Flutter Engine build: the
 engine compiles Impeller's C++ sources directly rather than consuming them
 across this boundary, and no Rust library can present a compatible C++ ABI. The
 C API serves embedders. See
-[`docs/architecture.md`](docs/architecture.md#impeller-c-api-compatibility) for
+[`docs/architecture.md`](https://github.com/jwinarske/impeller-rs/blob/main/docs/architecture.md#impeller-c-api-compatibility) for
 where parity is partial and how it is verified.
 
 ## Scope
@@ -222,14 +222,14 @@ nothing here uses.
 
 ## Documentation
 
-[`docs/architecture.md`](docs/architecture.md) covers the design and the rules
+[`docs/architecture.md`](https://github.com/jwinarske/impeller-rs/blob/main/docs/architecture.md) covers the design and the rules
 that govern the codebase: the HAL and presentation split, the Vulkan-first
 policy, explicit synchronization, the ownership boundary with drm-rs, format
 and modifier negotiation, the shader pipeline, dependency purity, and the
 testing model. Read it before proposing structural changes — a fair number of
 alternatives were considered and rejected for recorded reasons.
 
-[`docs/on-a-board.md`](docs/on-a-board.md) is how to cross-build the suite and
+[`docs/on-a-board.md`](https://github.com/jwinarske/impeller-rs/blob/main/docs/on-a-board.md) is how to cross-build the suite and
 run it on a real device, and what doing so has found. Most of what this suite
 checks is agreement between two devices, and on a workstation both of them are
 software — so the board is not a nice-to-have lane, it is where a class of
@@ -242,9 +242,23 @@ API**: it reserves the name, which the plain `impeller` had already lost to an
 unrelated crate, and it says so in its own description. Do not depend on it;
 the first version with anything in it will be `0.1.0` or later.
 
-Every crate in this workspace is still `publish = false`. The manifests are
-otherwise ready — versions on internal dependencies, metadata filled in — so
-publishing is a decision rather than a task. [`CHANGELOG.md`](CHANGELOG.md)
+Every crate in this workspace is still `publish = false`, which is the only
+deliberate gate left. The manifests are otherwise ready: versions on internal
+dependencies, metadata filled in, this file wired in as each crate's `readme` by
+symlink so there is no second copy to go stale, and `all-features` set for docs.rs
+on `impeller-rs`, whose default features are Vulkan and its swapchain and would
+otherwise document neither the GLES backend nor either presentation path. The links
+above are absolute for the same reason -- a relative one resolves here and 404s on
+a crate page.
+
+Two things about a first publish are worth knowing before starting one. It cannot
+be rehearsed: `cargo package` resolves against the crates.io index even with
+`--no-verify`, so today only `impeller-geometry` and `impeller-hal` can be packaged
+and everything else fails on a dependency that is not there yet. And it is
+therefore strictly ordered, each crate unblocking the next --  the two leaves, then
+`renderer` and `text`, then `core`, then `capi`, `entity` and `shaders`, then the
+two backends, then `present` and its three paths, then `impeller-rs`, with
+`testkit` last if it goes at all. [`CHANGELOG.md`](https://github.com/jwinarske/impeller-rs/blob/main/CHANGELOG.md)
 tracks what would go into the first release that has one.
 
 ## Contributing
@@ -334,7 +348,7 @@ recover later.
 
 ## License
 
-BSD 3-Clause. See [`LICENSE`](LICENSE).
+BSD 3-Clause. See [`LICENSE`](https://github.com/jwinarske/impeller-rs/blob/main/LICENSE).
 
 This matches the Flutter Engine, home of the C++ Impeller whose architecture
 this project takes as its reference. Any code ported from there retains its
