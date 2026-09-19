@@ -65,6 +65,15 @@
 //!
 //! That section needs no device, which is why it comes first and why it is
 //! measured even where every backend was skipped. A `Canvas` opens nothing.
+//!
+//! It is also the one part of this file with a check that runs everywhere.
+//! Absolute milliseconds need a board and a baseline, so they catch a regression
+//! only when someone benches; a *ratio* of one build to another cancels the
+//! processor and holds on any machine --  measured at 3.20 on a Ryzen 9 at 5.3 GHz
+//! and 3.07 on an A76 at 2.4, four per cent apart across a threefold difference in
+//! speed. `building_a_stroke_costs_what_it_should_relative_to_a_fill` gates those
+//! in the ordinary suite, which is where a stroker that doubled its output would
+//! now be caught without a board at all.
 
 use impeller_core::{
     Canvas, Color, GradientStop, Layer, Paint, Recording, Rect, Shader, TileMode, Vec2,
@@ -1263,6 +1272,68 @@ mod tests {
                 "the header names a governor that could not be read: {header}"
             ),
         }
+    }
+
+    /// What building costs *relative to itself*, which no board is needed for.
+    ///
+    /// The `recording` rows are gated on a Pi 5 in absolute milliseconds, and that
+    /// catches a regression only where someone runs a board. These two ratios hold
+    /// on any machine, because dividing one build by another cancels the
+    /// processor: measured on a Ryzen 9 at 5.3 GHz and on an A76 at 2.4, the
+    /// stroke-to-fill ratio came to 3.20 and 3.07 -- four per cent apart across a
+    /// threefold difference in speed. So they belong in the suite, where every
+    /// commit runs them.
+    ///
+    /// The bounds are wide because what they are for is a step change. Stroking is
+    /// about three times filling and may drift; a stroker that started emitting
+    /// twice the geometry would leave this range, and that is the failure worth
+    /// catching. Ten per cent precision here would be gating the machine's mood.
+    #[test]
+    fn building_a_stroke_costs_what_it_should_relative_to_a_fill() {
+        // Medians of a handful each, alternating, so a burst of load on the
+        // machine lands on both sides rather than on one. Twenty-five builds of
+        // the dearest path is under twenty milliseconds even on a board.
+        let median_of = |path| {
+            let mut samples: Vec<Duration> = (0..25)
+                .map(|_| {
+                    let started = Instant::now();
+                    let recording = recording(path);
+                    let elapsed = started.elapsed();
+                    // Read it, so nothing is optimized away.
+                    assert!(recording.draw_count() > 0);
+                    elapsed
+                })
+                .collect();
+            samples.sort();
+            samples[samples.len() / 2].as_secs_f64()
+        };
+
+        // Stroking a path builds two contours where filling builds one, and adds
+        // the joins and the caps between them. Three times, near enough.
+        let ratio = median_of(Path::StrokedTessellated) / median_of(Path::TessellatedSingleSampled);
+        assert!(
+            (2.0..=4.5).contains(&ratio),
+            "building a stroked path costs {ratio:.2} times building a filled one, \
+             and every machine measured so far says between 3.0 and 3.2 -- outside \
+             two to four and a half is a change in what the stroker emits rather \
+             than in how fast this machine is"
+        );
+
+        // And the analytic route does not care which it is asked for: a stroke
+        // width goes into the material, not into geometry, so the field builds a
+        // stroked shape for what it builds a filled one. Wider bounds than above
+        // because both sides are small enough for a processor changing frequency
+        // mid-run to skew them -- 0.68 was observed that way on an unpinned board,
+        // against 0.97 and 0.99 pinned. What it still catches is the field falling
+        // back to the tessellator, which would put this at three or more.
+        let analytic = median_of(Path::StrokedAnalytic) / median_of(Path::Analytic);
+        assert!(
+            (0.4..=1.8).contains(&analytic),
+            "the analytic route builds a stroked shape for {analytic:.2} times what \
+             it builds a filled one, and a stroke width belongs in the material \
+             rather than the geometry -- near three would mean it started \
+             tessellating"
+        );
     }
 
     #[test]
