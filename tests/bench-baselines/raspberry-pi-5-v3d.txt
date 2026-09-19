@@ -101,6 +101,14 @@
 # cent of the draw, on the row that is cheapest to draw. Timing only the drawing
 # made the stroker look free.
 #
+# The `recording` rows additionally require the binary to be run from `/tmp`, which
+# is what `docs/on-a-board.md` says to do and is how these were taken. A
+# byte-identical executable builds the stroked path eighteen per cent dearer from
+# tmpfs than from ext4 on an x86-64 desktop, and the shorter rows do not move at all,
+# so a board run from a home directory is not a check of these six numbers. The GPU
+# rows are indifferent to it. Found by mistaking it for something else; the story is
+# in `docs/on-a-board.md`.
+#
 # **These numbers require `scaling_governor` to be `performance`, and that setting
 # does not survive a reboot.** Under `ondemand`, which is this board's default, the
 # recording rows land in two or three states: the distance field at 0.136 and

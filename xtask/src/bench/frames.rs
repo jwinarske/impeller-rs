@@ -13,6 +13,20 @@
 //! a recorded number means, and a change here wants a board run behind it. Anything
 //! in `bench.rs` -- the clock, the report, the baseline parsing, the tests -- does
 //! not.
+//!
+//! One thing that changes these numbers and is in neither file: **which filesystem
+//! the executable is run from.** A byte-identical binary builds the stroked path in
+//! 0.238 ms from ext4 and 0.283 from tmpfs, eighteen per cent, while every shorter
+//! row here does not move at all. Measured on one machine by copying one file back
+//! and forth and hashing it both times, after the difference had first been mistaken
+//! for the effect of moving this code into its own module. Consistent with how a
+//! text segment gets mapped, and the mechanism is not established from here.
+//!
+//! What follows from it is a rule for reading the board's numbers rather than a
+//! change to them: `docs/on-a-board.md` copies the cross-built binary to `/tmp` and
+//! the baseline was recorded that way, so a run from anywhere else is not comparable
+//! with that file even at the same commit. The longest-running row is the one that
+//! moves, which is the shape to expect if it is ever seen again.
 
 use impeller_core::{
     Canvas, Color, GradientStop, Layer, Paint, Recording, Rect, Shader, TileMode, Vec2,
