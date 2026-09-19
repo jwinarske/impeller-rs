@@ -30,7 +30,7 @@
 # three unnamed rows had the default one per cent and failed on any slow-mode
 # run, which is noise this file was producing rather than catching.
 #
-# Last checked against the board: b284c3e
+# Last checked against the board: 2df5a06
 #
 # That line names the commit whose state a board run passed against, which is
 # never the commit that writes the line -- a hash cannot be recorded inside the
