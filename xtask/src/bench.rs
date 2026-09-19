@@ -1141,21 +1141,39 @@ fn verified_at() -> Option<String> {
 ///
 /// This is the cheapest thing that would have surfaced it: not a threshold, not
 /// a failure, just the count, printed where the skip census is printed and read
-/// the same way. What it counts is commits touching the crates the bench times,
-/// since the baseline file last changed.
+/// the same way. What it counts is commits touching the crates the bench times --
+/// and the bench itself, since what it measures is as able to change as what it
+/// measures it on -- since the board last agreed.
 ///
 /// `None` where the question cannot be asked -- no git, no baseline, a
 /// checkout without history. A tarball build is not a build that has drifted.
+/// What the bench times, end to end through both backends -- and the bench
+/// itself, which is the entry this list was missing.
+///
+/// A change to `bench.rs` can move a recorded number with no renderer change
+/// at all, and did: adding the two stroked rows on 2026-09-18 took the Vulkan
+/// frame row from 13.955 to 14.135, one and three tenths per cent, because two
+/// more configurations now run before it in the same process. A cold board
+/// reproduced the new value to the thousandth. Without this entry the count
+/// read zero across that commit -- the counter saying the board's agreement
+/// still stood when what the board had agreed about had changed.
+///
+/// It makes the count noisier: a test added beside `recording()` flags it as
+/// surely as `recording()` itself, and one did. That is the right side to err
+/// on for a line that is printed rather than enforced. The cost of a false
+/// positive is reading a sentence; the cost of a false negative is a baseline
+/// claiming a board agreed with numbers it never saw.
+const TIMED: &[&str] = &[
+    "crates/impeller-core/src",
+    "crates/impeller-shaders/shaders",
+    "crates/impeller-hal/src",
+    "crates/impeller-hal-vulkan/src",
+    "crates/impeller-hal-gles/src",
+    "xtask/src/bench.rs",
+];
+
 pub fn baseline_drift() -> Option<(usize, &'static str)> {
     const BASELINE: &str = "tests/bench-baselines";
-    /// What the bench times, end to end through both backends.
-    const TIMED: &[&str] = &[
-        "crates/impeller-core/src",
-        "crates/impeller-shaders/shaders",
-        "crates/impeller-hal/src",
-        "crates/impeller-hal-vulkan/src",
-        "crates/impeller-hal-gles/src",
-    ];
 
     let git = |args: &[&str]| -> Option<String> {
         let out = std::process::Command::new("git").args(args).output().ok()?;
@@ -1288,6 +1306,29 @@ mod tests {
     /// about three times filling and may drift; a stroker that started emitting
     /// twice the geometry would leave this range, and that is the failure worth
     /// catching. Ten per cent precision here would be gating the machine's mood.
+    /// The drift counter has to watch the bench, and this is what says it does.
+    ///
+    /// The entry was missing until 2026-09-18 and the omission was invisible: the
+    /// count read zero across a commit that moved the Vulkan frame row by one and
+    /// three tenths per cent, because what changed was the bench's own shape rather
+    /// than the renderer. A list of paths is exactly the kind of thing a later edit
+    /// shortens without noticing, and nothing else in the tree would notice either.
+    #[test]
+    fn the_drift_counter_watches_the_bench_as_well_as_the_renderer() {
+        assert!(
+            TIMED.contains(&"xtask/src/bench.rs"),
+            "the drift counter no longer watches the bench, so a change to what it \
+             measures will not be counted: {TIMED:?}"
+        );
+        // And still watches the renderer, which is the half that was never wrong.
+        for expected in [
+            "crates/impeller-core/src",
+            "crates/impeller-shaders/shaders",
+        ] {
+            assert!(TIMED.contains(&expected), "{expected} is no longer watched");
+        }
+    }
+
     #[test]
     fn building_a_stroke_costs_what_it_should_relative_to_a_fill() {
         // Medians of a handful each, alternating, so a burst of load on the
