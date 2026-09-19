@@ -164,6 +164,23 @@ It does not survive a reboot, so `cargo xtask bench` prints the governor in its
 header and the baseline names the one it was recorded under. A run whose header
 says `ondemand` is not comparable with that file.
 
+**Pinning it also settled the Vulkan bimodality, which this document and the
+baseline had both carried as unexplained.** Four Vulkan rows used to land in one of
+two states from one process to the next, 4.3 per cent apart on the distance field;
+ten pinned runs put all eighteen rows in one cluster each, the distance field
+spreading 0.14 per cent. Nine unpinned runs had shown the slow state five times.
+Heat and accumulated session state had both been recorded as the cause and both
+been tested and disproved -- with a fan, a cold boot and a power cycle -- so the
+lesson is less about frequency than about which mechanisms get written down: this
+one was settled by removing it and seeing the effect go, which neither of the
+others ever was.
+
+The tolerances that existed to cover the slow state are down from 5.0 to 2.0, and
+that is the point rather than tidiness. A tolerance wide enough to hold two states
+is wide enough to hide a real regression, and this file was doing both: the shader
+change found the same day cost 2.35 per cent on that row and its check passed on
+the merits, failing only because the run happened to land slow.
+
 **Check the board is quiet first, because it is not always.** `pgrep homescreen`
 before a run, and a glance at `ps -eo pcpu,comm --sort=-pcpu | head`. A Flutter
 embedder left running on the Pi 5 -- about a sixth of a core, drawing through the
