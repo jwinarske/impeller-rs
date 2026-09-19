@@ -75,164 +75,17 @@
 //! in the ordinary suite, which is where a stroker that doubled its output would
 //! now be caught without a board at all.
 
-use impeller_core::{
-    Canvas, Color, GradientStop, Layer, Paint, Recording, Rect, Shader, TileMode, Vec2,
-};
-use impeller_hal::{Extent2D, Hal, HalContext, PixelFormat, TextureDescriptor};
+use impeller_core::Recording;
+use impeller_hal::{Hal, HalContext, PixelFormat, TextureDescriptor};
 use impeller_hal_gles::{DisplayTarget, GlesContext, GlesHal};
 use impeller_hal_vulkan::{DevicePreference, VulkanContext, VulkanHal};
+mod frames;
+
+use frames::{full_frame, EXTENT, FRAME, FRAMES, SHAPES, WARMUP};
+pub use frames::{recording, Path};
+
 use std::io::{self, Write};
 use std::time::{Duration, Instant};
-
-/// The frame the document's number was taken from.
-const EXTENT: Extent2D = Extent2D {
-    width: 1920,
-    height: 1080,
-};
-
-/// A hundred and sixty rounded rectangles, as the document says.
-const SHAPES: usize = 160;
-
-/// Rendered before timing starts, so pipeline creation and the first
-/// allocation of every buffer are not counted as frame cost.
-const WARMUP: usize = 5;
-
-/// Timed frames.
-///
-/// Two hundred rather than the thirty this began with, and the reason is the
-/// percentile below. A ninety-ninth percentile of thirty samples is the
-/// largest of them by another name -- `ceil(0.99 * 30)` is thirty -- so
-/// reporting one would have dressed the maximum up as a distribution. Two
-/// hundred puts the ninety-ninth at the third-largest, which is a tail rather
-/// than an outlier, and costs about fifty milliseconds a configuration at the
-/// times this actually measures.
-const FRAMES: usize = 200;
-
-/// The percentile below is only a percentile if there are samples enough for it.
-///
-/// At the compiler rather than in a test, because it is a statement about a
-/// constant: `ceil(0.99 * n)` is `n` for every `n` under a hundred, so a p99
-/// taken from fewer would be the maximum under another name and no run would
-/// say so.
-const _: () = assert!(FRAMES >= 100);
-
-/// How a frame's shapes are drawn, which is the whole question.
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub enum Path {
-    /// A rounded rectangle stated as one, which reaches the analytic distance
-    /// field: coverage from an implicit function in the fragment stage, over a
-    /// quad, with the pass left at one sample.
-    Analytic,
-    /// The same shape stated as a path, which tessellates it. Antialiased, so
-    /// the pass multisamples.
-    TessellatedMultisampled,
-    /// The same again with antialiasing off, which leaves the pass at one
-    /// sample and is the third of the document's three figures.
-    TessellatedSingleSampled,
-    /// The same shape *stroked*, through the analytic field: a distance to the
-    /// outline rather than to the interior, still one sample.
-    ///
-    /// Strokes were timed by nothing at all until this, which is how a shader
-    /// change that cost two and a half per cent reached a release. They are
-    /// their own pair of routes and deserve their own comparison: what an
-    /// outline costs is not what a fill costs, and the tessellated one has to
-    /// build two contours where a fill builds one.
-    StrokedAnalytic,
-    /// The stroked shape as a path, which sends it through the stroker.
-    /// Antialiasing off, so this and the field above are one sample each and
-    /// the difference between them is the route.
-    StrokedTessellated,
-}
-
-impl Path {
-    pub fn name(self) -> &'static str {
-        match self {
-            Self::Analytic => "distance field, 1 sample",
-            Self::TessellatedMultisampled => "tessellated, 4 samples",
-            Self::TessellatedSingleSampled => "tessellated, 1 sample",
-            Self::StrokedAnalytic => "stroked field, 1 sample",
-            Self::StrokedTessellated => "stroked path, 1 sample",
-        }
-    }
-
-    /// Whether this path strokes rather than fills.
-    fn strokes(self) -> bool {
-        matches!(self, Self::StrokedAnalytic | Self::StrokedTessellated)
-    }
-
-    /// Whether the shape goes to the tessellator rather than the field.
-    fn tessellates(self) -> bool {
-        matches!(
-            self,
-            Self::TessellatedMultisampled
-                | Self::TessellatedSingleSampled
-                | Self::StrokedTessellated
-        )
-    }
-}
-
-/// Wide enough that the stroke is geometry rather than the thin-stroke rule.
-///
-/// A width under a device pixel is widened to one and dimmed to pay for it,
-/// which is a different measurement and a much smaller one -- what these two
-/// rows are for is what an outline costs when there is an outline. Four device
-/// pixels at this frame size, on shapes a hundred and twenty across.
-const STROKE_WIDTH: f32 = 4.0;
-
-/// Under a device pixel the width is widened to one and dimmed to pay for it,
-/// which is a different measurement and a much smaller one. Held here so that
-/// lowering the constant fails the build rather than quietly changing what the
-/// two rows mean.
-const _: () = assert!(STROKE_WIDTH >= 1.0);
-
-/// Lay the shapes out in a grid that fills the frame.
-///
-/// Placed off the whole pixel deliberately: an axis-aligned rectangle at
-/// integer bounds has no edge to antialias, which is the one case where the
-/// field's advantage does not exist and the comparison would flatter it.
-fn shapes() -> impl Iterator<Item = Rect> {
-    let columns = 16usize;
-    let rows = SHAPES / columns;
-    let width = EXTENT.width as f32 / columns as f32;
-    let height = EXTENT.height as f32 / rows as f32;
-    (0..SHAPES).map(move |i| {
-        let (column, row) = (i % columns, i / columns);
-        let left = column as f32 * width + 4.3;
-        let top = row as f32 * height + 4.7;
-        Rect::new(left, top, left + width - 8.0, top + height - 8.0)
-    })
-}
-
-/// One frame's worth of drawing, recorded the way the path under test asks.
-pub fn recording(path: Path) -> Recording {
-    let mut canvas = Canvas::new(EXTENT);
-    canvas.clear(Color::BLACK);
-    // The field route needs antialiasing -- its coverage *is* the distance, and
-    // the analytic path declines a paint that asked for none -- while the
-    // tessellated rows turn it off to stay at one sample. So this is which
-    // route the path names rather than a per-path flag.
-    let anti_alias = !matches!(
-        path,
-        Path::TessellatedSingleSampled | Path::StrokedTessellated
-    );
-    let paint = match path.strokes() {
-        true => Paint::stroke(Color::WHITE, STROKE_WIDTH),
-        false => Paint::fill(Color::WHITE),
-    }
-    .with_anti_alias(anti_alias);
-    for rect in shapes() {
-        let drawn = match path.tessellates() {
-            // The same shape and the same paint, stated as a path so that the
-            // tessellator sees it rather than the fragment stage. Comparing
-            // the two forms of one shape is what makes this a measurement of
-            // the path rather than of the content.
-            true => canvas.draw_path(&rect.to_rounded_path(12.0), &paint),
-            false => canvas.draw_rrect(rect, 12.0, &paint),
-        };
-        drawn.expect("a rounded rectangle");
-    }
-    canvas.finish()
-}
 
 /// One configuration's result, as the event that reports it either way.
 fn outcome(what: &'static str, timed: Result<Timing, String>) -> Event {
@@ -240,109 +93,6 @@ fn outcome(what: &'static str, timed: Result<Timing, String>) -> Event {
         Ok(timing) => Event::Measured(timing),
         Err(why) => Event::Failed { what, why },
     }
-}
-
-/// How the full-frame row names itself.
-const FRAME: &str = "full frame, mixed content";
-
-/// What a whole frame of mixed content costs, which is a budget rather than a
-/// comparison.
-///
-/// The three routes above answer one narrow question and answer it well: the
-/// same shapes, twice, so the difference is the route. That is not a frame. It
-/// has one material, no layer, no blur and no gradient, so it says nothing
-/// about what an interface costs — and a renderer can be quick at a hundred
-/// and sixty identical rectangles and slow at everything a real frame is made
-/// of.
-///
-/// So this is the other kind: a ground that is a gradient, cards that carry
-/// shadows, and a blurred layer over the top, at the size a display actually
-/// is. Every one of those reaches machinery the comparison never touches — the
-/// ramp, the blur's passes, the layer's own target and its composite back.
-///
-/// Deliberately *not* the panel example's frame, which it otherwise resembles.
-/// That one turns antialiasing off on its ground because `execute_deferred`
-/// cannot submit a multisampled pass, which is a constraint of presenting to a
-/// display and not of drawing. A frame written to be timed should look like a
-/// frame, so this leaves it on.
-///
-/// Static, at one instant of that scene rather than a moving one: a benchmark
-/// that changed its own content between runs would report the content.
-fn full_frame() -> Recording {
-    let (w, h) = (EXTENT.width as f32, EXTENT.height as f32);
-    let mut canvas = Canvas::new(EXTENT);
-    canvas.clear(Color::srgb(0.05, 0.06, 0.09, 1.0));
-
-    // A wash behind everything. A gradient rather than a flat fill because it
-    // is the one thing here that tabulates a ramp.
-    canvas
-        .draw_rect(
-            Rect::new(0.0, 0.0, w, h),
-            &Paint::default().with_shader(Shader::LinearGradient {
-                start: Vec2::new(0.0, 0.0),
-                end: Vec2::new(w, h),
-                // Five, and the count is the point rather than the picture:
-                // at or below `MAX_STOPS` a gradient travels inside the
-                // material and tabulates nothing. Past it the recorder bakes a
-                // ramp and the shader samples it, which is the path a frame
-                // should be timed on and the one two stops would miss.
-                stops: (0..5)
-                    .map(|i| {
-                        let t = i as f32 / 4.0;
-                        GradientStop {
-                            offset: t,
-                            color: Color::srgb(0.08 + 0.14 * t, 0.10, 0.18 + 0.02 * t, 1.0),
-                        }
-                    })
-                    .collect(),
-                tile: TileMode::Clamp,
-            }),
-        )
-        .expect("the ground");
-
-    let center = Vec2::new(w * 0.5, h * 0.5);
-    let orbit = w.min(h) * 0.26;
-    let side = w.min(h) * 0.20;
-    let hues = [
-        Color::srgb(0.98, 0.42, 0.28, 1.0),
-        Color::srgb(0.36, 0.82, 0.62, 1.0),
-        Color::srgb(0.42, 0.58, 0.98, 1.0),
-    ];
-    for (i, hue) in hues.into_iter().enumerate() {
-        let phase = i as f32 * std::f32::consts::TAU / 3.0;
-        let at = Vec2::new(
-            center.x + orbit * phase.cos(),
-            center.y + orbit * phase.sin() * 0.55,
-        );
-        let card = Rect::new(
-            at.x - side * 0.5,
-            at.y - side * 0.5,
-            at.x + side * 0.5,
-            at.y + side * 0.5,
-        );
-        // Shadow first and card over it, which is the order every real caller
-        // uses and the one the occluder flag describes.
-        canvas
-            .draw_shadow(&card.to_rounded_path(side * 0.18), Color::BLACK, 8.0, false)
-            .expect("a shadow");
-        canvas
-            .draw_rrect(card, side * 0.18, &Paint::fill(hue))
-            .expect("a card");
-    }
-
-    // A blurred highlight, so the layer's own target and its composite back are
-    // in the number too.
-    canvas.save_layer(Layer::opacity(0.5).with_blur(24.0));
-    canvas
-        .draw_circle(
-            center,
-            w.min(h) * 0.10,
-            &Paint::fill(Color::srgb(1.0, 0.95, 0.80, 1.0)),
-        )
-        .expect("a highlight");
-    canvas.restore();
-
-    canvas.finish()
 }
 
 /// What a run of one configuration on one device came to.
@@ -1169,7 +919,7 @@ const TIMED: &[&str] = &[
     "crates/impeller-hal/src",
     "crates/impeller-hal-vulkan/src",
     "crates/impeller-hal-gles/src",
-    "xtask/src/bench.rs",
+    "xtask/src/bench/frames.rs",
 ];
 
 pub fn baseline_drift() -> Option<(usize, &'static str)> {
@@ -1203,6 +953,19 @@ pub fn baseline_drift() -> Option<(usize, &'static str)> {
     Some((count, BASELINE))
 }
 
+/// A path inside the repository, from wherever the tests are run.
+///
+/// `CARGO_MANIFEST_DIR` is `xtask`, so the repository root is its parent. Worth a
+/// function rather than a literal because getting it wrong makes an existence
+/// check pass by looking in the wrong place, which is worse than not checking.
+#[cfg(test)]
+fn repo_relative(path: &str) -> std::path::PathBuf {
+    std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .expect("xtask has a parent")
+        .join(path)
+}
+
 /// The line the gate prints for [`baseline_drift`].
 pub fn drift_line() -> Option<String> {
     let (count, path) = baseline_drift()?;
@@ -1223,6 +986,7 @@ pub fn drift_line() -> Option<String> {
 
 #[cfg(test)]
 mod tests {
+    use super::frames::shapes;
     use super::*;
 
     /// A timing with unremarkable numbers, for the tests that are about the
@@ -1306,19 +1070,32 @@ mod tests {
     /// about three times filling and may drift; a stroker that started emitting
     /// twice the geometry would leave this range, and that is the failure worth
     /// catching. Ten per cent precision here would be gating the machine's mood.
-    /// The drift counter has to watch the bench, and this is what says it does.
+    /// The drift counter has to watch the measured frames, and this says it does.
     ///
-    /// The entry was missing until 2026-09-18 and the omission was invisible: the
-    /// count read zero across a commit that moved the Vulkan frame row by one and
-    /// three tenths per cent, because what changed was the bench's own shape rather
-    /// than the renderer. A list of paths is exactly the kind of thing a later edit
-    /// shortens without noticing, and nothing else in the tree would notice either.
+    /// The entry was missing entirely until 2026-09-18, and the omission was
+    /// invisible: the count read zero across a commit that moved the Vulkan frame
+    /// row by one and three tenths per cent, because what changed was the bench's
+    /// own shape rather than the renderer. It then pointed at `bench.rs` whole for
+    /// two commits, which flagged a test and a documentation fix as though they had
+    /// moved a number. Now it names `bench/frames.rs`, which holds what is measured
+    /// and nothing else.
+    ///
+    /// A list of paths is exactly the kind of thing a later edit shortens without
+    /// noticing, and a *renamed* file is how this one would break next -- nothing in
+    /// the tree would say so, which is why the path is asserted rather than trusted.
     #[test]
-    fn the_drift_counter_watches_the_bench_as_well_as_the_renderer() {
+    fn the_drift_counter_watches_the_frames_as_well_as_the_renderer() {
+        const FRAMES_PATH: &str = "xtask/src/bench/frames.rs";
         assert!(
-            TIMED.contains(&"xtask/src/bench.rs"),
-            "the drift counter no longer watches the bench, so a change to what it \
-             measures will not be counted: {TIMED:?}"
+            TIMED.contains(&FRAMES_PATH),
+            "the drift counter no longer watches the measured frames, so a change \
+             to what the bench measures will not be counted: {TIMED:?}"
+        );
+        // And the path it names has to exist, since a move would leave the entry
+        // pointing at nothing and the counter silently watching one thing fewer.
+        assert!(
+            std::path::Path::new(&repo_relative(FRAMES_PATH)).exists(),
+            "{FRAMES_PATH} is watched and is not there"
         );
         // And still watches the renderer, which is the half that was never wrong.
         for expected in [
