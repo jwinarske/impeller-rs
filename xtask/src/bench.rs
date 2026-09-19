@@ -1059,17 +1059,25 @@ mod tests {
     /// What building costs *relative to itself*, which no board is needed for.
     ///
     /// The `recording` rows are gated on a Pi 5 in absolute milliseconds, and that
-    /// catches a regression only where someone runs a board. These two ratios hold
-    /// on any machine, because dividing one build by another cancels the
-    /// processor: measured on a Ryzen 9 at 5.3 GHz and on an A76 at 2.4, the
-    /// stroke-to-fill ratio came to 3.20 and 3.07 -- four per cent apart across a
-    /// threefold difference in speed. So they belong in the suite, where every
-    /// commit runs them.
+    /// catches a regression only where someone runs a board. A ratio of one build
+    /// to another cancels the processor, so it can be gated in the suite: measured
+    /// on a Ryzen 9 at 5.3 GHz and on an A76 at 2.4, the stroke-to-fill ratio came
+    /// to 3.18 and 3.07 across a threefold difference in speed.
     ///
-    /// The bounds are wide because what they are for is a step change. Stroking is
-    /// about three times filling and may drift; a stroker that started emitting
-    /// twice the geometry would leave this range, and that is the failure worth
-    /// catching. Ten per cent precision here would be gating the machine's mood.
+    /// It does not cancel everything, and the bounds are wide for a reason found
+    /// rather than guessed. The *same byte-identical binary* gives 3.18 run from
+    /// ext4 and 3.75 run from tmpfs -- the stroked build eighteen per cent dearer
+    /// out of tmpfs while the shorter rows do not move at all. That is consistent
+    /// with how the text pages are mapped, and the mechanism is not established
+    /// from here; what matters for this test is that the observed range is 3.07 to
+    /// 3.75 rather than the 3.0 to 3.2 an earlier version of this comment claimed
+    /// from one filesystem.
+    ///
+    /// So the ceiling is 5.5, which leaves half again above the highest figure any
+    /// machine has produced. What it still catches is a step change: a stroker
+    /// emitting seventy per cent more geometry leaves the range, and that is the
+    /// failure worth having. Tighter than this would be gating where the binary
+    /// happens to sit.
     /// The drift counter has to watch the measured frames, and this says it does.
     ///
     /// The entry was missing entirely until 2026-09-18, and the omission was
@@ -1130,11 +1138,11 @@ mod tests {
         // the joins and the caps between them. Three times, near enough.
         let ratio = median_of(Path::StrokedTessellated) / median_of(Path::TessellatedSingleSampled);
         assert!(
-            (2.0..=4.5).contains(&ratio),
+            (2.0..=5.5).contains(&ratio),
             "building a stroked path costs {ratio:.2} times building a filled one, \
-             and every machine measured so far says between 3.0 and 3.2 -- outside \
-             two to four and a half is a change in what the stroker emits rather \
-             than in how fast this machine is"
+             and every machine and filesystem measured so far lands between 3.07 \
+             and 3.75 -- outside two to five and a half is a change in what the \
+             stroker emits rather than in where this binary happens to live"
         );
 
         // And the analytic route does not care which it is asked for: a stroke

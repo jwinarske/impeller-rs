@@ -192,6 +192,23 @@ sequence, so contention lands on whichever group was running. A group several pe
 cent slow together while the other device's group is clean is interference and not
 a renderer.
 
+**Run it from `/tmp` because that is where the numbers were recorded, not only
+because it is convenient.** A byte-identical binary builds the stroked path in
+0.238 ms from an ext4 filesystem and 0.283 from tmpfs -- eighteen per cent, on the
+longest-running of the `recording` rows, while the shorter ones do not move at all.
+Measured on an x86-64 desktop by copying one file between the two and hashing it
+each time; consistent with how a text segment is mapped, and the mechanism is not
+established from here. The board's baseline was recorded with the binary in `/tmp`,
+as the block above puts it, so a run from a home directory or a mounted share is not
+comparable with that file even at the same commit.
+
+It cost an afternoon's confusion before it was found: the eighteen per cent was
+first taken for the effect of moving the bench's frame definitions into their own
+module, since the two measurements happened to come from two checkouts on two
+filesystems. Two things settled it -- the binaries hashed the same, and copying each
+one to the other's filesystem moved the number with the filesystem rather than with
+the file.
+
 `/tmp` is wiped on reboot, so a lockup costs the binary as well as the run.
 A bench that dies instantly with `nohup: failed to run command './xtask'` is
 that, not the board.
