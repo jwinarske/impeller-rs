@@ -3,6 +3,7 @@ name = "impeller-rs"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
+readme = "README.md"
 publish.workspace = true
 license.workspace = true
 repository.workspace = true
@@ -21,6 +22,15 @@ name = "impeller"
 #   --features vulkan,drm       Vulkan rendering with KMS scanout
 #   --features gles,drm         the classic embedded GBM path
 #   --features vulkan,gles,drm  one binary that picks at runtime
+# docs.rs builds with default features, which here are Vulkan and its swapchain
+# -- so the GLES backend, the DRM presentation path and the EGL one would be
+# absent from the documentation of the one crate a reader is most likely to open.
+# The whole surface is documented instead. It builds and documents clean with
+# every feature at once, which the gate's feature matrix does not check on its
+# own: that walks combinations one at a time.
+[package.metadata.docs.rs]
+all-features = true
+
 [features]
 default = ["vulkan", "present-wsi"]
 vulkan = ["dep:impeller-hal-vulkan"]
