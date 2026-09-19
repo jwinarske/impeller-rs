@@ -3,7 +3,10 @@ name = "xtask"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
-publish.workspace = true
+# This workspace's own tooling -- the gate, the bench, the report. It is a
+# development dependency of the repository rather than of any caller, and it would
+# be the only crate here that publishes a binary nobody outside asked for.
+publish = false
 license.workspace = true
 
 [lints]

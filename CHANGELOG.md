@@ -9,11 +9,24 @@ Dates are the day a version reached crates.io.
 
 ## Unreleased
 
-Everything. No version with an API has been published, so this section holds
-the whole project rather than a delta, and `docs/parity.md` and
-`docs/playground-parity.md` describe its state far better than a list could —
-both are checked by tests, so neither can drift from the code without failing
-the build.
+Nothing since `0.1.0`.
+
+## 0.1.0
+
+The date above this line goes in when it reaches crates.io, as the note at the top
+of this file says; until then `0.1.0` is what is being proposed rather than what has
+shipped.
+
+Everything, because this is the first version with an API. So this section holds the
+whole project rather than a delta, and `docs/parity.md` and
+`docs/playground-parity.md` describe its state far better than a list could — both
+are checked by tests, so neither can drift from the code without failing the build.
+
+Fourteen of the workspace's seventeen crates go. `xtask` is this repository's
+tooling; `impeller-testkit` exists to test this workspace and its API is shaped by
+that; `impeller-capi` produces a shared library that C consumers obtain from a build
+rather than from cargo. Each says so in its own manifest, and each is one line from
+changing its mind.
 
 This section used to carry a list of what stood between here and a first release
 with an API. It had one entry, `drawRSuperellipse` and `clipRSuperellipse`, and

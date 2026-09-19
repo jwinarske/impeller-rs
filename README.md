@@ -242,8 +242,10 @@ API**: it reserves the name, which the plain `impeller` had already lost to an
 unrelated crate, and it says so in its own description. Do not depend on it;
 the first version with anything in it will be `0.1.0` or later.
 
-Every crate in this workspace is still `publish = false`, which is the only
-deliberate gate left. The manifests are otherwise ready: versions on internal
+Fourteen of this workspace's seventeen crates are `publish = true`; `xtask`,
+`impeller-testkit` and `impeller-capi` refuse, each saying why in its own manifest
+and each one line from changing its mind. Nothing has been published under those
+settings yet, so the gate that remains is a person running `cargo publish`. The manifests are otherwise ready: versions on internal
 dependencies, metadata filled in, this file wired in as each crate's `readme` by
 symlink so there is no second copy to go stale, and `all-features` set for docs.rs
 on `impeller-rs`, whose default features are Vulkan and its swapchain and would
