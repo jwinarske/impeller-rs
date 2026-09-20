@@ -15,7 +15,14 @@ edition = "2021"
 # a version declared here only fails a build when a *direct* dependency asks
 # for more than it.
 rust-version = "1.85"
-publish = false
+# Publishing is on by default and refused per crate, rather than the other way
+# round, so that adding a crate to this workspace makes a decision visible instead
+# of silently opting it out. Three say no today and each says why: `xtask`, which is
+# this repository's own tooling; `impeller-testkit`, which exists to test this
+# workspace and whose API is shaped by that rather than by a caller; and
+# `impeller-capi`, whose artifact is a shared library for C consumers who do not use
+# cargo to get it.
+publish = true
 # Matches the Flutter Engine, where the C++ Impeller this project takes its
 # architecture from lives. Any code ported from there keeps its own copyright
 # notice alongside ours.

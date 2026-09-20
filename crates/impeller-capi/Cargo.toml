@@ -4,7 +4,11 @@ version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 readme = "README.md"
-publish.workspace = true
+# Produces a shared library for C consumers, who obtain it from a build rather than
+# from cargo -- so the thing this crate is *for* is not what crates.io distributes.
+# Publishing the source would be reasonable and is a separate decision; flip this to
+# `true` and nothing else has to move.
+publish = false
 license.workspace = true
 repository.workspace = true
 homepage.workspace = true

@@ -4,7 +4,12 @@ version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 readme = "README.md"
-publish.workspace = true
+# Exists to test this workspace, and its API is shaped by that: the catalog, the
+# corpus, the scene model and the comparison tolerances are all answers to "how do
+# these crates check themselves". Publishing it would commit that shape to
+# semantic versioning for the benefit of callers who have not asked for it. Flip
+# this to `true` if that changes -- nothing else has to move.
+publish = false
 license.workspace = true
 repository.workspace = true
 homepage.workspace = true
