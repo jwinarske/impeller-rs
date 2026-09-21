@@ -11,11 +11,7 @@ Dates are the day a version reached crates.io.
 
 Nothing since `0.1.0`.
 
-## 0.1.0
-
-The date above this line goes in when it reaches crates.io, as the note at the top
-of this file says; until then `0.1.0` is what is being proposed rather than what has
-shipped.
+## 0.1.0 — 2026-09-21
 
 Everything, because this is the first version with an API. So this section holds the
 whole project rather than a delta, and `docs/parity.md` and

@@ -818,6 +818,96 @@ fn the_changelog_does_not_call_a_built_operation_absent() {
     );
 }
 
+/// Two documents count how many of these crates go to a registry, and the
+/// manifests decide it.
+///
+/// This is the shape of claim that goes stale here without anybody touching the
+/// sentence: adding a crate moves both numbers, and a crate changing its mind
+/// moves one of them and a list of names besides. The README carried "Nothing is
+/// released" for as long as that was true and for a while after it was not,
+/// which is the same failure one step further along.
+///
+/// What is checkable offline is the arithmetic and the names, not whether
+/// anything reached crates.io -- no test here goes to the network, so the
+/// registry's state stays a thing a reader is told rather than shown.
+#[test]
+fn the_documents_count_the_publishing_crates_correctly() {
+    let root = repo_root();
+    let mut refusing = Vec::new();
+    let mut total = 0usize;
+    let mut members: Vec<PathBuf> = std::fs::read_dir(root.join("crates"))
+        .expect("reading crates/")
+        .map(|entry| entry.expect("a directory entry under crates/").path())
+        .collect();
+    members.push(root.join("xtask"));
+    members.sort();
+
+    for member in members {
+        let manifest = member.join("Cargo.toml");
+        let Ok(text) = std::fs::read_to_string(&manifest) else {
+            continue;
+        };
+        total += 1;
+        // `publish = false` is spelled out per crate; everything else inherits
+        // `publish = true` from the workspace, which is the direction the
+        // workspace comment says it chose deliberately.
+        if text.lines().any(|line| line.trim() == "publish = false") {
+            let name = member
+                .file_name()
+                .expect("a member directory has a name")
+                .to_string_lossy()
+                .into_owned();
+            refusing.push(format!("`{name}`"));
+        }
+    }
+    assert!(
+        total >= 10 && !refusing.is_empty(),
+        "found {total} members and {} refusing, which is not the shape of this \
+         workspace -- did the layout change?",
+        refusing.len()
+    );
+
+    let listed = match refusing.split_last() {
+        Some((last, rest)) if !rest.is_empty() => format!("{} and {last}", rest.join(", ")),
+        _ => refusing.join(""),
+    };
+    let publishing = total - refusing.len();
+    let claim = format!(
+        "{} of this workspace's {} crates publish; {listed} refuse",
+        spell(publishing),
+        spell(total),
+    );
+    // Lowercased on both sides, because `spell` has no way to know the clause
+    // opens a sentence in one document and not the other. Every name in it is
+    // a crate's, so nothing case-bearing is lost.
+    let flattened = |text: &str| {
+        text.split_whitespace()
+            .collect::<Vec<_>>()
+            .join(" ")
+            .to_lowercase()
+    };
+    assert!(
+        flattened(&doc("../README.md")).contains(&claim),
+        "README.md counts the publishing crates wrongly. The manifests say:\n  {claim}\n\
+         Adding a crate, or one changing its mind about publishing, means \
+         changing that sentence too."
+    );
+
+    // The changelog says it in its own words for the version it shipped with,
+    // so only the two numbers are held in common. A past version's sentence is
+    // a record and stays as written; this is here because `0.1.0` was the
+    // whole workspace and its sentence is therefore about today's manifests.
+    let counted = format!(
+        "{} of the workspace's {} crates",
+        spell(publishing),
+        spell(total)
+    );
+    assert!(
+        flattened(&doc("../CHANGELOG.md")).contains(&counted),
+        "CHANGELOG.md counts the publishing crates wrongly. The manifests say:\n  {counted}"
+    );
+}
+
 /// A run of spaces inside a string literal is alignment or it is a mistake.
 ///
 /// Rust's line continuation swallows the newline *and* the indentation after

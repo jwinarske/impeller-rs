@@ -7,7 +7,6 @@ readme = "README.md"
 publish.workspace = true
 license.workspace = true
 repository.workspace = true
-homepage.workspace = true
 description = "Presentation target trait and format negotiation for impeller-rs."
 keywords = ["presentation", "swapchain", "graphics", "display"]
 categories = ["graphics", "rendering"]

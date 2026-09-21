@@ -7,7 +7,6 @@ readme = "README.md"
 publish.workspace = true
 license.workspace = true
 repository.workspace = true
-homepage.workspace = true
 description = "A Flutter-class 2D renderer: Vulkan and GLES backends, WSI and DRM/KMS presentation."
 keywords = ["renderer", "vulkan", "gles", "graphics", "flutter"]
 categories = ["graphics", "rendering::engine"]

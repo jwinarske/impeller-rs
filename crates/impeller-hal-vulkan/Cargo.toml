@@ -7,7 +7,6 @@ readme = "README.md"
 publish.workspace = true
 license.workspace = true
 repository.workspace = true
-homepage.workspace = true
 description = "Vulkan rendering backend for impeller-rs."
 keywords = ["vulkan", "backend", "graphics", "renderer", "hal"]
 categories = ["graphics", "rendering::graphics-api"]

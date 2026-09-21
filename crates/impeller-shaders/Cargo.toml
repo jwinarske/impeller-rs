@@ -7,7 +7,6 @@ readme = "README.md"
 publish.workspace = true
 license.workspace = true
 repository.workspace = true
-homepage.workspace = true
 description = "WGSL shader sources for impeller-rs, translated at build time by naga."
 keywords = ["wgsl", "shader", "naga", "spirv", "glsl"]
 categories = ["graphics", "rendering::graphics-api"]

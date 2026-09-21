@@ -237,31 +237,33 @@ defect is visible at all.
 
 ## Releases
 
-Nothing is released. `impeller-rs 0.0.0` exists on crates.io and contains **no
-API**: it reserves the name, which the plain `impeller` had already lost to an
-unrelated crate, and it says so in its own description. Do not depend on it;
-the first version with anything in it will be `0.1.0` or later.
+`impeller-rs 0.1.0` is on crates.io, as are the thirteen crates it is assembled
+from.
 
-Fourteen of this workspace's seventeen crates are `publish = true`; `xtask`,
-`impeller-testkit` and `impeller-capi` refuse, each saying why in its own manifest
-and each one line from changing its mind. Nothing has been published under those
-settings yet, so the gate that remains is a person running `cargo publish`. The manifests are otherwise ready: versions on internal
-dependencies, metadata filled in, this file wired in as each crate's `readme` by
-symlink so there is no second copy to go stale, and `all-features` set for docs.rs
-on `impeller-rs`, whose default features are Vulkan and its swapchain and would
-otherwise document neither the GLES backend nor either presentation path. The links
-above are absolute for the same reason -- a relative one resolves here and 404s on
-a crate page.
+```toml
+[dependencies]
+impeller-rs = "0.1.0"
+```
 
-Two things about a first publish are worth knowing before starting one. It cannot
-be rehearsed: `cargo package` resolves against the crates.io index even with
-`--no-verify`, so today only `impeller-geometry` and `impeller-hal` can be packaged
-and everything else fails on a dependency that is not there yet. And it is
-therefore strictly ordered, each crate unblocking the next --  the two leaves, then
-`renderer` and `text`, then `core`, then `capi`, `entity` and `shaders`, then the
-two backends, then `present` and its three paths, then `impeller-rs`, with
-`testkit` last if it goes at all. [`CHANGELOG.md`](https://github.com/jwinarske/impeller-rs/blob/main/CHANGELOG.md)
-tracks what would go into the first release that has one.
+Its default features are Vulkan and its swapchain, but docs.rs builds it with
+`all-features`, so the GLES backend and both presentation paths are documented
+there whatever a caller enables. The links in this file are absolute for a
+related reason -- a relative one resolves here and 404s on a crate page.
+
+`impeller-rs 0.0.0` also exists and contains **no API**: it reserved the name,
+which the plain `impeller` had already lost to an unrelated crate. Nothing should
+depend on it.
+
+Fourteen of this workspace's seventeen crates publish; `impeller-capi`,
+`impeller-testkit` and `xtask` refuse, each saying why in its own manifest
+and each one line from changing its mind. A release is ordered, because
+`cargo publish` verifies a packaged crate against the registry rather than against
+the workspace: nothing can go up before what it depends on, and there is no way to
+rehearse the whole sequence in advance. A crate published for the first time also
+spends a token from a bucket that holds five and refills one every ten minutes, so
+adding several new crates at once waits on the clock rather than on this
+repository. [`CHANGELOG.md`](https://github.com/jwinarske/impeller-rs/blob/main/CHANGELOG.md)
+records what each version carried.
 
 ## Contributing
 
