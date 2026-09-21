@@ -7,7 +7,6 @@ readme = "README.md"
 publish.workspace = true
 license.workspace = true
 repository.workspace = true
-homepage.workspace = true
 description = "Render pass encoding for impeller-rs, generic over the rendering HAL."
 keywords = ["renderer", "graphics", "render-pass", "2d"]
 categories = ["graphics", "rendering"]

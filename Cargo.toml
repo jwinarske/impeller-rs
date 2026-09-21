@@ -28,7 +28,9 @@ publish = true
 # notice alongside ours.
 license = "BSD-3-Clause"
 repository = "https://github.com/jwinarske/impeller-rs"
-homepage = "https://github.com/jwinarske/impeller-rs"
+# No `homepage`. There is nowhere for it to point that a crate page does not
+# already link: it held this same URL, which cargo's `redundant_homepage` lint
+# warns about, and docs.rs is linked from the absent `documentation` by default.
 
 # Dependency versions are pinned here and inherited by every member via
 # `dep = { workspace = true }`, so a bump is a single reviewed edit.
