@@ -1121,24 +1121,40 @@ mod tests {
         // Medians of a handful each, alternating, so a burst of load on the
         // machine lands on both sides rather than on one. Twenty-five builds of
         // the dearest path is under twenty milliseconds even on a board.
-        let median_of = |path| {
-            let mut samples: Vec<Duration> = (0..25)
-                .map(|_| {
+        //
+        // The alternation is the point and it was a comment rather than code
+        // until CI came back at 1.99 against a floor of 2.0. One path was built
+        // twenty-five times and then the other, so a runner that got busy during
+        // the second block inflated the denominator alone and the ratio fell out
+        // of bounds from below -- the one direction load was supposed to be
+        // unable to produce. So the two paths are interleaved here, and both
+        // ratios below go through this rather than dividing two separate runs.
+        const ROUNDS: usize = 25;
+        let medians_of = |a: Path, b: Path| -> (f64, f64) {
+            let mut first = Vec::with_capacity(ROUNDS);
+            let mut second = Vec::with_capacity(ROUNDS);
+            for _ in 0..ROUNDS {
+                for (path, into) in [(a, &mut first), (b, &mut second)] {
                     let started = Instant::now();
                     let recording = recording(path);
                     let elapsed = started.elapsed();
                     // Read it, so nothing is optimized away.
                     assert!(recording.draw_count() > 0);
-                    elapsed
-                })
-                .collect();
-            samples.sort();
-            samples[samples.len() / 2].as_secs_f64()
+                    into.push(elapsed);
+                }
+            }
+            let median = |mut samples: Vec<Duration>| {
+                samples.sort();
+                samples[samples.len() / 2].as_secs_f64()
+            };
+            (median(first), median(second))
         };
 
         // Stroking a path builds two contours where filling builds one, and adds
         // the joins and the caps between them. Three times, near enough.
-        let ratio = median_of(Path::StrokedTessellated) / median_of(Path::TessellatedSingleSampled);
+        let (stroked, filled) =
+            medians_of(Path::StrokedTessellated, Path::TessellatedSingleSampled);
+        let ratio = stroked / filled;
         assert!(
             (2.0..=5.5).contains(&ratio),
             "building a stroked path costs {ratio:.2} times building a filled one, \
@@ -1154,7 +1170,8 @@ mod tests {
         // mid-run to skew them -- 0.68 was observed that way on an unpinned board,
         // against 0.97 and 0.99 pinned. What it still catches is the field falling
         // back to the tessellator, which would put this at three or more.
-        let analytic = median_of(Path::StrokedAnalytic) / median_of(Path::Analytic);
+        let (stroked_field, filled_field) = medians_of(Path::StrokedAnalytic, Path::Analytic);
+        let analytic = stroked_field / filled_field;
         assert!(
             (0.4..=1.8).contains(&analytic),
             "the analytic route builds a stroked shape for {analytic:.2} times what \

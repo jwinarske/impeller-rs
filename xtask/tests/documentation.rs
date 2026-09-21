@@ -908,6 +908,73 @@ fn the_documents_count_the_publishing_crates_correctly() {
     );
 }
 
+/// The README's Rust snippet is the crate's doctest, character for character.
+///
+/// Nothing compiles a README. That one does not merely risk going stale, it
+/// went stale in the way that matters: it created a surface and never destroyed
+/// it, while the doctest beside it did. Nothing in this workspace frees a GPU
+/// object on drop, so the snippet a reader copies first left a `VkImage` alive
+/// at `vkDestroyDevice` -- `VUID-vkDestroyDevice-device-05137`, an error from
+/// the validation layer rather than a leak nobody notices.
+///
+/// So the two are held equal and the doctest is the one that compiles. Exact
+/// equality rather than something cleverer about which lines matter: the
+/// difference that mattered here was one line present in one copy, which any
+/// comparison forgiving enough to ignore formatting would also have ignored.
+#[test]
+fn the_readme_snippet_is_the_crate_doctest() {
+    /// The fenced block's body, given the line that opens it.
+    ///
+    /// The closing fence is derived from the opener rather than assumed: in a
+    /// doc comment every line carries `//!`, the closing one included, so a
+    /// search for a fence at the start of a line finds nothing.
+    fn fenced(text: &str, opener: &str) -> String {
+        let close = match opener.split_once("```") {
+            Some((prefix, _)) => format!("\n{prefix}```"),
+            None => panic!("`{opener}` is not a fence"),
+        };
+        let body = text
+            .split_once(&format!("{opener}\n"))
+            .unwrap_or_else(|| panic!("no block opening with `{opener}`"))
+            .1;
+        let end = body
+            .find(&close)
+            .unwrap_or_else(|| panic!("`{opener}` is never closed"));
+        body[..end].to_owned()
+    }
+
+    let readme = fenced(&doc("../README.md"), "```rust");
+    let lib = std::fs::read_to_string(repo_root().join("crates/impeller/src/lib.rs"))
+        .expect("reading the facade crate");
+    // Stripped back to what rustdoc compiles: the `//!` that makes it a doc
+    // comment, and the `#` lines it hides from a reader. Those hidden lines are
+    // why this is not a plain string comparison -- the doctest needs an `Ok` to
+    // close over its `?`, and a README showing one would be teaching noise.
+    let raw = fenced(&lib, "//! ```no_run");
+    let doctest: Vec<&str> = raw
+        .lines()
+        .map(|line| line.strip_prefix("//!").unwrap_or(line))
+        .map(|line| line.strip_prefix(' ').unwrap_or(line))
+        .filter(|line| !line.starts_with("# "))
+        .collect();
+
+    assert!(
+        readme.contains("destroy_surface"),
+        "the README's snippet creates a surface and never destroys it, which is \
+         the defect this test exists for: nothing here frees a GPU object on \
+         drop, so the surface outlives its device and the validation layer says \
+         so."
+    );
+    assert_eq!(
+        readme,
+        doctest.join("\n"),
+        "README.md's Rust block and the doctest in crates/impeller/src/lib.rs \
+         have drifted apart. They are one snippet in two places and only the \
+         doctest is compiled, so the README is the copy that can be wrong. \
+         Change both, or neither."
+    );
+}
+
 /// A run of spaces inside a string literal is alignment or it is a mistake.
 ///
 /// Rust's line continuation swallows the newline *and* the indentation after

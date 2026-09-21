@@ -3,16 +3,28 @@
 //! ```no_run
 //! use impeller::{BackendPreference, Canvas, Color, Context, Extent2D, Paint, PixelFormat, Rect};
 //!
+//! // The backend is chosen at run time, so one binary serves a board with a
+//! // working Vulkan driver and one where only GLES is usable.
 //! let mut ctx = Context::new(BackendPreference::Auto)?;
+//!
 //! let size = Extent2D::new(256, 256);
 //! let mut surface = ctx.create_surface(size, PixelFormat::Rgba8Unorm)?;
 //!
 //! let mut canvas = Canvas::new(size);
 //! canvas.clear(Color::WHITE);
-//! canvas.draw_rect(Rect::new(32.0, 32.0, 224.0, 224.0), &Paint::fill(Color::rgba8(0, 120, 220, 255)))?;
+//! canvas.draw_rect(
+//!     Rect::new(32.0, 32.0, 224.0, 224.0),
+//!     &Paint::fill(Color::rgba8(0, 120, 220, 255)),
+//! )?;
 //!
+//! // Recording is separate from submitting, so a whole frame is described
+//! // before any of it reaches the GPU and every shape shares one pass.
 //! ctx.draw(&mut surface, &canvas.finish())?;
 //! let pixels = ctx.read(&mut surface)?;
+//!
+//! // Destroyed explicitly, because nothing here frees a GPU object on drop. A
+//! // surface still alive when its context goes is a child outliving its device,
+//! // which the validation layer reports as an error rather than a leak.
 //! ctx.destroy_surface(surface);
 //! # Ok::<(), impeller::Error>(())
 //! ```
