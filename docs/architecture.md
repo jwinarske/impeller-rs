@@ -3535,6 +3535,50 @@ Desktop GL is the only future backend that participates in the DRM column, and
 it matters: some embedded and legacy industrial stacks expose desktop GL rather
 than GLES over their KMS drivers.
 
+### The browser, and what already builds for it
+
+The browser column above names WebGPU, and that is still the plan. What follows
+is a measurement rather than a change to it, taken on 2026-09-21, because the
+distance to a browser is much shorter than a row of dashes suggests and a reader
+estimating it from the table alone would get it wrong.
+
+Built for `wasm32-unknown-unknown`, with nothing modified, seven crates compile:
+`impeller-geometry`, `impeller-hal`, `impeller-text`, `impeller-renderer`,
+`impeller-core`, `impeller-entity` and `impeller-shaders`. That is the whole
+device-free half of the renderer -- tessellation, stroking, dashing, clip
+bookkeeping, batching, the material packing, and the translated shader tree --
+so everything from a `Canvas` call to a finished `Recording` runs in a browser
+today. It is the same property that lets those crates be tested without a GPU,
+and it was not built for this.
+
+The two backends do not compile, and what stops them is worth separating:
+
+- `impeller-hal-vulkan` fails inside `ash`'s dynamic loader. Vulkan is not a web
+  API and no amount of work here changes that.
+- `impeller-hal-gles` fails inside `khronos-egl`, which dlopens `libEGL`. That is
+  the loader rather than any GLES code, and the distinction is the whole point:
+  `crates/impeller-hal-gles/src/render.rs` is the rendering path and contains no
+  reference to EGL at all. Every one is in
+  `crates/impeller-hal-gles/src/context.rs` and
+  `crates/impeller-hal-gles/src/fence.rs`.
+
+So a WebGL2 path would need a second way to obtain a context, a decision about
+fences, and a browser-canvas presentation crate -- and would leave the rendering
+path alone. The shaders are already GLSL ES 300 and
+`crates/impeller-shaders/build.rs` sets `is_webgl: false` beside the version, a
+flag rather than a translation.
+
+Capability gating is what makes this cheaper than it sounds. WebGL2 has no
+advanced blend equation, no float render target and no dma-buf, and all three are
+already capabilities that the layers above refuse on rather than approximate. A
+WebGL2 context would report a smaller `Capabilities` and the refusals would be
+the ones already written, with no branch on the target anywhere above the HAL.
+
+None of that is a commitment, and none of it has run a shader. "It compiles" is
+the weakest evidence in this document: it says the dependency graph is clean for
+the target, and says nothing about whether a picture comes out right. Choosing
+between WebGPU and WebGL2 is a decision this section does not make.
+
 Each shipped backend permanently multiplies the conformance matrix, the shader
 snapshot set, and the capability-gating surface. The Vulkan-first policy caps
 what any additional backend can cost core development, and a backend that loses
