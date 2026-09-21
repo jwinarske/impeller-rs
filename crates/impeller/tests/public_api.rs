@@ -15820,23 +15820,44 @@ fn a_stroke_too_wide_to_tessellate_draws_rather_than_aborting() {
         );
     }
 
-    // Past that the picture degrades, and it is the same limit `MAX_COORDINATE`
-    // names arriving by a different road. A width of `1e30` puts the stroke's
-    // own outline at five times ten to the twenty-ninth, which is far outside
-    // what an `f32` carries through a projection -- so the geometry collapses
-    // and covers exactly half the frame. Measured, not desired.
+    // Past that the picture is the driver's, and this asserts only what is this
+    // renderer's. `MAX_COORDINATE` is two to the twenty-fourth and a width of
+    // `1e30` puts the stroke's outline at five times ten to the twenty-ninth, so
+    // the vertices reaching the device are finite and enormous: measured in clip
+    // space, the largest is 7.8e27 for `1e30` and 2.7e36 for `f32::MAX`, against
+    // a unit cube. None is NaN and none is infinite, which is the part that is
+    // ours.
     //
-    // Asserted as "draws something substantial" rather than pinned at a half,
-    // because the number is a float-precision artifact rather than a decision.
-    // What the test is here for is the line above it: these widths used to end
-    // the process, and now they return.
+    // What a rasterizer does with a triangle that size is its own business, and
+    // the two here disagree completely. lavapipe clips in float and covers about
+    // half the frame; V3D bins into a bounded fixed-point format, cannot express
+    // the coordinate, and drops the primitives for a coverage of exactly zero.
+    // Both are defensible and neither is a bug in this crate -- `1e9` covers the
+    // frame on both, and its largest clip coordinate is 7.8e6.
+    //
+    // So this used to assert "draws something substantial", which passed on a
+    // software rasterizer and failed on a Pi 5 for a reason the assertion was
+    // never about. What the test is here for is the line above it: these widths
+    // used to end the process, and now they return. That is what is checked, plus
+    // that the frame handed back is whole and not garbage -- a dropped primitive
+    // leaves the background, and a corrupt one would not be gray.
     for width in [1e30f32, f32::MAX] {
         let wide = render(&mut ctx, bar(width));
-        let covered = wide.chunks_exact(4).filter(|p| p[0] > 128).count();
-        assert!(
-            covered > whole / 4,
-            "a stroke {width:e} wide should still draw a great deal; it covered \
-             {covered} of {whole}"
+        assert_eq!(
+            wide.len(),
+            whole * 4,
+            "a stroke {width:e} wide returned a frame of the wrong size"
+        );
+        // Black background, white stroke: every pixel is gray and opaque however
+        // much of it the device decided to draw. Noise would not be.
+        let corrupt = wide
+            .chunks_exact(4)
+            .filter(|p| p[0] != p[1] || p[1] != p[2] || p[3] != 255)
+            .count();
+        assert_eq!(
+            corrupt, 0,
+            "a stroke {width:e} wide put {corrupt} pixels in the frame that are \
+             neither the background nor the stroke"
         );
     }
 }
