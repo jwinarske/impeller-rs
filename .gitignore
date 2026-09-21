@@ -9,12 +9,12 @@
 target/
 **/*.rs.bk
 
-# Test output: diff images, JSON/JUnit reports, capture artifacts (plan.md 15.3)
+# Test output: diff images, JSON/JUnit reports, capture artifacts
 /tests/output/
 /tests/**/actual/
 /tests/**/diff/
 
-# Device-run artifacts pulled back from boards (plan.md 17.1)
+# Device-run artifacts pulled back from boards
 /ci/results/
 
 # Editor / OS
