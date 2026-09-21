@@ -92,6 +92,11 @@ canvas.draw_rect(
 // before any of it reaches the GPU and every shape shares one pass.
 ctx.draw(&mut surface, &canvas.finish())?;
 let pixels = ctx.read(&mut surface)?;
+
+// Destroyed explicitly, because nothing here frees a GPU object on drop. A
+// surface still alive when its context goes is a child outliving its device,
+// which the validation layer reports as an error rather than a leak.
+ctx.destroy_surface(surface);
 ```
 
 ## Running it
