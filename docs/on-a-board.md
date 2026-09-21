@@ -69,13 +69,37 @@ needs to: `ash` opens the loader at runtime and `drm-rs` issues ioctls through
 
 ## Running them there
 
-`--no-run` prints each binary it built. Copy them across and run them; there is
+`--no-run` prints each binary it built. Copy those across and run them; there is
 no cargo on the board and none needed.
 
+Ask cargo which ones they are rather than globbing the directory they landed in.
+`deps/` also holds every build script and every stale artifact from earlier
+builds: 1865 files and 5.0 GB here against 59 test binaries, and 179 of those
+files are executable, so a glob copies eighty times what is needed and the loop
+then runs 120 build scripts as though they were tests. It is not merely
+wasteful. `/tmp` on a Pi 5 is a 4.0 GB tmpfs, so the copy cannot finish, and it
+fails after filling the board's memory rather than at the start.
+
 ```sh
-scp target/aarch64-unknown-linux-gnu/debug/deps/* "$PI:/tmp/pibins/"
+cargo test --workspace --exclude xtask --target aarch64-unknown-linux-gnu \
+  --no-run --message-format=json 2>/dev/null \
+  | python3 -c 'import sys, json
+for line in sys.stdin:
+    try: m = json.loads(line)
+    except ValueError: continue
+    if m.get("reason") == "compiler-artifact" and m.get("profile", {}).get("test") and m.get("executable"):
+        print(m["executable"])' > /tmp/pibins.txt
+
+ssh "$PI" 'rm -rf /tmp/pibins && mkdir -p /tmp/pibins'
+tar cf - -C target/aarch64-unknown-linux-gnu/debug/deps $(sed 's#.*/##' /tmp/pibins.txt) \
+  | ssh "$PI" 'cd /tmp/pibins && tar xf - && chmod +x *'
 ssh "$PI" 'cd /tmp/pibins && for b in *; do ./$b --test-threads=1; done'
 ```
+
+`profile.test` is the field that matters: it is what separates a test binary from
+a build script, and both are `compiler-artifact` messages with an `executable`.
+One `tar` through the pipe rather than `scp` per file, because 59 round trips to
+a board over a home network is the slowest part of the whole exercise.
 
 Two things the harness needs, both of which look like failures when missing.
 
