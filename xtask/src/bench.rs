@@ -130,9 +130,10 @@ pub struct Timing {
     /// The frame ninety-nine hundredths of them came in under.
     ///
     /// Reported beside the median because that pair is what a frame budget is
-    /// written against -- `plan.md`'s desktop target is a rate *and* a p99
-    /// within twice the median, and a renderer that hits an average while
-    /// missing one frame in fifty is not the same thing as one that does not.
+    /// written against: a rate *and* a bound on the tail, since a renderer that
+    /// hits an average while missing one frame in fifty is not the same thing as
+    /// one that does not. Twice the median is the figure this project has used for
+    /// that bound.
     /// The slowest frame is a different statement: one interruption owns it,
     /// and on a machine doing anything else there is always one.
     pub p99: Duration,
@@ -567,9 +568,10 @@ fn epilogue() -> &'static str {
      \n\
      The rate is what a median frame would sustain with nothing else in it: \n\
      no present, no vertical blank, and a scene that is a hundred and sixty \n\
-     rectangles rather than an interface. Read it against the other paths \n\
-     here rather than against a target in `plan.md`, which names a different \n\
-     scene and counts a whole frame.\n\
+     rectangles rather than an interface. So it is a number to read against the \n\
+     other paths here, and not against any figure for what a frame should \n\
+     cost -- one of those names a scene and counts a present, and this counts \n\
+     neither.\n\
      \n\
      Read each p99 against the median on its own line before reading it as \n\
      a renderer's tail. On a machine with a desktop on it a configuration \n\
