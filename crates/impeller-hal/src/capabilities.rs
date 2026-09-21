@@ -97,12 +97,20 @@ pub struct Capabilities {
     pub dma_buf: DmaBufSupport,
     /// Cross-component synchronization.
     pub sync: SyncSupport,
-    /// Whether the separable blend modes are available.
+    /// Whether the advanced blend modes are available.
     ///
-    /// These need a hardware extension and cannot be emulated with blend
+    /// Both kinds: the separable ones from `Multiply` through `Exclusion` and
+    /// the four non-separable ones. What they share is the thing that matters
+    /// here -- [`BlendMode::factors`] has no pair to return for any of them --
+    /// and what this does not gate is Porter-Duff, `Plus` or `Modulate`, which
+    /// are factors and available everywhere.
+    ///
+    /// They need a hardware extension and cannot be emulated with blend
     /// factors, so a device without it refuses [`BlendMode::is_advanced`] modes
     /// rather than substituting the nearest expressible one. Callers check this
     /// before using one; nothing branches on which backend is in play.
+    ///
+    /// [`BlendMode::factors`]: crate::BlendMode::factors
     ///
     /// [`BlendMode::is_advanced`]: crate::BlendMode::is_advanced
     pub advanced_blend: bool,
@@ -218,6 +226,63 @@ impl Capabilities {
 mod tests {
     use super::*;
     use crate::format::Extent2D;
+
+    /// The advanced-blend refusal, which had no test while the texture refusal
+    /// beside it did.
+    ///
+    /// Three cases rather than one, because a check that refuses is only
+    /// correct if it also lets things through: a refusal that fired on every
+    /// batch would pass a test asserting only that an advanced mode is refused,
+    /// and this renderer draws almost nothing in an advanced mode.
+    ///
+    /// This is the whole of what a device lacking the extension gets. There is
+    /// no second implementation to fall back to -- upstream has one, reached
+    /// through framebuffer fetch, and the comment above says why substituting
+    /// is refused instead. So a caller asking for `Multiply` on such a device
+    /// gets this error and never a different picture.
+    #[test]
+    fn an_advanced_mode_is_refused_only_where_the_extension_is_missing() {
+        const TRI: [[f32; 2]; 3] = [[0.0, 0.0], [1.0, 0.0], [0.0, 1.0]];
+
+        let batch = |blend| {
+            let mut batch = crate::Batch::new();
+            batch
+                .push(&TRI, &[0, 1, 2], crate::Material::solid([1.0; 4]), blend)
+                .expect("one triangle is within any batch's limits");
+            batch
+        };
+        let advanced = batch(crate::BlendMode::Multiply);
+        let ordinary = batch(crate::BlendMode::SrcOver);
+        assert!(
+            crate::BlendMode::Multiply.is_advanced() && !crate::BlendMode::SrcOver.is_advanced(),
+            "the two modes chosen here have to sit on opposite sides of the \
+             thing being checked, or this test checks nothing"
+        );
+
+        let without = Capabilities {
+            advanced_blend: false,
+            ..Default::default()
+        };
+        let with = Capabilities {
+            advanced_blend: true,
+            ..Default::default()
+        };
+
+        assert!(
+            without.check_blend_modes(&advanced).is_err(),
+            "an advanced mode was allowed on a device with no advanced-blend \
+             extension, which reaches the driver as a mode it cannot express"
+        );
+        assert!(
+            with.check_blend_modes(&advanced).is_ok(),
+            "an advanced mode was refused on a device that has the extension"
+        );
+        assert!(
+            without.check_blend_modes(&ordinary).is_ok(),
+            "an ordinary mode was refused for want of an extension it does not \
+             need -- the check is looking at the batch rather than at the mode"
+        );
+    }
 
     #[test]
     fn sample_counts_reject_non_powers_of_two() {

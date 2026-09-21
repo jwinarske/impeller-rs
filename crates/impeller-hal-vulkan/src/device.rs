@@ -106,9 +106,10 @@ mod ext {
     /// Promoted to core in 1.2, so on the 1.1 baseline it must be requested
     /// explicitly as a dependency of the modifier extension.
     pub const IMAGE_FORMAT_LIST: &str = "VK_KHR_image_format_list";
-    /// The separable blend modes, which no combination of blend factors can
-    /// express. Unrelated to the DRM path; gated the same way because the
-    /// answer to "can this device do it" is a capability either way.
+    /// The advanced blend modes, separable and non-separable alike, which no
+    /// combination of blend factors can express. Unrelated to the DRM path;
+    /// gated the same way because the answer to "can this device do it" is a
+    /// capability either way.
     pub const BLEND_OPERATION_ADVANCED: &str = "VK_EXT_blend_operation_advanced";
     /// Presenting into a surface. Absent on a device that can render but not
     /// display, which is a normal thing for a compute-only or headless card to
@@ -132,11 +133,15 @@ fn required_dependencies(name: &str) -> &'static [&'static str] {
     }
 }
 
-/// Whether this device can do every separable blend mode, coherently.
+/// Whether this device can do every advanced blend mode, coherently.
 ///
 /// Three conditions, all required, and all reported as one flag because a
 /// caller cannot do anything useful with two of the three. `allOperations`
-/// covers the modes themselves; the coherent feature is what lets overlapping
+/// covers the modes themselves -- and it is the reason this says every mode
+/// rather than the separable ones: what it guarantees beyond the subset a
+/// device may otherwise offer is the four non-separable operations, so
+/// requiring it is what makes `Hue` through `Luminosity` safe to report. The
+/// coherent feature is what lets overlapping
 /// draws share a pass without a barrier between them; and the attachment limit
 /// has to cover what a pass actually binds. Anything short of all three reports
 /// false, and the modes are then refused rather than approximated.

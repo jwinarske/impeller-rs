@@ -215,7 +215,7 @@ fn every_mode_matches_its_equation_on_vulkan() {
     // Both devices, because they do not offer the same modes. Advanced blending
     // is an extension one physical device can have and another can lack on the
     // same machine, and testing only whichever one `Auto` prefers means the
-    // separable modes go unchecked wherever the preferred device is the one
+    // advanced modes go unchecked wherever the preferred device is the one
     // without it. Which device supplies the coverage is not asserted: that is a
     // property of the machine, not of the renderer.
     let mut ran = false;
@@ -298,7 +298,8 @@ fn the_porter_duff_modes_agree_between_the_backends() {
         return;
     };
 
-    // Only the modes both backends have. The separable modes are Vulkan-only
+    // Only the modes both backends have. The advanced modes -- separable and
+    // non-separable alike, since one extension gates both -- are Vulkan-only
     // here, and comparing them across backends is what the corpus does through
     // an explicit capability gate rather than what this test papers over.
     for mode in BlendMode::PORTER_DUFF {
@@ -333,7 +334,7 @@ fn check_distinctness(mut ctx: Validated) {
     let families: &[(&str, &[BlendMode])] = if advanced {
         &[
             ("porter-duff", BlendMode::PORTER_DUFF),
-            ("separable", BlendMode::ADVANCED),
+            ("advanced", BlendMode::ADVANCED),
         ]
     } else {
         &[("porter-duff", BlendMode::PORTER_DUFF)]
