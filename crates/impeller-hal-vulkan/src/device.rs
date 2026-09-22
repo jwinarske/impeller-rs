@@ -36,6 +36,17 @@ pub enum DevicePreference {
 #[derive(Debug, Clone, Copy, Default)]
 pub struct ContextConfig {
     pub device: DevicePreference,
+    /// Capabilities to build this context without, whatever the device offers.
+    ///
+    /// Empty by default. Tests set it to reach a refusal on a machine whose
+    /// device has the thing -- before this, several could only run on hardware
+    /// that genuinely lacked it, and one of them said so.
+    ///
+    /// Withholding only; see `impeller_hal::Withheld` for why that direction is
+    /// the only one there is. Where the capability is backed by an extension this
+    /// is honored by not enabling it, so the device is genuinely built without it
+    /// and the probe reports false on its own merits rather than being overruled.
+    pub withheld: impeller_hal::Withheld,
     /// Request the validation layer and capture what it reports.
     ///
     /// Off by default because it costs real time per call. Tests turn it on
@@ -90,6 +101,29 @@ pub struct FrameSync<'a> {
     /// waited for. Doing it here makes the ordering the render pass's, which is
     /// where it can be expressed without a stall.
     pub presents: bool,
+}
+
+/// Which extensions a withheld capability is backed by on this backend.
+///
+/// Exhaustive on purpose: a new `Capability` fails to compile here until someone
+/// decides what it means for Vulkan. Empty is a legitimate answer --
+/// `float_render_targets` comes from a format-properties query and has no
+/// extension to leave out, so it is withheld by clearing the field after
+/// detection instead.
+///
+/// These names are subtracted from what the device reports as *available*, not
+/// from what this backend asks for. `resolve_extensions` re-adds an extension's
+/// dependencies, so a name dropped from the request list comes back as some other
+/// extension's dependency; subtracting from the available set instead means its
+/// existing rule -- drop anything whose dependencies are missing -- cascades for
+/// free and the device stays valid by construction. Nothing withheld here has a
+/// dependent, so that cascade is not exercised yet; a capability whose extension
+/// others depend on wants it checked.
+fn withheld_extensions(capability: impeller_hal::Capability) -> &'static [&'static str] {
+    match capability {
+        impeller_hal::Capability::AdvancedBlend => &[ext::BLEND_OPERATION_ADVANCED],
+        impeller_hal::Capability::FloatRenderTargets => &[],
+    }
 }
 
 /// Extensions this backend asks for when the device offers them.
@@ -251,6 +285,7 @@ impl VulkanContext {
         Self::with_config(ContextConfig {
             device: preference,
             validation: false,
+            ..Default::default()
         })
     }
 
@@ -381,6 +416,7 @@ impl VulkanContext {
             debug_messenger,
             validation_log,
             sync_validation_available,
+            config.withheld,
         )
     }
 
@@ -392,8 +428,9 @@ impl VulkanContext {
         debug_messenger: Option<(ash::ext::debug_utils::Instance, vk::DebugUtilsMessengerEXT)>,
         validation_log: Arc<ValidationLog>,
         sync_validation: bool,
+        withheld: impeller_hal::Withheld,
     ) -> Result<Self> {
-        let available = match device_extensions(&instance, physical_device) {
+        let mut available = match device_extensions(&instance, physical_device) {
             Ok(set) => set,
             Err(e) => {
                 unsafe { instance.destroy_instance(None) };
@@ -414,6 +451,22 @@ impl VulkanContext {
             ext::BLEND_OPERATION_ADVANCED,
             ext::SWAPCHAIN,
         ];
+        // Taken out of what the device *offers*, before anything asks for it, so
+        // everything downstream follows on its own: the probe below reports false
+        // because the extension is not enabled, the device is created without the
+        // feature it backs, and `enabled_extensions` -- which some paths consult
+        // instead of the capability -- agrees with all of it.
+        for capability in [
+            impeller_hal::Capability::AdvancedBlend,
+            impeller_hal::Capability::FloatRenderTargets,
+        ] {
+            if withheld.contains(capability) {
+                for name in withheld_extensions(capability) {
+                    available.remove(*name);
+                }
+            }
+        }
+
         let enabled = resolve_extensions(&wanted, &available);
         let advanced_blend = probe_advanced_blend(&instance, physical_device, &enabled);
 
@@ -461,8 +514,12 @@ impl VulkanContext {
         };
 
         let queue = unsafe { device.get_device_queue(queue_family_index, 0) };
-        let capabilities =
+        let mut capabilities =
             detect_capabilities(&instance, physical_device, &enabled, advanced_blend);
+        // Covers what the subtraction above cannot: a capability read from a
+        // format query rather than from an extension. Idempotent, so the fields
+        // already false because their extension was left out stay false.
+        withheld.apply_to(&mut capabilities);
 
         let allocator =
             gpu_allocator::vulkan::Allocator::new(&gpu_allocator::vulkan::AllocatorCreateDesc {

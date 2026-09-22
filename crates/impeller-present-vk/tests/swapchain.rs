@@ -37,6 +37,7 @@ fn setup() -> Option<(VulkanContext, ash::vk::SurfaceKHR)> {
     let ctx = match VulkanContext::with_config(ContextConfig {
         device: DevicePreference::Auto,
         validation: true,
+        ..Default::default()
     }) {
         Ok(ctx) => ctx,
         Err(e) => {

@@ -12,6 +12,7 @@ fn validated(device: DevicePreference) -> Option<VulkanContext> {
     let ctx = VulkanContext::with_config(ContextConfig {
         device,
         validation: true,
+        ..Default::default()
     })
     .ok()?;
     if !ctx.validation_active() {
@@ -126,6 +127,7 @@ fn synchronization_validation_is_switched_on() {
     let Ok(ctx) = VulkanContext::with_config(ContextConfig {
         device: DevicePreference::Auto,
         validation: true,
+        ..Default::default()
     }) else {
         eprintln!("skipping: no Vulkan device");
         return;

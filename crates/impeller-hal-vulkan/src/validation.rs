@@ -150,6 +150,7 @@ impl Validated {
         crate::VulkanContext::with_config(crate::ContextConfig {
             device,
             validation: true,
+            ..Default::default()
         })
         .map(|ctx| Self(std::mem::ManuallyDrop::new(ctx)))
     }

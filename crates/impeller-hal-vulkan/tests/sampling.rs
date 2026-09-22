@@ -36,6 +36,7 @@ fn context() -> Option<VulkanContext> {
     match VulkanContext::with_config(ContextConfig {
         device: DevicePreference::Auto,
         validation: true,
+        ..Default::default()
     }) {
         Ok(ctx) => Some(ctx),
         Err(e) => {
