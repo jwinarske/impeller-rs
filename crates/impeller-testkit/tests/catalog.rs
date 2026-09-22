@@ -1140,10 +1140,28 @@ fn composing_a_channel_swap_with_a_blur_gives_the_same_picture_either_way() {
     let inner = shot("blur/compose-paint-blur-inner");
     let outer = shot("blur/compose-paint-blur-outer");
     let diff = compare(&inner, &outer).expect("the two renders are the same size");
-    assert_eq!(
-        diff.differing, 0,
+    // Within a level, not bit for bit, and the gap between those two is a
+    // device rather than a renderer. The operators commute exactly in real
+    // arithmetic; what does not commute is where the rounding falls, since one
+    // order quantizes the swapped color before the weighted sum and the other
+    // quantizes the sum before the swap. lavapipe rounds both the same way and
+    // these were byte for byte identical for as long as that was the only
+    // device asked. On v3d they differ by one level on a hundred and
+    // twenty-seven pixels of sixteen thousand, which this used to report as a
+    // dropped filter.
+    //
+    // A level is still far inside what the test is for, and the margin is
+    // measured rather than described: rendering these plates with one of the two
+    // filters deleted puts them 178 levels apart over 43 per cent of the frame
+    // with the swap gone, and 84 over 32 per cent with the blur gone. So the
+    // failure this guards against clears a bound of one by two orders of
+    // magnitude, and `max_delta` is the right thing to bound because that
+    // failure is large everywhere rather than small somewhere.
+    assert!(
+        diff.max_delta <= 1,
         "a permutation and a blur commute, so composing them either way is one \
-         operator; these differ, which means one of the two was dropped: {diff:?}"
+         operator; these differ by more than a rounding, which means one of the \
+         two was dropped: {diff:?}"
     );
     // And the swap ran at all: green in, red out.
     let middle = inner.pixel(64, 64);
