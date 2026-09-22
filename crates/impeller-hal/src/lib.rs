@@ -46,7 +46,9 @@ pub mod sync;
 
 pub use batch::{Batch, BatchDraw, ClipRole, ClipState, Vertex};
 pub use blend::{BlendFactor, BlendFactors, BlendMode};
-pub use capabilities::{Capabilities, DmaBufSupport, SampleCounts, SyncSupport};
+pub use capabilities::{
+    Capabilities, Capability, DmaBufSupport, SampleCounts, SyncSupport, Withheld,
+};
 pub use error::{Error, Result};
 pub use format::{Extent2D, FormatModifierSet, Fourcc, Modifier, PixelFormat};
 /// A caller's fragment program, in the forms each backend can take one.
