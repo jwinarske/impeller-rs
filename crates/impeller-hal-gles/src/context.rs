@@ -42,6 +42,30 @@ mod ext {
     /// machine's driver has the first and not this, and without the barrier it
     /// returns the source unblended for every advanced mode.
     pub const BLEND_ADVANCED_COHERENT: &str = "GL_KHR_blend_equation_advanced_coherent";
+
+    /// Rendering into a half-float or float color attachment. Core ES 3.0 can
+    /// sample one and cannot draw into it; either of these adds the second, and
+    /// the half-float one is the weaker and is enough.
+    pub const COLOR_BUFFER_FLOAT: &str = "GL_EXT_color_buffer_float";
+    pub const COLOR_BUFFER_HALF_FLOAT: &str = "GL_EXT_color_buffer_half_float";
+}
+
+/// Which extensions a withheld capability is backed by on this backend.
+///
+/// Exhaustive on purpose, for the reason the Vulkan map beside it is: a new
+/// `Capability` fails to compile here until someone decides what it means for
+/// GLES. Unlike Vulkan, both of today's capabilities have an extension behind
+/// them, so neither needs the field cleared afterwards -- though it is, because
+/// doing so is free and keeps the two backends saying the same thing.
+fn withheld_extensions(capability: impeller_hal::Capability) -> &'static [&'static str] {
+    match capability {
+        impeller_hal::Capability::AdvancedBlend => {
+            &[ext::BLEND_ADVANCED, ext::BLEND_ADVANCED_COHERENT]
+        }
+        impeller_hal::Capability::FloatRenderTargets => {
+            &[ext::COLOR_BUFFER_FLOAT, ext::COLOR_BUFFER_HALF_FLOAT]
+        }
+    }
 }
 
 /// How the context gets its display.
@@ -110,11 +134,19 @@ pub struct GlesContext {
 /// Mirrors the Vulkan backend's, and for the same reason: the checking costs
 /// real time per call, so it is asked for rather than assumed, and tests are
 /// what ask.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, Default)]
 pub struct GlesConfig {
     pub target: DisplayTarget,
     /// Request `GL_KHR_debug` and capture what the driver reports.
     pub debug: bool,
+    /// Capabilities to build this context without, whatever the driver offers.
+    ///
+    /// Empty by default, and the Vulkan backend's field of the same name says
+    /// what it is for. Honored here by taking the extensions out of the set the
+    /// probe reads, so the capability is false because the extension is not
+    /// there -- which is the position this backend is already in on a driver
+    /// that lacks it.
+    pub withheld: impeller_hal::Withheld,
 }
 
 impl GlesContext {
@@ -122,6 +154,7 @@ impl GlesContext {
         Self::with_config(GlesConfig {
             target,
             debug: false,
+            ..Default::default()
         })
     }
 
@@ -238,8 +271,29 @@ impl GlesContext {
             })
         };
 
-        let gl_extensions = gl_extension_set(&gl);
-        let capabilities = detect_capabilities(&gl, &egl, &egl_extensions, &gl_extensions);
+        // Taken out before the probe reads the set, so `advanced_blend` and
+        // `float_render_targets` come back false for the same reason they would
+        // on a driver without the extensions. The set is kept and backs
+        // `has_gl_extension` and the coherent check below, so one subtraction
+        // here makes all three agree.
+        let mut gl_extensions = gl_extension_set(&gl);
+        for capability in [
+            impeller_hal::Capability::AdvancedBlend,
+            impeller_hal::Capability::FloatRenderTargets,
+        ] {
+            if settings.withheld.contains(capability) {
+                for name in withheld_extensions(capability) {
+                    gl_extensions.remove(*name);
+                }
+            }
+        }
+        let gl_extensions = gl_extensions;
+
+        let mut capabilities = detect_capabilities(&gl, &egl, &egl_extensions, &gl_extensions);
+        // Before the barrier is resolved below, not after: a restricted context
+        // should hold no entry point it will never call, which is what a driver
+        // without the extension leaves it holding.
+        settings.withheld.apply_to(&mut capabilities);
 
         // Only where the equations are available and the driver does not order
         // overlapping draws itself. A missing entry point where the extension
@@ -255,7 +309,6 @@ impl GlesContext {
                 // the pointer came from the loader for a current context.
                 .map(|proc| unsafe { std::mem::transmute::<_, BlendBarrier>(proc) })
         });
-        let mut capabilities = capabilities;
         if matches!(blend_barrier, Some(None)) {
             capabilities.advanced_blend = false;
         }
@@ -763,8 +816,8 @@ fn detect_capabilities(
         // Core ES 3.0 can sample a half-float texture and cannot render into
         // one; either extension adds the second. Named separately because the
         // half-float one is the weaker of the two and is enough for this.
-        float_render_targets: gl_extensions.contains("GL_EXT_color_buffer_float")
-            || gl_extensions.contains("GL_EXT_color_buffer_half_float"),
+        float_render_targets: gl_extensions.contains(ext::COLOR_BUFFER_FLOAT)
+            || gl_extensions.contains(ext::COLOR_BUFFER_HALF_FLOAT),
         // Empty, and the only field here that is empty without a reason
         // beside it. It is not a statement that this backend cannot export a
         // scanout buffer -- `dma_buf` above says it can, wherever the three

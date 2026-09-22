@@ -143,6 +143,7 @@ impl Validated {
         crate::GlesContext::with_config(crate::GlesConfig {
             target,
             debug: true,
+            ..Default::default()
         })
         .map(|ctx| Self(std::mem::ManuallyDrop::new(ctx)))
     }
