@@ -957,6 +957,50 @@ ask for `-p impeller-present-drm` by name or silently leave all twenty-five
 behind. Mine did, on the first run: the total was 809 where it should have been
 834.
 
+## What a second full run found, and why none of it was the renderer
+
+The findings above were defects. A full run on 2026-09-22, after the crates were
+published, found four failures and **not one of them was in the renderer.** Each
+was a test claiming more than it could know, and the four together say something
+the individual entries do not: a suite whose only two devices are software
+rasterizers cannot tell its own assumptions from the code's behavior. Four
+separate assertions had quietly recorded lavapipe's arithmetic as an invariant.
+
+- **A coverage bound was measuring a driver's guard band.** A stroke `1e30` wide
+  was required to cover more than a quarter of the frame. The vertices reaching
+  the device are finite and enormous -- in clip space the largest is 7.8e27,
+  against a unit cube -- with no NaN and no infinity, which is the part this
+  renderer decides. lavapipe clips such a triangle in float and covers about half
+  the frame; v3d bins into a bounded fixed-point format, cannot express the
+  coordinate, and drops the primitives for a coverage of exactly zero. Both are
+  defensible, and `1e9` covers the frame on both at 7.8e6. Any coverage assertion
+  above `MAX_COORDINATE` is an assertion about a rasterizer.
+- **A texture filter had no term in the tolerance.** Four corpus scenes diverged,
+  every one at a maximum delta of exactly three and every one sampling a texture.
+  Established by reduction: one scene, an eight-texel sheet magnified about
+  fourteen times, is byte for byte identical across the two devices through
+  `Sampling::Nearest` and reaches three across seventy-two per cent of the frame
+  through `Sampling::Linear`. Nothing else changed. This is the fourth time a
+  board run has found the tolerance model wrong in a new way, after the outlier
+  budget, the per-store bound and the tie budget above -- which is worth reading
+  as a pattern rather than as four accidents.
+- **Two orders of one operator were required to agree bit for bit.** A channel
+  swap and a blur commute exactly in real arithmetic; where the rounding falls
+  does not, since one order quantizes the swapped color before the weighted sum
+  and the other quantizes the sum before the swap. One level on a hundred and
+  twenty-seven pixels, reported as a dropped filter.
+- **A capability was confused with a result.** A plate no device could render and
+  a plate every device rendered identically both arrived as one `false`. No device
+  on the board has advanced blending -- v3d has not got the extension, the GLES
+  context is the same v3d, and that board's llvmpipe reports it absent where the
+  desktop's newer one has it -- so nothing was asked, and the message said the
+  mode was not reaching the picture. The skip written for exactly that machine
+  could never run, because the per-plate assertion reached it first.
+
+The shape to take from it: a cross-device assertion states a property of this
+renderer or a property of a rasterizer, and the two are easy to write down in the
+same sentence. A board is the only thing on this bench that tells them apart.
+
 ## What no machine here checks
 
 `cargo xtask gate` prints what the suite says it covered, under the totals, and
@@ -986,10 +1030,11 @@ blend arithmetic would be caught today by one machine.
 
 ## Where it stands
 
-All fifty-three test binaries on a Raspberry Pi 5: **784 passed, 0 failed, 0
-ignored**, with a hundred and twenty-one announced skips and the catalog
-drawing 222 of its 242 scenes across two devices. It was 794 passed and 23 failed the
-first time the board was run.
+All fifty-nine test binaries on a Raspberry Pi 5: **901 passed, 0 failed, 0
+ignored**, measured 2026-09-22. It was 794 passed and 23 failed the first time the
+board was run, and 896 passed with 4 failed immediately before the four entries
+above were fixed -- the four are what closed that gap, and the extra test is the
+one that came with the filter term.
 
 The Pi 4 is a separate case and is not covered by that number. Its vc4 display
 controller refuses to import what this renderer exports, for reasons the DRM
