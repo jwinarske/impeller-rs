@@ -4,6 +4,7 @@
 //! without a graphics stack still gets a green run, while lanes that must have
 //! GLES enforce it through the image they run on.
 
+use impeller_hal::Capability;
 use impeller_hal_gles::DisplayTarget;
 use impeller_hal_gles::Validated as GlesValidated;
 
@@ -224,4 +225,81 @@ fn a_deferred_submission_hands_back_a_fence_that_signals() {
     }
 
     ctx.destroy_texture(target);
+}
+
+/// Withholding advanced blending leaves the extensions out of the context.
+///
+/// The Vulkan backend's test of this name says what the assertion is for and why a
+/// capability reading false is not enough on its own: the extension set is kept on
+/// the context and other code reads it, so the two have to agree.
+///
+/// What is not observable from here, said rather than left as a gap: the
+/// blend-qualified program variants are built lazily from the capability, and
+/// nothing exposes whether one was linked. So this asserts the reachable
+/// consequences -- the capability is false, both extensions are gone, and the debug
+/// log is clean -- and the program half is covered where a draw is refused.
+#[test]
+fn withholding_advanced_blend_leaves_the_extensions_out_of_the_context() {
+    let Some(ctx) = context() else {
+        return;
+    };
+    if !ctx.capabilities().advanced_blend {
+        eprintln!("skipping: this driver has no advanced blending to withhold");
+        return;
+    }
+    assert!(
+        ctx.has_gl_extension("GL_KHR_blend_equation_advanced"),
+        "the driver reports advanced blending without the extension behind it"
+    );
+    drop(ctx);
+
+    let Ok(restricted) =
+        GlesValidated::without(DisplayTarget::Surfaceless, Capability::AdvancedBlend)
+    else {
+        eprintln!("skipping: no GLES context");
+        return;
+    };
+    assert!(
+        !restricted.capabilities().advanced_blend,
+        "advanced blending survived being withheld"
+    );
+    // Both names, though only the first bites everywhere. The driver this was
+    // written against has the advanced equations and not the coherent variant, so
+    // the second assertion is vacuously true here and dropping that name from the
+    // map cannot be caught on this machine -- checked, rather than assumed. The
+    // first one is load-bearing: withholding only the coherent name fails this.
+    for name in [
+        "GL_KHR_blend_equation_advanced",
+        "GL_KHR_blend_equation_advanced_coherent",
+    ] {
+        assert!(
+            !restricted.has_gl_extension(name),
+            "{name} is still present while the capability it backs reads false"
+        );
+    }
+}
+
+/// A restricted context still reports flags that match its own extensions.
+///
+/// The pairs from `capability_flags_match_the_extensions_actually_present`, re-run
+/// against a restricted context. Withholding something reaches the two capabilities
+/// named and nothing else, and these are the fields that would show it if it did.
+#[test]
+fn a_restricted_context_reports_flags_that_match_its_extensions() {
+    let Ok(ctx) = GlesValidated::without(DisplayTarget::Surfaceless, Capability::AdvancedBlend)
+    else {
+        eprintln!("skipping: no GLES context");
+        return;
+    };
+    let caps = ctx.capabilities();
+
+    assert_eq!(
+        caps.dma_buf.export,
+        ctx.has_egl_extension("EGL_MESA_image_dma_buf_export")
+    );
+    assert_eq!(
+        caps.sync.export_sync_file,
+        ctx.has_egl_extension("EGL_ANDROID_native_fence_sync")
+    );
+    assert!(!caps.sync.import_sync_file);
 }
