@@ -56,6 +56,24 @@ pub struct Tolerance {
 impl Tolerance {
     /// Bit-exact. Correct for clears, coverage, and anything else the
     /// specification pins down.
+    /// The same profile with `extra` more levels allowed per channel.
+    ///
+    /// Added to whichever profile a scene already earned rather than replacing
+    /// it, because the mechanisms are independent: what a multisampled edge
+    /// permits and what a texture filter permits are different things happening
+    /// in the same frame. A scene that does both needs both, which is how
+    /// `nine-patch-stretched` came to fail on a board -- it earns the multisample
+    /// profile, and a term applied only to the per-store one never reached it.
+    ///
+    /// Saturating, because a `u8` is what the field is and a profile at its
+    /// ceiling already permits everything.
+    pub const fn widened_by(self, extra: u8) -> Self {
+        Self {
+            per_channel: self.per_channel.saturating_add(extra),
+            outlier_fraction: self.outlier_fraction,
+        }
+    }
+
     pub const EXACT: Self = Self {
         per_channel: 0,
         outlier_fraction: 0.0,

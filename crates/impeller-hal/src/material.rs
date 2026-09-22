@@ -1015,6 +1015,67 @@ impl Material {
         Self::Solid(color)
     }
 
+    /// How this material reads a texture, if it reads one.
+    ///
+    /// `None` for a material that samples nothing, which is not the same answer
+    /// as [`Sampling::Nearest`]: one says there is no texture and the other says
+    /// there is and it is read at a texel's center.
+    ///
+    /// Here because a caller above the HAL may need to know whether a draw
+    /// interpolates between texels, and only this type knows. The test harness
+    /// asks it to size a cross-device tolerance: a filter that forms a weighted
+    /// sum of texels does so with weights of implementation-defined precision,
+    /// so two devices disagree on every interpolated pixel by more than the last
+    /// bit of one store. Deriving that from a recording rather than from the
+    /// scene that produced it is the point -- the scene model has four separate
+    /// places a sampled texture can come from and a comment recording four
+    /// occasions on which enumerating them missed one.
+    pub fn sampling(&self) -> Option<Sampling> {
+        match self {
+            Self::Image { sampling, .. } | Self::Mesh { sampling, .. } => Some(*sampling),
+            // Reads a texture and states no filter: a blur and a morphology
+            // sample their own target at offsets they compute, and a glyph reads
+            // coverage out of the atlas. What they do between texels is the
+            // shader's, not a field's, so there is no mode to report here.
+            Self::Blur { .. }
+            | Self::Morphology { .. }
+            | Self::Glyph { .. }
+            | Self::Runtime { .. } => None,
+            // Reads no texture at all.
+            Self::Solid(_)
+            | Self::LinearGradient { .. }
+            | Self::RadialGradient { .. }
+            | Self::SweepGradient { .. }
+            | Self::ConicalGradient { .. }
+            | Self::RoundedRect { .. }
+            | Self::RoundedRectBlur { .. }
+            | Self::Ellipse { .. }
+            | Self::PointField { .. } => None,
+        }
+    }
+
+    /// Whether this material reads between texels rather than at one.
+    ///
+    /// Every mode but [`Sampling::Nearest`] forms a weighted sum: linear over
+    /// four texels, bicubic over sixteen, mipmapped over two levels of the
+    /// first. Measured on a Raspberry Pi 5, one scene rendered twice differing
+    /// only in this: nearest is byte for byte identical between v3d and llvmpipe
+    /// over the whole frame, and linear reaches a delta of three across seventy
+    /// per cent of it.
+    /// Whether this material reads its texture at offsets it computes, rather
+    /// than at the coordinate it was handed.
+    ///
+    /// True for the two filters that walk a neighborhood: a blur steps out by a
+    /// sigma, a morphology by a radius, and neither need land on a texel center
+    /// whatever size the texture is. So this is the one case where a material
+    /// can say that a read interpolates without knowing the texture -- which is
+    /// why it is a separate question from [`Self::sampling`], and why a layer
+    /// dilated by a morphology is one of the scenes that put two devices three
+    /// levels apart.
+    pub fn reads_at_computed_offsets(&self) -> bool {
+        matches!(self, Self::Blur { .. } | Self::Morphology { .. })
+    }
+
     /// The same material at `factor` of its opacity.
     ///
     /// Applied to every color a material carries, since a gradient's stops may
@@ -1473,6 +1534,75 @@ pub enum MaterialVariant {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// What a material can say about a texture read, and what it cannot.
+    ///
+    /// The second half is the point. A material has never seen the texture it
+    /// names -- `Image::source` says so in as many words -- so it can report the
+    /// filter that is bound and never whether that filter interpolates, which
+    /// depends on the texture's size against the size it is drawn at. Only the
+    /// two neighborhood filters escape that, because they step out by a sigma or
+    /// a radius whatever the size is.
+    #[test]
+    fn a_material_reports_its_filter_and_not_what_the_filter_does() {
+        let image = |sampling| Material::Image {
+            to_local: linear_to_local([1.0, 0.0, 0.0, 1.0]),
+            slot: 3,
+            alpha: 1.0,
+            tile: TileMode::Clamp,
+            sampling,
+            source: [0.0, 0.0, 1.0, 1.0],
+            tint: [1.0; 4],
+        };
+
+        for sampling in [
+            Sampling::Nearest,
+            Sampling::Linear,
+            Sampling::Cubic,
+            Sampling::Mipmap,
+        ] {
+            assert_eq!(image(sampling).sampling(), Some(sampling));
+            assert_eq!(image(sampling).texture_slot(), Some(3));
+            // Even a linear one: whether it lands between texels is the
+            // caller's geometry against a size this type does not hold.
+            assert!(
+                !image(sampling).reads_at_computed_offsets(),
+                "an image is read where it is drawn, not at an offset of its own"
+            );
+        }
+
+        // The one case a material can settle by itself.
+        let morphology = Material::Morphology {
+            to_local: linear_to_local([1.0, 0.0, 0.0, 1.0]),
+            slot: 0,
+            step: [1.0, 0.0],
+            radius: 2.0,
+            dilate: true,
+        };
+        assert_eq!(
+            morphology.sampling(),
+            None,
+            "it carries no filter to report"
+        );
+        assert!(morphology.reads_at_computed_offsets());
+
+        // Reads a texture, states no filter, and walks nothing: the pair of
+        // answers is why `sampling` returning `None` cannot be read as "no
+        // texture".
+        let glyph = Material::Glyph {
+            color: [1.0; 4],
+            slot: 1,
+        };
+        assert_eq!(glyph.sampling(), None);
+        assert_eq!(glyph.texture_slot(), Some(1));
+        assert!(!glyph.reads_at_computed_offsets());
+
+        // Reads nothing at all.
+        let solid = Material::solid([1.0; 4]);
+        assert_eq!(solid.sampling(), None);
+        assert_eq!(solid.texture_slot(), None);
+        assert!(!solid.reads_at_computed_offsets());
+    }
 
     /// A mapping with the given two-by-two linear part and no translation.
     ///
