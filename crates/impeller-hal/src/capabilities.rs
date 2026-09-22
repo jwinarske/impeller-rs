@@ -8,6 +8,120 @@
 
 use crate::format::FormatModifierSet;
 
+/// A capability a context can be asked to do without.
+///
+/// One variant per [`Capabilities`] field it withholds, named for that field.
+/// Exists so a test can obtain a context that lacks something the device has,
+/// and so exercise a refusal on any machine rather than only on hardware that
+/// happens to lack it. Several tests here could previously only run where the
+/// capability was genuinely absent, and one of them said so: "on a machine where
+/// both have it there is nothing here to check".
+///
+/// **Withholding only.** There is no way to grant a capability a device has not
+/// got, and that is a soundness property rather than a matter of taste: a Vulkan
+/// device is created without
+/// `VkPhysicalDeviceBlendOperationAdvancedFeaturesEXT` when the capability is
+/// false, so a granted flag would have pipelines built with advanced blend
+/// operations against a device that never enabled the feature. See [`Withheld`],
+/// whose name is the other half of saying this.
+///
+/// Deliberately not `#[non_exhaustive]`. Each backend maps this with an
+/// exhaustive `match`, and since the backends are separate crates a wildcard arm
+/// would let them drift apart -- one honoring a new variant and the other
+/// silently ignoring it. The cost is that adding a variant is a breaking change
+/// for anything downstream that matches on it, which is accepted because this is
+/// test-support vocabulary.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum Capability {
+    /// [`Capabilities::advanced_blend`].
+    AdvancedBlend,
+    /// [`Capabilities::float_render_targets`].
+    FloatRenderTargets,
+}
+
+impl Capability {
+    /// Which bit of a [`Withheld`] set stands for this one.
+    const fn bit(self) -> u32 {
+        match self {
+            Self::AdvancedBlend => 1 << 0,
+            Self::FloatRenderTargets => 1 << 1,
+        }
+    }
+}
+
+/// Capabilities a context is to be built without, as a bitmask.
+///
+/// A set rather than one capability because a test may want a device short of
+/// two things at once, and a bitmask rather than a `Vec` because
+/// `ContextConfig` is `Copy` and a heap field would take that away from a
+/// published type. Hand-rolled over a `u32` like [`SampleCounts`] above, for the
+/// same reason: this workspace has no bitflags dependency and does not need one.
+///
+/// The name is the type's only job beyond storage. Nothing here can grant a
+/// capability, and a neutral name like `CapabilitySet` would invite someone to
+/// add that direction; `Withheld` makes it unsayable. [`Self::apply_to`] can
+/// clear a field and can do nothing else.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct Withheld(u32);
+
+impl Withheld {
+    /// Withhold nothing, which is what every ordinary caller wants and what
+    /// `Default` gives.
+    pub const fn none() -> Self {
+        Self(0)
+    }
+
+    /// Withhold exactly one.
+    pub const fn of(capability: Capability) -> Self {
+        Self(capability.bit())
+    }
+
+    /// The same set with one more withheld.
+    pub const fn with(self, capability: Capability) -> Self {
+        Self(self.0 | capability.bit())
+    }
+
+    /// Whether this set withholds `capability`.
+    pub const fn contains(self, capability: Capability) -> bool {
+        (self.0 & capability.bit()) != 0
+    }
+
+    /// Whether this set withholds nothing.
+    pub const fn is_empty(self) -> bool {
+        self.0 == 0
+    }
+
+    /// Clear every withheld capability from `capabilities`.
+    ///
+    /// Clearing only. A capability already false stays false, so applying this
+    /// to a device that never had the thing is a no-op rather than a promotion --
+    /// which is what makes the set safe to apply unconditionally at the end of
+    /// detection.
+    ///
+    /// A backend that can express a withholding more honestly should do that
+    /// *as well*: dropping the extension the capability is backed by means the
+    /// probe reports false on its own merits and the device is genuinely built
+    /// without it. This is what covers the fields backed by a format query
+    /// rather than an extension, and it is the belt to that braces.
+    pub fn apply_to(self, capabilities: &mut Capabilities) {
+        for capability in [Capability::AdvancedBlend, Capability::FloatRenderTargets] {
+            if !self.contains(capability) {
+                continue;
+            }
+            match capability {
+                Capability::AdvancedBlend => capabilities.advanced_blend = false,
+                Capability::FloatRenderTargets => capabilities.float_render_targets = false,
+            }
+        }
+    }
+}
+
+impl From<Capability> for Withheld {
+    fn from(capability: Capability) -> Self {
+        Self::of(capability)
+    }
+}
+
 /// Supported MSAA sample counts, as a bitmask of powers of two.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct SampleCounts(u32);
@@ -226,6 +340,122 @@ impl Capabilities {
 mod tests {
     use super::*;
     use crate::format::Extent2D;
+
+    /// Withholding clears the field it names and touches nothing else.
+    ///
+    /// Field by field rather than by comparing two whole structs, so a failure
+    /// says which field moved. `Capabilities` holds a `Vec` and two `String`s and
+    /// is not `PartialEq`, which is the other reason.
+    #[test]
+    fn withholding_clears_its_own_field_and_no_other() {
+        let full = || Capabilities {
+            max_texture_size: 8192,
+            sample_counts: SampleCounts::from_mask(0b101),
+            dma_buf: DmaBufSupport {
+                import: true,
+                export: true,
+                modifiers: true,
+            },
+            sync: SyncSupport {
+                export_sync_file: true,
+                import_sync_file: true,
+            },
+            advanced_blend: true,
+            float_render_targets: true,
+            render_formats: Vec::new(),
+            device_name: String::from("a device"),
+            driver_name: String::from("a driver"),
+            software: true,
+        };
+
+        let mut caps = full();
+        Withheld::of(Capability::AdvancedBlend).apply_to(&mut caps);
+        assert!(!caps.advanced_blend, "the named field is not cleared");
+        assert!(caps.float_render_targets, "an unnamed field was cleared");
+        assert_eq!(caps.max_texture_size, 8192);
+        assert_eq!(caps.sample_counts, SampleCounts::from_mask(0b101));
+        assert!(caps.dma_buf.import && caps.dma_buf.export && caps.dma_buf.modifiers);
+        assert!(caps.sync.export_sync_file && caps.sync.import_sync_file);
+        assert!(caps.software);
+
+        let mut caps = full();
+        Withheld::of(Capability::FloatRenderTargets).apply_to(&mut caps);
+        assert!(!caps.float_render_targets);
+        assert!(caps.advanced_blend, "an unnamed field was cleared");
+
+        let mut caps = full();
+        Withheld::of(Capability::AdvancedBlend)
+            .with(Capability::FloatRenderTargets)
+            .apply_to(&mut caps);
+        assert!(!caps.advanced_blend && !caps.float_render_targets);
+        assert_eq!(caps.max_texture_size, 8192, "a set of two reached further");
+    }
+
+    /// It can clear and it can do nothing else.
+    ///
+    /// The whole soundness argument in one assertion: applied to a device that has
+    /// nothing, every field is still false afterwards. A mechanism that could
+    /// grant would have pipelines built with advanced blend operations against a
+    /// Vulkan device created without the feature enabled, which is undefined
+    /// behavior reachable from safe published API rather than a wrong picture.
+    #[test]
+    fn withholding_can_never_grant() {
+        let mut caps = Capabilities::default();
+        assert!(!caps.advanced_blend && !caps.float_render_targets);
+
+        Withheld::of(Capability::AdvancedBlend)
+            .with(Capability::FloatRenderTargets)
+            .apply_to(&mut caps);
+
+        assert!(
+            !caps.advanced_blend && !caps.float_render_targets,
+            "withholding a capability a device has not got turned it on"
+        );
+    }
+
+    /// Withholding nothing is the identity, and withholding twice is withholding
+    /// once.
+    ///
+    /// The first is what every ordinary caller gets from `Default`, so it has to
+    /// be free of effect. The second is what lets a backend apply the set at the
+    /// end of detection without knowing whether something earlier already took
+    /// the capability away -- which both backends do, since dropping an extension
+    /// makes the probe report false before this runs.
+    #[test]
+    fn withholding_nothing_changes_nothing_and_applying_twice_is_the_same() {
+        let mut caps = Capabilities {
+            advanced_blend: true,
+            float_render_targets: true,
+            ..Default::default()
+        };
+        Withheld::none().apply_to(&mut caps);
+        assert!(caps.advanced_blend && caps.float_render_targets);
+        assert!(Withheld::none().is_empty());
+        assert!(!Withheld::of(Capability::AdvancedBlend).is_empty());
+
+        let withheld = Withheld::of(Capability::AdvancedBlend);
+        withheld.apply_to(&mut caps);
+        let once = caps.advanced_blend;
+        withheld.apply_to(&mut caps);
+        assert_eq!(once, caps.advanced_blend, "a second application differed");
+        assert!(caps.float_render_targets, "the other field followed along");
+    }
+
+    /// A set says what it holds and nothing more.
+    #[test]
+    fn a_set_reports_what_it_withholds() {
+        let one = Withheld::of(Capability::AdvancedBlend);
+        assert!(one.contains(Capability::AdvancedBlend));
+        assert!(!one.contains(Capability::FloatRenderTargets));
+
+        let both = one.with(Capability::FloatRenderTargets);
+        assert!(both.contains(Capability::AdvancedBlend));
+        assert!(both.contains(Capability::FloatRenderTargets));
+
+        // The conversion the test-facing constructors lean on, so a caller can
+        // pass one capability where a set is wanted.
+        assert_eq!(Withheld::from(Capability::AdvancedBlend), one);
+    }
 
     /// The advanced-blend refusal, which had no test while the texture refusal
     /// beside it did.
