@@ -191,10 +191,26 @@ fn scanout_and_explicit_sync_are_reported_independently() {
 
     // A device can be scanout-capable without fence export; that combination
     // selects the CPU-wait fallback rather than disabling the DRM path, so
-    // neither flag may be derived from the other.
-    if !caps.supports_scanout() {
-        assert!(!caps.dma_buf.can_allocate_scanout());
-    }
+    // neither flag may be derived from the other. What says so is the pair of
+    // extension checks in the test above, since the two flags come from
+    // different extensions.
+    //
+    // This used to close with an assertion that could not fail.
+    // `supports_scanout` is `can_allocate_scanout() || import`, so guarding it
+    // with `if !supports_scanout()` and then asserting `!can_allocate_scanout()`
+    // asserts the second half of a disjunction already known to be false --
+    // entailed by the definition, on any device, whatever the driver does. It
+    // read as coverage of the relationship and was none, and the relationship it
+    // appeared to cover is held by `import_only_devices_still_support_scanout` in
+    // `impeller_hal::capabilities`, which needs no device: import alone makes the
+    // composite true while `can_allocate_scanout` stays false, which is the one
+    // direction that is not entailed.
+    //
+    // So what is left here is a report rather than a check, and the print above is
+    // the point of it -- what this machine's device actually offers, named in the
+    // output where a later reader of a board run can see it. Said plainly because
+    // a test whose body is one `eprintln!` looks like something half-written
+    // unless it says it is not.
 }
 
 #[test]
