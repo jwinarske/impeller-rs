@@ -107,6 +107,7 @@
 pub mod device;
 pub mod kms;
 pub mod output;
+pub mod pacing;
 pub mod target;
 
 pub use output::{CommitRequest, DmaBufPlanes, FbHandle, Mode, OutputEvent, ScanoutOutput};
