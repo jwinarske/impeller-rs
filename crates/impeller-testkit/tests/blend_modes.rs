@@ -11,8 +11,8 @@
 
 use googletest::prelude::*;
 use impeller_hal::{
-    blend::blend_advanced, Batch, BlendFactor, BlendMode, Error, Extent2D, Hal, HalContext,
-    Material, PassDescriptor, PixelFormat, TextureDescriptor,
+    blend::blend_advanced, Batch, BlendFactor, BlendMode, Capability, Error, Extent2D, Hal,
+    HalContext, Material, PassDescriptor, PixelFormat, TextureDescriptor,
 };
 use impeller_hal_gles::Validated as GlesValidated;
 use impeller_hal_gles::{DisplayTarget, GlesHal};
@@ -247,46 +247,89 @@ fn every_mode_matches_its_equation_on_gles() {
 fn a_mode_the_device_cannot_do_is_refused_rather_than_approximated() {
     // The failure this guards against is not an error but a picture: a backend
     // that reports no advanced blending and then draws plain source-over
-    // anyway looks almost right, and nobody finds that by looking. Both
-    // backends run the same check, so whichever one lacks the capability here
-    // exercises it.
+    // anyway looks almost right, and nobody finds that by looking.
+    //
+    // This used to run only where a backend happened to lack the capability, and
+    // said so: "on a machine where both have it there is nothing here to check".
+    // It now withholds the capability instead, so both backends are checked
+    // everywhere and the only skip left is for a backend that will not start.
+    //
+    // Each half asserts three things rather than one, because "refused" on its
+    // own is what the old shape could not tell from "this machine never had it":
+    // the restricted context refuses every advanced mode, the *unrestricted* one
+    // accepts them where the device can, and an ordinary mode draws the same
+    // pixels either way -- which is what says the withholding is narrow rather
+    // than a context that has stopped working.
     let mut ran_on = Vec::new();
 
-    if let Ok(mut ctx) = Validated::new(DevicePreference::Auto) {
-        if !ctx.capabilities().advanced_blend {
-            for mode in BlendMode::ADVANCED {
-                assert!(
-                    matches!(
-                        render::<VulkanHal>(&mut ctx, *mode),
-                        Err(Error::Unsupported(_))
-                    ),
-                    "vulkan accepted {mode} while reporting no advanced blending"
-                );
-            }
-            ran_on.push("vulkan");
+    if let Ok(mut restricted) =
+        Validated::without(DevicePreference::Auto, Capability::AdvancedBlend)
+    {
+        for mode in BlendMode::ADVANCED {
+            assert!(
+                matches!(
+                    render::<VulkanHal>(&mut restricted, *mode),
+                    Err(Error::Unsupported(_))
+                ),
+                "vulkan accepted {mode} with advanced blending withheld"
+            );
         }
-    }
-    if let Ok(mut ctx) = GlesValidated::new(DisplayTarget::Surfaceless) {
-        if !ctx.capabilities().advanced_blend {
-            for mode in BlendMode::ADVANCED {
-                assert!(
-                    matches!(
-                        render::<GlesHal>(&mut ctx, *mode),
-                        Err(Error::Unsupported(_))
-                    ),
-                    "gles accepted {mode} while reporting no advanced blending"
-                );
-            }
-            ran_on.push("gles");
+        let restricted_plain =
+            render::<VulkanHal>(&mut restricted, BlendMode::SrcOver).expect("an ordinary mode");
+
+        let mut ordinary = Validated::new(DevicePreference::Auto).expect("the same device again");
+        assert_eq!(
+            restricted_plain,
+            render::<VulkanHal>(&mut ordinary, BlendMode::SrcOver).expect("an ordinary mode"),
+            "withholding advanced blending moved a source-over draw"
+        );
+        if ordinary.capabilities().advanced_blend {
+            assert!(
+                render::<VulkanHal>(&mut ordinary, BlendMode::Multiply).is_ok(),
+                "vulkan refused an advanced mode it reports it has, so the \
+                 refusal above says nothing about the withholding"
+            );
         }
+        ran_on.push("vulkan");
     }
 
-    // Not an assertion that some backend must lack the capability — on a
-    // machine where both have it there is nothing here to check, and saying so
-    // is better than reporting a pass that examined nothing.
-    if ran_on.is_empty() {
-        eprintln!("skipping: every available backend supports advanced blending");
+    if let Ok(mut restricted) =
+        GlesValidated::without(DisplayTarget::Surfaceless, Capability::AdvancedBlend)
+    {
+        for mode in BlendMode::ADVANCED {
+            assert!(
+                matches!(
+                    render::<GlesHal>(&mut restricted, *mode),
+                    Err(Error::Unsupported(_))
+                ),
+                "gles accepted {mode} with advanced blending withheld"
+            );
+        }
+        let restricted_plain =
+            render::<GlesHal>(&mut restricted, BlendMode::SrcOver).expect("an ordinary mode");
+        drop(restricted);
+
+        let mut ordinary =
+            GlesValidated::new(DisplayTarget::Surfaceless).expect("the same context again");
+        assert_eq!(
+            restricted_plain,
+            render::<GlesHal>(&mut ordinary, BlendMode::SrcOver).expect("an ordinary mode"),
+            "withholding advanced blending moved a source-over draw"
+        );
+        if ordinary.capabilities().advanced_blend {
+            assert!(
+                render::<GlesHal>(&mut ordinary, BlendMode::Multiply).is_ok(),
+                "gles refused an advanced mode it reports it has, so the refusal \
+                 above says nothing about the withholding"
+            );
+        }
+        ran_on.push("gles");
     }
+
+    assert!(
+        !ran_on.is_empty(),
+        "neither backend would start, so nothing was checked"
+    );
 }
 
 #[gtest]

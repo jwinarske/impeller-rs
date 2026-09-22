@@ -8,8 +8,8 @@
 //! two rather than only checking each against an expectation.
 
 use impeller_hal::{
-    Batch, BlendMode, ClipState, Extent2D, Hal, HalContext, Material, PassDescriptor, PixelFormat,
-    Sampling, TextureDescriptor, TileMode, Vertex,
+    Batch, BlendMode, Capability, ClipState, Extent2D, Hal, HalContext, Material, PassDescriptor,
+    PixelFormat, Sampling, TextureDescriptor, TileMode, Vertex,
 };
 use impeller_hal_gles::Validated as GlesValidated;
 use impeller_hal_gles::{DisplayTarget, GlesHal};
@@ -1078,5 +1078,40 @@ fn a_float_render_target_follows_what_the_device_reports() {
             .map(|t| ctx.destroy_texture(t));
         check(offered, made, "gles");
     }
+
+    // And the same pair on a device built without the capability, so the
+    // `(false, Err)` arm above runs everywhere rather than only on hardware that
+    // cannot render into half-float. Both real devices here offer it, so before
+    // this the refusal half of a both-directions check was never taken.
+    //
+    // Kept beside the arms above rather than replacing them: a withheld
+    // capability proves the refusal follows the capability, and only the real
+    // device proves the capability follows the driver.
+    if let Ok(mut ctx) = Validated::without(DevicePreference::Auto, Capability::FloatRenderTargets)
+    {
+        let offered = ctx.capabilities().float_render_targets;
+        assert!(!offered, "the capability survived being withheld");
+        let made = ctx
+            .create_texture(&TextureDescriptor::offscreen(
+                SOURCE,
+                PixelFormat::Rgba16Float,
+            ))
+            .map(|t| ctx.destroy_texture(t));
+        check(offered, made, "vulkan without float targets");
+    }
+    if let Ok(mut ctx) =
+        GlesValidated::without(DisplayTarget::Surfaceless, Capability::FloatRenderTargets)
+    {
+        let offered = ctx.capabilities().float_render_targets;
+        assert!(!offered, "the capability survived being withheld");
+        let made = ctx
+            .create_texture(&TextureDescriptor::offscreen(
+                SOURCE,
+                PixelFormat::Rgba16Float,
+            ))
+            .map(|t| ctx.destroy_texture(t));
+        check(offered, made, "gles without float targets");
+    }
+
     assert!(ran > 0, "no backend available");
 }
