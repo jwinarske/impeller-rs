@@ -207,7 +207,7 @@ column is right and the obvious way to check it is wrong.
 | `aiks_dl_gradient_unittests.cc` | ~40 | 46 | nothing; see below |
 | `aiks_dl_clip_unittests.cc` | ~6 | 8 | nothing; this file is covered |
 | `aiks_dl_opacity_unittests.cc` | ~3 | 3 | nothing; this file is covered |
-| `aiks_dl_blend_unittests.cc` | ~79 | 77 | capability injection for one and a callback for one; see below |
+| `aiks_dl_blend_unittests.cc` | ~79 | 77 | a callback for one and a second implementation this renderer does not have for one; see below |
 | `aiks_dl_blur_unittests.cc` | ~64 | 64 | nothing; see below |
 | `aiks_dl_vertices_unittests.cc` | ~16 | 22 | nothing; see below |
 | `aiks_dl_atlas_unittests.cc` | ~11 | 12 | nothing; see below |
@@ -1410,10 +1410,29 @@ chapter's generic pair.
 The blend row named two obstacles and one of them was misread, for three of
 that file's twenty-one tests. Two are named for framebuffer fetch and one is
 the subpass collapse optimization itself, which is out of scope for the reason
-below. Of the two, only `ColorFilterAdvancedBlendNoFbFetch` is blocked, and not
-by framebuffer fetch: it is a Metal-only test that installs a mock capabilities
-object to force `SupportsFramebufferFetch()` false, so what it needs is
-capability injection and there is none here. `FramebufferAdvancedBlendCoverage`
+below. Of the two, only `ColorFilterAdvancedBlendNoFbFetch` is absent, and the reason
+this column gave for it was wrong in a way worth correcting: it said the test
+needs capability injection, which reads as a mechanism someone could build. It is
+a Metal-only test that installs a mock capabilities object to force
+`SupportsFramebufferFetch()` false, and what it then exercises is upstream's
+*other* advanced-blend implementation -- the one that does not read the
+destination through a fetch.
+
+There is no such implementation here to select. This renderer does advanced
+blending with the hardware extension or refuses the batch:
+`Capabilities::check_blend_modes` returns an error rather than substituting, the
+word `framebuffer_fetch` appears nowhere in the tree, and `solid.wgsl` binds one
+texture and one uniform -- so nothing in the fragment stage can read the target
+at all, and `blend_tint`'s advanced arm blends against a tint carried in the
+paint rather than against what is already there. Forcing a capability false would
+produce that refusal and not a different picture, which is also why the scene
+could not satisfy the rule that a scene carrying a feature has to render
+differently without it.
+
+So it belongs with the subpass collapse rather than with the unwritten: out of
+scope because it tests a second implementation this renderer deliberately does
+not have. Building capability injection would be worth doing for other reasons
+and would not bring this scene any nearer. `FramebufferAdvancedBlendCoverage`
 is named for upstream's implementation and not for anything it requires -- it
 draws an image with `kMultiply` under a scale, and asserts the scale reached the
 image. That is a picture this renderer can draw, and it is here now. Twelve of the rest were unwritten rather than
