@@ -19,9 +19,7 @@
 //! scan out what this renderer exports; without naming a card you get whichever
 //! `/dev/dri` lists first. The crate documentation has the table.
 
-use impeller_core::{
-    execute_deferred, Canvas, Color, GradientStop, Layer, Paint, Rect, Shader, TileMode, Vec2,
-};
+use impeller_core::{Canvas, Color, GradientStop, Layer, Paint, Rect, Shader, TileMode, Vec2};
 use impeller_hal_vulkan::{DevicePreference, VulkanContext, VulkanHal};
 use impeller_present::PresentTarget;
 use impeller_present_drm::{DrmScanoutTarget, KmsOutput, ScanoutOutput};
@@ -187,24 +185,23 @@ fn main() {
         let t = start.elapsed().as_secs_f32();
         let recording = frame(width as f32, height as f32, t);
 
-        let image = match target.acquire(&mut ctx) {
-            Ok(image) => image,
-            Err(e) => {
-                eprintln!("acquire: {e}");
-                break;
-            }
-        };
-        let (fence, transient) =
-            match execute_deferred::<VulkanHal>(&mut ctx, image, &recording, &[]) {
-                Ok(pair) => pair,
-                Err(e) => {
-                    eprintln!("draw: {e}");
-                    break;
-                }
-            };
-        transient.destroy(&mut ctx);
-        if let Err(e) = target.set_frame_fence(fence) {
-            eprintln!("fence: {e}");
+        // Acquired for the side effect; the target draws into the slot it just
+        // took, so the image itself is not wanted here.
+        if let Err(e) = target.acquire(&mut ctx).map(|_| ()) {
+            eprintln!("acquire: {e}");
+            break;
+        }
+        // `submit_recording` rather than `execute_deferred` and a hand-rolled
+        // pair, and the difference is not tidiness. Both halves of that call's
+        // return travel together until the fence retires -- the layer targets are
+        // what the submission is still sampling -- and this scene has a blurred
+        // `save_layer`, so it produces one every frame. Destroying them straight
+        // after the call, which is what this loop did, frees them while the GPU
+        // may still be reading them. The target keeps them in the slot and drops
+        // them when a flip says the slot is free, which is the whole reason it
+        // holds them.
+        if let Err(e) = target.submit_recording(&mut ctx, &recording, &[]) {
+            eprintln!("draw: {e}");
             break;
         }
         if let Err(e) = target.present(&mut ctx) {
