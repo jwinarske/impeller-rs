@@ -1712,7 +1712,83 @@ impl Scene {
     /// moves a whole shape, each hundreds of pixels rather than ten.
     const TIE_BUDGET: f32 = 0.001;
 
+    /// How many more levels a filtered texture read is allowed, per channel.
+    ///
+    /// Two where this scene reads a texture whose size nothing here knows, and
+    /// zero otherwise. The two is measured: one scene rendered twice on a
+    /// Raspberry Pi 5, differing only in the sampler's filter, is byte for byte
+    /// identical between v3d and llvmpipe through `Sampling::Nearest` and reaches
+    /// a delta of three across seventy-two per cent of the frame through
+    /// `Sampling::Linear`. Same geometry, same shader, same upload, same blend --
+    /// so the filter is the mechanism.
+    ///
+    /// Its own term because a filter is not a store. The per-store rule counts
+    /// arithmetic on a value that was written down; a filter forms a weighted sum
+    /// of texels with weights of implementation-defined precision, so it
+    /// disagrees by more than the last bit of one store and on every interpolated
+    /// pixel rather than at an edge.
+    ///
+    /// **The rule is about what is knowable, not about which filter is bound,**
+    /// and that distinction took three wrong answers to find. A material reports
+    /// the filter and cannot report what it does: it has never seen the texture
+    /// and so cannot tell whether a linear read lands between texels or on one.
+    /// `Pass::sources` can, because it says what the texture *is*:
+    ///
+    /// - [`TextureSource::Image`] is the caller's, and its size is not in the
+    ///   recording. A linear read of it may interpolate over every pixel or none,
+    ///   and nothing here can rule either out, so the term is granted.
+    /// - [`TextureSource::Layer`] is a pass's output, and `Pass::extent` gives
+    ///   its size. A group composited back at the size it was rendered reads
+    ///   texel centers and returns them, which is why the plain layer scenes hold
+    ///   to the per-store bound on a board and why granting them this would be
+    ///   widening a guard that measures something.
+    /// - [`TextureSource::Ramp`] is a table this recorder baked, of a width it
+    ///   chose.
+    ///
+    /// A blur and a morphology are granted it whatever they read, since they step
+    /// out by a sigma or a radius that need not land on a center. That is what
+    /// covers a dilated layer, whose disagreement is real and whose composite is
+    /// not the cause.
+    ///
+    /// Recording a scene needs no device, so this costs a tessellation per call
+    /// and reaches no GPU. A scene that cannot be recorded reports zero rather
+    /// than panicking: whatever is wrong with it belongs in the message of the
+    /// test that tries to render it.
+    fn filter_term(&self) -> u8 {
+        use impeller_core::canvas::TextureSource;
+
+        let Ok(recording) = crate::record_scene(self) else {
+            return 0;
+        };
+        let unknown_size = recording.passes.iter().any(|pass| {
+            pass.batch.draws().iter().any(|draw| {
+                if draw.material.reads_at_computed_offsets() {
+                    return true;
+                }
+                // A filter that is bound and could interpolate, over a texture
+                // whose size is the caller's business rather than this
+                // recording's.
+                let filtered = !matches!(
+                    draw.material.sampling(),
+                    None | Some(impeller_hal::material::Sampling::Nearest)
+                );
+                filtered
+                    && draw
+                        .material
+                        .texture_slot()
+                        .and_then(|slot| pass.sources.get(slot as usize))
+                        .is_some_and(|source| matches!(source, TextureSource::Image(_)))
+            })
+        });
+        if unknown_size {
+            2
+        } else {
+            0
+        }
+    }
+
     pub fn tolerance(&self) -> crate::image::Tolerance {
+        let filter = self.filter_term();
         // Any fill that is not a plain color is evaluated per fragment, so
         // this asks what the fill is not rather than listing the kinds that
         // are. Enumerating them meant a new gradient kind silently inherited
@@ -1733,20 +1809,22 @@ impl Scene {
         if self.samples > 1
             && (self.items().any(Item::is_analytic) || self.items.iter().any(Node::is_analytic))
         {
-            return crate::image::Tolerance::ANALYTIC;
+            return crate::image::Tolerance::ANALYTIC.widened_by(filter);
         }
         // An additive blend before the rest, because it is the one case where a
         // fragment's rounding does not replace the last one but is added to it.
         // Overlapping draws then accumulate, so the bound is per draw that can
         // land on a pixel rather than per pixel. See `Tolerance::ACCUMULATED`.
         if self.items.iter().any(Node::blends_additively) {
-            return self.allowing_ties(crate::image::Tolerance::ACCUMULATED);
+            return self
+                .allowing_ties(crate::image::Tolerance::ACCUMULATED)
+                .widened_by(filter);
         }
         // Multisampling first, because it permits something the others do not:
         // a whole sample's worth of difference at an edge, on a few pixels. The
         // rest permit a unit everywhere and nothing more.
         if self.samples > 1 {
-            return crate::image::Tolerance::MULTISAMPLED;
+            return crate::image::Tolerance::MULTISAMPLED.widened_by(filter);
         }
         // A glyph run is computed whatever else the scene holds: its coverage
         // comes from a texture and is multiplied by the paint's color per
@@ -1775,7 +1853,9 @@ impl Scene {
         // scene that says so -- every draw in it writes a solid color and the
         // two backends still land two levels apart on a tenth of the frame.
         if !computed && depth == 0 {
-            return self.allowing_ties(crate::image::Tolerance::EXACT);
+            return self
+                .allowing_ties(crate::image::Tolerance::EXACT)
+                .widened_by(filter);
         }
         // One unit per fixed-point store the fragment passes through, which is
         // what the per-channel bound has always meant -- `ROUNDING` is this
@@ -1796,6 +1876,7 @@ impl Scene {
         // slack that is stated rather than discovered: if a scene ever needs
         // the third, the rule already predicted it.
         self.allowing_ties(crate::image::Tolerance::new(1 + depth, 0.0))
+            .widened_by(filter)
     }
 
     /// Add the tie budget to a profile, where this scene's edges can tie.
