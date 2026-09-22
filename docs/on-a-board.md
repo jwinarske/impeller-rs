@@ -1012,9 +1012,31 @@ On the workstation two of three devices check fourteen of twenty-nine blend
 modes against their reference equations, and only the software Vulkan device
 reaches all twenty-nine. On a Raspberry Pi 5 it is fourteen on all three. In CI
 it is fourteen on all three as well, its lavapipe being a version whose answer
-to the question differs from the one here. So the advanced modes are compared
-against their formulas on exactly one device anywhere in this building, and on
-none in CI.
+to the question differs from the one here.
+
+That paragraph used to end "so the advanced modes are compared against their
+formulas on exactly one device anywhere in this building, and on none in CI",
+which is not true and understated the coverage in the direction that matters.
+What those counts measure is one of the two ways to reach an advanced mode:
+applied as a *batch's* blend, against what is already in the target. That is the
+fixed-function path the extension provides, and a device without it refuses the
+batch.
+
+The shader's own formulas are reached the other way, by a tint. `drawVertices`
+and `drawAtlas` combine a per-vertex or per-sprite color with what the paint
+produced, and that happens inside the fragment -- no destination read, no
+extension, nothing to gate.
+`every_advanced_mode_agrees_with_the_reference_formulas` in
+`crates/impeller/tests/tint_blend.rs` checks all fifteen against `impeller_hal`'s
+reference, which was written first and independently of the shader, on whatever
+device the machine has. It passes on a Raspberry Pi 5, where no device has
+advanced blending at all.
+
+So what one device alone reaches is the hardware path rather than the arithmetic.
+A transcription error in a blend formula is caught everywhere, including on a
+board that refuses every advanced mode as a batch blend. What is thin is the
+check that the extension is *driven* correctly -- the blend equation and the
+coherency, set per pass -- and that is what the counts above are about.
 
 The scene counts say it again from the other side. Twenty of the catalog's
 plates and six of the corpus's need the extension on *both* sides of a
