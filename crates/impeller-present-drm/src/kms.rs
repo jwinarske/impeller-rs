@@ -440,14 +440,22 @@ impl ScanoutOutput for KmsOutput {
         // whole path: the kernel latches the flip when rendering completes
         // rather than the caller blocking until it has.
         //
-        // **Unverified.** The virtual KMS driver, which is the only device this
-        // has been run against, advertises `IN_FENCE_FD` on its plane and then
-        // never completes the flip for a commit carrying one. The fence itself
-        // is not the problem: the exported sync_file is checked to signal, in
-        // the Vulkan backend's own suite, precisely because that was the other
-        // candidate. So this is believed correct and is demonstrated by nothing
-        // — real hardware is what would settle it, and until then the tests
-        // here take the fallback path and say so.
+        // Demonstrated on two devices, and this paragraph used to say the
+        // opposite. `the_scanout_target_drives_a_real_display_controller` drives
+        // eight frames and asserts `cpu_waits() == 1`: one commit went out
+        // without a fence and seven carried one, and every flip completed. It
+        // passes against the virtual KMS driver, and it passes on a Raspberry Pi
+        // 5 -- `vc4` with HDMI connected, no display server to hold master --
+        // where the whole `impeller-present-drm` suite ran on 2026-09-22.
+        //
+        // What it said before was that the virtual driver never completes a flip
+        // for a commit carrying a fence, so the path was believed correct and
+        // demonstrated by nothing. The first half of that generalized a narrower
+        // limitation: what the virtual driver will not complete is a commit that
+        // *also sets a mode*, which `DrmScanoutTarget::present` states precisely
+        // and handles by withholding the fence there -- and that withheld fence
+        // is the one `cpu_waits` the assertion above allows for. The second half
+        // followed from the first and was wrong with it.
         //
         // The fd stays alive until after the commit; the kernel dups what it
         // needs, and closing it earlier hands the kernel a closed descriptor.
