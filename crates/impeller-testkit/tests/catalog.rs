@@ -1506,6 +1506,7 @@ fn every_plate_that_asks_for_an_advanced_blend_can_show_one() {
     }
     let mut gles = GlesValidated::new(DisplayTarget::Surfaceless).ok();
     let mut checked = 0usize;
+    let mut unasked: Vec<&str> = Vec::new();
     for scene in catalog() {
         let mut without = scene.clone();
         if without_advanced_blends(&mut without.items) == 0 {
@@ -1520,38 +1521,72 @@ fn every_plate_that_asks_for_an_advanced_blend_can_show_one() {
         // claim the catalog can honestly make is that some device here shows
         // it. `docs/on-a-board.md` has both.
         let mut shown = false;
+        // Counted, because a plate nothing could render and a plate everything
+        // rendered identically are the same `false` and are not the same thing.
+        // This test asserted on the pair of them and so failed on a Raspberry
+        // Pi 5, where *no* device has advanced blending: v3d has not got the
+        // extension, the GLES context is the same v3d, and that board's llvmpipe
+        // reports it absent too -- 19.1.7, where the one on the machine this was
+        // written on is 22.1.8 and has it. Nothing was asked and the message said
+        // the mode was not reaching the picture.
+        //
+        // The skip below was written for exactly that machine and could never
+        // run, because the assertion reached it first. So the count is what
+        // decides which of the two is true.
+        let mut asked = 0usize;
         for ctx in devices.iter_mut() {
             if !scene.supported_by(ctx.capabilities()) {
                 continue;
             }
+            asked += 1;
             let with = render::<VulkanHal>(ctx, &scene);
             let plain = render::<VulkanHal>(ctx, &without);
             shown |= compare(&with, &plain).expect("same size").differing != 0;
         }
         if let Some(gles) = gles.as_mut() {
             if scene.supported_by(gles.capabilities()) {
+                asked += 1;
                 let with = render::<GlesHal>(gles, &scene);
                 let plain = render::<GlesHal>(gles, &without);
                 shown |= compare(&with, &plain).expect("same size").differing != 0;
             }
         }
+        if asked == 0 {
+            unasked.push(scene.name);
+            continue;
+        }
         assert!(
             shown,
             "{} renders the same with its advanced blends deleted on every \
-             device here, so whatever mode it is named for is not reaching the \
-             picture",
+             device that can render it, so whatever mode it is named for is not \
+             reaching the picture",
             scene.name
         );
         checked += 1;
     }
     if checked == 0 {
-        eprintln!("skipping: no device here has advanced blending");
+        eprintln!(
+            "skipping: no device here has advanced blending, so none of the {} \
+             plates carrying one could be checked",
+            unasked.len()
+        );
         return;
     }
+    // Said rather than passed over, for the machine that has one capable device
+    // and not another: the plates it could not ask about are unchecked, and a
+    // pass here is a claim about the rest.
+    if !unasked.is_empty() {
+        eprintln!(
+            "skipping: {} plate(s) carrying an advanced blend that no device \
+             here can render",
+            unasked.len()
+        );
+    }
     assert!(
-        checked >= 36,
-        "only {checked} plates were found to carry an advanced blend, which is \
-         fewer than the catalog has and means the walk missed some"
+        checked + unasked.len() >= 36,
+        "only {} plates were found to carry an advanced blend, which is fewer \
+         than the catalog has and means the walk missed some",
+        checked + unasked.len()
     );
 }
 
