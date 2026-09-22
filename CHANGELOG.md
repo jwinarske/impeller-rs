@@ -9,7 +9,23 @@ Dates are the day a version reached crates.io.
 
 ## Unreleased
 
-Nothing since `0.1.0`.
+`Capability` and `Withheld` in `impeller-hal`, and a `withheld` field on
+`ContextConfig` and `GlesConfig`, so a context can be built lacking a capability
+the device has. Test support: the refusal paths and the branches that decide
+whether to skip could previously only run on a machine whose device lacked the
+thing, and one test said as much about itself. `Validated::without` is the call a
+test makes.
+
+Withholding only, which is soundness rather than preference -- a Vulkan device is
+created without the advanced-blend features structure when that capability is
+false, so granting one would mean pipelines built against a device that never
+enabled the feature. `docs/architecture.md` has the rest, including why a
+restricted context must not reach the corpus.
+
+Additive, so nothing a caller has written changes. `Capability` is not
+`#[non_exhaustive]`: the backends are separate crates and a wildcard arm would let
+one honor a new variant while the other ignored it, which means adding a variant
+later is a breaking change. That is written down beside the type.
 
 ## 0.1.0 — 2026-09-21
 

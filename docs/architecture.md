@@ -3333,6 +3333,43 @@ tests skipped because modesetting master is exclusive per device and the
 harness runs one file's tests on several threads, so all but the first were
 refused the card. Both were found by looking, not by a failure.
 
+**A capability can be withheld, which turns a class of skip into a run.** The
+skips above are a test declining because the machine cannot do the thing. A
+narrower case is a test that only has work to do where a device *cannot* do
+something: the refusal paths, and the branches that decide whether to skip. Those
+ran on whichever machine happened to lack the capability and nowhere else, and one
+of them said so -- "on a machine where both have it there is nothing here to
+check".
+
+`ContextConfig` and `GlesConfig` carry a `Withheld` set for this. Where the
+capability is backed by an extension the backend honors it by not enabling the
+extension, so the probe reports false on its own merits and the device is genuinely
+built without it; `enabled_extensions` is consulted directly in places instead of
+the capability, and a context whose two answers disagreed would not exercise the
+refusal it was built for. `float_render_targets` on Vulkan comes from a format
+query with no extension behind it, so there the field is cleared after detection
+instead. `Validated::without` is what a test calls.
+
+Withholding only, and that direction is soundness rather than preference: a Vulkan
+device is created without the advanced-blend features structure when that
+capability is false, so a granted flag would mean pipelines built with advanced
+blend operations against a device that never enabled the feature. The type is named
+for the one direction it has so the other cannot be written, and there is
+deliberately no closure taking `&mut Capabilities` -- that is the general answer,
+and the one that would make undefined behavior expressible from safe published API.
+
+Two things it does not do. It cannot make an unavailable scene renderable, because
+forcing a capability false produces a refusal rather than a different picture; and a
+restricted context must not reach the corpus, the conformance suite or the catalog,
+where `Scene::supported_by` drops what it cannot render and the run would stay
+green with fewer plates in it.
+
+The skip census will not measure this, and the reason is worth keeping. A test that
+declines wholly prints a line the census counts. A test that quietly skips one of
+its arms prints nothing, so the census reads it as a clean pass -- which is what
+happened to the advanced-blend test on the machine this was written on, where it
+announced no skip while examining half of itself.
+
 **A sweep reports every failure in it, not the first.** Several tests here ask
 the same question of a set — every blend mode against its equation, every
 drawing call given a coordinate that is not a number — and for those the useful

@@ -5,6 +5,7 @@
 //! still get a green `cargo test`, and the lanes that must have Vulkan enforce
 //! it by running on images that provide it.
 
+use impeller_hal::Capability;
 use impeller_hal_vulkan::DevicePreference;
 use impeller_hal_vulkan::Validated;
 
@@ -74,6 +75,102 @@ fn capability_flags_are_internally_consistent() {
     assert_eq!(
         caps.dma_buf.modifiers,
         ctx.has_extension("VK_EXT_image_drm_format_modifier")
+    );
+}
+
+/// Withholding advanced blending produces a device that has not got the
+/// extension, rather than one that has it and says otherwise.
+///
+/// This is the assertion the mechanism exists to earn. `Capabilities` already has
+/// unit tests for the refusal itself, against a hand-built value, so a test here
+/// that only checked the capability reads false would prove nothing those do not.
+/// What cannot be reached from a synthesized `Capabilities` is whether the *device*
+/// was built without the thing -- and that is what makes the refusal the real one
+/// rather than a flag disagreeing with its driver.
+///
+/// It is also the guard against a later simplification. Clearing the field after
+/// detection would satisfy every other assertion in this file and would leave
+/// `enabled_extensions` saying the device has an extension the capability denies.
+/// Some paths read that set instead of the capability, so the two must agree.
+#[test]
+fn withholding_advanced_blend_leaves_the_extension_out_of_the_device() {
+    const EXTENSION: &str = "VK_EXT_blend_operation_advanced";
+
+    // Whichever device here has the thing, rather than whichever one is
+    // preferred. Asking only `Auto` is how the test this mechanism replaces came
+    // to run nowhere: on this machine the preferred device reports no advanced
+    // blending and the software one does, so a search finds a device to withhold
+    // from where a preference finds none. The same mistake, caught in the test
+    // written to fix it.
+    let capable = [DevicePreference::Auto, DevicePreference::Software]
+        .into_iter()
+        .find(|preference| {
+            Validated::new(*preference)
+                .map(|ctx| {
+                    let has = ctx.capabilities().advanced_blend;
+                    // The positive control, and not decoration: without it a
+                    // later reading cannot tell a working restriction from a
+                    // device that never had the extension.
+                    assert!(
+                        !has || ctx.has_extension(EXTENSION),
+                        "a device reports advanced blending without the extension"
+                    );
+                    has
+                })
+                .unwrap_or(false)
+        });
+    let Some(preference) = capable else {
+        eprintln!("skipping: no device here has advanced blending to withhold");
+        return;
+    };
+
+    let restricted = Validated::without(preference, Capability::AdvancedBlend)
+        .expect("a device that was just created can be created again");
+    assert!(
+        !restricted.capabilities().advanced_blend,
+        "advanced blending survived being withheld"
+    );
+    assert!(
+        !restricted.has_extension(EXTENSION),
+        "the capability reads false while the extension is still enabled, so the \
+         device and what it says about itself disagree"
+    );
+}
+
+/// A restricted device still reports flags that match its own extensions.
+///
+/// The same three pairs the test above this file's middle asserts for an ordinary
+/// device, re-run against a restricted one. That makes the argument for taking the
+/// extension out -- rather than overruling the answer afterwards -- an executable
+/// claim rather than a paragraph in a commit message.
+#[test]
+fn a_restricted_device_reports_flags_that_match_its_extensions() {
+    let Ok(ctx) = Validated::without(DevicePreference::Auto, Capability::AdvancedBlend) else {
+        eprintln!("skipping: no Vulkan device");
+        return;
+    };
+    // Withholding something the device never had is a no-op, which is exactly
+    // what makes this safe to run on any device: the pairs below hold either way.
+    let caps = ctx.capabilities();
+
+    assert_eq!(
+        caps.sync.export_sync_file,
+        ctx.has_extension("VK_KHR_external_semaphore_fd")
+    );
+    assert_eq!(
+        caps.sync.import_sync_file,
+        ctx.has_extension("VK_KHR_external_fence_fd")
+    );
+    assert_eq!(
+        caps.dma_buf.modifiers,
+        ctx.has_extension("VK_EXT_image_drm_format_modifier")
+    );
+
+    // And the withholding reached nothing it was not asked to reach. A
+    // subtraction that took a dependency with it would show up here.
+    assert!(
+        ctx.has_extension("VK_KHR_swapchain") || caps.device_name.contains("llvmpipe"),
+        "withholding advanced blending cost the swapchain extension"
     );
 }
 

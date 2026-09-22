@@ -263,11 +263,27 @@ fn the_advanced_blend_pipeline_state_is_valid() {
 
 #[test]
 fn a_device_without_the_extension_refuses_advanced_modes() {
-    let Some(mut ctx) = context() else { return };
-    if ctx.capabilities().advanced_blend {
-        eprintln!("skipping: the preferred device offers advanced blending");
-        return;
-    }
+    // Built without the extension rather than found without it. This used to
+    // return early when the preferred device offered advanced blending, which on
+    // a machine whose preferred device has it meant the test never ran -- and
+    // whether it ran was decided by a device preference that has nothing to do
+    // with what is being checked.
+    let mut ctx = match VulkanContext::with_config(ContextConfig {
+        device: DevicePreference::Auto,
+        validation: true,
+        withheld: impeller_hal::Withheld::of(impeller_hal::Capability::AdvancedBlend),
+    }) {
+        Ok(ctx) => ctx,
+        Err(e) => {
+            eprintln!("skipping: no usable Vulkan device ({e})");
+            return;
+        }
+    };
+    assert!(
+        !ctx.capabilities().advanced_blend,
+        "the capability survived being withheld, so what follows would be \
+         checking a device that can do it"
+    );
     // Reported as unsupported rather than drawn as something else. A backend
     // that quietly fell back to source-over would produce a picture that is
     // wrong in a way no test of the output would name.

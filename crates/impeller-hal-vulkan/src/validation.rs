@@ -154,6 +154,32 @@ impl Validated {
         })
         .map(|ctx| Self(std::mem::ManuallyDrop::new(ctx)))
     }
+
+    /// The same, built without the capabilities named.
+    ///
+    /// What a test reaches for to exercise a refusal on a machine whose device
+    /// has the thing. Takes one capability or a set, so the ordinary case reads
+    /// `Validated::without(DevicePreference::Auto, Capability::AdvancedBlend)`.
+    ///
+    /// Withholding only; `impeller_hal::Withheld` says why there is no other
+    /// direction. The same `Result` shape as [`Self::new`] on purpose, so the
+    /// `let Ok(ctx) = .. else { skip }` every test here opens with is unchanged.
+    ///
+    /// A restricted device is still checked by the layer, which matters more here
+    /// than for an ordinary context: leaving an extension out is a configuration
+    /// nothing else in this suite creates, and a finding would be worth seeing
+    /// rather than guessing at.
+    pub fn without(
+        device: crate::DevicePreference,
+        withheld: impl Into<impeller_hal::Withheld>,
+    ) -> impeller_hal::Result<Self> {
+        crate::VulkanContext::with_config(crate::ContextConfig {
+            device,
+            validation: true,
+            withheld: withheld.into(),
+        })
+        .map(|ctx| Self(std::mem::ManuallyDrop::new(ctx)))
+    }
 }
 
 impl std::ops::Deref for Validated {
