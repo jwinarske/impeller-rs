@@ -147,6 +147,23 @@ impl Validated {
         })
         .map(|ctx| Self(std::mem::ManuallyDrop::new(ctx)))
     }
+
+    /// The same, built without the capabilities named.
+    ///
+    /// The Vulkan backend's constructor of this name says what it is for. Here
+    /// too the `Result` shape matches [`Self::new`], so a caller's skip line does
+    /// not change.
+    pub fn without(
+        target: crate::DisplayTarget,
+        withheld: impl Into<impeller_hal::Withheld>,
+    ) -> impeller_hal::Result<Self> {
+        crate::GlesContext::with_config(crate::GlesConfig {
+            target,
+            debug: true,
+            withheld: withheld.into(),
+        })
+        .map(|ctx| Self(std::mem::ManuallyDrop::new(ctx)))
+    }
 }
 
 impl std::ops::Deref for Validated {
