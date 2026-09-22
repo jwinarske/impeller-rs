@@ -61,13 +61,24 @@ All four are Tier 1 on Linux. The windowed column works today against a surface
 the caller supplies. The scanout column is **partial**: the frame loop above
 KMS is implemented and tested — the buffer ring, fence plumbing, and format and
 modifier negotiation — and dma-buf export from Vulkan is real. A buffer this
-renderer allocates, draws into and exports is accepted by a real display
-controller as a framebuffer, the mode is set, and frames flip in turn — checked
-against the virtual KMS driver, since a compositor holds master on any card
-driving a display. The render fence rides each commit, so the
-kernel latches the flip when rendering completes and the frame loop blocks on
-nothing — except on a commit that also sets the mode, which vkms will not
-complete with a fence attached and which happens once per output.
+renderer allocates, draws into and exports is accepted by a display controller as
+a framebuffer, the mode is set, and frames flip in turn.
+
+That is checked two ways rather than one. On a workstation it is the virtual KMS
+driver, because a compositor holds master on any card driving a display. On a
+Raspberry Pi 5 it is the hardware: no display server runs there, so the tests can
+take master, and all twenty-five in `impeller-present-drm` pass — including the
+five that set a mode and commit a frame — on `vc4` with `v3d` as a separate render
+node, which is the split render and display topology the virtual driver stands in
+for. The render fence rides each commit, so the kernel latches the flip when
+rendering completes and the frame loop blocks on nothing, except on a commit that
+also sets the mode: the virtual driver will not complete one with a fence attached,
+which happens once per output.
+
+What keeps the column partial is therefore not the absence of real hardware. It is
+what neither lane reaches — writeback and CRC readback, resize storms, hotplug —
+and the quirks only a rack of boards finds: IOMMU faults, compressed-format corner
+cases, scaler limits.
 
 `cargo xtask drm` says whether a given machine could run that lane.
 
