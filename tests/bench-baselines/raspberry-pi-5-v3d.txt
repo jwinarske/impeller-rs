@@ -30,7 +30,7 @@
 # three unnamed rows had the default one per cent and failed on any slow-mode
 # run, which is noise this file was producing rather than catching.
 #
-# Last checked against the board: bbb4063
+# Last checked against the board: 8949afc
 #
 # That line names the commit whose state a board run passed against, which is
 # never the commit that writes the line -- a hash cannot be recorded inside the
@@ -44,21 +44,28 @@
 # later reader can find. Update it when a `--check` run passes, whether or not
 # the numbers are re-recorded.
 #
-# Checked three times on 2026-09-22, all three reporting no configuration
-# regressed, on a board at 61 C with `throttled=0x0`, no other load, and the
-# governor pinned as these numbers require. Every GPU row landed within two tenths
-# of a per cent of what is below, which is what says the two commits touching
-# watched paths since the previous check moved nothing -- both were additions, a
-# test and two accessors, and neither is reached from a render path.
+# Checked three times each on 2026-09-22, at bbb4063 and again at 8949afc, every
+# run reporting no configuration regressed. A quiet board both times: 61 C,
+# `throttled=0x0`, no other load, governor pinned as these numbers require, and the
+# binary run from `/tmp`.
 #
-# One row looked like a change and was not, which is the whole reason for running
-# it more than once. The first run put the *recording* stroked path at +4.1 per
-# cent against its five, three times the worst this file had seen over ten runs;
-# the second and third read +0.2 and -0.1. So it did not reproduce. That row is
-# already the most variable of the six and the one the note below says moves with
-# the filesystem the executable is on, which is enough to expect a wide reading
-# from it occasionally -- what produced this particular one is not established, and
-# one run would have recorded it as a regression.
+# The five commits touching watched paths across those two checks moved nothing,
+# which is what the runs say rather than what the diffs promise. They add a
+# capability that can be withheld when a context is built, so the additions are
+# reached from context creation and from nothing a frame does. At 8949afc the GPU
+# rows held within one per cent over three runs and the GLES rows within four
+# tenths; the largest deviation anywhere was 2.8 per cent on the *recording* frame
+# row against its ten, which is inside one unit of the thousandth this file stores
+# for an 0.018 ms measurement and is why that row carries ten.
+#
+# Running it three times is what keeps a reading from becoming a number. At
+# bbb4063 the first run put the *recording* stroked path at +4.1 per cent against
+# its five, three times the worst this file had seen over ten runs, and the second
+# and third read +0.2 and -0.1. It did not recur at 8949afc either -- +0.0, -0.2,
+# +0.2, the first of those also a first run after the binary was copied across,
+# which is the shape anyone tempted to explain the earlier reading by the copy
+# should know about. What produced it is still not established, and one run would
+# have recorded it as a regression.
 #
 # Tolerances re-derived on 2026-09-18 from ten runs with the governor pinned, and
 # the numbers below are untouched. Five rows tighten and one widens, which is what
