@@ -30,7 +30,7 @@
 # three unnamed rows had the default one per cent and failed on any slow-mode
 # run, which is noise this file was producing rather than catching.
 #
-# Last checked against the board: 2df5a06
+# Last checked against the board: bbb4063
 #
 # That line names the commit whose state a board run passed against, which is
 # never the commit that writes the line -- a hash cannot be recorded inside the
@@ -43,6 +43,22 @@
 # out, and nothing in the tree could have said so -- "I ran it" is not a fact a
 # later reader can find. Update it when a `--check` run passes, whether or not
 # the numbers are re-recorded.
+#
+# Checked three times on 2026-09-22, all three reporting no configuration
+# regressed, on a board at 61 C with `throttled=0x0`, no other load, and the
+# governor pinned as these numbers require. Every GPU row landed within two tenths
+# of a per cent of what is below, which is what says the two commits touching
+# watched paths since the previous check moved nothing -- both were additions, a
+# test and two accessors, and neither is reached from a render path.
+#
+# One row looked like a change and was not, which is the whole reason for running
+# it more than once. The first run put the *recording* stroked path at +4.1 per
+# cent against its five, three times the worst this file had seen over ten runs;
+# the second and third read +0.2 and -0.1. So it did not reproduce. That row is
+# already the most variable of the six and the one the note below says moves with
+# the filesystem the executable is on, which is enough to expect a wide reading
+# from it occasionally -- what produced this particular one is not established, and
+# one run would have recorded it as a regression.
 #
 # Tolerances re-derived on 2026-09-18 from ten runs with the governor pinned, and
 # the numbers below are untouched. Five rows tighten and one widens, which is what
