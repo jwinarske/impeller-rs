@@ -6,8 +6,24 @@ rust-version.workspace = true
 readme = "README.md"
 # Produces a shared library for C consumers, who obtain it from a build rather than
 # from cargo -- so the thing this crate is *for* is not what crates.io distributes.
-# Publishing the source would be reasonable and is a separate decision; flip this to
-# `true` and nothing else has to move.
+#
+# Asked again after 0.1.0 shipped, on the argument that publishing the source would
+# at least put the C API on docs.rs and let a consumer build the library from a
+# version rather than a git ref. Neither holds, and the reasons are two settings a
+# few lines below this one. `doc = false`, so docs.rs would render an empty page:
+# rustdoc writes a library's pages under its lib name and the facade already owns
+# `impeller`. And the crate-type has no `rlib`, so a Rust caller adding this as a
+# dependency gets nothing it can name -- the artifact is the shared library, which
+# a cargo dependency does not hand anyone.
+#
+# What publishing would genuinely add is a citable version and vendorable source.
+# That is real and is not worth an empty documentation page and a second published
+# crate whose lib name collides with the facade's, so it stays false deliberately
+# rather than pending a decision.
+#
+# Flipping it is still one line here, but no longer only that:
+# `the_documents_count_the_publishing_crates_correctly` holds the counts in
+# README.md and CHANGELOG.md to these manifests, so those sentences have to follow.
 publish = false
 license.workspace = true
 repository.workspace = true
