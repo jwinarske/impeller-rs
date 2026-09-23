@@ -392,6 +392,7 @@ dependencies = [
  "impeller-renderer",
  "impeller-testkit",
  "log",
+ "proptest",
 ]
 
 [[package]]
@@ -404,6 +405,7 @@ dependencies = [
  "impeller-hal-vulkan",
  "impeller-present",
  "log",
+ "proptest",
  "rustix",
 ]
 

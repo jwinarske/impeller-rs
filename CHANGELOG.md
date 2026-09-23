@@ -28,6 +28,15 @@ GPU could still be sampling them, which the validation layer reports as
 a comment in the atomic-commit path called the fence-on-commit path unverified, when
 two devices demonstrate it.
 
+dma-buf negotiation gets generated input on both halves. The `IN_FORMATS` parser
+is put through blobs built the way the kernel lays one out and then corrupted --
+truncated anywhere, given a version that does not exist, and given a header
+claiming arrays the bytes do not hold -- asserting it advertises only formats and
+modifiers those bytes carry. `negotiate` is put through generated pairs of
+advertised sets, asserting an agreed layout is one both sides listed and that a
+refusal means nothing asked for was shared. `proptest` rather than a fuzzer, for
+the toolchain reason `docs/architecture.md` already records.
+
 `Capability` and `Withheld` in `impeller-hal`, and a `withheld` field on
 `ContextConfig` and `GlesConfig`, so a context can be built lacking a capability
 the device has. Test support: the refusal paths and the branches that decide
