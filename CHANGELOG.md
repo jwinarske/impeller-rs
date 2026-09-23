@@ -15,6 +15,13 @@ loop previously discarded. `KmsOutput` gains `pacing`, `exact_frame_nanos` and
 `framebuffer_count`, all inherent so the published `OutputEvent` keeps its shape, and
 the panel example reports the ledger and can be made to miss on demand.
 
+What that measures on a board is now settled at both ring depths. A Pi 5 latches every
+vertical blank at sixty a second on both display controllers at `DEPTH=2`, where the
+ring cannot hold a finished buffer back to absorb a frame that overran -- so the figure
+is a statement about the renderer and not about the ring. Growing the scene separates
+the two depths sharply, which is what says the shallower ring was a real constraint
+rather than an inert knob. `docs/on-a-board.md` has the tables and the preconditions.
+
 Two fixes came with it. The panel example destroyed a frame's layer targets while the
 GPU could still be sampling them, which the validation layer reports as
 `VUID-vkDestroyImage-image-01000` and which `submit_recording` exists to prevent. And
