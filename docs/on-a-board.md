@@ -1037,8 +1037,46 @@ ring depth, which is not the same as headroom -- and calibrating the example's s
 probe showed the difference is a whole frame period wide. What says there was headroom
 is the offscreen figure beside it, which is what `cargo xtask bench` measures.
 
-Nothing above has been run on a board yet. When it has, the numbers go here with the
-date and the commit, the way the rest of this file's numbers do.
+### What it did, measured 2026-09-22 at 251e1e0
+
+Both display controllers, three runs of ten seconds each, governor pinned, board at
+61 C with `vcgencmd get_throttled` clean, nothing else running and no display server,
+release build run from `/tmp`. Ring depth three, the scene's default three cards.
+
+| controller | mode | period | frames | flips / blanks | missed | cpu waits |
+|---|---|---|---|---|---|---|
+| `vc4`, HDMI | 1280x1440 at 60 Hz | 16.668 ms | 600, 599, 599 | 594/593, 593/592, 593/592 | 0, 0, 0 | 1, 1, 1 |
+| `rp1-dsi`, DSI | 800x1280 at 60 Hz | 16.645 ms | 600, 600, 600 | 594/593 each | 0, 0, 0 | 1, 1, 1 |
+
+**Every vertical blank was latched, on both controllers, in all six runs.** Sixty
+frames a second at 1280x1440 and at 800x1280, with one CPU wait apiece -- the
+modesetting commit, and nothing after it. The kernel's timestamps agree with the
+blanks counted to a millisecond over ten seconds in every run.
+
+Three things that number says, and one it does not.
+
+It says the **fence-on-commit path works on hardware at scale**. One CPU wait in six
+hundred frames means five hundred and ninety-nine commits handed their fence to the
+kernel and every one of them latched. The eight-frame test asserted that already; this
+is the same claim three orders of magnitude further along, on two different
+controllers.
+
+It says the **counter would have noticed**. Under `STALL=10` on the same controller
+and the same pinned board, five hundred and forty-six frames produced fifty-four
+stalls and fifty-four missed blanks. A zero from this measurement is "nothing was late
+enough", not "nothing is counting", and that distinction was measured rather than
+assumed.
+
+It says the **rounded refresh would have been the wrong period for both**. HDMI's mode
+is 59.995 Hz and DSI's is 60.08, and both report "60.00" to the whole-hertz figure the
+wait budget uses -- in opposite directions. `exact_frame_nanos` is why the
+cross-check above lands to a millisecond rather than to a few.
+
+What it does **not** say is that there was headroom. At ring depth three a frame taking
+nearly the whole period and one taking a tenth of it both miss nothing, so this
+figure and `cargo xtask bench`'s offscreen rows answer different questions and neither
+substitutes for the other. What would say it is the same run at depth two, which has
+not been done.
 
 ## What no machine here checks
 
