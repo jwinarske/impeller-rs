@@ -326,6 +326,147 @@ fn the_scanout_target_drives_a_real_display_controller() {
     target.destroy(&mut ctx);
 }
 
+/// Count how many open descriptors this process holds.
+///
+/// The dma-buf and sync_file exchange on this path is all descriptors, so a count
+/// that climbs over a run is the shape a leak takes here.
+fn open_descriptors() -> usize {
+    std::fs::read_dir("/proc/self/fd")
+        .map(|entries| entries.count())
+        .unwrap_or(0)
+}
+
+/// A long run neither leaks nor loses track of the blanks it landed on.
+///
+/// Sixty frames rather than eight, because what this is about is what does *not*
+/// change over a run: the framebuffers the output holds, the descriptors this
+/// process holds, and the count of commits that had to wait on the CPU.
+///
+/// **No deadline is asserted here and none can be.** The suite that runs on a board
+/// is a debug build -- `docs/on-a-board.md` cross-builds without `--release` -- so a
+/// frame here is an unoptimized frame measured against a real sixteen-millisecond
+/// budget, and an assertion about missed blanks would be an assertion about the
+/// optimizer. The number belongs to the release-built example, and this test's job
+/// is that the ledger and the bookkeeping are sound wherever it runs.
+///
+/// What it does check about pacing is the one thing that can be wrong rather than
+/// merely slow: that the blanks the ledger counted account for the time the flips
+/// arrived over. A ledger reporting more flips than the display could have shown in
+/// that span is reading something other than vertical blanks, and no amount of
+/// arithmetic self-consistency would reveal it -- `missed` is *defined* from the
+/// sequence numbers, so comparing it back against them proves nothing.
+#[test]
+fn a_long_run_neither_leaks_nor_loses_blanks() {
+    use impeller_hal_vulkan::VulkanHal;
+    use impeller_present::PresentTarget;
+    use impeller_present_drm::DrmScanoutTarget;
+
+    const FRAMES: u32 = 60;
+
+    let (Some((output, _card)), Some(mut ctx)) = (output(), context()) else {
+        return;
+    };
+    let period = output.exact_frame_nanos();
+    let mut target = match DrmScanoutTarget::<VulkanHal, _>::new(&mut ctx, output, 3) {
+        Ok(target) => target,
+        Err(e) => panic!("building the scanout target: {e}"),
+    };
+
+    // Taken after the ring is built, so the buffers it imports on purpose are not
+    // counted as growth.
+    let framebuffers = target.output().framebuffer_count();
+    let ring_depth = target.ring_depth();
+    let descriptors = open_descriptors();
+
+    for frame in 0..FRAMES {
+        let image = target.acquire(&mut ctx).expect("acquire");
+        let mut batch = Batch::new();
+        let t = (frame % 8) as f32 / 8.0;
+        batch
+            .push(
+                &FULL,
+                &QUAD,
+                Material::solid([t, 0.4, 1.0 - t, 1.0]),
+                BlendMode::Src,
+            )
+            .expect("push");
+        let fence = ctx
+            .submit_batch_deferred(image, &batch, PassDescriptor::clear([0.0; 4]))
+            .expect("deferred submission");
+        target
+            .set_frame_fence(fence)
+            .expect("attach the render fence");
+        target
+            .present(&mut ctx)
+            .unwrap_or_else(|e| panic!("frame {frame}: {e}"));
+    }
+
+    let pacing = target.output().pacing();
+    eprintln!(
+        "{FRAMES} frames: {} flips over {} blanks, missed {:?}, cpu waits {}, ring {}",
+        pacing.flips(),
+        pacing.elapsed_vblanks(),
+        pacing.missed(),
+        target.cpu_waits(),
+        ring_depth,
+    );
+
+    assert!(
+        pacing.flips() > 0,
+        "sixty frames produced no counted flip, so the ledger saw nothing"
+    );
+
+    // The cross-check. Flips cannot have arrived faster than the display refreshes,
+    // so the span has to cover the blanks between them. A tenth of slack because
+    // the kernel's timestamp is the flip's and the first counted flip may follow a
+    // longer interval than the ones after it.
+    if pacing.usable() {
+        if let Some(period) = period {
+            let expected = period * pacing.elapsed_vblanks();
+            let span = pacing.span().as_nanos() as u64;
+            assert!(
+                span * 10 >= expected * 9,
+                "{} flips over {} blanks arrived in {span} ns, which is less than \
+                 the {expected} ns those blanks take -- the sequence numbers are \
+                 not counting vertical blanks",
+                pacing.flips(),
+                pacing.elapsed_vblanks()
+            );
+        }
+    } else {
+        eprintln!(
+            "skipping the blank cross-check: this driver's flip sequence did not advance usably"
+        );
+    }
+
+    assert_eq!(
+        target.output().framebuffer_count(),
+        framebuffers,
+        "the output holds more framebuffers than it started the run with"
+    );
+    assert_eq!(
+        target.ring_depth(),
+        ring_depth,
+        "the ring changed depth under a steady loop"
+    );
+    assert_eq!(
+        target.cpu_waits(),
+        1,
+        "a commit past the modesetting one had to wait on the CPU"
+    );
+
+    target.destroy(&mut ctx);
+
+    // After teardown, so the ring's own descriptors are gone and what is left is
+    // what the loop failed to release.
+    let after = open_descriptors();
+    assert!(
+        after <= descriptors,
+        "sixty frames left {} open descriptors behind",
+        after - descriptors
+    );
+}
+
 #[test]
 fn a_frame_with_layers_reaches_a_real_display_controller() {
     // The same whole-stack check as above, for a frame that composites a layer.
