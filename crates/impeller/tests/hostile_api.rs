@@ -226,3 +226,85 @@ proptest! {
         );
     }
 }
+
+/// A stack of layers deeper than any interface needs is recorded, not refused and
+/// not fatal.
+///
+/// `save_layer` is the one call a caller can nest without bound, and each nesting
+/// costs a pass and a target for it. So the arithmetic a hostile caller reaches is not
+/// a big array but a deep stack, and the two failures worth ruling out are a recursion
+/// that runs out of stack and a limit that was never written down.
+///
+/// Recorded here rather than executed, like the rest of this file, and the numbers
+/// below say why that is not a dodge: a thousand nested layers at sixty-four pixels
+/// square draw in a tenth of a second, and what a device would then do with a
+/// thousand targets is a question about memory on that device rather than about this
+/// API. The recording is where a stack overflow would happen, and it does not.
+///
+/// What this does not claim is that a deep nest is *useful*. Each layer composites
+/// through its own opacity, so a thousand at nine tenths each leaves the drawing
+/// multiplied by nine tenths to the thousandth, which is nothing. Arriving at
+/// nothing by arithmetic is a correct picture; arriving at it by aborting is not.
+#[test]
+fn a_stack_of_layers_deeper_than_anything_needs_is_still_a_recording() {
+    for depth in [1usize, 64, 1024] {
+        let mut canvas = Canvas::new(Extent2D::new(64, 64));
+        canvas.clear(Color::BLACK);
+        for _ in 0..depth {
+            canvas.save_layer(Layer::opacity(0.9));
+        }
+        assert_eq!(
+            canvas.layer_depth(),
+            depth,
+            "the canvas lost count of the layers it has open"
+        );
+        canvas
+            .draw_rect(Rect::new(8.0, 8.0, 56.0, 56.0), &Paint::fill(Color::WHITE))
+            .expect("a rectangle inside a deep stack is still a rectangle");
+        for _ in 0..depth {
+            canvas.restore();
+        }
+        assert_eq!(canvas.layer_depth(), 0, "a balanced stack did not unwind");
+
+        // One pass per layer and one for the root, which is what says the nesting
+        // reached the recording rather than being flattened away somewhere.
+        let recording = canvas.finish();
+        assert_eq!(
+            recording.passes.len(),
+            depth + 1,
+            "a nest of {depth} produced {} passes",
+            recording.passes.len()
+        );
+    }
+}
+
+/// Unbalanced nesting neither panics nor invents a pass.
+///
+/// A caller who opens layers and forgets to close them is the ordinary way a deep
+/// stack arrives -- a loop with an early return in it. `finish` has to cope, and what
+/// it must not do is drop the drawing on the floor without saying so.
+#[test]
+fn layers_left_open_are_finished_rather_than_lost() {
+    let mut canvas = Canvas::new(Extent2D::new(64, 64));
+    canvas.clear(Color::BLACK);
+    for _ in 0..32 {
+        canvas.save_layer(Layer::opacity(0.9));
+    }
+    canvas
+        .draw_rect(Rect::new(8.0, 8.0, 56.0, 56.0), &Paint::fill(Color::WHITE))
+        .expect("a rectangle");
+    assert_eq!(canvas.layer_depth(), 32, "the layers did not open");
+
+    // No `restore` at all: thirty-two layers still open when the recording is asked
+    // for.
+    let recording = canvas.finish();
+    assert_eq!(
+        recording.passes.len(),
+        33,
+        "an unbalanced stack lost the passes its layers opened"
+    );
+    assert!(
+        recording.draw_count() > 0,
+        "the drawing inside an unclosed layer went nowhere"
+    );
+}
