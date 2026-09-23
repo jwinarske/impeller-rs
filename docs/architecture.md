@@ -3409,7 +3409,7 @@ be looked at, since the incorrect ones look exactly the same from there.
      "does this match Impeller". -->
 | L3 | Conformance: same corpus, cross-backend and cross-presentation diffs | Every merge (software) | runs, cross-backend and cross-device; cross-presentation only for the offscreen target |
 | L4 | Presentation: resize storms, flip pacing, fence ordering, hotplug | VKMS and headless WSI in CI | partial — headless WSI runs on both backends, fence ordering is checked under the validation layer, and five tests drive a real display controller through VKMS wherever a card is present. Not in CI, which loads no such module; no writeback, no CRC, no resize storms, no hotplug. Flip pacing is measured rather than asserted: the KMS output counts the vertical blank the kernel reports with each completed flip, and the panel example reports the blanks that latched nothing new. That is a number a release build on a board produces, so no test asserts it — see the pacing section below |
-| L5 | Stress and soak: atlas thrash, layer-depth bombs, leak detection | Nightly and weekly, hardware | partial — `a_long_run_neither_leaks_nor_loses_blanks` drives sixty frames through the scanout ring and holds the framebuffers the output keeps, the descriptors the process keeps, the ring's depth and the CPU-wait count constant across the run. That covers the resources the DRM path exchanges every frame, which is where a leak here would show. Nothing yet for atlas thrash or layer-depth bombs, and no soak long enough to catch a slow drift |
+| L5 | Stress and soak: atlas thrash, layer-depth bombs, leak detection | Nightly and weekly, hardware | partial — `a_long_run_neither_leaks_nor_loses_blanks` drives sixty frames through the scanout ring and holds the framebuffers the output keeps, the descriptors the process keeps, the ring's depth and the CPU-wait count constant across the run. That covers the resources the DRM path exchanges every frame, which is where a leak here would show. Layer-depth bombs are covered: `a_stack_of_layers_deeper_than_anything_needs_is_still_a_recording` nests a thousand layers and still draws and finishes. Atlas thrash is covered as state transitions rather than as churn — twenty-five unit tests in `impeller-text`'s atlas drive fullness, compaction, eviction, growth and the growth limit. What is missing is the soak: every one of those is a short deterministic case, and nothing runs long enough to catch a slow drift |
 | L6 | Performance: micro and full-frame benches with regression gating | Nightly, quiet runners | partial — `cargo xtask bench` times the two rounded-rectangle paths against each other on every device present, which is the one measurement this document rests a design on, and then a whole frame of mixed content at the same size: a tabulated ramp behind, shadowed cards over it, a blurred layer on top. Gating is opt-in: `--record` writes a baseline keyed by device and configuration, `--check` compares against one and exits non-zero on a regression past `--tolerance` or on a row either side lacks. A plain run still passes whatever it says. What is missing is the runner: checking an unchanged build against its own baseline on a busy workstation reports three rows of eight regressed, so the calibrated threshold this needs is a property of the machine, not of the flag |
 | L7 | Fuzz: path data, scene descriptions, dma-buf negotiation | Continuous background | none |
 
@@ -3482,9 +3482,19 @@ arrived over, and are never compared with an `Instant`, which shares no epoch.
 the flip it committed before committing again, so one commit is outstanding whatever
 the ring depth; depth buys work-ahead on the render side. A deep ring therefore hides
 a slow frame instead of missing a blank, and zero misses at depth three is consistent
-with a frame taking a tenth of the period or nearly all of it. The offscreen figure
-`cargo xtask bench` produces is what separates those, which is why a miss count is
-reported beside the ring depth and never on its own.
+with a frame taking a tenth of the period or nearly all of it. Two things separate
+those, which is why a miss count is reported beside the ring depth and never on its
+own: the offscreen figure `cargo xtask bench` produces, and the same run at depth two,
+where the ring has no spare buffer and so nowhere to hide an overrun.
+
+The second of those was run, and it also says the depth axis is not inert -- worth
+establishing, since a knob that changes nothing would make a zero at depth two no
+stronger than a zero at depth three. A Pi 5 missed nothing at depth two on both
+controllers, and the same scene grown four times over missed 294 blanks at depth two
+against 111 at depth three. The rates say why: at depth two they are clean
+submultiples of the refresh, because a late frame with no spare buffer waits a whole
+period, while at depth three rendering overlaps scanout and they land in between.
+`docs/on-a-board.md` has the tables.
 
 There is a sharper version of the same point, found while calibrating the example's
 stall probe. Making every other frame late by one whole frame period missed nothing

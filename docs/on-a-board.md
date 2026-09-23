@@ -1034,8 +1034,10 @@ frame is a pipeline carrying a frame of latency rather than one that is keeping 
 
 Read a zero carefully. It means no frame was late *enough* to miss a blank at that
 ring depth, which is not the same as headroom -- and calibrating the example's stall
-probe showed the difference is a whole frame period wide. What says there was headroom
-is the offscreen figure beside it, which is what `cargo xtask bench` measures.
+probe showed the difference is a whole frame period wide. Two things say there was
+headroom: the offscreen figure beside it, which is what `cargo xtask bench` measures,
+and the same run at `DEPTH=2`, where there is no spare buffer for a late frame to hide
+behind.
 
 ### What it did, measured 2026-09-22 at 251e1e0
 
@@ -1072,11 +1074,55 @@ is 59.995 Hz and DSI's is 60.08, and both report "60.00" to the whole-hertz figu
 wait budget uses -- in opposite directions. `exact_frame_nanos` is why the
 cross-check above lands to a millisecond rather than to a few.
 
-What it does **not** say is that there was headroom. At ring depth three a frame taking
-nearly the whole period and one taking a tenth of it both miss nothing, so this
-figure and `cargo xtask bench`'s offscreen rows answer different questions and neither
-substitutes for the other. What would say it is the same run at depth two, which has
-not been done.
+What it does **not** say on its own is that there was headroom. At ring depth three a
+frame taking nearly the whole period and one taking a tenth of it both miss nothing,
+so this figure and `cargo xtask bench`'s offscreen rows answer different questions and
+neither substitutes for the other. The run below is what says it.
+
+### What depth two said, measured 2026-09-23 at f190736
+
+A two-deep ring has nowhere to hold a finished buffer back, so a frame that overran
+its period misses a blank instead of being absorbed. The same scene at depth two is
+therefore the stronger claim, and it was run the same way: three runs of ten seconds
+on each controller with a depth-three control in the same session, governor pinned,
+board from 62.0 C to 65.3 C with `vcgencmd get_throttled` clean throughout, load
+average 0.00 before, no display server, release build from `/tmp`.
+
+| controller | depth | frames | flips / blanks | missed | cpu waits |
+|---|---|---|---|---|---|
+| `vc4`, HDMI | 2 | 600, 600, 600 | 594/593 each | 0, 0, 0 | 1, 1, 1 |
+| `vc4`, HDMI | 3 | 600 | 594/593 | 0 | 1 |
+| `rp1-dsi`, DSI | 2 | 599, 599, 600 | 593/592, 593/592, 594/593 | 0, 0, 0 | 1, 1, 1 |
+| `rp1-dsi`, DSI | 3 | 600 | 594/593 | 0 | 1 |
+
+**Zero at depth two, on both controllers, in all six runs.** So the ring was not
+covering for anything: the renderer fits a frame inside the period with no spare
+buffer to hide behind, and the sixty-a-second figure above is a statement about the
+renderer rather than about the ring.
+
+That is only worth reading if the depth axis does anything, which it does. Scaling the
+scene with `CARDS` on HDMI, ten seconds per point, same session:
+
+| cards | depth 2 | depth 3 |
+|---|---|---|
+| 3 (default) | 0 missed, 59.9 fps | 0 missed, 60.0 fps |
+| 12 | 294 missed, 30.1 fps | 111 missed, 48.7 fps |
+| 24 | 294 missed, 30.0 fps | 242 missed, 35.3 fps |
+| 48 | 388 missed, 20.0 fps | 363 missed, 22.8 fps |
+| 3, `STALL=10` | 86 missed | 54 missed |
+
+Two things to read off it. The deeper ring is worth a great deal once the scene is
+over budget -- at twelve cards it turns 294 missed blanks into 111 -- which is what
+says the two-deep result above was not measuring an inert knob. And the depth-two
+rates are clean submultiples of sixty where the depth-three rates are not: with no
+spare buffer a late frame waits a whole period, so the loop locks to 60/n, while at
+depth three rendering overlaps scanout and lands in between. That is the mechanism
+`target::DrmScanoutTarget` describes, observed rather than inferred.
+
+The headroom is real and it is not large. At depth two the scene still misses nothing
+at **four** cards and misses 119 blanks at five, so what the published figure has in
+hand is more than one card's worth of work and less than two. A frame budget is not
+the same as a frame rate, and this is the frame budget.
 
 ## What no machine here checks
 

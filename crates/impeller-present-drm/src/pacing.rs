@@ -27,12 +27,14 @@
 //! sequence numbers are not what this thinks they are. They are never mixed with
 //! `Instant`, which has no epoch to share.
 //!
-//! What this cannot tell you is whether there was headroom. A loop that waits for the
-//! flip it committed before committing again has one commit outstanding whatever the
-//! ring depth, so a deep ring hides a slow frame instead of missing a blank. Zero
-//! misses at depth three is consistent with a frame taking almost the whole period
-//! and with one taking a tenth of it. The offscreen figure is what separates those,
-//! which is why a miss count is reported beside it rather than in place of it.
+//! What a single miss count cannot tell you is whether there was headroom. A loop that
+//! waits for the flip it committed before committing again has one commit outstanding
+//! whatever the ring depth, so a deep ring hides a slow frame instead of missing a
+//! blank. Zero misses at depth three is consistent with a frame taking almost the whole
+//! period and with one taking a tenth of it. Two things separate those, which is why a
+//! miss count is reported beside the ring depth rather than on its own: the offscreen
+//! figure `cargo xtask bench` measures, and the same run at depth two, where there is
+//! no spare buffer to hide behind. `docs/on-a-board.md` has both for a Pi 5.
 
 use std::time::Duration;
 

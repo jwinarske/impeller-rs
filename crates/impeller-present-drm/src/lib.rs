@@ -29,13 +29,19 @@
 //! over HDMI at 1280x1440, both on a Pi 5. That is the first time anything here
 //! has been shown to reach a panel rather than a virtual display controller.
 //!
-//! And it keeps up with them. Ten seconds on each controller, three runs apiece,
-//! measured 2026-09-22: six hundred frames at sixty a second with **no vertical
-//! blank missed** and one CPU wait -- the modesetting commit -- in every run. The
-//! blanks come from the sequence the kernel reports with each flip rather than from
-//! a clock; `pacing` says why, and `docs/on-a-board.md` has the numbers and the
-//! preconditions. What that figure does not say is that there was headroom: at ring
-//! depth three a frame taking nearly the whole period misses nothing either.
+//! And it keeps up with them, with room to spare. Ten seconds on each controller,
+//! three runs apiece, measured 2026-09-22: six hundred frames at sixty a second with
+//! **no vertical blank missed** and one CPU wait -- the modesetting commit -- in every
+//! run. The blanks come from the sequence the kernel reports with each flip rather
+//! than from a clock; `pacing` says why, and `docs/on-a-board.md` has the numbers and
+//! the preconditions.
+//!
+//! The room to spare was measured separately, because a three-deep ring can hold a
+//! finished buffer back and so absorb a frame that overran. Repeating both controllers
+//! at `DEPTH=2`, where it cannot, missed nothing either -- and the same scene grown
+//! four times over misses 294 blanks at depth two against 111 at depth three, which is
+//! what says the depth was doing something. The scene still fits at four cards and
+//! does not at five, so the margin is over one card's work and under two.
 //!
 //! The HDMI half of that took a fix rather than a discovery. It refused every
 //! commit until `primary_plane_for` began honoring the kernel's
