@@ -9,6 +9,18 @@ Dates are the day a version reached crates.io.
 
 ## Unreleased
 
+`impeller_present_drm::pacing` counts the vertical blanks a frame loop did not land
+on, from the sequence the kernel reports with each completed flip -- which the event
+loop previously discarded. `KmsOutput` gains `pacing`, `exact_frame_nanos` and
+`framebuffer_count`, all inherent so the published `OutputEvent` keeps its shape, and
+the panel example reports the ledger and can be made to miss on demand.
+
+Two fixes came with it. The panel example destroyed a frame's layer targets while the
+GPU could still be sampling them, which the validation layer reports as
+`VUID-vkDestroyImage-image-01000` and which `submit_recording` exists to prevent. And
+a comment in the atomic-commit path called the fence-on-commit path unverified, when
+two devices demonstrate it.
+
 `Capability` and `Withheld` in `impeller-hal`, and a `withheld` field on
 `ContextConfig` and `GlesConfig`, so a context can be built lacking a capability
 the device has. Test support: the refusal paths and the branches that decide
