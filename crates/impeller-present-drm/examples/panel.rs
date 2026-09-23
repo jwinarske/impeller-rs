@@ -44,6 +44,12 @@
 //! `docs/on-a-board.md` has the cross-compilation recipe and the preconditions a
 //! number taken here has to state.
 //!
+//! `DEPTH=n` sets the ring depth, and two is the interesting value. A three-deep
+//! ring can absorb a frame that overran its period by holding a finished buffer
+//! back, so a run that misses nothing at three has kept up without saying whether it
+//! had room to spare. A two-deep ring has nowhere to put that frame, so the same
+//! result at two is the stronger claim.
+//!
 //! Two knobs exist to make the miss count say something rather than read zero.
 //! `CARDS=n` scales the scene, since a counter that has only ever read zero is not
 //! known to work. `STALL=n` makes every nth frame late by two frame periods, and
@@ -204,7 +210,17 @@ fn main() {
         }
     };
 
-    let mut target = match DrmScanoutTarget::<VulkanHal, _>::new(&mut ctx, output, 3) {
+    // Three is what a frame loop wants: one on screen, one being flipped to, one
+    // being drawn. `DEPTH=2` is the measurement that separates keeping up from
+    // having headroom -- a two-deep ring cannot absorb a frame that overran, so a
+    // run that misses nothing at two had time to spare rather than a ring covering
+    // for it. Two is the floor the target enforces anyway.
+    let depth: usize = std::env::var("DEPTH")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(impeller_present_drm::DEFAULT_RING_DEPTH)
+        .max(2);
+    let mut target = match DrmScanoutTarget::<VulkanHal, _>::new(&mut ctx, output, depth) {
         Ok(target) => target,
         Err(e) => {
             eprintln!("this display controller cannot scan out what the renderer exports: {e}");
