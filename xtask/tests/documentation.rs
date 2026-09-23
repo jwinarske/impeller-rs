@@ -1451,3 +1451,115 @@ fn every_path_the_documents_name_is_there() {
         dangling.join("\n  ")
     );
 }
+
+/// The documents count the DRM crate's tests correctly.
+///
+/// Two documents state how many tests `impeller-present-drm` has, split three
+/// ways, because the split is the claim: the ones taking DRM master are the ones
+/// that need a card, and a reader deciding whether a board run was complete
+/// counts them. Nothing checked those numbers, so they went stale in the
+/// understating direction -- `five` after a sixth master test landed, and
+/// `eleven unit` after eight more did. An understated count is the worse
+/// direction, since it reads as a gap someone might set out to fill.
+#[test]
+fn the_documents_count_the_drm_tests_correctly() {
+    /// Lines that are exactly the attribute, so a mention inside prose or a
+    /// string does not count as a test.
+    fn tests_in(path: &std::path::Path) -> usize {
+        std::fs::read_to_string(path)
+            .unwrap_or_default()
+            .lines()
+            .filter(|line| line.trim() == "#[test]")
+            .count()
+    }
+
+    let crate_root = repo_root().join("crates/impeller-present-drm");
+    let master = tests_in(&crate_root.join("tests/kms.rs"));
+    let scanout = tests_in(&crate_root.join("tests/scanout.rs"));
+    let unit = {
+        let mut total = 0;
+        let mut stack = vec![crate_root.join("src")];
+        while let Some(dir) = stack.pop() {
+            for entry in std::fs::read_dir(&dir).into_iter().flatten().flatten() {
+                let path = entry.path();
+                if path.is_dir() {
+                    stack.push(path);
+                } else if path.extension().is_some_and(|e| e == "rs") {
+                    total += tests_in(&path);
+                }
+            }
+        }
+        total
+    };
+
+    // The lesson `a_skip_says_the_word_the_census_counts` records: a check that
+    // read nothing would pass every assertion below.
+    assert!(
+        master > 0 && scanout > 0 && unit > 0,
+        "counted {master} master, {scanout} scanout and {unit} unit tests, \
+         so this read the wrong paths and would pass on anything"
+    );
+    let total = master + scanout + unit;
+
+    let flat = |name: &str| {
+        doc(name)
+            .split_whitespace()
+            .collect::<Vec<_>>()
+            .join(" ")
+            .to_lowercase()
+    };
+    let architecture = flat("architecture.md");
+    let board = flat("on-a-board.md");
+
+    for (name, text, stated) in [
+        (
+            "docs/architecture.md",
+            &architecture,
+            format!("{} tests drive a real display controller", spell(master)),
+        ),
+        (
+            "docs/architecture.md",
+            &architecture,
+            format!("{} tests in `impeller-present-drm`", spell(master)),
+        ),
+        (
+            "docs/architecture.md",
+            &architecture,
+            format!(
+                "all {} tests pass, along with the {} scanout and unit tests",
+                spell(master),
+                spell(scanout + unit)
+            ),
+        ),
+        (
+            "docs/on-a-board.md",
+            &board,
+            format!(
+                "{} tests in `impeller-present-drm` pass on the pi 5",
+                spell(total)
+            ),
+        ),
+        (
+            "docs/on-a-board.md",
+            &board,
+            format!("{} unit,", spell(unit)),
+        ),
+        (
+            "docs/on-a-board.md",
+            &board,
+            format!("{} scanout,", spell(scanout)),
+        ),
+        (
+            "docs/on-a-board.md",
+            &board,
+            format!("the {} that take drm master", spell(master)),
+        ),
+    ] {
+        assert!(
+            text.contains(&stated),
+            "{name} does not say \"{stated}\". The crate has {master} tests \
+             taking DRM master, {scanout} scanout and {unit} unit, {total} in \
+             all. Adding one means saying so."
+        );
+    }
+}
