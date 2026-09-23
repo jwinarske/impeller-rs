@@ -1001,6 +1001,45 @@ The shape to take from it: a cross-device assertion states a property of this
 renderer or a property of a rasterizer, and the two are easy to write down in the
 same sentence. A board is the only thing on this bench that tells them apart.
 
+## Measuring pacing there, and what a number will have to say
+
+The suite says the frame loop works. It does not say the display kept up, and a frame
+rate cannot: sixty frames a second to a sixty-hertz panel and sixty to a
+hundred-and-twenty-hertz one read the same on a counter. `docs/architecture.md` has
+the mechanism -- blanks counted from the kernel's flip sequence, not intervals timed
+in userspace -- and this is the recipe and the preconditions.
+
+The number comes from the panel example, **built release**, because the suite here is
+cross-compiled without it and a debug frame against a real sixteen-millisecond budget
+measures the optimizer:
+
+```sh
+cargo build -p impeller-present-drm --release --example panel \
+  --target aarch64-unknown-linux-gnu
+scp target/aarch64-unknown-linux-gnu/release/examples/panel "$PI:/tmp/"
+ssh "$PI" 'cd /tmp && IMPELLER_DRM_CARD=/dev/dri/card0 SECONDS=30 ./panel'
+```
+
+`/tmp` for the reason the bench rows want it, `card0` because that is `vc4` and the
+one that scans out what this renderer exports -- the crate documentation has the
+table, and `cargo xtask drm` says what a given machine could host.
+
+A figure taken here has to carry what the timing baseline's header carries, and for
+the same reason: the governor pinned to `performance`, `vcgencmd get_throttled` clean
+before and after, nothing else on the board, three runs rather than one, and the
+commit it was taken at. Two more belong to this measurement rather than to the bench:
+the **ring depth**, because a deeper ring hides a slow frame instead of missing a
+blank, and the **CPU-wait count**, because a run with no misses and a wait on every
+frame is a pipeline carrying a frame of latency rather than one that is keeping up.
+
+Read a zero carefully. It means no frame was late *enough* to miss a blank at that
+ring depth, which is not the same as headroom -- and calibrating the example's stall
+probe showed the difference is a whole frame period wide. What says there was headroom
+is the offscreen figure beside it, which is what `cargo xtask bench` measures.
+
+Nothing above has been run on a board yet. When it has, the numbers go here with the
+date and the commit, the way the rest of this file's numbers do.
+
 ## What no machine here checks
 
 `cargo xtask gate` prints what the suite says it covered, under the totals, and

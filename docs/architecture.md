@@ -3408,8 +3408,8 @@ be looked at, since the incorrect ones look exactly the same from there.
      would answer "does this match Skia", which is not the same question as
      "does this match Impeller". -->
 | L3 | Conformance: same corpus, cross-backend and cross-presentation diffs | Every merge (software) | runs, cross-backend and cross-device; cross-presentation only for the offscreen target |
-| L4 | Presentation: resize storms, flip pacing, fence ordering, hotplug | VKMS and headless WSI in CI | partial — headless WSI runs on both backends, fence ordering is checked under the validation layer, and five tests drive a real display controller through VKMS wherever a card is present. Not in CI, which loads no such module; no writeback, no CRC, no resize storms, no hotplug |
-| L5 | Stress and soak: atlas thrash, layer-depth bombs, leak detection | Nightly and weekly, hardware | none |
+| L4 | Presentation: resize storms, flip pacing, fence ordering, hotplug | VKMS and headless WSI in CI | partial — headless WSI runs on both backends, fence ordering is checked under the validation layer, and five tests drive a real display controller through VKMS wherever a card is present. Not in CI, which loads no such module; no writeback, no CRC, no resize storms, no hotplug. Flip pacing is measured rather than asserted: the KMS output counts the vertical blank the kernel reports with each completed flip, and the panel example reports the blanks that latched nothing new. That is a number a release build on a board produces, so no test asserts it — see the pacing section below |
+| L5 | Stress and soak: atlas thrash, layer-depth bombs, leak detection | Nightly and weekly, hardware | partial — `a_long_run_neither_leaks_nor_loses_blanks` drives sixty frames through the scanout ring and holds the framebuffers the output keeps, the descriptors the process keeps, the ring's depth and the CPU-wait count constant across the run. That covers the resources the DRM path exchanges every frame, which is where a leak here would show. Nothing yet for atlas thrash or layer-depth bombs, and no soak long enough to catch a slow drift |
 | L6 | Performance: micro and full-frame benches with regression gating | Nightly, quiet runners | partial — `cargo xtask bench` times the two rounded-rectangle paths against each other on every device present, which is the one measurement this document rests a design on, and then a whole frame of mixed content at the same size: a tabulated ramp behind, shadowed cards over it, a blurred layer on top. Gating is opt-in: `--record` writes a baseline keyed by device and configuration, `--check` compares against one and exits non-zero on a regression past `--tolerance` or on a row either side lacks. A plain run still passes whatever it says. What is missing is the runner: checking an unchanged build against its own baseline on a busy workstation reports three rows of eight regressed, so the calibrated threshold this needs is a property of the machine, not of the flag |
 | L7 | Fuzz: path data, scene descriptions, dma-buf negotiation | Continuous background | none |
 
@@ -3448,6 +3448,67 @@ On a Raspberry Pi 5 -- `vc4` and `drm-rp1-dsi` for display, `v3d` as a separate
 render node -- all five tests pass, along with the twenty scanout and unit tests
 beside them. So the VKMS lane is standing in for something that works, which is
 what makes finishing it worth doing rather than a hope.
+
+### Pacing is counted in blanks, not in seconds
+
+A frame rate says nothing about pacing. Sixty frames a second to a sixty-hertz
+display is right; sixty to a hundred and twenty is missing every other blank and
+reads identically on a frame counter. What separates them is the sequence number the
+kernel reports with each completed page flip, which is the display's own count of
+vertical blanks since the pipeline came up. `KmsOutput` records it and
+`impeller_present_drm::pacing` does the arithmetic.
+
+A missed flip is a blank at which the display latched nothing new while the loop was
+trying to give it one. For consecutive flips, an interval accounts for its gap in
+sequence numbers *less one* -- the flip ending an interval fills it. Five flips are
+discarded first, the number `cargo xtask bench` discards and for a version of the
+same reason: the first flip follows the commit that set the mode and enabled the
+CRTC, and a blank counter means nothing until the thing counting is running.
+
+**Counted, rather than timed from an interval, and the alternatives fail concretely.**
+`Mode::frame_nanos` returns zero where a driver reports no refresh rate, so a rule of
+the shape "longer than two frames is a miss" would classify every interval as a miss
+on such a driver -- silently, and in the direction that invents a problem. The refresh
+a mode reports is rounded to whole hertz, about a per cent out on the 59.94 modes HDMI
+is full of; `KmsOutput::exact_frame_nanos` takes the pixel clock over the pixels a
+frame scans instead, and is confined to the report so the wait budget keeps the cheap
+figure it is fine with. And the event loop polls every five hundred microseconds
+rather than sleeping on the descriptor, so an interval measured in userspace carries a
+fraction of a millisecond that has nothing to do with the display. Kernel timestamps
+are kept for one job, checking that the blanks counted account for the span the flips
+arrived over, and are never compared with an `Instant`, which shares no epoch.
+
+**What the number cannot tell you is whether there was headroom.** The loop waits for
+the flip it committed before committing again, so one commit is outstanding whatever
+the ring depth; depth buys work-ahead on the render side. A deep ring therefore hides
+a slow frame instead of missing a blank, and zero misses at depth three is consistent
+with a frame taking a tenth of the period or nearly all of it. The offscreen figure
+`cargo xtask bench` produces is what separates those, which is why a miss count is
+reported beside the ring depth and never on its own.
+
+There is a sharper version of the same point, found while calibrating the example's
+stall probe. Making every other frame late by one whole frame period missed nothing
+at all: the loop already waits a period, so a one-period delay spends slack rather
+than overrunning a blank. Only the second period costs a blank. **A frame being late
+is not the same as a frame being late enough**, and that gap is exactly what a rate
+cannot show and a miss count can.
+
+**None of it is in `tests/bench-baselines`, deliberately.** That file is compared by
+a ratio in which larger is worse, so a rate would read a collapse as an improvement
+and a baseline of zero would divide by zero; its tolerance is a percentage, which
+means nothing against a count of one or three; the drift counter does not watch
+`crates/impeller-present-drm/src`, so a row there would go stale while the gate said
+current; and `cargo xtask bench` takes no DRM master and must not, so it could not
+produce the row. A paced figure is published with its preconditions in
+`docs/on-a-board.md`, the way the board's other numbers are.
+
+No test asserts a deadline, and none can. The suite that cross-compiles to a board is
+a debug build, so a frame there is an unoptimized frame against a real
+sixteen-millisecond budget; an assertion about missed blanks would be an assertion
+about the optimizer. `a_long_run_neither_leaks_nor_loses_blanks` asserts the
+bookkeeping instead -- that the ledger saw flips, that the blanks counted account for
+the time they arrived over, and that nothing grew -- and the number itself comes from
+a release build of the panel example.
 
 VKMS proves protocol, not hardware quirks — IOMMU faults, AFBC corner cases,
 scaler limits. That is what the board rack exists for. VKMS green with hardware
