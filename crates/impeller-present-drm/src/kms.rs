@@ -527,6 +527,16 @@ impl ScanoutOutput for KmsOutput {
 }
 
 impl KmsOutput {
+    /// Framebuffers this output currently holds.
+    ///
+    /// A frame loop imports one per ring slot and releases it when the slot goes,
+    /// so over a run of frames this is constant. It is exposed for the test that
+    /// says so: each one holds GEM handles, and a count that climbs is the leak
+    /// that would otherwise take a long soak and a careful eye to notice.
+    pub fn framebuffer_count(&self) -> usize {
+        self.framebuffers.len()
+    }
+
     /// Which vertical blanks this output's flips landed on.
     ///
     /// An inherent method rather than a field on [`OutputEvent::FlipComplete`],
