@@ -18,6 +18,45 @@
 //! controller. A Raspberry Pi 5 has two, and only one of them can currently
 //! scan out what this renderer exports; without naming a card you get whichever
 //! `/dev/dri` lists first. The crate documentation has the table.
+//!
+//! # Reading the report
+//!
+//! It ends with what it paced: frames presented, the vertical blanks that passed
+//! while it did, and how many of those blanks the display latched nothing new on.
+//! The last is the number worth having, and it is counted from the sequence the
+//! kernel reports with each flip rather than from a clock. `crate::pacing` says
+//! why.
+//!
+//! Three things that number is not. It is not a property of the renderer alone --
+//! a deeper ring hides a slow frame instead of missing a blank, so the ring depth
+//! is printed beside it. It is not comparable with `cargo xtask bench`'s
+//! `full frame, mixed content` row, which is a different scene at a different size
+//! and counts neither the recording nor the present. And it means little from a
+//! debug build: **build this release** and run it from a filesystem the numbers
+//! were taken on, which for this project's board means
+//!
+//! ```text
+//! cargo build -p impeller-present-drm --release --example panel
+//! scp target/.../examples/panel board:/tmp/
+//! ssh board 'cd /tmp && IMPELLER_DRM_CARD=/dev/dri/card0 ./panel'
+//! ```
+//!
+//! `docs/on-a-board.md` has the cross-compilation recipe and the preconditions a
+//! number taken here has to state.
+//!
+//! Two knobs exist to make the miss count say something rather than read zero.
+//! `CARDS=n` scales the scene, since a counter that has only ever read zero is not
+//! known to work. `STALL=n` makes every nth frame late by two frame periods, and
+//! should cost one missed blank each time -- so `STALL=10` over a hundred and
+//! sixty-five frames gives sixteen, which is what it gave when this was calibrated.
+//!
+//! Two periods rather than one, and the reason is worth knowing before reading any
+//! number here. This loop already waits for the flip it committed before committing
+//! again, so on a scene the renderer finishes early there is a whole period of slack
+//! in every frame. Sleeping one period spends that slack and misses nothing --
+//! measured, at `STALL=2`, which held sixty frames a second and zero misses. Only
+//! the second period overruns the blank. A frame being late is not the same as a
+//! frame being late *enough*, and a miss count is the difference.
 
 use impeller_core::{Canvas, Color, GradientStop, Layer, Paint, Rect, Shader, TileMode, Vec2};
 use impeller_hal_vulkan::{DevicePreference, VulkanContext, VulkanHal};
@@ -58,7 +97,7 @@ fn card() -> Option<KmsOutput> {
 /// Nothing here is chosen to be easy on the renderer. The ground is a gradient
 /// so banding would show, the cards carry shadows so the blur runs every frame,
 /// and the whole thing moves so a frame held by mistake is obvious.
-fn frame(width: f32, height: f32, t: f32) -> impeller_core::Recording {
+fn frame(width: f32, height: f32, t: f32, cards: u32) -> impeller_core::Recording {
     let mut canvas = Canvas::new(impeller_core::Extent2D::new(width as u32, height as u32));
     canvas.clear(Color::srgb(0.05, 0.06, 0.09, 1.0));
 
@@ -97,8 +136,8 @@ fn frame(width: f32, height: f32, t: f32) -> impeller_core::Recording {
     let orbit = width.min(height) * 0.26;
     let side = width.min(height) * 0.20;
 
-    for i in 0..3 {
-        let phase = t * 0.6 + i as f32 * std::f32::consts::TAU / 3.0;
+    for i in 0..cards {
+        let phase = t * 0.6 + i as f32 * std::f32::consts::TAU / cards as f32;
         let at = Vec2::new(
             center.x + orbit * phase.cos(),
             center.y + orbit * phase.sin() * 0.55,
@@ -120,7 +159,9 @@ fn frame(width: f32, height: f32, t: f32) -> impeller_core::Recording {
             Color::srgb(0.98, 0.42, 0.28, 1.0),
             Color::srgb(0.36, 0.82, 0.62, 1.0),
             Color::srgb(0.42, 0.58, 0.98, 1.0),
-        ][i];
+            // Wrapped rather than extended: scaling the scene is about how much work a
+            // frame is, and three hues at four cards is the same work as four would be.
+        ][i as usize % 3];
         canvas
             .draw_rrect(card, side * 0.18, &Paint::fill(hue))
             .expect("card");
@@ -178,12 +219,26 @@ fn main() {
         .ok()
         .and_then(|s| s.parse().ok())
         .unwrap_or(20.0);
+    // Three is what the scene was drawn for. More is how a miss count is made to
+    // read something other than zero, which is the only way to know it works.
+    let cards: u32 = std::env::var("CARDS")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(3)
+        .max(1);
+    // Every nth frame sleeps a frame period, which should cost exactly one blank.
+    // A counter that does not rise by about one per stall is not counting blanks.
+    let stall: u64 = std::env::var("STALL")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(0);
+    let period = target.output().exact_frame_nanos();
     let start = std::time::Instant::now();
     let mut frames = 0u64;
 
     while start.elapsed().as_secs_f32() < seconds {
         let t = start.elapsed().as_secs_f32();
-        let recording = frame(width as f32, height as f32, t);
+        let recording = frame(width as f32, height as f32, t, cards);
 
         // Acquired for the side effect; the target draws into the slot it just
         // took, so the image itself is not wanted here.
@@ -209,6 +264,19 @@ fn main() {
             break;
         }
         frames += 1;
+
+        if stall > 0 && frames % stall == 0 {
+            // Two periods: the first is absorbed by the wait `present` already does
+            // before it commits, and only the second overruns the blank. One period
+            // held sixty frames a second with nothing missed, which is what says the
+            // slack is there rather than that the counter is asleep.
+            //
+            // Sleeping rather than spinning, because what is wanted is a late frame
+            // and not a processor competing with the one drawing it.
+            if let Some(nanos) = period {
+                std::thread::sleep(std::time::Duration::from_nanos(nanos * 2));
+            }
+        }
     }
 
     let elapsed = start.elapsed().as_secs_f32();
@@ -216,5 +284,39 @@ fn main() {
         "{frames} frames in {elapsed:.1}s, {:.1} per second",
         frames as f32 / elapsed
     );
+
+    // What the frame rate above cannot say. A rate is the same whether every blank
+    // was latched or every second one was; this is the difference.
+    let pacing = target.output().pacing();
+    print!(
+        "{} flips over {} blanks",
+        pacing.flips(),
+        pacing.elapsed_vblanks()
+    );
+    match pacing.missed() {
+        Some(missed) => print!(", {missed} missed"),
+        None => print!(", missed unknown: this driver's flip sequence did not advance usably"),
+    }
+    println!(
+        ", {} cpu wait(s), ring depth {}, {} card(s)",
+        target.cpu_waits(),
+        target.ring_depth(),
+        cards
+    );
+
+    // The cross-check, from the kernel's own timestamps. If the blanks counted do
+    // not account for the time the flips arrived over, the sequence numbers are not
+    // what this takes them for and the miss count above means nothing.
+    if let (Some(nanos), true) = (period, pacing.usable()) {
+        let expected = nanos * pacing.elapsed_vblanks();
+        let span = pacing.span().as_nanos() as u64;
+        println!(
+            "  blanks account for {:.3}s of the {:.3}s the flips arrived over, at {:.3} ms a blank",
+            expected as f64 / 1e9,
+            span as f64 / 1e9,
+            nanos as f64 / 1e6,
+        );
+    }
+
     target.destroy(&mut ctx);
 }
