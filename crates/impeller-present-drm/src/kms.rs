@@ -67,6 +67,8 @@ pub struct KmsOutput {
     framebuffers: HashMap<u64, Framebuffer>,
     /// Committed and not yet reported as on screen.
     in_flight: Option<FbHandle>,
+    /// Which vertical blanks the flips landed on; see [`crate::pacing`].
+    pacing: crate::pacing::Pacing,
     pending: Vec<OutputEvent>,
 }
 
@@ -134,6 +136,7 @@ impl KmsOutput {
             formats,
             framebuffers: HashMap::new(),
             in_flight: None,
+            pacing: crate::pacing::Pacing::new(),
             pending: Vec::new(),
         })
     }
@@ -524,6 +527,48 @@ impl ScanoutOutput for KmsOutput {
 }
 
 impl KmsOutput {
+    /// Which vertical blanks this output's flips landed on.
+    ///
+    /// An inherent method rather than a field on [`OutputEvent::FlipComplete`],
+    /// deliberately: that enum is published, and `FakeOutput` and the scanout tests
+    /// both construct and match it, so growing a variant would break every caller
+    /// for a number only a report wants. If the target or a second binding ever
+    /// needs pacing, the event grows a payload then and that is a recorded break.
+    pub fn pacing(&self) -> &crate::pacing::Pacing {
+        &self.pacing
+    }
+
+    /// Nanoseconds between vertical blanks, from the mode's timings rather than
+    /// from its rounded refresh.
+    ///
+    /// [`crate::Mode::frame_nanos`] divides a refresh reported in whole hertz, which
+    /// is about a per cent out on the 59.94 Hz modes HDMI is full of. That is
+    /// harmless for a wait budget, which is what it is for, and not good enough to
+    /// check a blank count against. This computes the period the mode actually
+    /// describes: the pixel clock over the total pixels a frame scans.
+    ///
+    /// `None` where the mode reports no clock or degenerate totals, and where it is
+    /// interlaced or doublescan -- both of which make "a frame" mean something this
+    /// arithmetic does not handle, and neither of which any display here uses.
+    pub fn exact_frame_nanos(&self) -> Option<u64> {
+        let mode = &self.pipeline.mode;
+        let flags = mode.flags();
+        if flags.contains(control::ModeFlags::INTERLACE)
+            || flags.contains(control::ModeFlags::DBLSCAN)
+        {
+            return None;
+        }
+        let clock = u64::from(mode.clock());
+        let htotal = u64::from(mode.hsync().2);
+        let vtotal = u64::from(mode.vsync().2);
+        if clock == 0 || htotal == 0 || vtotal == 0 {
+            return None;
+        }
+        // The clock is in kilohertz, so the pixels a frame scans divided by it is
+        // milliseconds; scaled to nanoseconds without losing the fraction.
+        Some(htotal * vtotal * 1_000_000 / clock)
+    }
+
     /// Read whatever the kernel has queued, without blocking.
     fn drain_events(&mut self) {
         // An empty queue reports as an error on a non-blocking fd, which is
@@ -532,7 +577,21 @@ impl KmsOutput {
             return;
         };
         for event in events {
-            if let control::Event::PageFlip(_) = event {
+            if let control::Event::PageFlip(flip) = event {
+                // Another controller's blanks are not this one's. A process
+                // driving one card with two pipelines gets both here, and
+                // counting them together would report a number belonging to
+                // neither.
+                if flip.crtc != self.pipeline.crtc {
+                    continue;
+                }
+                // `duration` is the kernel's `CLOCK_MONOTONIC` timestamp for the
+                // flip, despite the name drm-rs gives it: it is built from
+                // `tv_sec` and `tv_usec`, not from a difference. Recorded so the
+                // blank count can be cross-checked against the span it arrived
+                // over, and never compared with an `Instant`, which shares no
+                // epoch with it.
+                self.pacing.observe(flip.frame, flip.duration);
                 // The flip that completed is the one committed, and what it
                 // frees is whatever was on screen before it.
                 if let Some(fb) = self.in_flight.take() {
