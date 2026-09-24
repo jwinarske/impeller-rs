@@ -96,6 +96,32 @@ pub fn dash_path(path: &Path, dash: &Dash, tolerance: f32) -> Path {
     }
     let cycle = dash.cycle();
     let period: f32 = cycle.iter().sum();
+    // A pattern finer than the curve is flattened to cannot be drawn as dashes:
+    // every on and off together falls inside one line segment of the polyline
+    // below, so there is nothing for them to land on distinctly. Returned
+    // unchanged on the same terms as an unusable pattern, and for a sharper
+    // reason than tidiness -- `walk` counts intervals rather than distance, so a
+    // period of `f32::MIN_POSITIVE` over a hundred-unit path asks for about ten
+    // to the fortieth of them, and the position it accumulates them into stops
+    // advancing long before that: at around two times ten to the minus
+    // thirty-first, adding the interval to it is below the last bit of an `f32`
+    // and the loop stops making progress while still emitting geometry every
+    // turn. That was not slow, it did not finish, and it exhausted memory trying.
+    //
+    // Worth being straight about what this costs. A sub-resolution pattern with
+    // an even duty cycle would ideally read as a line at half coverage, and this
+    // draws it solid. The difference is a shade on something no caller can see
+    // the shape of, and the alternative was a hang.
+    // Stated positively and then negated, because `!(period > tolerance)` is the
+    // negated comparison clippy refuses on a partially ordered type -- and it
+    // refuses it for the reason that matters here: the two can be incomparable. A
+    // `tolerance` of NaN makes `resolvable` false and returns the path unchanged,
+    // which is the safe direction, where reading the comparison the other way
+    // round would let it through.
+    let resolvable = period > tolerance;
+    if !resolvable {
+        return path.clone();
+    }
 
     let mut builder = PathBuilder::new().with_fill_rule(path.fill_rule());
     for polyline in flatten(path, tolerance) {
@@ -139,7 +165,19 @@ fn walk(points: &[Vec2], cycle: &[f32], period: f32, phase: f32, out: &mut PathB
         let mut travelled = 0.0f32;
         while length - travelled > left {
             // The interval ends inside this segment.
-            travelled += left;
+            //
+            // Guarded against an interval too small to move the position it is
+            // added to. The check above cannot be relied on for this: it compares
+            // the period against the tolerance, and a caller reaching `walk`
+            // through another route, or a tolerance small enough to admit a
+            // period this fine, would arrive here anyway. Termination should not
+            // depend on either. Breaking leaves the rest of the segment to the
+            // code below, which draws it as one run.
+            let next = travelled + left;
+            if next <= travelled {
+                break;
+            }
+            travelled = next;
             let at = from + segment * (travelled / length);
             if drawing {
                 if !pen_down {
@@ -328,6 +366,48 @@ mod tests {
         assert!(
             (drawn - arc / 2.0).abs() < 0.5,
             "drew {drawn} of an arc of {arc}"
+        );
+    }
+
+    /// A pattern too fine to resolve is drawn solid rather than not at all.
+    ///
+    /// `is_usable` admits it: the intervals are finite, positive, and their sum is
+    /// greater than zero. What it cannot see is how that sum compares with the
+    /// path, and `walk` counts intervals rather than distance -- so a period of
+    /// `f32::MIN_POSITIVE` over a hundred-unit line asks for about ten to the
+    /// fortieth dashes. It never got that far. The position the intervals
+    /// accumulate into stops advancing at around `2e-31`, where adding one is
+    /// below the last bit of an `f32`, and from there the loop emitted geometry
+    /// forever without moving. Memory ran out.
+    ///
+    /// Found by generating a `Paint` field by field, which is how a `Dash` this
+    /// small is built at all.
+    #[test]
+    fn a_pattern_finer_than_the_tolerance_is_left_solid() {
+        let path = line(100.0);
+        for interval in [f32::MIN_POSITIVE, 1e-30, 1e-20, 1e-9] {
+            let dash = Dash::new(vec![interval, interval], 0.0);
+            assert!(
+                dash.is_usable(),
+                "an interval of {interval:e} is what this test is about, and \
+                 `is_usable` is expected to admit it"
+            );
+            // Reaching the assertion at all is most of the point.
+            let dashed = dash_path(&path, &dash, 0.1);
+            assert_eq!(
+                dashed.verbs().len(),
+                path.verbs().len(),
+                "an interval of {interval:e} is finer than the tolerance, so the \
+                 path should come back as it went in"
+            );
+        }
+
+        // And a pattern the tolerance can resolve is still dashed, so the guard
+        // above did not turn dashing off for everything.
+        let dashed = dash_path(&path, &Dash::new(vec![5.0, 5.0], 0.0), 0.1);
+        assert!(
+            dashed.verbs().len() > line(100.0).verbs().len(),
+            "a five-unit dash over a hundred units produced no extra verbs"
         );
     }
 }
