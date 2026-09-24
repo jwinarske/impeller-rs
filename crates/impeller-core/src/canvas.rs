@@ -5652,13 +5652,29 @@ impl Canvas {
     /// A power of two so that every step is an exact halving, which is what
     /// makes the sampler a box filter above.
     fn blur_downsample(sigma: f32, extent: u32) -> u32 {
+        // A sigma that is not a length asks for no reduction. `with_blur_xy`
+        // refuses one, but `Layer::blur` is a public field and a struct literal
+        // carries whatever it likes past that -- and an infinite sigma makes the
+        // condition below true however far the reduction goes, leaving the extent
+        // as the loop's only stop.
+        if !sigma.is_finite() || sigma <= 0.0 {
+            return 1;
+        }
         let mut scale = 1u32;
         // Stopped once the axis would round to nothing. The extent is floored
         // at one texel where it is built, so this is not what keeps a target
         // from having no pixels -- it is what keeps the reduction from spending
         // passes halving a single texel into itself, which a deviation of a few
         // hundred against a small layer will otherwise ask for.
-        while blur_radius(sigma / scale as f32) > BLUR_MAX_TAPS && extent / (scale * 2) >= 1 {
+        //
+        // Written as `scale <= extent / 2` rather than `extent / (scale * 2) >= 1`,
+        // which says the same thing and computes `scale * 2`. That product
+        // overflows once `scale` reaches two to the thirty-first, which a layer
+        // whose bounds make the extent that large reaches -- and the overflow was
+        // not the worse half: in release the multiply wraps to zero and the
+        // division that followed it panicked instead, so both profiles died on the
+        // same input. Found by a generated sequence of canvas calls.
+        while blur_radius(sigma / scale as f32) > BLUR_MAX_TAPS && scale <= extent / 2 {
             scale *= 2;
         }
         scale
@@ -6889,5 +6905,68 @@ mod tests {
             dilate: true,
         };
         assert_eq!(negative.applied_radius(Extent2D::new(64, 64)), [0.0, 0.0]);
+    }
+
+    /// A blur's reduction terminates whatever the sigma and the extent.
+    ///
+    /// The reduction doubles a divisor until the kernel fits the tap budget or
+    /// the axis runs out. An infinite sigma never satisfies the first, so the
+    /// extent is the only stop -- and against a very large extent the divisor
+    /// reached two to the thirty-first, where the old condition's `scale * 2`
+    /// overflowed. Release was worse rather than better: the product wrapped to
+    /// zero and the division panicked.
+    ///
+    /// A struct literal is how a non-finite sigma gets here at all, since
+    /// `Layer::with_blur_xy` maps one to zero. `Layer::blur` is a public field.
+    ///
+    /// Found by `a_sequence_of_any_operations_records_something_addressable`,
+    /// which generated a layer with an infinite blur inside bounds of `-1e20`.
+    #[test]
+    fn the_blur_reduction_terminates_for_any_sigma_and_extent() {
+        // Reaching the end of this at all is most of the assertion.
+        for extent in [0u32, 1, 2, 3, 128, u32::MAX / 2, u32::MAX - 1, u32::MAX] {
+            for sigma in [
+                f32::INFINITY,
+                f32::NEG_INFINITY,
+                f32::NAN,
+                -1.0,
+                0.0,
+                1e30,
+                f32::MAX,
+                500.0,
+                8.0,
+            ] {
+                let scale = Canvas::blur_downsample(sigma, extent);
+                assert!(
+                    scale.is_power_of_two(),
+                    "sigma {sigma:e} over {extent} gave a divisor of {scale}, which \
+                     is not a power of two, so the halvings are not exact"
+                );
+                assert!(
+                    scale == 1 || scale <= extent,
+                    "sigma {sigma:e} reduced a {extent}-texel axis by {scale}, which \
+                     is more than the axis has"
+                );
+            }
+        }
+
+        // A sigma that is not a length reduces nothing, on the same terms as
+        // `with_blur_xy` refusing it and `Morphology::applied_radius` refusing a
+        // non-finite radius.
+        for sigma in [f32::INFINITY, f32::NAN, -1.0, 0.0] {
+            assert_eq!(
+                Canvas::blur_downsample(sigma, u32::MAX),
+                1,
+                "a sigma of {sigma} asked for a reduction"
+            );
+        }
+
+        // And a real one still reduces, so the guard above did not turn the
+        // reduction off for everything.
+        assert!(
+            Canvas::blur_downsample(500.0, 4096) > 1,
+            "a wide blur on a large target stopped reducing, which is what the tap \
+             budget exists to avoid"
+        );
     }
 }
