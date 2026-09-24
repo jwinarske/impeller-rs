@@ -2121,7 +2121,16 @@ impl Canvas {
         // target. So the conversion happens once, here, where the transform
         // that decides it is still the one the caller drew under.
         let basis = BlurBasis::of(self.transform);
-        let layer = layer.scaled_by(max_scale_of(self.transform));
+        let scale = max_scale_of(self.transform);
+        let layer = layer.scaled_by(scale);
+        // And the filters beside it, which this line did not touch for as long as
+        // it has existed. The comment above said the conversion happens once here
+        // and it happened to the layer only, so `save_layer_filtered` with a blur
+        // took a device sigma while the same filter through
+        // `Paint::with_image_filter` -- which becomes a layer -- took a local one.
+        let filter = filter.map(|filter| filter.scaled_by(scale));
+        let backdrop = backdrop.cloned().map(|filter| filter.scaled_by(scale));
+        let backdrop = backdrop.as_ref();
         let reach = layer.reach(basis);
         // A layer opened under a clip cannot draw outside it, and neither can
         // the draw that composites it, so an unbounded one does not need a

@@ -851,7 +851,14 @@ grew. Measured before the change, a square in a blurred layer reached the same
 twenty-nine pixels at a scale of one and of three.
 
 **Where the conversion happens, and why there.** Once, when a layer is opened —
-`Layer::scaled_by`, called from both entries to `open_layer`. Everything past
+`Layer::scaled_by` and `ImageFilter::scaled_by`, called from both entries to
+`open_layer`. The filter half was missing until 2026-09-23, and "once, here" was
+what made it hard to see: the line converted the layer and not the `ImageFilter`
+handed alongside it, so `save_layer_filtered` with a blur took a device sigma
+while the same filter through `Paint::with_image_filter` -- which becomes a layer
+on the way -- took a local one. One value in one type meaning two things
+depending on which call received it, rather than two conventions.
+`impeller-rs`'s `filter_space.rs` holds all five spellings against each other. Everything past
 that line works in device pixels: the reach is applied to bounds already
 transformed, and the passes that do the blurring run on a target. The transform
 that decides the conversion is the one in force when the layer is opened, and
