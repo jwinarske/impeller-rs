@@ -28,6 +28,20 @@ GPU could still be sampling them, which the validation layer reports as
 a comment in the atomic-commit path called the fence-on-commit path unverified, when
 two devices demonstrate it.
 
+**Every spelling of "filter this" now measures its lengths in the same space.**
+A caller's blur sigma is stated in the space they were drawing in, and
+`Layer::scaled_by` converted the fields a `Copy` layer carries while nothing
+converted the `ImageFilter` handed alongside them. So under a scale of two an
+eight-pixel blur came out as sixteen device pixels through `Layer::with_blur`,
+`Paint::with_image_filter` and `Layer::backdrop_blur`, and as eight through
+`Canvas::save_layer_filtered` and `Canvas::save_layer_backdrop`. The third of
+those against the fourth is what makes it a defect rather than two conventions:
+both hand an `ImageFilter::Blur` to a layer, and only the one that becomes a
+layer on the way was scaled. `ImageFilter::scaled_by` closes it, reaching through
+a `Compose` into both halves. A morphology radius is still device pixels in every
+spelling, which is non-parity 17 and is now asserted to be the same in both
+rather than merely divergent in one.
+
 A corpus scene pins what space a morphology radius is in. `dilate` and `erode`
 measure in device pixels here and nothing scales them, where upstream's radius is
 a local length the transform scales at the pass -- so a dilated layer under a

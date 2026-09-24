@@ -229,7 +229,15 @@ pub enum MaskBlurStyle {
 pub enum ImageFilter {
     #[default]
     None,
-    /// Blur what was drawn, by a standard deviation per axis in device pixels.
+    /// Blur what was drawn, by a standard deviation per axis in the space the
+    /// caller is drawing in.
+    ///
+    /// The caller's space rather than device pixels, which is what `dart:ui`
+    /// means by a sigma and what the rest of this renderer does with one: a card
+    /// lifting under a scale blurs by more as its content grows. `scaled_by`
+    /// converts it when the layer opens. This doc said "device pixels" for as
+    /// long as one path failed to convert it, which is the state
+    /// `impeller-rs`'s `filter_space.rs` now rules out.
     ///
     /// Two, because `dart:ui`'s `ImageFilter.blur` takes `sigmaX` and
     /// `sigmaY` separately and upstream's `MakeBlur` passes both through. A
@@ -341,6 +349,55 @@ impl ImageFilter {
     /// not finite is not a blur, and neither is one that is zero or less.
     pub(crate) fn blurs(sigma: f32) -> bool {
         sigma.is_finite() && sigma > 0.0
+    }
+
+    /// This filter with its lengths converted from the caller's space to device
+    /// pixels.
+    ///
+    /// A caller's sigma is stated in the space they were drawing in, which is
+    /// what `dart:ui` means by it and what upstream honors by scaling with
+    /// `effect_transform.Basis()`. `Layer::scaled_by` does this for the fields a
+    /// `Copy` layer carries, and for a long time nothing did it for the filter
+    /// handed alongside them -- so the same `ImageFilter::Blur` meant a local
+    /// sigma through `Paint::with_image_filter`, which becomes a layer and is
+    /// scaled, and a device sigma through `Canvas::save_layer_filtered`, which
+    /// was not. One value in one type meaning two things depending on which call
+    /// received it, which is the defect this closes rather than a difference
+    /// between the two spellings.
+    ///
+    /// **Only the blur scales**, and the rest is not an oversight:
+    ///
+    /// - A morphology radius is device pixels here on purpose, and diverges from
+    ///   upstream in exactly that way -- `docs/non-parity.md` 17 has the entry
+    ///   and the pinning test. Scaling it here and not in `Layer::scaled_by`
+    ///   would trade a stated divergence for an unstated inconsistency.
+    /// - A matrix is not a length. It moves a finished image, and the transform
+    ///   is already in the space the image is in.
+    /// - A color filter and a caller's program carry no lengths at all.
+    ///
+    /// Matched arm by arm with no wildcard, so a variant added later fails to
+    /// compile here instead of silently not being converted. That is the whole
+    /// reason this is written out rather than done with an `if let`.
+    pub(crate) fn scaled_by(self, scale: f32) -> Self {
+        if !scale.is_finite() || scale <= 0.0 {
+            return self;
+        }
+        match self {
+            Self::Blur { sigma_x, sigma_y } => Self::Blur {
+                sigma_x: sigma_x * scale,
+                sigma_y: sigma_y * scale,
+            },
+            Self::Compose { outer, inner } => Self::Compose {
+                outer: Box::new(outer.scaled_by(scale)),
+                inner: Box::new(inner.scaled_by(scale)),
+            },
+            Self::None
+            | Self::Matrix { .. }
+            | Self::Dilate { .. }
+            | Self::Erode { .. }
+            | Self::Color(_)
+            | Self::Runtime { .. } => self,
+        }
     }
 
     /// Whether this would change anything.
