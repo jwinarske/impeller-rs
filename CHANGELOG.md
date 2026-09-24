@@ -28,6 +28,18 @@ GPU could still be sampling them, which the validation layer reports as
 a comment in the atomic-commit path called the fence-on-commit path unverified, when
 two devices demonstrate it.
 
+**A composed image filter nested deeper than 256 is refused rather than fatal.**
+Everything that reads a composition walks it recursively -- `peel`, `covering`,
+`is_identity`, `scaled_by` -- as does the pass building after it, so a deep enough
+`ImageFilter::Compose` took the process down instead of returning an error: a debug
+build serviced two thousand and forty-eight levels and died at three thousand and
+seventy-two. The limit is checked iteratively, so the check cannot overflow on the
+input it exists to refuse, and it costs the limit rather than the filter's size.
+Each level also costs a pass, so the accepted depth is already a recording of two
+hundred and sixty passes. Not covered, and documented as such: a composition is a
+chain of `Box`es, so building one deep enough overflows the stack when it is
+*dropped*, in the caller's own code, before anything here sees it.
+
 **A dash pattern finer than the curve is flattened to no longer hangs.** `walk`
 counts intervals rather than distance, and `Dash::is_usable` cannot see how the
 intervals compare with the path -- so a period of `f32::MIN_POSITIVE` over a

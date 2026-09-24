@@ -2036,6 +2036,15 @@ impl Canvas {
                  states where the finished image goes",
             ));
         }
+        // Refused here for the reason the depth is a constant at all: everything
+        // that reads a composition walks it recursively, and a composition deep
+        // enough took the process down rather than returning an error. See
+        // `ImageFilter::MAX_NESTING`.
+        if filter.nests_deeper_than(ImageFilter::MAX_NESTING) {
+            return Err(Error::Unsupported(
+                "this image filter composes more filters than can be walked",
+            ));
+        }
         let (min, max) = match bounds {
             Some(bounds) => transformed_bounds(
                 self.transform,
@@ -2070,6 +2079,13 @@ impl Canvas {
         bounds: Option<Rect>,
         backdrop: &ImageFilter,
     ) -> Result<&mut Self> {
+        // The same refusal `save_layer_filtered` makes, and for the same reason:
+        // a backdrop's filter is read by the same recursive walks.
+        if backdrop.nests_deeper_than(ImageFilter::MAX_NESTING) {
+            return Err(Error::Unsupported(
+                "this image filter composes more filters than can be walked",
+            ));
+        }
         let (min, max) = match bounds {
             Some(bounds) => transformed_bounds(
                 self.transform,
@@ -2800,6 +2816,14 @@ impl Canvas {
         atlas_slot: u32,
         paint: &Paint,
     ) -> Result<&mut Self> {
+        if paint
+            .image_filter
+            .nests_deeper_than(ImageFilter::MAX_NESTING)
+        {
+            return Err(Error::Unsupported(
+                "this image filter composes more filters than can be walked",
+            ));
+        }
         let (outermost, rest) = paint.image_filter.peel();
         let Some((layer, runtime)) = self.filter_layer(&outermost) else {
             return Err(Error::Unsupported("this image filter is not implemented"));
@@ -2845,6 +2869,14 @@ impl Canvas {
     /// peeling, the region arithmetic and the blend placement are the same and
     /// are described there.
     fn draw_vertices_filtered(&mut self, mesh: &Vertices, paint: &Paint) -> Result<&mut Self> {
+        if paint
+            .image_filter
+            .nests_deeper_than(ImageFilter::MAX_NESTING)
+        {
+            return Err(Error::Unsupported(
+                "this image filter composes more filters than can be walked",
+            ));
+        }
         let (outermost, rest) = paint.image_filter.peel();
         let Some((layer, runtime)) = self.filter_layer(&outermost) else {
             return Err(Error::Unsupported("this image filter is not implemented"));
@@ -2931,6 +2963,14 @@ impl Canvas {
         // A chain of filters is a stack of layers, and this builds the stack
         // one frame at a time rather than all at once -- which keeps the
         // single-filter case exactly what it was, with the remainder `None`.
+        if paint
+            .image_filter
+            .nests_deeper_than(ImageFilter::MAX_NESTING)
+        {
+            return Err(Error::Unsupported(
+                "this image filter composes more filters than can be walked",
+            ));
+        }
         let (outermost, rest) = paint.image_filter.peel();
         let Some((layer, runtime)) = self.filter_layer(&outermost) else {
             return Err(Error::Unsupported("this image filter is not implemented"));
