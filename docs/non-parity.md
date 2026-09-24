@@ -662,8 +662,23 @@ attached, not a multiplication.
 **Impact.** A dilate or erode inside a scaled layer reaches the wrong distance
 compared with upstream -- unchanged by the scale where upstream's grows with it --
 and the error is proportional to the scale, so it is invisible at one and total at
-ten. Nothing here would currently notice: every morphology scene in the catalog is
-drawn without a scale, rotation or concat, checked by inspection of all six, so the
-corpus comparison agrees with itself across backends and devices while both differ
-from upstream. Fixing it needs a scene that combines the two before the fix, not
-after, or the change is unmeasured.
+ten. Nothing noticed until this entry was written: every morphology scene in the catalog
+was drawn without a scale, rotation or concat, all six of them, so the corpus
+comparison agreed with itself across backends and devices while both differed from
+upstream.
+
+The pair that notices now is `layer-dilated` and `layer-dilated-under-scale` --
+the same cross at half the size under a scale of two, so it lands on exactly the
+pixels the unscaled one covers and the dilation distance is the only thing left
+that can separate them. `the_dilation_under_a_scale_reaches_the_same_distance`
+reads the radius out of the recording and asserts they agree, which they do here
+and would not upstream. It is written to fail when the convention is flipped, and
+says in its own message to replace it with the doubled assertion rather than delete
+it.
+
+Worth knowing what does *not* catch it, since it looks as though it should: the
+cost baseline records identical rows for the two scenes. A pass is emitted per
+`MORPHOLOGY_TAPS` texels and that constant is thirty-two, so eight and sixteen both
+fit in one pass each way and the pass count never moves. The same arithmetic means
+the two scenes are very likely pixel-identical, so the image comparison is not the
+detector either. The radius has to be read, not counted.
