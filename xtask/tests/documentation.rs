@@ -752,6 +752,32 @@ fn every_non_parity_entry_states_its_impact() {
         "docs/non-parity.md records a difference without saying what it costs:\n  {}",
         silent.join("\n  ")
     );
+
+    // And the numbers are a sequence, which nothing checked. Two entries were
+    // both numbered thirteen for as long as the second one existed, because an
+    // entry is written by copying its neighbor and the heading is the part most
+    // easily left behind. The numbers are not decoration: `architecture.md`
+    // cites them by number, so a duplicate makes a reference ambiguous and a gap
+    // makes one dangle.
+    let stated: Vec<usize> = numbered
+        .iter()
+        .filter_map(|(heading, _)| heading.split('.').next()?.trim().parse().ok())
+        .collect();
+    assert_eq!(
+        stated.len(),
+        numbered.len(),
+        "a numbered entry in docs/non-parity.md does not start with a number this \
+         could read: {:?}",
+        numbered.iter().map(|(h, _)| h).collect::<Vec<_>>()
+    );
+    let expected: Vec<usize> = (1..=stated.len()).collect();
+    assert_eq!(
+        stated,
+        expected,
+        "docs/non-parity.md's entries are numbered {stated:?}, which is not one \
+         through {}. A duplicate makes every citation of that number ambiguous.",
+        stated.len()
+    );
 }
 
 /// The changelog says of itself that `docs/parity.md` describes what is built

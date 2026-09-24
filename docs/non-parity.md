@@ -578,7 +578,7 @@ upstream has derived either.
 draw uses. Where it does bite it is loud rather than subtle: a rectangle appears
 where a soft shape was asked for.
 
-## 13. A tint blend in `Plus` saturates in the shader, not at the target
+## 16. A tint blend in `Plus` saturates in the shader, not at the target
 
 **What differs.** `Plus` reaches three different places here, and one of them
 clamps. A paint's own blend mode goes to the hardware as `One, One`, and a `Plus`
@@ -628,3 +628,42 @@ the clamp is invisible, because the attachment would have clipped the sum anyway
 `an_atlas_tint_in_plus_is_clipped_where_the_other_routes_are_not` pins it, and is
 written to fail if the clamp comes out again so that whoever notices the
 inconsistency finds the cost recorded rather than rediscovering it.
+
+## 17. A morphology radius is in device pixels; upstream's is a local length
+
+**What differs.** `ImageFilter.dilate` and `ImageFilter.erode` take a radius, and
+the two renderers disagree about what space it is in. Upstream's is local: read at
+master on 2026-09-23, `DirectionalMorphologyFilterContents::RenderFilter` builds
+`entity.GetTransform() * effect_transform.Basis()`, applies it to the radius, and
+rounds the length of the result to whole texels for the shader. So a dilated layer
+under `canvas.scale(3.0)` spreads three times as far. Here the radius is device
+pixels and nothing scales it: `Layer::scaled_by` multiplies `blur` and
+`backdrop_blur` by the layer's scale and leaves `morphology` alone, deliberately.
+
+**Why.** Not a decision so much as a claim that turned out to be false.
+`architecture.md` records the conversion of every blur from device space to local,
+done because a card lifting under a scale kept a blur the same size while its
+content grew -- and it exempted morphology on the stated grounds that "upstream has
+no morphology to be in parity with". Upstream has both filters, so the exemption
+rested on nothing, and the one filter left in the old convention is the one the
+section was written to fix.
+
+It was not simply flipped along with the blur, and the reason is worth stating
+rather than leaving as an omission. The radius is rounded to whole texels at
+construction, in device space, and `architecture.md` explains why that rounding
+must happen in the one place both the shader and the layer's bounds read the
+radius from: a structuring element is a set of sample positions, and a radius
+rounded for one reader and not the other grows the picture past what the target
+has room for. Making the radius local moves the rounding after the scale, which
+means it no longer happens where the value is stored, and the bounds and the pass
+have to be shown to still agree. That is a change with a correctness argument
+attached, not a multiplication.
+
+**Impact.** A dilate or erode inside a scaled layer reaches the wrong distance
+compared with upstream -- unchanged by the scale where upstream's grows with it --
+and the error is proportional to the scale, so it is invisible at one and total at
+ten. Nothing here would currently notice: every morphology scene in the catalog is
+drawn without a scale, rotation or concat, checked by inspection of all six, so the
+corpus comparison agrees with itself across backends and devices while both differ
+from upstream. Fixing it needs a scene that combines the two before the fix, not
+after, or the change is unmeasured.
