@@ -706,6 +706,49 @@ impl Morphology {
     pub fn is_identity(&self) -> bool {
         self.radius == [0.0, 0.0]
     }
+
+    /// The radius worth applying on a target this size, per axis.
+    ///
+    /// A window reaching `extent` texels along an axis already spans the whole
+    /// of it, so every output pixel is the extreme over the entire row or
+    /// column and a wider one cannot change a single pixel. Dilating takes the
+    /// largest sample and eroding the smallest; either way the taps a larger
+    /// radius adds are all outside the image, and whatever the sampler returns
+    /// there is already in the window. So this clamp is picture-preserving
+    /// rather than a limit on the filter, which is what makes it safe to apply
+    /// without the caller having asked.
+    ///
+    /// **Why it has to exist.** `sane` bounds the radius below and
+    /// rejects what is not finite, and nothing bounded it above -- so the pass
+    /// loop, which emits one pass per [`MORPHOLOGY_TAPS`] texels, turned a
+    /// caller's float into that many passes. A radius of a million asked for
+    /// sixty-two thousand of them and a radius of `1e20` exhausted memory,
+    /// through the documented constructor and with no unsafe input anywhere:
+    /// the value is finite, positive and whole. That is a recording's size made
+    /// proportional to a scalar, which is the defect this closes.
+    ///
+    /// Non-finite gives zero, on the same terms as `sane` and for the same
+    /// reason a non-finite sigma gives no blur. Checked before the `min` rather
+    /// than after, because [`f32::min`] returns the other operand when one side
+    /// is NaN -- the trap `Layer::with_blur_xy` and `Rect::outset` both name,
+    /// and the one that would turn a NaN radius into a full-width dilation.
+    /// It also has to be handled here rather than left to the loop: the loop's
+    /// condition is false for NaN, so NaN was already harmless, but infinity
+    /// entered it and never left, since subtracting the taps from infinity
+    /// leaves infinity.
+    pub fn applied_radius(&self, extent: Extent2D) -> [f32; 2] {
+        let one = |radius: f32, along: u32| {
+            if radius.is_finite() {
+                radius.max(0.0).min(along as f32)
+            } else {
+                0.0
+            }
+        };
+        [
+            one(self.radius[0], extent.width),
+            one(self.radius[1], extent.height),
+        ]
+    }
 }
 
 /// What a mask blur is blurring: a shape, or a run of glyphs.
@@ -5514,15 +5557,15 @@ impl Canvas {
             Affine2::from_mat2(Mat2::from_diagonal(Vec2::new(0.5, -0.5)))
                 * Affine2::from_translation(Vec2::new(1.0, -1.0)),
         ));
+        // Clamped to what the target can tell apart. The loop below emits a
+        // pass per `MORPHOLOGY_TAPS` texels of radius, so without this a
+        // caller's float decides how many passes a recording holds --
+        // `Morphology::applied_radius` has the arithmetic and the case that
+        // found it.
+        let radius = morphology.applied_radius(target.extent);
         let axes = [
-            (
-                [1.0 / target.extent.width as f32, 0.0],
-                morphology.radius[0],
-            ),
-            (
-                [0.0, 1.0 / target.extent.height as f32],
-                morphology.radius[1],
-            ),
+            ([1.0 / target.extent.width as f32, 0.0], radius[0]),
+            ([0.0, 1.0 / target.extent.height as f32], radius[1]),
         ];
 
         let mut sampled = source;
@@ -6734,5 +6777,108 @@ mod tests {
         // would cost a draw and defeat the load operation.
         assert!(recording.is_empty());
         assert!(recording.root().descriptor.clear.is_some());
+    }
+
+    /// A morphology radius cannot decide how many passes a recording holds.
+    ///
+    /// The loop emits a pass per `MORPHOLOGY_TAPS` texels, so before the clamp a
+    /// radius of a million gave sixty-two thousand passes and `1e20` exhausted
+    /// memory -- through `Morphology::dilate`, whose sanitizing rejects only what
+    /// is negative or not finite. Nothing about that input was malformed.
+    #[test]
+    fn a_huge_morphology_radius_is_bounded_by_what_the_target_can_show() {
+        // The morphology materials a radius produces, in order. Compared rather
+        // than counted, because the clamp's justification is that a wider window
+        // cannot change a pixel -- and identical materials over identical passes
+        // is that claim in a form a machine can check without a device. It says
+        // the two requests are not merely the same size but the same recording,
+        // and the shader is a function of what it is handed.
+        let filters = |radius: f32| {
+            let mut canvas = canvas();
+            canvas.clear(Color::BLACK);
+            canvas.save_layer(
+                Layer::opacity(1.0).with_morphology(Morphology::dilate(radius, radius)),
+            );
+            canvas
+                .draw_rect(Rect::new(8.0, 8.0, 56.0, 56.0), &Paint::fill(Color::WHITE))
+                .expect("a rectangle is a rectangle");
+            canvas.restore();
+            let recording = canvas.finish();
+            let morphology: Vec<Material> = recording
+                .passes
+                .iter()
+                .flat_map(|pass| pass.batch.draws())
+                .filter(|draw| matches!(draw.material, Material::Morphology { .. }))
+                .map(|draw| draw.material.clone())
+                .collect();
+            (recording.passes.len(), morphology)
+        };
+
+        // A 128-square target, so each axis saturates at 128 texels: four passes
+        // an axis at thirty-two taps each, plus the root and the composite.
+        let (passes, saturated) = filters(128.0);
+        assert!(passes < 16, "{passes} passes to saturate a 128 square");
+        assert_eq!(saturated.len(), 8, "{saturated:?}");
+        for radius in [1e3f32, 1e6, 1e20, f32::MAX] {
+            let (grew, wider) = filters(radius);
+            assert_eq!(
+                grew, passes,
+                "a radius of {radius:e} cost more passes than saturating the target"
+            );
+            assert_eq!(
+                wider, saturated,
+                "a radius of {radius:e} asked for a different filter than saturating the target"
+            );
+        }
+    }
+
+    /// Infinity terminates, which it did not before.
+    ///
+    /// `Morphology::dilate` maps it to zero, so this reaches the loop the only way
+    /// left: the fields are public, so a struct literal skips the constructor.
+    /// Subtracting the taps from infinity leaves infinity, so the loop never ended
+    /// and each turn of it allocated a pass.
+    #[test]
+    fn a_non_finite_morphology_radius_is_no_filter_rather_than_no_end() {
+        for radius in [f32::INFINITY, f32::NEG_INFINITY, f32::NAN] {
+            let morphology = Morphology {
+                radius: [radius, radius],
+                dilate: true,
+            };
+            assert_eq!(
+                morphology.applied_radius(Extent2D::new(128, 128)),
+                [0.0, 0.0],
+                "a radius of {radius} survived as something to apply"
+            );
+            let mut canvas = canvas();
+            canvas.clear(Color::BLACK);
+            canvas.save_layer(Layer {
+                morphology: Some(morphology),
+                ..Layer::opacity(1.0)
+            });
+            canvas.restore();
+            // Reaching here at all is the assertion.
+            assert!(!canvas.finish().passes.is_empty());
+        }
+    }
+
+    /// The clamp is per axis, and is the extent of that axis.
+    #[test]
+    fn the_applied_radius_is_clamped_to_each_axis_separately() {
+        let morphology = Morphology {
+            radius: [1e9, 7.0],
+            dilate: false,
+        };
+        assert_eq!(
+            morphology.applied_radius(Extent2D::new(64, 256)),
+            [64.0, 7.0],
+            "the clamp took the wrong axis or clamped what did not need it"
+        );
+        // Negative is refused rather than reflected, as `sane` does.
+        let negative = Morphology {
+            radius: [-5.0, -0.0],
+            dilate: true,
+        };
+        assert_eq!(negative.applied_radius(Extent2D::new(64, 64)), [0.0, 0.0]);
     }
 }
