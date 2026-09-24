@@ -28,6 +28,23 @@ GPU could still be sampling them, which the validation layer reports as
 a comment in the atomic-commit path called the fence-on-commit path unverified, when
 two devices demonstrate it.
 
+**A morphology radius no longer decides how many passes a recording holds.**
+`morphology_passes` emits one pass per `MORPHOLOGY_TAPS` texels of radius and
+nothing bounded the radius above, so `Morphology::dilate(1e6, 1e6)` recorded
+sixty-two thousand passes and `1e20` exhausted memory -- through the documented
+constructor, whose sanitizing rejects only what is negative or not finite. A
+`Morphology` built as a struct literal could also carry infinity, which the pass
+loop never came back from. `Morphology::applied_radius` clamps to the extent of
+the target axis, which cannot change a picture: a window reaching as far as the
+target is wide already spans it. Found by a generated `Layer`.
+
+Generated canvas operation sequences and generated `Layer`s in
+`impeller-rs`'s hostile-input suite, which is what found the above. Up to forty
+calls whose order is hostile -- unbalanced restores, clips under a degenerate
+transform, layers left open at `finish` -- and every `Layer` field, built as a
+struct literal so a new field breaks the build rather than going quietly
+uncovered.
+
 dma-buf negotiation gets generated input on both halves. The `IN_FORMATS` parser
 is put through blobs built the way the kernel lays one out and then corrupted --
 truncated anywhere, given a version that does not exist, and given a header
