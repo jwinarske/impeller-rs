@@ -648,3 +648,226 @@ fn the_generated_sequences_reach_the_states_worth_reaching() {
         );
     }
 }
+
+/// Every field of a [`Paint`], generated.
+///
+/// A struct literal for the reason `hostile_layer` is one: `Paint` has ten public
+/// fields and is not `#[non_exhaustive]`, so a literal makes an eleventh a compile
+/// error here rather than a field the generator quietly stops covering.
+///
+/// This exists because `Paint` has the shape that has already produced two
+/// defects. Three of its fields are sanitized by a builder and public anyway --
+/// `with_mask_blur` maps a non-finite sigma to zero, and `mask_blur` is a field --
+/// which is exactly how `Layer::blur` carried an infinity into the blur reduction
+/// and `Morphology`'s radius carried one into the pass loop. Nothing generated a
+/// paint at all until this, so the whole family was reachable only through the
+/// builders that clean it.
+///
+/// Probing it by hand first turned up no panic but plenty of incoherence: a mask
+/// blur of infinity records a blur where the builder would record none, `1e20`
+/// loses the draw entirely while the larger `f32::MAX` keeps it, and NaN and a
+/// negative both correctly record nothing. Non-monotonic, and none of it a defect
+/// by the contract at the top of this file -- which is the contract this asserts
+/// rather than the coherence, because "garbage out" is allowed and a lost index is
+/// not.
+fn hostile_paint() -> impl Strategy<Value = Paint> {
+    (
+        // Threes again, because a tuple strategy stops at twelve and ten fields
+        // with their innards exceed it.
+        (
+            hostile_color(),
+            prop_oneof![
+                3 => Just(Style::Fill),
+                1 => (hostile_coord(), hostile_coord()).prop_map(|(width, miter_limit)| {
+                    Style::Stroke(StrokeStyle {
+                        width,
+                        cap: LineCap::Butt,
+                        join: LineJoin::Miter,
+                        miter_limit,
+                    })
+                }),
+            ],
+            prop::sample::select(
+                [
+                    MaskBlurStyle::Normal,
+                    MaskBlurStyle::Solid,
+                    MaskBlurStyle::Outer,
+                    MaskBlurStyle::Inner,
+                ]
+                .as_slice(),
+            ),
+        ),
+        (
+            prop_oneof![
+                4 => Just(ImageFilter::None),
+                1 => (hostile_coord(), hostile_coord()).prop_map(|(x, y)| ImageFilter::Blur {
+                    sigma_x: x,
+                    sigma_y: y,
+                }),
+                1 => (hostile_coord(), hostile_coord()).prop_map(|(x, y)| ImageFilter::Dilate {
+                    radius_x: x,
+                    radius_y: y,
+                }),
+            ],
+            prop_oneof![
+                4 => Just(ColorFilter::None),
+                1 => Just(ColorFilter::Gamma { direction: Gamma::SrgbToLinear }),
+            ],
+            prop::option::of(
+                (
+                    prop::collection::vec(hostile_coord(), 0..4),
+                    hostile_coord(),
+                )
+                    .prop_map(|(intervals, phase)| Dash::new(intervals, phase)),
+            ),
+        ),
+        (
+            hostile_coord(),
+            prop::sample::select(BlendMode::ALL),
+            prop::sample::select(BlendMode::ALL),
+            any::<bool>(),
+        ),
+    )
+        .prop_map(
+            |(
+                (color, style, mask_blur_style),
+                (image_filter, color_filter, dash),
+                (mask_blur, blend, tint_blend, anti_alias),
+            )| Paint {
+                shader: Shader::Solid(color),
+                style,
+                mask_blur_style,
+                image_filter,
+                color_filter,
+                dash,
+                mask_blur,
+                blend,
+                tint_blend,
+                anti_alias,
+            },
+        )
+}
+
+/// Layers a builder would not produce, written out rather than generated.
+///
+/// See `a_paint_inside_a_filtered_layer_records_something_addressable` for why
+/// these are a list and not a strategy.
+fn hostile_layers() -> Vec<Layer> {
+    let base = Layer::opacity(1.0);
+    vec![
+        base,
+        // An infinite blur, which `with_blur_xy` maps to zero and a literal does
+        // not. This is what carried infinity into the blur reduction.
+        Layer {
+            blur: Vec2::new(f32::INFINITY, 0.0),
+            ..base
+        },
+        Layer {
+            blur: Vec2::new(f32::MAX, f32::MAX),
+            ..base
+        },
+        // A backdrop blur past its own builder, which is the same bypass again.
+        Layer {
+            backdrop_blur: f32::INFINITY,
+            ..base
+        },
+        // A morphology radius past `sane`, which is what asked for six quintillion
+        // passes before `applied_radius` clamped it.
+        Layer {
+            morphology: Some(Morphology {
+                radius: [1e20, 1e20],
+                dilate: true,
+            }),
+            ..base
+        },
+        // A matrix whose axes differ by seventy-six orders of magnitude, so the
+        // preimage it widens to is degenerate one way and enormous the other.
+        Layer {
+            matrix: Some(Transform2D::from(Affine2::from_scale(Vec2::new(
+                1.1754944e-38,
+                3.4028235e38,
+            )))),
+            ..base
+        },
+        // Alpha that is not a fraction, under a blend that ignores it.
+        Layer {
+            alpha: f32::NAN,
+            blend: BlendMode::Clear,
+            ..base
+        },
+    ]
+}
+
+proptest! {
+    #![proptest_config(ProptestConfig { cases: 2048, ..ProptestConfig::default() })]
+
+    /// A paint assembled field by field still records addressably.
+    ///
+    /// Two shapes, because the paint's style decides which geometry path runs: a
+    /// rectangle reaches the fill and the analytic routes, and a path with a
+    /// curve reaches the tessellator and the dasher. A stroke width or a dash
+    /// interval that is not a length has to be refused or survived, not trusted.
+    #[test]
+    fn a_paint_of_any_configuration_records_something_addressable(
+        paint in hostile_paint(),
+        curved in any::<bool>(),
+    ) {
+        let mut canvas = Canvas::new(SIZE);
+        canvas.clear(Color::BLACK);
+        if curved {
+            let mut path = PathBuilder::new();
+            path.move_to(Vec2::new(16.0, 16.0));
+            path.cubic_to(
+                Vec2::new(96.0, 8.0),
+                Vec2::new(8.0, 96.0),
+                Vec2::new(112.0, 112.0),
+            );
+            let path = path.build();
+            let _ = canvas.draw_path(&path, &paint);
+        } else {
+            let _ = canvas.draw_rect(Rect::new(16.0, 16.0, 112.0, 112.0), &paint);
+        }
+        let recording = canvas.finish();
+        prop_assert!(
+            recording_is_addressable(&recording).is_ok(),
+            "{}",
+            recording_is_addressable(&recording).unwrap_err()
+        );
+    }
+
+    /// The same paint on a layer's content, where a filter pass sits above it.
+    ///
+    /// A paint's own image filter opens a layer per draw, so this nests one inside
+    /// another and is the arrangement where a pass count multiplies rather than
+    /// adds -- which is how the blur reduction's overflow was reached.
+    ///
+    /// The layer is *chosen* rather than generated, and that is a limit of the
+    /// tooling rather than of the interest. Combining `hostile_layer` with
+    /// `hostile_paint` overflows the stack inside `proptest`'s own `new_tree`
+    /// before any case runs -- each generator is fine alone and the pair is not,
+    /// because the strategy tree a nest of tuples and `prop_oneof` builds is walked
+    /// recursively and a debug build's test thread has two mebibytes. It looked
+    /// exactly like a renderer defect and was not, which is worth leaving written
+    /// down here: the fix was to make the test shallower.
+    ///
+    /// So the layers below are the interesting ones written out. Each is a value a
+    /// builder would refuse and a struct literal carries anyway, which is the shape
+    /// that has already produced two defects.
+    #[test]
+    fn a_paint_inside_a_filtered_layer_records_something_addressable(
+        paint in hostile_paint(),
+        layer in prop::sample::select(hostile_layers()),
+    ) {
+        let mut canvas = Canvas::new(SIZE);
+        canvas.clear(Color::BLACK);
+        canvas.save_layer(layer);
+        let _ = canvas.draw_rect(Rect::new(16.0, 16.0, 112.0, 112.0), &paint);
+        canvas.restore();
+        let recording = canvas.finish();
+        prop_assert!(
+            recording_is_addressable(&recording).is_ok(),
+            "{}",
+            recording_is_addressable(&recording).unwrap_err()
+        );
+    }
+}

@@ -28,6 +28,28 @@ GPU could still be sampling them, which the validation layer reports as
 a comment in the atomic-commit path called the fence-on-commit path unverified, when
 two devices demonstrate it.
 
+**A dash pattern finer than the curve is flattened to no longer hangs.** `walk`
+counts intervals rather than distance, and `Dash::is_usable` cannot see how the
+intervals compare with the path -- so a period of `f32::MIN_POSITIVE` over a
+hundred-unit line asked for around ten to the fortieth dashes. It never got
+there: the position the intervals accumulate into stops advancing at about
+`2e-31`, where adding one falls below the last bit of an `f32`, and from there the
+loop emitted geometry forever without moving. `dash_path` now returns such a path
+unchanged, on the same terms as an unusable pattern, and `walk` refuses an
+interval that cannot move the position it is added to so that termination does not
+depend on the caller's tolerance.
+
+The same loop had a second way not to end, and `is_usable` is why it was missed:
+it sums the intervals as the caller gave them, while `Dash::cycle` doubles an
+odd-length pattern so it alternates, so the total the walk runs against can be
+twice the total that was checked. `[f32::MAX, 118.0, 370.0]` sums to `f32::MAX`
+and doubles to infinity; `phase.rem_euclid(inf)` is infinity, and the loop that
+normalizes the phase subtracted intervals from it forever. A non-finite period is
+now refused, and that loop guards its own progress rather than trusting a check
+made against a different sum. Found by generating a `Paint` field by field,
+which is also new: nothing generated one before, and three of its fields are
+sanitized by a builder and public anyway.
+
 **Every spelling of "filter this" now measures its lengths in the same space.**
 A caller's blur sigma is stated in the space they were drawing in, and
 `Layer::scaled_by` converted the fields a `Copy` layer carries while nothing
