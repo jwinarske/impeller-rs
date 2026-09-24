@@ -873,8 +873,15 @@ conclusion, and the test failed the moment it did. Without it the shadow would
 have silently started growing with the transform, which is the one thing
 upstream is explicit about not doing.
 
-The morphology is left in device pixels and says so. Upstream has no morphology
-to be in parity with.
+The morphology is left in device pixels and says so, and that is a divergence
+rather than the absence of one. This sentence used to end "upstream has no
+morphology to be in parity with", which is wrong twice: upstream has dilate and
+erode, and its radius is a *local* length scaled by the transform at the pass --
+`entity.GetTransform() * effect_transform.Basis()` applied to the radius, then
+rounded to whole texels in device space. So the convention here is the opposite
+of upstream's, on the one filter this section changed everything else to match.
+`non-parity.md` §17 has what it costs and why it was not simply flipped with the
+blur.
 
 **A stroke narrower than a pixel is widened, and dimmed to pay for it.** A
 stroke's width is a length in the space the shape is drawn in, and nothing stops
