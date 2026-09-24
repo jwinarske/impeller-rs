@@ -1,0 +1,14 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+#
+# Provenance, which the header above does not distinguish: these are not defects
+# this tree ever had. Both shrank out when the implementations were deliberately
+# broken to check these properties can fail -- sorting linear first in
+# `intersect`, and disabling the guard inside `negotiate_non_linear`. Kept because
+# re-running them is what keeps those two checks cheap.
+cc 9971de8f1487ff92b739fc01a1e0fa71373e4e66868ac8db916168b9df03226a # shrinks to render = [FormatModifierSet { fourcc: Fourcc(808669784), modifiers: [Modifier(72057594037927937), Modifier(0)] }], scanout = [FormatModifierSet { fourcc: Fourcc(808669784), modifiers: [Modifier(72057594037927937), Modifier(0)] }], preferred = [Fourcc(808669784)]
+cc 468c2e6e292d32efab682ebea79465956186cc80aa14f86cf9d889d3330efa69 # shrinks to render = [FormatModifierSet { fourcc: Fourcc(808669784), modifiers: [Modifier(0)] }], scanout = [FormatModifierSet { fourcc: Fourcc(808669784), modifiers: [Modifier(0)] }], preferred = [Fourcc(808669784)]

@@ -1,0 +1,16 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+#
+# Provenance, which the header above does not distinguish: these are not defects
+# this tree ever had. Each is the case that shrank out when `parse_in_formats`
+# was deliberately broken to check these properties can fail -- dropping the
+# end-of-blob guard, keeping formats no entry claimed, and removing the modifier
+# dedup. They are kept because re-running them is what makes those three checks
+# cheap forever, not because anything here once read past a blob.
+cc b5af884bd8b8647014010c08f98ff711f17e563f547e9f8de8943f86359ea890 # shrinks to formats = [], entries = [(0, 0, 0), (0, 0, 0), (0, 0, 0)], cut = 24
+cc 53c5e5dea6606a30a0db3a9caa54f634f03bce013bbb0cdd09f1cd49ddad5f32 # shrinks to formats = [], entries = [], count_formats = 0, formats_offset = 0, count_modifiers = 1, modifiers_offset = 1
+cc cdb0e72cebd6bcd818c70fbdc93651df008374981d40269cfa1e8b4436767be5 # shrinks to formats = [875713112, 875713112, 875713112, 875713112, 875713112, 875713112, 875713112, 875713112, 875713112, 875713112, 875713112, 875713112, 875713112, 875713112, 875713112, 875713112, 875713112, 875713112, 875713112, 875713112, 875713112, 875713112, 875713112, 875713112, 875713112, 875713112, 875713112, 875713112], entries = [(7911138653988049728, 18, 18446744073709551615), (18446744073709551615, 0, 18446744073709551615)]

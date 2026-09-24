@@ -26,3 +26,4 @@ impeller-core = { path = "../impeller-core" }
 impeller-hal-vulkan = { path = "../impeller-hal-vulkan" }
 impeller-testkit = { path = "../impeller-testkit" }
 impeller-renderer = { path = "../impeller-renderer" }
+proptest = { workspace = true }
