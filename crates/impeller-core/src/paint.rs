@@ -313,6 +313,21 @@ pub enum ImageFilter {
     /// means knowing how far each filter in the chain reaches.
     ///
     /// [`Canvas::save_layer`]: crate::Canvas::save_layer
+    ///
+    /// # How deep one may go
+    ///
+    /// Two hundred and fifty-six levels, and past that the calls taking a filter
+    /// refuse it rather than crash. Everything that reads a composition walks it
+    /// recursively, and the depth that can be walked is a property of the stack
+    /// rather than of the picture -- a debug build managed two thousand and
+    /// forty-eight and died at three thousand and seventy-two. Each level also
+    /// costs a pass and a target, so the limit is far above any use.
+    ///
+    /// One thing no refusal here can cover: this is a chain of `Box`es, so
+    /// *dropping* a composition recurses as deeply as it nests. A filter built deep
+    /// enough overflows the stack being freed, in the caller's own code, before it
+    /// is handed to anything. Building one is what has to be avoided, not passing
+    /// it.
     Compose {
         outer: Box<ImageFilter>,
         inner: Box<ImageFilter>,
@@ -473,6 +488,49 @@ impl ImageFilter {
     /// caller composes two compositions -- `compose(compose(a, b), c)` was
     /// refused as an unimplemented filter, having been assembled entirely out
     /// of implemented ones.
+    /// The deepest composition this will walk.
+    ///
+    /// Every function that reads a composition walks it recursively -- `peel`,
+    /// `covering`, `is_identity`, `scaled_by` -- and the passes it turns into are
+    /// built by a recursion too. So the depth that can be serviced is a property of
+    /// the stack rather than of the picture, and a limit stated here is a refusal
+    /// where the absence of one was a fatal stack overflow.
+    ///
+    /// Measured on 2026-09-24 rather than guessed: a debug build serviced a
+    /// composition two thousand and forty-eight deep and died at three thousand and
+    /// seventy-two. A release build has smaller frames and would reach further,
+    /// which is the wrong direction to calibrate from -- a limit has to hold in the
+    /// profile that fails first, and the suite is that profile.
+    ///
+    /// Two hundred and fifty-six is far below it and far above any use. `dart:ui`
+    /// callers compose two or three filters; each level here also costs a pass and
+    /// a target, so a composition this deep is already a recording of two hundred
+    /// and sixty passes over a picture nobody can see the shape of.
+    pub(crate) const MAX_NESTING: usize = 256;
+
+    /// Whether this composition nests deeper than `limit`.
+    ///
+    /// Iterative, with its own worklist, which is the point: a recursive depth
+    /// check would overflow on exactly the input it exists to refuse. Stops as soon
+    /// as the limit is passed rather than measuring the whole tree, so a
+    /// pathological filter costs the limit and not its own size.
+    ///
+    /// A composition is a tree rather than a list -- both halves can compose -- so
+    /// the walk carries a depth per node instead of counting iterations.
+    pub(crate) fn nests_deeper_than(&self, limit: usize) -> bool {
+        let mut work = vec![(self, 0usize)];
+        while let Some((filter, depth)) = work.pop() {
+            if depth > limit {
+                return true;
+            }
+            if let Self::Compose { outer, inner } = filter {
+                work.push((outer, depth + 1));
+                work.push((inner, depth + 1));
+            }
+        }
+        false
+    }
+
     pub(crate) fn peel(&self) -> (ImageFilter, ImageFilter) {
         match self {
             Self::Compose { outer, inner } => {

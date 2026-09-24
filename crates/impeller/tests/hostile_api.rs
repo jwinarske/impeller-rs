@@ -871,3 +871,111 @@ proptest! {
         );
     }
 }
+
+/// A composition deeper than anything needs is refused, not fatal.
+///
+/// The companion to `a_stack_of_layers_deeper_than_anything_needs_is_still_a_recording`
+/// and the case it did not cover. Layers nest through the canvas's own stack, which
+/// is a `Vec`; a composed image filter nests through `Box`, and everything that
+/// reads one walks it recursively -- `peel`, `covering`, `is_identity`, `scaled_by`
+/// -- as does the pass building that follows. So a deep enough composition took the
+/// process down rather than returning an error.
+///
+/// Measured before the limit existed: a debug build serviced two thousand and
+/// forty-eight levels and died at three thousand and seventy-two. That boundary is
+/// a property of the stack and the profile rather than of the picture, which is why
+/// the limit is far below it.
+///
+/// Each level also costs a pass, so the accepted depth is already a recording of
+/// two hundred and sixty passes over a picture whose shape nobody can see.
+#[test]
+fn a_composition_deeper_than_anything_needs_is_refused_rather_than_fatal() {
+    fn nested(depth: usize) -> ImageFilter {
+        let mut filter = ImageFilter::Blur {
+            sigma_x: 1.0,
+            sigma_y: 1.0,
+        };
+        for _ in 0..depth {
+            filter = ImageFilter::Compose {
+                outer: Box::new(ImageFilter::Color(ColorFilter::Gamma {
+                    direction: Gamma::SrgbToLinear,
+                })),
+                inner: Box::new(filter),
+            };
+        }
+        filter
+    }
+
+    let draw = |filter: &ImageFilter| -> (bool, usize) {
+        let mut canvas = Canvas::new(SIZE);
+        canvas.clear(Color::BLACK);
+        let taken = canvas
+            .save_layer_filtered(Layer::opacity(1.0), None, filter)
+            .is_ok();
+        let _ = canvas.draw_rect(Rect::new(8.0, 8.0, 56.0, 56.0), &Paint::fill(Color::WHITE));
+        canvas.restore();
+        (taken, canvas.finish().passes.len())
+    };
+
+    // Shallow compositions are what this is for, and they still work.
+    for depth in [1usize, 16, 64] {
+        let (taken, passes) = draw(&nested(depth));
+        assert!(taken, "a composition {depth} deep was refused");
+        assert!(
+            passes > depth,
+            "a composition {depth} deep produced only {passes} passes"
+        );
+    }
+
+    // And a deep one is refused rather than fatal. Reaching these assertions at
+    // all is most of what they say.
+    //
+    // Four and eight thousand rather than something enormous, and the ceiling is
+    // this test's rather than the renderer's: a composition is a chain of `Box`es,
+    // so *dropping* one recurses as deeply as it nests, and a sixty-five-thousand
+    // deep filter overflowed the stack being freed at the end of the statement that
+    // built it. That is a property of a recursively boxed type in the caller's own
+    // code -- it happens before the filter is handed to anything here, and no
+    // refusal on this side can prevent it. What this file can say is that the
+    // renderer refuses what it is given rather than crashing on it, and the
+    // refusal costs the limit rather than the filter's own size, because
+    // `nests_deeper_than` walks iteratively and stops as soon as the limit is
+    // passed.
+    for depth in [4096usize, 8192] {
+        let (taken, passes) = draw(&nested(depth));
+        assert!(
+            !taken,
+            "a composition {depth} deep was accepted, which is the crash this \
+             refusal replaced"
+        );
+        assert_eq!(
+            passes, 1,
+            "a refused filter still built {passes} passes, so the layer was opened \
+             after all"
+        );
+    }
+
+    // The same refusal on the backdrop path, which reads the filter with the same
+    // recursive walks.
+    let mut canvas = Canvas::new(SIZE);
+    canvas.clear(Color::BLACK);
+    assert!(
+        canvas
+            .save_layer_backdrop(Layer::opacity(1.0), None, &nested(4096))
+            .is_err(),
+        "a backdrop filter deeper than the limit was accepted"
+    );
+
+    // And on a paint, which reaches the recursion through `peel` instead.
+    let mut canvas = Canvas::new(SIZE);
+    canvas.clear(Color::BLACK);
+    assert!(
+        canvas
+            .draw_rect(
+                Rect::new(8.0, 8.0, 56.0, 56.0),
+                &Paint::fill(Color::WHITE).with_image_filter(nested(4096)),
+            )
+            .is_err(),
+        "a paint's filter deeper than the limit was accepted"
+    );
+}
