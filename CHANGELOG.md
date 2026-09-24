@@ -37,7 +37,16 @@ there: the position the intervals accumulate into stops advancing at about
 loop emitted geometry forever without moving. `dash_path` now returns such a path
 unchanged, on the same terms as an unusable pattern, and `walk` refuses an
 interval that cannot move the position it is added to so that termination does not
-depend on the caller's tolerance. Found by generating a `Paint` field by field,
+depend on the caller's tolerance.
+
+The same loop had a second way not to end, and `is_usable` is why it was missed:
+it sums the intervals as the caller gave them, while `Dash::cycle` doubles an
+odd-length pattern so it alternates, so the total the walk runs against can be
+twice the total that was checked. `[f32::MAX, 118.0, 370.0]` sums to `f32::MAX`
+and doubles to infinity; `phase.rem_euclid(inf)` is infinity, and the loop that
+normalizes the phase subtracted intervals from it forever. A non-finite period is
+now refused, and that loop guards its own progress rather than trusting a check
+made against a different sum. Found by generating a `Paint` field by field,
 which is also new: nothing generated one before, and three of its fields are
 sanitized by a builder and public anyway.
 

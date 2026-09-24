@@ -118,7 +118,16 @@ pub fn dash_path(path: &Path, dash: &Dash, tolerance: f32) -> Path {
     // `tolerance` of NaN makes `resolvable` false and returns the path unchanged,
     // which is the safe direction, where reading the comparison the other way
     // round would let it through.
-    let resolvable = period > tolerance;
+    //
+    // `period` has to be checked finite here and not merely large, and the reason
+    // is that `is_usable` does not check *this* sum. It adds up the intervals as
+    // the caller gave them; `cycle` doubles an odd-length pattern so that it
+    // alternates, so the total the walk runs against can be twice the one that was
+    // validated -- and `[f32::MAX, 118.0, 370.0]` sums to `f32::MAX`, which is
+    // finite and positive, then doubles to infinity. `phase.rem_euclid(inf)` is
+    // infinity, and the loop that normalizes the phase below subtracts intervals
+    // from it forever.
+    let resolvable = period.is_finite() && period > tolerance;
     if !resolvable {
         return path.clone();
     }
@@ -144,13 +153,25 @@ fn walk(points: &[Vec2], cycle: &[f32], period: f32, phase: f32, out: &mut PathB
     let mut remaining = phase.rem_euclid(period);
     let mut index = 0usize;
     while remaining >= cycle[index] {
-        remaining -= cycle[index];
+        // Guarded rather than trusted. The comment here used to say that a cycle
+        // of positive total length cannot spin forever and that `is_usable`
+        // guarantees it before we arrive, and both halves were wrong: `is_usable`
+        // sums the intervals as given while this walks the doubled cycle, and an
+        // interval smaller than the last bit of `remaining` leaves it where it was
+        // however many times it is subtracted. `dash_path` now refuses a
+        // non-finite period, which is the case that made this loop immortal, and
+        // this is what makes the loop's own termination not depend on that.
+        let next = remaining - cycle[index];
+        if next >= remaining {
+            break;
+        }
+        remaining = next;
         index = (index + 1) % cycle.len();
-        // A cycle of positive total length cannot spin here forever, and
-        // `is_usable` is what guarantees that before we arrive.
     }
-    // How much of the current interval is left to travel.
-    let mut left = cycle[index] - remaining;
+    // How much of the current interval is left to travel. Floored at zero because
+    // the loop above can leave `remaining` larger than the interval it stopped on,
+    // and a negative `left` would send the walk below backwards.
+    let mut left = (cycle[index] - remaining).max(0.0);
     // Even indices are drawn, odd are skipped.
     let mut drawing = index % 2 == 0;
     let mut pen_down = false;
@@ -409,5 +430,61 @@ mod tests {
             dashed.verbs().len() > line(100.0).verbs().len(),
             "a five-unit dash over a hundred units produced no extra verbs"
         );
+    }
+
+    /// An odd-length pattern whose doubled cycle overflows is refused.
+    ///
+    /// `is_usable` sums the intervals as the caller gave them, and `cycle` doubles
+    /// an odd-length pattern so that it alternates -- so the total the walk runs
+    /// against is twice the one that was validated. `[f32::MAX, 118.0, 370.0]`
+    /// sums to `f32::MAX`, which is finite and positive and passes every check
+    /// `is_usable` makes, and doubles to infinity.
+    ///
+    /// Then `phase.rem_euclid(inf)` is infinity, and the loop that normalizes the
+    /// phase subtracted intervals from it forever: infinity less `f32::MAX` is
+    /// still infinity, so the index cycled and the condition never turned false.
+    /// The comment on that loop had claimed `is_usable` ruled this out.
+    ///
+    /// Found by generating a `Paint` field by field, and only with a random seed:
+    /// a fixed one had passed this file's own properties several times over.
+    #[test]
+    fn an_odd_pattern_whose_doubled_cycle_overflows_is_refused() {
+        let path = line(100.0);
+        // Odd length, so `cycle` doubles it, and a sum that doubles past what an
+        // `f32` holds.
+        let dash = Dash::new(vec![f32::MAX, 118.494_29, 370.615_72], -1e20);
+        assert!(
+            dash.is_usable(),
+            "the intervals are finite, non-negative and sum above zero, which is \
+             the whole of what `is_usable` asks -- this test is about what it does \
+             not ask"
+        );
+        assert!(
+            !dash.cycle().iter().sum::<f32>().is_finite(),
+            "this case is only interesting while the doubled cycle overflows"
+        );
+        // Reaching the assertion at all is the point: this did not return.
+        let dashed = dash_path(&path, &dash, 0.1);
+        assert_eq!(
+            dashed.verbs().len(),
+            path.verbs().len(),
+            "a pattern whose cycle does not sum to a length should come back \
+             undashed"
+        );
+    }
+
+    /// An interval below the last bit of the phase does not stall the walk.
+    ///
+    /// The other half of the same loop, and the half that does not depend on
+    /// `dash_path` having refused anything: a large phase against a tiny first
+    /// interval leaves `remaining` where it was however often it is subtracted.
+    #[test]
+    fn a_phase_far_past_a_tiny_interval_still_settles() {
+        let path = line(100.0);
+        // Period is 500-ish, so `dash_path` admits it, and the first interval is
+        // far below the last bit of the phase inside it.
+        let dash = Dash::new(vec![f32::MIN_POSITIVE, 500.0], 499.999_97);
+        assert!(dash.is_usable());
+        let _ = dash_path(&path, &dash, 0.1);
     }
 }
