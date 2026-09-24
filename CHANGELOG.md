@@ -28,6 +28,16 @@ GPU could still be sampling them, which the validation layer reports as
 a comment in the atomic-commit path called the fence-on-commit path unverified, when
 two devices demonstrate it.
 
+A corpus scene pins what space a morphology radius is in. `dilate` and `erode`
+measure in device pixels here and nothing scales them, where upstream's radius is
+a local length the transform scales at the pass -- so a dilated layer under a
+scale of two spreads twice as far there. `layer-dilated-under-scale` is the same
+cross at half the size under that scale, landing on the pixels the unscaled scene
+covers, so the dilation distance is all that can separate the pair, and
+`the_dilation_under_a_scale_reaches_the_same_distance` reads the radius out of the
+recording. The divergence is recorded as non-parity 17; the test is written to
+fail if the convention is flipped rather than to endorse it.
+
 **A morphology radius no longer decides how many passes a recording holds.**
 `morphology_passes` emits one pass per `MORPHOLOGY_TAPS` texels of radius and
 nothing bounded the radius above, so `Morphology::dilate(1e6, 1e6)` recorded

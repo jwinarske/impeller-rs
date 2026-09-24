@@ -3533,6 +3533,55 @@ pub fn corpus() -> Vec<Scene> {
             }],
         )
         .with_background(DARK_GROUND),
+        // The same cross, the same radii, drawn at half the size under a scale
+        // of two -- so the content lands on exactly the pixels `layer-dilated`
+        // covers, and the only thing that can differ between the two scenes is
+        // how far the dilation reached.
+        //
+        // Which makes this a pin on the radius convention rather than a picture.
+        // The radius here is in device pixels and nothing scales it, so the two
+        // scenes come out identical. Upstream's radius is a local length scaled
+        // by the transform at the pass, so upstream's pair would differ: eight
+        // and three against sixteen and six. `non-parity.md` 17 has the case.
+        // Flipping this renderer's convention is therefore visible here and only
+        // here -- `the_dilation_under_a_scale_reaches_the_same_distance` fails
+        // the moment it is flipped, which is the point of writing the scene
+        // before the change rather than after it.
+        Scene::tree(
+            "layer-dilated-under-scale",
+            vec![Node::Layer {
+                layer: Box::new(LayerSpec {
+                    morphology: Some(MorphologySpec {
+                        radius: [8.0, 3.0],
+                        dilate: true,
+                    }),
+                    ..LayerSpec::default()
+                }),
+                bounds: None,
+                transform: Transform::scale(2.0, 2.0),
+                children: vec![
+                    Item::fill(
+                        Shape::Rect {
+                            min: [28.0, 12.0],
+                            max: [36.0, 52.0],
+                        },
+                        [1.0, 1.0, 1.0, 1.0],
+                    )
+                    .with_blend(BlendMode::SrcOver)
+                    .into(),
+                    Item::fill(
+                        Shape::Rect {
+                            min: [12.0, 28.0],
+                            max: [52.0, 36.0],
+                        },
+                        [1.0, 1.0, 1.0, 1.0],
+                    )
+                    .with_blend(BlendMode::SrcOver)
+                    .into(),
+                ],
+            }],
+        )
+        .with_background(DARK_GROUND),
         Scene::tree(
             "atlas-turned-sprites",
             // Sprites out of the sheet, each turned and scaled by an amount
