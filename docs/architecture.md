@@ -3342,6 +3342,18 @@ arithmetically correct and far too dark passes every one. The bundled example
 wrote linear bytes into a file every viewer reads as sRGB for a long time, and
 nothing in the suite could have said so.
 
+A second case, and a sharper one because it was in the drawing rather than in a
+file: a blur handed to a group as an `ImageFilter` was left in device pixels while
+the same blur set on the layer was converted to them, so two of the five spellings
+of one operation blurred by the wrong amount under any scale. It lasted as long as
+the conversion had existed. Nothing relative could see it -- the mistake is above
+both backends, so both were wrong together and agreed -- and the cost baseline
+could not either, since a sigma changes without changing a pass or draw count,
+which was measured rather than assumed. It took a unit test comparing the
+spellings against each other. **The lesson is narrower than "write more scenes":
+a quantity that only one code path computes needs a check that names the expected
+value, and no amount of cross-comparison substitutes for one.**
+
 Both the example and the gallery are run by `ci/smoke.sh`, which is otherwise
 the suite plus the feature matrix. Neither is covered by a test: they are code
 that runs, so a change breaking one compiles, passes everything, and is found

@@ -3582,6 +3582,72 @@ pub fn corpus() -> Vec<Scene> {
             }],
         )
         .with_background(DARK_GROUND),
+        // A composed filter handed to a group, under a scale. Three things here
+        // had no corpus scene between them until this one: `LayerSpec::filter`,
+        // which reaches `save_layer_filtered` and which nothing in the corpus set
+        // at all; a whole-group filter under a transform; and a composition, which
+        // is what that field exists for.
+        //
+        // What this scene does *not* do is worth stating, because the obvious
+        // reading is wrong. A blur handed over as a filter was once left in device
+        // pixels while the same blur on the layer itself was converted to them,
+        // and a scene like this one would not have caught that: every comparison
+        // the corpus makes is between two backends or two devices, and the
+        // conversion happens above both, so each side would have been wrong
+        // together and agreed. The cost row does not move either -- measured, by
+        // reverting the conversion: the sigma changes and the pass and draw counts
+        // do not. `impeller-rs`'s `filter_space.rs` is what holds the five
+        // spellings against each other, and it is a unit test for that reason.
+        //
+        // What this scene is for is the part a cross-comparison can see: whether
+        // two backends agree about a composed filter's passes, and two devices
+        // about its arithmetic. Neither had a corpus scene to disagree over.
+        //
+        // Blur inside, recolor outside, so the composition is not symmetric and a
+        // pass order swapped between the halves would show. The blur is the half
+        // that carries a length, which makes it the half the conversion has to
+        // reach through the `Compose` to find.
+        Scene::tree(
+            "layer-composed-filter-under-scale",
+            vec![Node::Layer {
+                layer: Box::new(LayerSpec {
+                    filter: ImageFilter::Compose {
+                        outer: Box::new(ImageFilter::Color(ColorFilter::Blend {
+                            color: [0.2, 0.5, 1.0, 0.6],
+                            mode: BlendMode::SrcOver,
+                        })),
+                        inner: Box::new(ImageFilter::Blur {
+                            sigma_x: 4.0,
+                            sigma_y: 1.5,
+                        }),
+                    },
+                    ..LayerSpec::default()
+                }),
+                bounds: None,
+                transform: Transform::scale(2.0, 2.0),
+                children: vec![
+                    Item::fill(
+                        Shape::Rect {
+                            min: [20.0, 14.0],
+                            max: [44.0, 26.0],
+                        },
+                        [1.0, 1.0, 1.0, 1.0],
+                    )
+                    .with_blend(BlendMode::SrcOver)
+                    .into(),
+                    Item::fill(
+                        Shape::Circle {
+                            center: [32.0, 42.0],
+                            radius: 12.0,
+                        },
+                        [1.0, 0.9, 0.2, 1.0],
+                    )
+                    .with_blend(BlendMode::SrcOver)
+                    .into(),
+                ],
+            }],
+        )
+        .with_background(DARK_GROUND),
         Scene::tree(
             "atlas-turned-sprites",
             // Sprites out of the sheet, each turned and scaled by an amount
